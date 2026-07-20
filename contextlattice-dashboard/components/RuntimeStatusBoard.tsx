@@ -1,8 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { API_ENDPOINTS, PAGE_ENDPOINTS, type EndpointTarget } from "@/lib/endpointCatalog";
+import {
+  endpointTargetsForMode,
+  type DashboardRuntimeMode,
+  type EndpointTarget,
+} from "@/lib/endpointCatalog";
 import { asArray, asRecord, formatCompact, formatMs, serviceHealthLabel, toInt, toNumber, toText } from "@/lib/dashboardMetrics";
+import { useDashboardAuthRequired } from "@/lib/useDashboardAuthMode";
 
 type EndpointCheck = EndpointTarget & {
   status: number | null;
@@ -106,18 +111,24 @@ function EndpointTable({ title, rows }: { title: string; rows: EndpointCheck[] }
 }
 
 export function RuntimeStatusBoard() {
+  const authRequired = useDashboardAuthRequired();
   const [overview, setOverview] = useState<any | null>(null);
   const [health, setHealth] = useState<any | null>(null);
   const [checks, setChecks] = useState<EndpointCheck[]>([]);
   const [updatedAt, setUpdatedAt] = useState("");
+  const runtimeMode: DashboardRuntimeMode | null =
+    authRequired === true ? "hosted" : authRequired === false ? "local" : null;
 
   useEffect(() => {
+    if (runtimeMode === null) return;
+    const activeRuntimeMode = runtimeMode;
     let mounted = true;
     async function load() {
+      const endpointTargets = endpointTargetsForMode(activeRuntimeMode);
       const [overviewData, healthData, endpointChecks] = await Promise.all([
         getJson("/api/telemetry/overview?recallHistory=24&toolLimit=16"),
         getJson("/api/health"),
-        Promise.all([...PAGE_ENDPOINTS, ...API_ENDPOINTS].map(checkEndpoint)),
+        Promise.all(endpointTargets.map(checkEndpoint)),
       ]);
       if (!mounted) return;
       setOverview(overviewData);
@@ -131,7 +142,7 @@ export function RuntimeStatusBoard() {
       mounted = false;
       window.clearInterval(handle);
     };
-  }, []);
+  }, [runtimeMode]);
 
   const status = asRecord(asRecord(overview).status);
   const services = asArray(status.services);

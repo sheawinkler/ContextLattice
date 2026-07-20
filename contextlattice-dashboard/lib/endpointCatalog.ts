@@ -1,8 +1,11 @@
+export type DashboardRuntimeMode = "local" | "hosted";
+
 export type EndpointTarget = {
   path: string;
   kind: "page" | "api";
   note: string;
   allowedStatuses: number[];
+  runtimeModes?: DashboardRuntimeMode[];
 };
 
 export const ENDPOINT_CATALOG: EndpointTarget[] = [
@@ -28,8 +31,22 @@ export const ENDPOINT_CATALOG: EndpointTarget[] = [
   { path: "/api/memory/status", kind: "api", note: "Orchestrator service status proxy", allowedStatuses: [200] },
   { path: "/api/memory/topics", kind: "api", note: "Topic and rollup tree summary", allowedStatuses: [200] },
   { path: "/api/memory/preferences", kind: "api", note: "Preference learning status", allowedStatuses: [200] },
-  { path: "/api/workspace/current", kind: "api", note: "Workspace session view (auth-gated)", allowedStatuses: [200, 401] },
+  {
+    path: "/api/workspace/current",
+    kind: "api",
+    note: "Workspace session view (auth-gated)",
+    allowedStatuses: [200, 401],
+    runtimeModes: ["hosted"],
+  },
 ];
 
 export const PAGE_ENDPOINTS = ENDPOINT_CATALOG.filter((item) => item.kind === "page");
 export const API_ENDPOINTS = ENDPOINT_CATALOG.filter((item) => item.kind === "api");
+
+export function endpointRunsInMode(target: EndpointTarget, mode: DashboardRuntimeMode): boolean {
+  return !target.runtimeModes || target.runtimeModes.includes(mode);
+}
+
+export function endpointTargetsForMode(mode: DashboardRuntimeMode): EndpointTarget[] {
+  return ENDPOINT_CATALOG.filter((target) => endpointRunsInMode(target, mode));
+}

@@ -146,6 +146,29 @@ def audit_dockerfiles(root: Path, findings: list[dict[str, str]]) -> None:
                 findings.append(finding("non_node24_base", path.name, f"found node:{match.group(1)}"))
 
 
+def audit_dashboard_production_contract(root: Path, findings: list[dict[str, str]]) -> None:
+    relative = "Dockerfile.dashboard"
+    text = read_text(root, relative, findings)
+    required_patterns = {
+        "dashboard_build_missing": r"\b(?:npm run build|next build)\b",
+        "dashboard_production_env_missing": r"^\s*ENV\s+NODE_ENV=production\s*$",
+        "dashboard_start_missing": r"\b(?:npm run start|next start)\b",
+        "dashboard_healthcheck_missing": r"\bHEALTHCHECK\b[\s\S]*?/api/public/auth-mode",
+        "dashboard_runtime_schema_push_missing": r"\bprisma db push\b",
+    }
+    for kind, pattern in required_patterns.items():
+        if not re.search(pattern, text, re.MULTILINE):
+            findings.append(finding(kind, relative, f"required production contract pattern is absent: {pattern}"))
+
+    forbidden_patterns = {
+        "dashboard_dev_server": r"\b(?:npm run dev|next dev)\b",
+        "dashboard_npx_network_install": r"\bnpx\s+--yes\b",
+    }
+    for kind, pattern in forbidden_patterns.items():
+        if re.search(pattern, text):
+            findings.append(finding(kind, relative, f"forbidden dashboard runtime pattern found: {pattern}"))
+
+
 def audit_workflows(root: Path, findings: list[dict[str, str]]) -> dict[str, int]:
     action_majors: dict[str, int] = {}
     workflow_root = root / ".github" / "workflows"
@@ -180,6 +203,7 @@ def audit(root: Path, check_local: bool = False) -> dict[str, Any]:
     audit_version_files(root, findings)
     audit_dashboard_package(root, findings)
     audit_dockerfiles(root, findings)
+    audit_dashboard_production_contract(root, findings)
     action_majors = audit_workflows(root, findings)
     local_runtime: dict[str, str] = {}
     if check_local:
@@ -199,6 +223,7 @@ def audit(root: Path, check_local: bool = False) -> dict[str, Any]:
             "version_files": 2,
             "dockerfiles": len(EXPECTED_DOCKER_BASES),
             "dashboard_package": True,
+            "dashboard_production_contract": True,
             "workflow_count": len(list((root / ".github" / "workflows").glob("*.y*ml"))),
         },
     }
