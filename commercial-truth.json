@@ -4,10 +4,40 @@
   "contract_version": 1,
   "product": {
     "name": "ContextLattice",
-    "version": "3.19.1",
-    "stable_tag": "v3.19.1",
-    "release_train": "3.19",
+    "version": "4.0.2",
+    "stable_tag": "v4.0.2",
+    "release_train": "4.0",
+    "category": "local_first_agent_intelligence_layer",
+    "canonical_description": "The local-first intelligence layer that gives AI agents durable continuity, explainable retrieval, portable context, and verified learning across harnesses.",
     "primary_interface": "cli",
+    "companion_interfaces": [
+      "http",
+      "mcp",
+      "dashboard"
+    ],
+    "official_urls": {
+      "repository": "https://github.com/sheawinkler/ContextLattice",
+      "website": "https://contextlattice.io",
+      "documentation": "https://contextlattice.io/installation.html"
+    },
+    "source_licenses": {
+      "public": {
+        "spdx": "Apache-2.0",
+        "label": "Apache License 2.0"
+      },
+      "commercial": {
+        "spdx": "BUSL-1.1",
+        "label": "Business Source License 1.1",
+        "change_license": "Apache-2.0"
+      }
+    },
+    "public_pillars": [
+      "durable_continuity",
+      "explainable_adaptive_retrieval",
+      "portable_context",
+      "verified_skill_evolution",
+      "privacy_bounded_aggregate_signal"
+    ],
     "python_role": "build_and_development_tooling_only"
   },
   "currency": "USD",
@@ -41,6 +71,102 @@
       "release_gate": "PASS",
       "release_decision": "PROVEN",
       "production_proven": true
+    },
+    "frontier_verified_utility_ledger": {
+      "availability": "generally_available",
+      "release_gate": "PASS",
+      "release_decision": "PROVEN",
+      "production_proven": true
+    },
+    "frontier_utility_analytics": {
+      "availability": "generally_available",
+      "release_gate": "PASS",
+      "release_decision": "PROVEN",
+      "production_proven": true
+    },
+    "frontier_verified_efficiency_operations": {
+      "availability": "generally_available",
+      "release_gate": "PASS",
+      "release_decision": "PROVEN",
+      "production_proven": true
+    },
+    "frontier_retrieval_receipt_governance": {
+      "availability": "generally_available",
+      "release_gate": "PASS",
+      "release_decision": "PROVEN",
+      "production_proven": true
+    },
+    "frontier_causal_bridge_governance": {
+      "availability": "generally_available",
+      "release_gate": "PASS",
+      "release_decision": "PROVEN",
+      "production_proven": true
+    },
+    "frontier_continuous_counterfactual_eval": {
+      "availability": "generally_available",
+      "release_gate": "PASS",
+      "release_decision": "PROVEN",
+      "production_proven": true
+    },
+    "frontier_evidence_reputation_activation": {
+      "availability": "generally_available",
+      "release_gate": "PASS",
+      "release_decision": "PROVEN",
+      "production_proven": true
+    },
+    "frontier_continuous_retrieval_regression": {
+      "availability": "generally_available",
+      "release_gate": "PASS",
+      "release_decision": "PROVEN",
+      "production_proven": true
+    },
+    "frontier_adversarial_defense_operations": {
+      "availability": "generally_available",
+      "release_gate": "PASS",
+      "release_decision": "PROVEN",
+      "production_proven": true
+    },
+    "frontier_policy_laboratory_automation": {
+      "availability": "generally_available",
+      "release_gate": "PASS",
+      "release_decision": "PROVEN",
+      "production_proven": true
+    },
+    "frontier_agent_fit_governance": {
+      "availability": "generally_available",
+      "release_gate": "PASS",
+      "release_decision": "PROVEN",
+      "production_proven": true
+    },
+    "frontier_portable_continuation_governance": {
+      "availability": "generally_available",
+      "release_gate": "PASS",
+      "release_decision": "PROVEN",
+      "production_proven": true
+    },
+    "frontier_skill_evolution_governance": {
+      "availability": "generally_available",
+      "release_gate": "PASS",
+      "release_decision": "PROVEN",
+      "production_proven": true
+    },
+    "frontier_continuity_zero_automation": {
+      "availability": "generally_available",
+      "release_gate": "PASS",
+      "release_decision": "PROVEN",
+      "production_proven": true
+    },
+    "frontier_aggregate_signal": {
+      "availability": "controlled_activation_preview",
+      "release_gate": "IN_PROGRESS",
+      "release_decision": "UNPROVEN",
+      "production_proven": false
+    },
+    "frontier_private_aggregate_learning": {
+      "availability": "controlled_activation_preview",
+      "release_gate": "IN_PROGRESS",
+      "release_decision": "UNPROVEN",
+      "production_proven": false
     }
   },
   "features": [
@@ -128,6 +254,86 @@
       "id": "frontier_shared_proof_timeline",
       "buyer_label": "Every agent run, with receipts",
       "description": "Retain, inspect, analyze, and export one integrity-checked timeline of what an agent knew, did, corrected, proved, and taught across an authorized workspace."
+    },
+    {
+      "id": "frontier_verified_utility_ledger",
+      "buyer_label": "Proof of useful work",
+      "description": "Measure independently verified utility against exact model-visible ContextLattice tokens while keeping wire, provider, latency, cost, calls, failures, and exclusions honest and separate."
+    },
+    {
+      "id": "frontier_utility_analytics",
+      "buyer_label": "The economics of intelligence",
+      "description": "Turn verified utility into continuous cohorts, task-class economics, and matched-control confidence intervals without hiding negative outcomes."
+    },
+    {
+      "id": "frontier_verified_efficiency_operations",
+      "buyer_label": "Intelligence that proves its keep",
+      "description": "Evaluate governed efficiency policy across verified cohorts, with exact denominators, causal intervals, and an automatic abstain before weak evidence can steer the fleet."
+    },
+    {
+      "id": "frontier_retrieval_receipt_governance",
+      "buyer_label": "Every retrieval, with receipts",
+      "description": "Retain and govern the exact evidence decisions behind shared retrieval without moving the public retrieval engine behind a paywall."
+    },
+    {
+      "id": "frontier_causal_bridge_governance",
+      "buyer_label": "Causality with a witness",
+      "description": "Govern cross-workspace causal bridge policy, history, and review while the public engine continues to abstain unless typed evidence proves the link."
+    },
+    {
+      "id": "frontier_continuous_counterfactual_eval",
+      "buyer_label": "Every ranking earns its place",
+      "description": "Schedule bounded leave-one-source and leave-one-memory evaluations across governed cohorts without turning correlation into utility."
+    },
+    {
+      "id": "frontier_evidence_reputation_activation",
+      "buyer_label": "Trust learned from proof, not prestige",
+      "description": "Govern evidence-reputation activation across a workspace while self-awarded authority remains powerless and public defenses stay fail closed."
+    },
+    {
+      "id": "frontier_continuous_retrieval_regression",
+      "buyer_label": "Recall that learns without forgetting",
+      "description": "Continuously derive, review, and release-gate retrieval regressions from verified outcomes without silently admitting new fixtures."
+    },
+    {
+      "id": "frontier_adversarial_defense_operations",
+      "buyer_label": "A retrieval immune system",
+      "description": "Operate adversarial suites, incidents, and quarantine policy at workspace scale without any entitlement path that can disable core trust isolation."
+    },
+    {
+      "id": "frontier_policy_laboratory_automation",
+      "buyer_label": "Let retrieval policy earn the keys",
+      "description": "Simulate, compare, activate, schedule, and reverse evidence-bound retrieval and memory-lifecycle policy inside explicit workspace limits."
+    },
+    {
+      "id": "frontier_agent_fit_governance",
+      "buyer_label": "Every agent arrives ready",
+      "description": "Govern live steering, outcome-calibrated agent profiles, context preparation, and explicit runner or model activation while execution stays outside ContextLattice."
+    },
+    {
+      "id": "frontier_portable_continuation_governance",
+      "buyer_label": "Continuations that travel under policy",
+      "description": "Govern digest-only grant, import, manifest, delivery, and bulk-revocation metadata while external adapters retain all execution ownership."
+    },
+    {
+      "id": "frontier_skill_evolution_governance",
+      "buyer_label": "A skill system that compounds",
+      "description": "Discover repeated verified wins, review exact skill artifacts, monitor their real utility, and reverse activation, replacement, or retirement through immutable receipts."
+    },
+    {
+      "id": "frontier_continuity_zero_automation",
+      "buyer_label": "Open an agent. Already there.",
+      "description": "Bind the exact active mission, checkpoint, agent fit, preparation, repository identity, provenance, risks, and next move into one zero-entry manifest, then govern external delivery without surrendering execution control."
+    },
+    {
+      "id": "frontier_aggregate_signal",
+      "buyer_label": "Signal without surrender",
+      "description": "Preview and queue only clipped sufficient statistics locally, enforce cohort suppression and bounded privacy accounting, and opt out without exporting raw memory or prompts."
+    },
+    {
+      "id": "frontier_private_aggregate_learning",
+      "buyer_label": "The fleet learns. Your memory never leaves.",
+      "description": "Govern workspace-isolated aggregate learning with credential-derived scope, revocation, immutable receipts, and a hard production stop until independent privacy and utility reviews pass."
     }
   ],
   "plans": [
@@ -154,7 +360,9 @@
         "durable_memory",
         "staged_retrieval",
         "agent_session_context",
-        "dashboard_visibility"
+        "dashboard_visibility",
+        "frontier_verified_utility_ledger",
+        "frontier_aggregate_signal"
       ]
     },
     {
@@ -184,7 +392,11 @@
         "premium_artifact_downloads",
         "premium_runtime_keys",
         "protected_runtime_operations",
-        "frontier_delta_packet_automation"
+        "frontier_delta_packet_automation",
+        "frontier_verified_utility_ledger",
+        "frontier_utility_analytics",
+        "frontier_continuity_zero_automation",
+        "frontier_aggregate_signal"
       ]
     },
     {
@@ -220,7 +432,13 @@
         "frontier_shared_proof_timeline",
         "frontier_semantic_continuity_automation",
         "frontier_shared_objective_graph",
-        "frontier_shared_decision_provenance"
+        "frontier_shared_decision_provenance",
+        "frontier_verified_utility_ledger",
+        "frontier_utility_analytics",
+        "frontier_retrieval_receipt_governance",
+        "frontier_causal_bridge_governance",
+        "frontier_continuity_zero_automation",
+        "frontier_aggregate_signal"
       ]
     },
     {
@@ -254,7 +472,23 @@
         "frontier_delta_packet_automation",
         "frontier_shared_proof_timeline",
         "frontier_semantic_continuity_automation",
-        "frontier_shared_objective_graph"
+        "frontier_shared_objective_graph",
+        "frontier_verified_utility_ledger",
+        "frontier_utility_analytics",
+        "frontier_verified_efficiency_operations",
+        "frontier_retrieval_receipt_governance",
+        "frontier_causal_bridge_governance",
+        "frontier_continuous_counterfactual_eval",
+        "frontier_evidence_reputation_activation",
+        "frontier_continuous_retrieval_regression",
+        "frontier_adversarial_defense_operations",
+        "frontier_policy_laboratory_automation",
+        "frontier_agent_fit_governance",
+        "frontier_portable_continuation_governance",
+        "frontier_skill_evolution_governance",
+        "frontier_continuity_zero_automation",
+        "frontier_aggregate_signal",
+        "frontier_private_aggregate_learning"
       ]
     },
     {
@@ -291,7 +525,23 @@
         "frontier_semantic_continuity_automation",
         "frontier_shared_objective_graph",
         "frontier_shared_decision_provenance",
-        "scim_token_management"
+        "frontier_verified_utility_ledger",
+        "frontier_utility_analytics",
+        "frontier_verified_efficiency_operations",
+        "scim_token_management",
+        "frontier_retrieval_receipt_governance",
+        "frontier_causal_bridge_governance",
+        "frontier_continuous_counterfactual_eval",
+        "frontier_evidence_reputation_activation",
+        "frontier_continuous_retrieval_regression",
+        "frontier_adversarial_defense_operations",
+        "frontier_policy_laboratory_automation",
+        "frontier_agent_fit_governance",
+        "frontier_portable_continuation_governance",
+        "frontier_skill_evolution_governance",
+        "frontier_continuity_zero_automation",
+        "frontier_aggregate_signal",
+        "frontier_private_aggregate_learning"
       ]
     }
   ],
@@ -338,7 +588,29 @@
       "/memory/decision-changes/shared",
       "/memory/agent-packet/shared",
       "/memory/agent-proof-timeline/shared",
-      "/memory/agent-proof-timeline/shared/lifecycle"
+      "/memory/agent-proof-timeline/shared/lifecycle",
+      "/telemetry/utility/analytics",
+      "/telemetry/utility/policy/evaluate",
+      "/memory/retrieval/receipts/governance",
+      "/memory/causal-bridges/governance",
+      "/memory/retrieval/ablation/operations",
+      "/memory/evidence-reputation/activation",
+      "/memory/recall/regressions/operations",
+      "/memory/trust/defense/operations",
+      "/memory/policy/simulation/history",
+      "/memory/policy/scoped/activation",
+      "/memory/context-policy/canary",
+      "/memory/lifecycle/automation",
+      "/memory/contradictions/review-queue",
+      "/memory/storage/temperature/automation",
+      "/memory/agent-fit/steering/governance",
+      "/memory/agent-fit/profile/governance",
+      "/memory/agent-fit/context-prep/governance",
+      "/memory/agent-fit/selection/activation",
+      "/memory/portable-continuation/governance",
+      "/memory/skills/foundry/evolution/governance",
+      "/memory/continuity-zero/governance",
+      "/memory/aggregate-signal/governance"
     ]
   },
   "paid_feature_route_contracts": [
@@ -416,8 +688,218 @@
       "routes": [
         "/memory/agent-proof-timeline/shared"
       ]
+    },
+    {
+      "feature_id": "frontier_utility_analytics",
+      "eligible_plan_ids": [
+        "starter",
+        "team",
+        "operator",
+        "enterprise"
+      ],
+      "allowed_roles": [
+        "owner",
+        "admin"
+      ],
+      "routes": [
+        "/telemetry/utility/analytics"
+      ]
+    },
+    {
+      "feature_id": "frontier_verified_efficiency_operations",
+      "eligible_plan_ids": [
+        "operator",
+        "enterprise"
+      ],
+      "allowed_roles": [
+        "owner",
+        "admin"
+      ],
+      "routes": [
+        "/telemetry/utility/policy/evaluate"
+      ]
+    },
+    {
+      "feature_id": "frontier_retrieval_receipt_governance",
+      "eligible_plan_ids": [
+        "team",
+        "operator",
+        "enterprise"
+      ],
+      "allowed_roles": [
+        "owner",
+        "admin"
+      ],
+      "routes": [
+        "/memory/retrieval/receipts/governance"
+      ]
+    },
+    {
+      "feature_id": "frontier_causal_bridge_governance",
+      "eligible_plan_ids": [
+        "team",
+        "operator",
+        "enterprise"
+      ],
+      "allowed_roles": [
+        "owner",
+        "admin"
+      ],
+      "routes": [
+        "/memory/causal-bridges/governance"
+      ]
+    },
+    {
+      "feature_id": "frontier_continuous_counterfactual_eval",
+      "eligible_plan_ids": [
+        "operator",
+        "enterprise"
+      ],
+      "allowed_roles": [
+        "owner",
+        "admin"
+      ],
+      "routes": [
+        "/memory/retrieval/ablation/operations"
+      ]
+    },
+    {
+      "feature_id": "frontier_evidence_reputation_activation",
+      "eligible_plan_ids": [
+        "operator",
+        "enterprise"
+      ],
+      "allowed_roles": [
+        "owner",
+        "admin"
+      ],
+      "routes": [
+        "/memory/evidence-reputation/activation"
+      ]
+    },
+    {
+      "feature_id": "frontier_continuous_retrieval_regression",
+      "eligible_plan_ids": [
+        "operator",
+        "enterprise"
+      ],
+      "allowed_roles": [
+        "owner",
+        "admin"
+      ],
+      "routes": [
+        "/memory/recall/regressions/operations"
+      ]
+    },
+    {
+      "feature_id": "frontier_adversarial_defense_operations",
+      "eligible_plan_ids": [
+        "operator",
+        "enterprise"
+      ],
+      "allowed_roles": [
+        "owner",
+        "admin"
+      ],
+      "routes": [
+        "/memory/trust/defense/operations"
+      ]
+    },
+    {
+      "feature_id": "frontier_policy_laboratory_automation",
+      "eligible_plan_ids": [
+        "operator",
+        "enterprise"
+      ],
+      "allowed_roles": [
+        "owner",
+        "admin"
+      ],
+      "routes": [
+        "/memory/policy/simulation/history",
+        "/memory/policy/scoped/activation",
+        "/memory/context-policy/canary",
+        "/memory/lifecycle/automation",
+        "/memory/contradictions/review-queue",
+        "/memory/storage/temperature/automation"
+      ]
+    },
+    {
+      "feature_id": "frontier_agent_fit_governance",
+      "eligible_plan_ids": [
+        "operator",
+        "enterprise"
+      ],
+      "allowed_roles": [
+        "owner",
+        "admin"
+      ],
+      "routes": [
+        "/memory/agent-fit/steering/governance",
+        "/memory/agent-fit/profile/governance",
+        "/memory/agent-fit/context-prep/governance",
+        "/memory/agent-fit/selection/activation"
+      ]
+    },
+    {
+      "feature_id": "frontier_portable_continuation_governance",
+      "eligible_plan_ids": [
+        "operator",
+        "enterprise"
+      ],
+      "allowed_roles": [
+        "owner",
+        "admin"
+      ],
+      "routes": [
+        "/memory/portable-continuation/governance"
+      ]
+    },
+    {
+      "feature_id": "frontier_skill_evolution_governance",
+      "eligible_plan_ids": [
+        "operator",
+        "enterprise"
+      ],
+      "allowed_roles": [
+        "owner",
+        "admin"
+      ],
+      "routes": [
+        "/memory/skills/foundry/evolution/governance"
+      ]
+    },
+    {
+      "feature_id": "frontier_continuity_zero_automation",
+      "eligible_plan_ids": [
+        "starter",
+        "team",
+        "operator",
+        "enterprise"
+      ],
+      "allowed_roles": [
+        "owner",
+        "admin"
+      ],
+      "routes": [
+        "/memory/continuity-zero/governance"
+      ]
+    },
+    {
+      "feature_id": "frontier_private_aggregate_learning",
+      "eligible_plan_ids": [
+        "operator",
+        "enterprise"
+      ],
+      "allowed_roles": [
+        "owner",
+        "admin"
+      ],
+      "routes": [
+        "/memory/aggregate-signal/governance"
+      ]
     }
   ],
-  "contract_sha256": "0063c6ab969e760cdbf69650924d2e07b2c9f22888093a95e597dfcb5239fc79",
-  "commercial_truth_sha256": "4bd5be8040a2588f501e980f47c394a3e8a33e2f9db18c1e5dee30821ebf61c1"
+  "contract_sha256": "73099782452943b19aeb9d2d68acd93ae3169aa41cacc8ee244516290639b9d4",
+  "commercial_truth_sha256": "76c65ab0956a00b0ceb9e6030b45ac952e764a95e9a508d32a3f72ef7e060782"
 }

@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Policy Laboratory | Context Lattice</title>
+  <meta name="description" content="CLI-first policy simulation, scoped cards, evidence-aware recommendations, reversible memory lifecycle controls, and logical storage temperatures." />
+  <link rel="canonical" href="https://contextlattice.io/frontier-t5-policy-laboratory.html" />
+  <link rel="stylesheet" href="styles-gray.css?v=20260720a" />
+</head>
+<body class="home">
+  <main class="container">
+    <header class="topbar">
+      <a class="brand" href="index.html">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span class="brand-copy"><span class="brand-label">Context Lattice</span><span class="brand-sub">By Private Memory Corp</span></span>
+      </a>
+      <nav class="nav" aria-label="Primary">
+        <a href="index.html">Home</a>
+        <a href="architecture.html">Architecture</a>
+        <a href="cli.html">CLI</a>
+        <a class="active" href="frontier-t5-policy-laboratory.html">Policy Laboratory</a>
+        <a href="premium.html">Premium</a>
+        <a href="https://github.com/sheawinkler/ContextLattice" target="_blank" rel="noreferrer">GitHub</a>
+      </nav>
+    </header>
+
+    <section class="hero">
+      <span class="badge">Policy Laboratory</span>
+      <h1>Test a policy before it becomes a rule.</h1>
+      <p class="sub">Use the terminal to inspect bounded policy state, replay the same snapshot, and keep every lifecycle change reversible.</p>
+    </section>
+
+    <section class="section">
+      <article class="card">
+        <div class="kicker">Start here</div>
+        <h3>CLI-first status</h3>
+<pre><code>contextlattice_policy_lab status --project &lt;project&gt; --pretty</code></pre>
+        <p>The status response reports ledger, context-policy, and temporal-claim state. It is observational: it does not activate a policy automatically.</p>
+      </article>
+    </section>
+
+    <section class="section">
+      <article class="card">
+        <div class="kicker">No-persist replay</div>
+        <h3>Simulate on one immutable snapshot</h3>
+        <p>Compare baseline and candidate metrics from the same snapshot. The simulation is deterministic, records no replay result, and cannot mutate runtime policy. Treat its deltas as predictions, not observed production outcomes.</p>
+      </article>
+    </section>
+
+    <section class="section">
+      <article class="card">
+        <div class="kicker">Scoped evidence</div>
+        <h3>Cards, then recommendations</h3>
+        <p>A scoped policy card combines project, task class, and retrieval intent with a disclosed global prior. Sparse projects shrink toward that prior. Promotion recommendations include assignment exposure, uncertainty, drift, and survivor-bias checks; incomplete evidence means hold or abstain.</p>
+      </article>
+    </section>
+
+    <section class="section">
+      <article class="card">
+        <div class="kicker">Reversible memory</div>
+        <h3>Retire, resolve, restore</h3>
+        <p>Retirement is propose-first: content is not deleted and replacement links remain available. Contradiction resolution weighs explicit evidence edges, records an immutable receipt, and abstains when the margin is insufficient. An appeal path stays open instead of rewriting ordinary memory.</p>
+      </article>
+    </section>
+
+    <section class="section">
+      <article class="card">
+        <div class="kicker">Logical storage</div>
+        <h3>Use reversible temperature tiers</h3>
+        <p>Temperature decisions change retrieval-tier metadata such as hot, warm, deep, or retired. They do not claim physical byte movement, delete content, or bypass legal holds. A restore uses the prior receipt and rechecks that the memory has not drifted.</p>
+      </article>
+    </section>
+
+    <section class="section">
+      <article class="card">
+        <div class="kicker">Boundary</div>
+        <h3>Public core versus paid automation</h3>
+        <p>The public core includes status, no-persist simulation, scoped cards, recommendations, abstention, and explicit one-item lifecycle operations. Paid automation is the separate entitled lane for governed canaries, queues, and bounded multi-item policy execution. Every mutation still requires explicit approval, remains receipt-backed and reversible, and never silently enables runtime policy.</p>
+      </article>
+    </section>
+  </main>
+</body>
+</html>

@@ -5,7 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>CLI Quickstart | Context Lattice</title>
   <meta name="description" content="Context Lattice CLI quickstart for install, launch, monitoring, write/search validation, context compilation, and agent preflight." />
-  <link rel="stylesheet" href="styles-gray.css?v=20260601d" />
+  <link rel="canonical" href="https://contextlattice.io/cli.html" />
+  <link rel="stylesheet" href="styles-gray.css?v=20260720a" />
 </head>
 <body class="home">
   <main class="container">
@@ -38,7 +39,7 @@
       <h1>Install, launch, and validate Context Lattice from terminal in minutes.</h1>
       <p class="sub">Use these commands as the canonical local flow for public and premium lanes, including prompt-ready context compilation before expensive agent reasoning.</p>
       <!-- BEGIN GENERATED COMMERCIAL TRUTH: cli-release-summary -->
-      <p class="muted-note">Current release: <code>v3.19.1</code>. The CLI is the primary product interface; dashboard, HTTP, and MCP remain companion surfaces.</p>
+      <p class="muted-note">Current release: <code>v4.0.2</code>. The CLI is the primary product interface; dashboard, HTTP, and MCP remain companion surfaces.</p>
       <!-- END GENERATED COMMERCIAL TRUTH: cli-release-summary -->
     </section>
 
@@ -115,18 +116,21 @@ contextlattice_async_inbox_drain --session-id &lt;session-id&gt;
 contextlattice_async_inbox_hook --session-id &lt;session-id&gt;
 contextlattice_agent_trace --session-id &lt;session-id&gt; --tree
 contextlattice_agent_trace --session-id &lt;session-id&gt; --proof --tree
+contextlattice_agent_trace --proof --shared --operation configure --project &lt;project&gt; --adopt-current-core-anchor --adopt-existing-history --reason "retain release receipts"
+contextlattice_agent_trace --proof --shared --operation analytics --project &lt;project&gt; --tree
 contextlattice_run_advisor "what should this agent know before solving the task?" --pretty
 contextlattice_agent_runtime_doctor --pretty
 contextlattice_memory_topology --pretty
 contextlattice_pack "what should this agent know before solving the task?" --project contextlattice --pretty
 contextlattice_retrieval_plan "what evidence does this task owe?" --project contextlattice --pretty
 <!-- BEGIN GENERATED COMMERCIAL TRUTH: cli-release-claim -->
-contextlattice_claim_write --project contextlattice --subject release --predicate current_version --object 3.19.1 --pretty
+contextlattice_claim_write --project contextlattice --subject release --predicate current_version --object 4.0.2 --pretty
 <!-- END GENERATED COMMERCIAL TRUTH: cli-release-claim -->
 contextlattice_claim_query "what is current?" --project contextlattice --include-superseded --pretty
 contextlattice_synthesis_pack_v2 "what can the evidence prove?" --project contextlattice --pretty
 contextlattice_policy_candidate --project contextlattice --pretty
 contextlattice_policy_status --pretty
+contextlattice_policy_lab status --pretty
 contextlattice_skill_draft --payload-file workflow-runs.json --pretty
 contextlattice_skill_evaluate --draft-id &lt;draft-id&gt; --payload-file holdouts.json --pretty
 contextlattice_skill_export --draft-id &lt;draft-id&gt; --human-approved --approver &lt;identity&gt; --pretty
@@ -185,8 +189,27 @@ contextlattice_mesh_export \
 
 # receiving import is dry-run first
 contextlattice_mesh_import --file envelope.json --pretty
-contextlattice_mesh_import --file envelope.json --apply --pretty</code></pre>
-        <p class="muted-note">Passports are Ed25519-signed. Mesh uses the stable age v1 format with native X25519 recipients and ChaCha20-Poly1305 payload protection. Conflicts become preserved branches, never last-write-wins. ContextLattice performs no delivery network calls and adds no MCP tool surface.</p>
+contextlattice_mesh_import --file envelope.json --apply --pretty
+
+# T7 portable continuation keeps rich artifacts out of the agent transcript
+contextlattice_agent_tools portable-continuation grant-create \
+  --payload-file grant-request.json --output grant.json --pretty
+contextlattice_agent_tools portable-continuation manifest-create \
+  --payload-file continuation-request.json \
+  --output continuation-envelope.json --pretty
+contextlattice_agent_tools portable-continuation manifest-reconcile \
+  --payload-file reconciliation-request.json \
+  --envelope-file continuation-envelope.json --pretty
+contextlattice_agent_tools portable-continuation status --pretty
+
+# T8 verified skill evolution resolves evidence before creating inactive candidates
+contextlattice_agent_tools skill-evolution reusable-candidate \
+  --payload-file reusable-candidate.json --pretty
+contextlattice_agent_tools skill-evolution foundry-handoff \
+  --payload-file reusable-candidate.json --pretty
+contextlattice_agent_tools skill-evolution retirement-candidate \
+  --payload-file retirement-candidate.json --pretty</code></pre>
+        <p class="muted-note">Passports are Ed25519-signed. Mesh uses the stable age v1 format with native X25519 recipients and ChaCha20-Poly1305 payload protection. Conflicts become preserved branches, never last-write-wins. Continuation reconciliation rechecks authorization, lineage, revocation, key epoch, and replay. ContextLattice performs no delivery or import execution, stores no continuation payload, and adds no MCP tool surface.</p>
       </article>
     </section>
 
