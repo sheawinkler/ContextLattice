@@ -583,5 +583,35 @@ scripts/install_orbstack_self_heal_runner.sh
 ```
 
 Agent read/write failures trigger `orbstack_self_heal.sh run-once` in the
-background. The launchd runner is the periodic fallback for cases where no agent
-operation happens while the VM is wedged.
+background. The optional launchd runner is the periodic fallback for cases where
+no agent operation happens while the runtime is unavailable. Normal installation
+copies the host helpers but does not enable this runner; if an exact existing
+runner is already loaded, upgrades refresh it with the current fail-closed
+policy.
+
+The periodic policy is deliberately conservative:
+
+- Docker probes and container actions always use the configured explicit Docker
+  context (`orbstack` by default).
+- VM restart is disabled by default. Health-only failure and high CPU never stop
+  OrbStack.
+- Container shedding is disabled by default. Forward repair, when enabled,
+  targets only the labeled gateway container after three consecutive health
+  failures, is cooldown-bounded, and runs at most once per health outage.
+- An operator-enabled VM restart requires five consecutive Docker failures, a
+  startup grace period, a 15-minute cooldown, a one-attempt-per-outage latch,
+  and a one-attempt-per-hour circuit breaker.
+- VM recovery uses only `orb stop` followed by `orb start`. The supervisor never
+  force-stops OrbStack and never kills its processes.
+- Concurrent triggers are single-flight, and `stop` reports failure rather than
+  deleting its plist when launchd cannot unload the job.
+
+Inspect the active policy without changing it:
+
+```bash
+scripts/orbstack_self_heal.sh status
+```
+
+VM restart remains an advanced explicit opt-in. Set
+`CONTEXTLATTICE_ORBSTACK_HEAL_VM_RESTART=1` only for the `start` invocation that
+installs the periodic runner. The other safety gates remain mandatory.
