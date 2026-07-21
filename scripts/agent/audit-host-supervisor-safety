@@ -1,0 +1,339 @@
+#!/usr/bin/env python3
+"""Fail closed when host-supervisor release safeguards drift or disappear."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+from dataclasses import asdict, dataclass
+from pathlib import Path
+
+
+SUPERVISOR = Path("scripts/orbstack_self_heal.sh")
+LICENSE = Path("LICENSE")
+INSTALLER = Path("scripts/install_global_agent_tools.sh")
+GLOBAL_SMOKE = Path("scripts/agent/audit-agent-global-install-smoke")
+SUPERVISOR_TESTS = Path("scripts/tests/test_orbstack_self_heal_install.py")
+PUBLIC_WORKFLOW = Path(".github/workflows/public-product-truth.yml")
+RELEASE_WORKFLOW = Path(".github/workflows/release-installers.yml")
+PR_TEMPLATE = Path(".github/pull_request_template.md")
+AGENT_RULES = Path("AGENTS.md")
+RUNBOOK = Path("docs/host-supervisor-release-safety.md")
+
+REQUIRED_TESTS = (
+    "test_start_installs_shell_init_free_fail_closed_launch_payload",
+    "test_run_once_does_not_restart_vm_by_default",
+    "test_health_failure_and_high_cpu_never_restart_vm",
+    "test_forward_repair_is_thresholded_and_latched_per_health_outage",
+    "test_container_shedding_is_disabled_by_default",
+    "test_vm_restart_requires_threshold_and_is_latched_per_outage",
+    "test_transient_docker_failure_resets_streak_after_full_recovery",
+    "test_parallel_triggers_are_single_flight",
+    "test_signal_termination_releases_only_the_owned_lock",
+    "test_stop_reports_bootout_failure_and_retains_plist",
+    "test_stop_waits_for_confirmed_unload_before_removing_plist",
+    "test_global_upgrade_migrates_only_an_already_loaded_runner",
+)
+
+WORKFLOW_TRIGGER_PATHS = (
+    "AGENTS.md",
+    ".github/pull_request_template.md",
+    "docs/host-supervisor-release-safety.md",
+    "scripts/agent/audit-agent-global-install-smoke",
+    "scripts/agent/audit-host-supervisor-safety",
+    "scripts/install_global_agent_tools.sh",
+    "scripts/install_orbstack_self_heal_runner.sh",
+    "scripts/orbstack_self_heal.sh",
+    "scripts/tests/test_host_supervisor_safety_audit.py",
+    "scripts/tests/test_orbstack_self_heal_install.py",
+    ".github/workflows/release-installers.yml",
+    ".github/workflows/public-product-truth.yml",
+)
+
+HOST_LIFECYCLE_CRITICAL_PATHS = frozenset(
+    {
+        "scripts/agent/audit-agent-global-install-smoke",
+        "scripts/agent/audit-host-supervisor-safety",
+        "scripts/install_global_agent_tools.sh",
+        "scripts/install_orbstack_self_heal_runner.sh",
+        "scripts/orbstack_self_heal.sh",
+        "scripts/tests/test_host_supervisor_safety_audit.py",
+        "scripts/tests/test_orbstack_self_heal_install.py",
+        ".github/workflows/release-installers.yml",
+        ".github/workflows/public-product-truth.yml",
+    }
+)
+REQUIRED_PR_CHECKS = (
+    "This PR is host-lifecycle critical and includes every item below.",
+    "The source audit and failure injection suite pass.",
+    "The installed payload matches the reviewed source and the upgrade path was exercised.",
+    "Any launchd smoke uses an isolated launchd label and cannot touch an operator's loaded job.",
+    "Docker-unavailable, startup-transition, health-failure, high-CPU, locking, and stop-failure cases were exercised.",
+    "At least two real scheduled intervals preserved process/container identities and restart counts.",
+    "Destructive recovery remains explicit opt-in, bounded, and has a tested rollback.",
+)
+NO_IMPACT_CHECK = "This PR does not change a host supervisor, installer, scheduler, runtime start/stop path, or recovery policy."
+
+
+@dataclass(frozen=True)
+class Check:
+    check_id: str
+    path: str
+    ok: bool
+    detail: str
+
+
+def read(root: Path, relative: Path) -> str:
+    try:
+        return (root / relative).read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+def contains_all(text: str, needles: tuple[str, ...]) -> tuple[bool, list[str]]:
+    missing = [needle for needle in needles if needle not in text]
+    return not missing, missing
+
+
+def detect_lane(root: Path) -> str:
+    license_text = read(root, LICENSE).casefold()
+    if "business source license 1.1" in license_text or "busl-1.1" in license_text:
+        return "commercial"
+    if "apache license" in license_text and "version 2.0" in license_text:
+        return "public"
+    return "unknown"
+
+
+def checked_pr_labels(body: str) -> set[str]:
+    labels: set[str] = set()
+    for line in body.splitlines():
+        match = re.match(r"^\s*-\s*\[[xX]\]\s+(.+?)\s*$", line)
+        if match:
+            labels.add(match.group(1).casefold())
+    return labels
+
+
+def run_audit(root: Path, changed_files: list[str] | None = None, pr_body: str = "") -> dict[str, object]:
+    checks: list[Check] = []
+    lane = detect_lane(root)
+
+    def add(check_id: str, path: Path, ok: bool, detail: str) -> None:
+        checks.append(Check(check_id, str(path), ok, detail))
+
+    required_paths = (
+        LICENSE,
+        SUPERVISOR,
+        INSTALLER,
+        GLOBAL_SMOKE,
+        SUPERVISOR_TESTS,
+        PUBLIC_WORKFLOW,
+        PR_TEMPLATE,
+        AGENT_RULES,
+        RUNBOOK,
+    ) + (() if lane == "public" else (RELEASE_WORKFLOW,))
+    missing_paths = [str(path) for path in required_paths if not (root / path).is_file()]
+    add("required_paths", Path("."), not missing_paths, f"missing={missing_paths}" if missing_paths else "all contract files present")
+
+    supervisor = read(root, SUPERVISOR)
+    installer = read(root, INSTALLER)
+    global_smoke = read(root, GLOBAL_SMOKE)
+    tests = read(root, SUPERVISOR_TESTS)
+    public_workflow = read(root, PUBLIC_WORKFLOW)
+    release_workflow = read(root, RELEASE_WORKFLOW)
+    pr_template = read(root, PR_TEMPLATE)
+    agent_rules = read(root, AGENT_RULES)
+    runbook = read(root, RUNBOOK)
+
+    bash = shutil.which("bash")
+    syntax = None
+    if bash and supervisor:
+        syntax = subprocess.run(
+            [bash, "-n", str(root / SUPERVISOR)],
+            capture_output=True,
+            check=False,
+            text=True,
+        )
+    add(
+        "shell_syntax",
+        SUPERVISOR,
+        syntax is not None and syntax.returncode == 0,
+        "bash -n passed" if syntax is not None and syntax.returncode == 0 else (syntax.stderr[-1000:] if syntax else "bash unavailable"),
+    )
+
+    defaults_ok, defaults_missing = contains_all(
+        supervisor,
+        (
+            'ALLOW_VM_RESTART="${CONTEXTLATTICE_ORBSTACK_HEAL_VM_RESTART:-0}"',
+            'SHED_SERVICES="${CONTEXTLATTICE_ORBSTACK_HEAL_SHED_SERVICES:-}"',
+            'FAILURES_BEFORE_RESTART="${CONTEXTLATTICE_ORBSTACK_HEAL_FAILURES_BEFORE_RESTART:-5}"',
+            'STARTUP_GRACE_SECS="${CONTEXTLATTICE_ORBSTACK_HEAL_STARTUP_GRACE_SECS:-300}"',
+            'RESTART_COOLDOWN_SECS="${CONTEXTLATTICE_ORBSTACK_HEAL_COOLDOWN_SECS:-900}"',
+            'MAX_RESTARTS_PER_WINDOW="${CONTEXTLATTICE_ORBSTACK_HEAL_MAX_RESTARTS_PER_WINDOW:-1}"',
+        ),
+    )
+    add("fail_closed_defaults", SUPERVISOR, defaults_ok, f"missing={defaults_missing}" if defaults_missing else "restart and shedding defaults fail closed")
+
+    forbidden = [token for token in ("orb stop --force", "pkill", "kill -9") if token in supervisor]
+    add("destructive_commands", SUPERVISOR, not forbidden, f"forbidden={forbidden}" if forbidden else "no unattended force-stop or process-kill commands")
+
+    bounded_ok, bounded_missing = contains_all(
+        supervisor,
+        (
+            "restart_suppressed_outage_latch",
+            "restart_suppressed_startup_grace",
+            "restart_suppressed_cooldown",
+            "restart_suppressed_window_limit",
+            "health_failure_threshold_wait",
+            "docker_unavailable_no_restart",
+            'LOCK_DIR="${CONTEXTLATTICE_ORBSTACK_HEAL_LOCK_DIR:-$RUNTIME_DIR/orbstack-self-heal.lock}"',
+            "force_stop_enabled=false",
+            "kill_enabled=false",
+        ),
+    )
+    add("bounded_recovery_policy", SUPERVISOR, bounded_ok, f"missing={bounded_missing}" if bounded_missing else "lock, thresholds, grace, cooldown, latch, and circuit breaker present")
+
+    context_ok = (
+        'DOCKER_CONTEXT_NAME="${DOCKER_CONTEXT:-orbstack}"' in supervisor
+        and supervisor.count('docker --context "$DOCKER_CONTEXT_NAME"') >= 5
+    )
+    add("docker_context_pinning", SUPERVISOR, context_ok, "all supervisor Docker control paths must use the explicit configured context")
+
+    installer_ok, installer_missing = contains_all(
+        installer,
+        (
+            'if launchctl print "gui/${UID}/${label}"',
+            'if [[ "$was_loaded" == "1" ]]',
+            "CONTEXTLATTICE_ORBSTACK_HEAL_VM_RESTART=0",
+            'CONTEXTLATTICE_ORBSTACK_HEAL_SHED_SERVICES=""',
+            'for helper in orbstack_self_heal.sh ensure_docker_runtime.sh',
+        ),
+    )
+    add("upgrade_install_policy", INSTALLER, installer_ok, f"missing={installer_missing}" if installer_missing else "upgrade replaces payload and migrates only an already-loaded supervisor with safe defaults")
+
+    smoke_ok, smoke_missing = contains_all(
+        global_smoke,
+        (
+            'smoke_launchd_label = f"io.contextlattice.orbstack-self-heal.smoke.{os.getpid()}"',
+            'install_env["CONTEXTLATTICE_ORBSTACK_HEAL_LAUNCHD_LABEL"] = smoke_launchd_label',
+            '"orbstack_supervisor_not_auto_enabled"',
+        ),
+    )
+    add("global_smoke_isolation", GLOBAL_SMOKE, smoke_ok, f"missing={smoke_missing}" if smoke_missing else "global install smoke uses a PID-scoped launchd identity and proves no auto-enable")
+
+    missing_tests = [name for name in REQUIRED_TESTS if f"def {name}(" not in tests]
+    add("failure_injection_tests", SUPERVISOR_TESTS, not missing_tests, f"missing={missing_tests}" if missing_tests else f"all {len(REQUIRED_TESTS)} required safety cases present")
+
+    public_gate_ok, public_gate_missing = contains_all(
+        public_workflow,
+        (
+            "python3 scripts/agent/audit-host-supervisor-safety --pretty",
+            "--changed-files-stdin",
+            "CONTEXTLATTICE_PR_BODY",
+            "github.event.pull_request.base.sha",
+            "github.event.pull_request.head.sha",
+            "python3 scripts/tests/test_orbstack_self_heal_install.py",
+            "scripts.tests.test_host_supervisor_safety_audit",
+        ),
+    )
+    add("public_pr_gate", PUBLIC_WORKFLOW, public_gate_ok, f"missing={public_gate_missing}" if public_gate_missing else "PR gate runs audit, audit negative tests, and supervisor failure injection")
+
+    if lane == "public":
+        add("paid_release_gate", RELEASE_WORKFLOW, True, "not applicable to the Apache public lane")
+    else:
+        release_gate_ok, release_gate_missing = contains_all(
+            release_workflow,
+            (
+                "python3 scripts/agent/audit-host-supervisor-safety --pretty",
+                "python3 scripts/tests/test_orbstack_self_heal_install.py",
+            ),
+        )
+        add("paid_release_gate", RELEASE_WORKFLOW, release_gate_ok, f"missing={release_gate_missing}" if release_gate_missing else "paid publication reruns supervisor audit and failure injection")
+
+    missing_triggers = [path for path in WORKFLOW_TRIGGER_PATHS if public_workflow.count(f'- "{path}"') < 2]
+    add("workflow_trigger_coverage", PUBLIC_WORKFLOW, not missing_triggers, f"missing pull/push coverage={missing_triggers}" if missing_triggers else "all critical paths trigger pull-request and push gates")
+
+    pr_ok, pr_missing = contains_all(
+        pr_template,
+        (
+            "contextlattice-host-lifecycle-safety",
+            "installed payload",
+            "isolated launchd label",
+            "failure injection",
+            "scheduled intervals",
+            "rollback",
+        ),
+    )
+    add("pr_evidence_contract", PR_TEMPLATE, pr_ok, f"missing={pr_missing}" if pr_missing else "PR template requires installed-path, isolation, failure, soak, identity, and rollback evidence")
+
+    agent_ok, agent_missing = contains_all(
+        agent_rules,
+        (
+            "## Host Lifecycle Safety",
+            "host-lifecycle critical",
+            "audit-host-supervisor-safety",
+            "two real scheduled intervals",
+        ),
+    )
+    add("agent_policy", AGENT_RULES, agent_ok, f"missing={agent_missing}" if agent_missing else "agent rules classify and gate host-lifecycle changes")
+
+    runbook_ok, runbook_missing = contains_all(
+        runbook,
+        (
+            "installed payload",
+            "isolated launchd label",
+            "failure injection",
+            "two scheduled intervals",
+            "container identities",
+            "rollback",
+            "Do not tag or publish",
+        ),
+    )
+    add("release_runbook", RUNBOOK, runbook_ok, f"missing={runbook_missing}" if runbook_missing else "release runbook preserves the complete acceptance contract")
+
+    if changed_files is not None:
+        normalized_changed = sorted({item.strip().removeprefix("./") for item in changed_files if item.strip()})
+        critical_changed = [path for path in normalized_changed if path in HOST_LIFECYCLE_CRITICAL_PATHS]
+        checked = checked_pr_labels(pr_body)
+        missing_pr_checks = [label for label in REQUIRED_PR_CHECKS if label.casefold() not in checked]
+        contradictory = NO_IMPACT_CHECK.casefold() in checked
+        evidence_ok = not critical_changed or (not missing_pr_checks and not contradictory)
+        detail = (
+            f"critical_paths={critical_changed}; missing_checked_items={missing_pr_checks}; contradictory_no_impact={contradictory}"
+            if critical_changed
+            else "no host-lifecycle critical paths changed"
+        )
+        add("pr_evidence", PR_TEMPLATE, evidence_ok, detail)
+
+    failures = [check for check in checks if not check.ok]
+    return {
+        "schema_id": "contextlattice_host_supervisor_release_safety.v1",
+        "ok": not failures,
+        "lane": lane,
+        "checks": [asdict(check) for check in checks],
+        "summary": {"checks": len(checks), "passed": len(checks) - len(failures), "failed": len(failures)},
+        "failures": [asdict(check) for check in failures],
+    }
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--root", default="", help="Repository root; defaults to this script's repository.")
+    parser.add_argument("--changed-files-stdin", action="store_true", help="Read newline-delimited PR paths from stdin and enforce checked evidence.")
+    parser.add_argument("--pr-body-env", default="", help="Environment variable containing the pull-request body.")
+    parser.add_argument("--pretty", action="store_true")
+    args = parser.parse_args()
+    root = Path(args.root).expanduser().resolve() if args.root else Path(__file__).resolve().parents[2]
+    changed_files = sys.stdin.read().splitlines() if args.changed_files_stdin else None
+    pr_body = os.environ.get(args.pr_body_env, "") if args.pr_body_env else ""
+    payload = run_audit(root, changed_files, pr_body)
+    print(json.dumps(payload, indent=2 if args.pretty else None, sort_keys=True))
+    return 0 if payload["ok"] else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

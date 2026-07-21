@@ -23,6 +23,8 @@ PILLARS = (
     "Aggregate Signal",
 )
 WORKFLOW_PATHS = (
+    "AGENTS.md",
+    ".github/pull_request_template.md",
     "README.md",
     "LICENSE",
     "Makefile",
@@ -31,6 +33,7 @@ WORKFLOW_PATHS = (
     "crates/**/Cargo.toml",
     "docs/public_overview/**",
     "docs/releases/**",
+    "docs/host-supervisor-release-safety.md",
     "packaging/**",
     "scripts/build_release_payload.sh",
     "scripts/install_global_agent_tools.sh",
@@ -42,8 +45,11 @@ WORKFLOW_PATHS = (
     "scripts/sync_public_overview.sh",
     "scripts/install_public_overview_sync.sh",
     "scripts/agent/audit-public-product-truth",
+    "scripts/agent/audit-agent-global-install-smoke",
+    "scripts/agent/audit-host-supervisor-safety",
     "scripts/generate_commercial_truth.py",
     "scripts/tests/test_commercial_truth.py",
+    "scripts/tests/test_host_supervisor_safety_audit.py",
     "scripts/tests/test_public_product_truth.py",
     "services/gateway-go/commercial_contract_generated.go",
     "services/gateway-go/commercial_contract_generated_test.go",
