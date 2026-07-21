@@ -48,18 +48,33 @@
     <section class="section">
       <article class="card">
         <div class="kicker">Current launch boundary</div>
-        <h3>v4.0.3 makes the dashboard behave like the production instrument it is.</h3>
+        <h3>v4.0.4 makes recovery fail closed before it ever reaches the machine beneath the stack.</h3>
         <ul class="spec-list">
-          <li><strong>Production means production:</strong> optimized Next.js output replaces the development server, HMR, and developer overlays.</li>
-          <li><strong>Runtime truth:</strong> container health follows the live auth-mode contract instead of a generic page response.</li>
-          <li><strong>Quiet local mode:</strong> hosted-only billing probes never fire in the account-free local dashboard.</li>
-          <li><strong>Dense data, clean edges:</strong> long topic paths wrap inside the lattice instead of stretching the page.</li>
-          <li><strong>Same front door:</strong> CLI commands still lead; dashboard, HTTP, and MCP remain companion surfaces.</li>
+          <li><strong>Observe first:</strong> health-only failure and high CPU can never stop the host runtime.</li>
+          <li><strong>Repair once:</strong> gateway recovery waits for sustained failure and runs once per outage.</li>
+          <li><strong>Restart by consent:</strong> VM recovery is off by default and remains fenced by grace, threshold, cooldown, and circuit-breaker gates.</li>
+          <li><strong>No destructive fallback:</strong> recovery never force-stops the VM or kills its processes.</li>
+          <li><strong>Upgrades inherit safety:</strong> existing supervisors migrate to the current policy; new installs remain disabled until explicitly started.</li>
         </ul>
       </article>
     </section>
 
     <section class="section timeline">
+      <article class="update-card">
+        <span class="update-meta">2026-07-20 · v4.0.4 · Recovery Without Collateral Damage.</span>
+        <h2>A self-healer should restore the service, not fight the machine beneath it.</h2>
+        <p>
+          ContextLattice now treats host recovery as a fail-closed state machine. Transient health and Docker
+          failures are observed, serialized, and thresholded; bounded repair acts once, while destructive host
+          escalation stays unavailable unless an operator explicitly opts in.
+        </p>
+        <ul>
+          <li><strong>One outage, one attempt:</strong> gateway and VM recovery both latch until full health returns.</li>
+          <li><strong>Graceful means graceful:</strong> the supervisor has no force-stop or process-kill path.</li>
+          <li><strong>Truthful operations:</strong> unload failures retain configuration and report failure instead of manufacturing success.</li>
+        </ul>
+      </article>
+
       <article class="update-card">
         <span class="update-meta">2026-07-20 · v4.0.3 · Production Means Production.</span>
         <h2>The intelligence layer now ships a dashboard with no development-mode disguise.</h2>

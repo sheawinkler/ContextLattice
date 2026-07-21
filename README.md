@@ -16,7 +16,7 @@
 
 <p align="center">
   <a href="#quickstart"><img src="https://img.shields.io/badge/Interface-CLI%20First-111111?style=for-the-badge" alt="CLI first"></a>
-  <a href="https://github.com/sheawinkler/ContextLattice/releases/tag/v4.0.3"><img src="https://img.shields.io/badge/Release-v4.0.3-333333?style=for-the-badge" alt="ContextLattice v4.0.3"></a>
+  <a href="https://github.com/sheawinkler/ContextLattice/releases/tag/v4.0.4"><img src="https://img.shields.io/badge/Release-v4.0.4-333333?style=for-the-badge" alt="ContextLattice v4.0.4"></a>
   <a href="#quickstart"><img src="https://img.shields.io/badge/Deploy-Docker%20Compose-4b5563?style=for-the-badge" alt="Docker Compose"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-1f2937?style=for-the-badge" alt="Apache License 2.0"></a>
 </p>
@@ -52,7 +52,7 @@ ContextLattice packages the full operating layer around agent intelligence: dura
 
 The **CLI is the primary interface**. The dashboard makes behavior and proof visible. HTTP and MCP remain companion integration surfaces for applications and harnesses that need them.
 
-`v4.0.3` is the current release baseline. The active application path is Go/Rust; Python is retained for build, development, migration, and audit tooling rather than live request handling. Public local mode is account-free. Paid artifacts add hosted distribution, workspace governance, protected operations, and advanced analytics without moving local memory into a mandatory cloud.
+`v4.0.4` is the current release baseline. The active application path is Go/Rust; Python is retained for build, development, migration, and audit tooling rather than live request handling. Public local mode is account-free. Paid artifacts add hosted distribution, workspace governance, protected operations, and advanced analytics without moving local memory into a mandatory cloud.
 
 ## Architecture Snapshot
 
@@ -507,6 +507,7 @@ CODEX_SKILLS_QUARANTINE_INDEX=/opt/contextlattice/skills_quarantine/index/skills
 - Plans and distribution boundaries: `docs/public_overview/premium.html`
 - Retrieval receipts and trust model: [`docs/retrieval-receipts.md`](docs/retrieval-receipts.md)
 - Release notes, newest first; older entries are historical:
+  - `docs/releases/v4.0.4.md` (fail-closed host supervision, bounded recovery, truthful unload, and safe upgrade migration)
   - `docs/releases/v4.0.3.md` (production dashboard runtime, mode-aware probes, responsive graph paths, and paid replay integrity)
   - `docs/releases/v4.0.2.md` (one product truth across CLI, dashboard, docs, installers, release gates, and lane licensing)
   - `docs/releases/v4.0.1.md` (public installer boundary repair with unchanged Aggregate Signal runtime semantics)
