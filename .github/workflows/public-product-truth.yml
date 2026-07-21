@@ -3,6 +3,8 @@ name: Public product truth
 on:
   pull_request:
     paths:
+      - "AGENTS.md"
+      - ".github/pull_request_template.md"
       - "README.md"
       - "LICENSE"
       - "Makefile"
@@ -13,6 +15,7 @@ on:
       - "docs/public_overview/**"
       - "docs/readme/**"
       - "docs/releases/**"
+      - "docs/host-supervisor-release-safety.md"
       - "packaging/**"
       - "scripts/build_release_payload.sh"
       - "scripts/install_global_agent_tools.sh"
@@ -22,10 +25,13 @@ on:
       - "scripts/public_sync_guard.sh"
       - "scripts/agent_hooks/public_leak_guard.sh"
       - "scripts/agent/audit-public-product-truth"
+      - "scripts/agent/audit-agent-global-install-smoke"
+      - "scripts/agent/audit-host-supervisor-safety"
       - "scripts/generate_commercial_truth.py"
       - "scripts/install_public_overview_sync.sh"
       - "scripts/sync_public_overview.sh"
       - "scripts/tests/test_commercial_truth.py"
+      - "scripts/tests/test_host_supervisor_safety_audit.py"
       - "scripts/tests/test_orbstack_self_heal_install.py"
       - "scripts/tests/test_public_boundary_guards.py"
       - "scripts/tests/test_public_product_truth.py"
@@ -39,6 +45,8 @@ on:
       - main
       - public-paid/main
     paths:
+      - "AGENTS.md"
+      - ".github/pull_request_template.md"
       - "README.md"
       - "LICENSE"
       - "Makefile"
@@ -49,6 +57,7 @@ on:
       - "docs/public_overview/**"
       - "docs/readme/**"
       - "docs/releases/**"
+      - "docs/host-supervisor-release-safety.md"
       - "packaging/**"
       - "scripts/build_release_payload.sh"
       - "scripts/install_global_agent_tools.sh"
@@ -58,10 +67,13 @@ on:
       - "scripts/public_sync_guard.sh"
       - "scripts/agent_hooks/public_leak_guard.sh"
       - "scripts/agent/audit-public-product-truth"
+      - "scripts/agent/audit-agent-global-install-smoke"
+      - "scripts/agent/audit-host-supervisor-safety"
       - "scripts/generate_commercial_truth.py"
       - "scripts/install_public_overview_sync.sh"
       - "scripts/sync_public_overview.sh"
       - "scripts/tests/test_commercial_truth.py"
+      - "scripts/tests/test_host_supervisor_safety_audit.py"
       - "scripts/tests/test_orbstack_self_heal_install.py"
       - "scripts/tests/test_public_boundary_guards.py"
       - "scripts/tests/test_public_product_truth.py"
@@ -80,18 +92,39 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Enforce host lifecycle PR evidence
+        if: github.event_name == 'pull_request'
+        env:
+          CONTEXTLATTICE_PR_BODY: ${{ github.event.pull_request.body }}
+          CONTEXTLATTICE_PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          CONTEXTLATTICE_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: >-
+          git diff --name-only "$CONTEXTLATTICE_PR_BASE_SHA" "$CONTEXTLATTICE_PR_HEAD_SHA" |
+          python3 scripts/agent/audit-host-supervisor-safety
+          --changed-files-stdin
+          --pr-body-env CONTEXTLATTICE_PR_BODY
+          --pretty
       - name: Compile deterministic truth tooling
-        run: python3 -m py_compile scripts/generate_commercial_truth.py scripts/agent/audit-public-product-truth
+        run: >-
+          python3 -m py_compile
+          scripts/generate_commercial_truth.py
+          scripts/agent/audit-public-product-truth
+          scripts/agent/audit-host-supervisor-safety
       - name: Verify generated commercial truth
         run: python3 scripts/generate_commercial_truth.py --check
       - name: Run focused truth-contract tests
         run: >-
           python3 -m unittest
           scripts.tests.test_public_product_truth
+          scripts.tests.test_host_supervisor_safety_audit
           scripts.tests.test_commercial_truth.CommercialTruthTests.test_contract_decisions
           scripts.tests.test_commercial_truth.CommercialTruthTests.test_public_projection_has_no_private_paths
       - name: Prove fail-closed host supervision
-        run: python3 scripts/tests/test_orbstack_self_heal_install.py
+        run: |
+          python3 scripts/agent/audit-host-supervisor-safety --pretty
+          python3 scripts/tests/test_orbstack_self_heal_install.py
       - name: Audit public-facing product truth
         shell: bash
         run: |

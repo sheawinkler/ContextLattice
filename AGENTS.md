@@ -23,6 +23,11 @@ ContextLattice is the local memory and capability router for this repo.
 - Keep judgment here: correctness, safety, maintainability, minimal context, and repo-local convention win over style preference.
 - Do not paste long runbooks, API docs, examples, or architecture lore into always-loaded instructions. Put them in references/docs or ContextLattice.
 
+## Host Lifecycle Safety
+- Treat changes to host supervisors, installers, schedulers, runtime start/stop paths, and recovery policy as host-lifecycle critical.
+- Before merge, complete the enforced PR evidence contract, run `scripts/agent/audit-host-supervisor-safety`, the matching failure-injection suite, an installed upgrade-path smoke under an isolated scheduler identity, and at least two real scheduled intervals with identity/restart-count proof.
+- Never accept direct source tests as proof of installed behavior, let test jobs reuse an operator's scheduler label, or tag a host-lifecycle change without a tested rollback.
+
 ## Compaction
 - Before compaction or handoff, write objective state with:
   `scripts/agent_hooks/contextlattice_pre_compaction_write.sh "<objective summary>"`
