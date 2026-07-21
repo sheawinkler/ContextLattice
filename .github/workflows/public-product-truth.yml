@@ -17,6 +17,8 @@ on:
       - "scripts/build_release_payload.sh"
       - "scripts/install_global_agent_tools.sh"
       - "scripts/install_global_agent_tools.ps1"
+      - "scripts/install_orbstack_self_heal_runner.sh"
+      - "scripts/orbstack_self_heal.sh"
       - "scripts/public_sync_guard.sh"
       - "scripts/agent_hooks/public_leak_guard.sh"
       - "scripts/agent/audit-public-product-truth"
@@ -24,6 +26,7 @@ on:
       - "scripts/install_public_overview_sync.sh"
       - "scripts/sync_public_overview.sh"
       - "scripts/tests/test_commercial_truth.py"
+      - "scripts/tests/test_orbstack_self_heal_install.py"
       - "scripts/tests/test_public_boundary_guards.py"
       - "scripts/tests/test_public_product_truth.py"
       - "scripts/tests/test_t*_public_projection.py"
@@ -50,6 +53,8 @@ on:
       - "scripts/build_release_payload.sh"
       - "scripts/install_global_agent_tools.sh"
       - "scripts/install_global_agent_tools.ps1"
+      - "scripts/install_orbstack_self_heal_runner.sh"
+      - "scripts/orbstack_self_heal.sh"
       - "scripts/public_sync_guard.sh"
       - "scripts/agent_hooks/public_leak_guard.sh"
       - "scripts/agent/audit-public-product-truth"
@@ -57,6 +62,7 @@ on:
       - "scripts/install_public_overview_sync.sh"
       - "scripts/sync_public_overview.sh"
       - "scripts/tests/test_commercial_truth.py"
+      - "scripts/tests/test_orbstack_self_heal_install.py"
       - "scripts/tests/test_public_boundary_guards.py"
       - "scripts/tests/test_public_product_truth.py"
       - "scripts/tests/test_t*_public_projection.py"
@@ -84,6 +90,8 @@ jobs:
           scripts.tests.test_public_product_truth
           scripts.tests.test_commercial_truth.CommercialTruthTests.test_contract_decisions
           scripts.tests.test_commercial_truth.CommercialTruthTests.test_public_projection_has_no_private_paths
+      - name: Prove fail-closed host supervision
+        run: python3 scripts/tests/test_orbstack_self_heal_install.py
       - name: Audit public-facing product truth
         shell: bash
         run: |
