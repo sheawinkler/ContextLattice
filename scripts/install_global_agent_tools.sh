@@ -303,6 +303,41 @@ copy_runtime_python_script() {
   copy_script "${ROOT_DIR}/${rel_path}" "${GLOBAL_SCRIPTS_DIR}/${rel_path#scripts/}"
 }
 
+install_orbstack_host_helpers() {
+  local label target_script temp_path was_loaded=0 helper source_file target_file
+  label="${CONTEXTLATTICE_ORBSTACK_HEAL_LAUNCHD_LABEL:-io.contextlattice.orbstack-self-heal}"
+  target_script="${GLOBAL_SCRIPTS_DIR}/orbstack_self_heal.sh"
+
+  if [[ "$(uname -s)" == "Darwin" ]] && command -v launchctl >/dev/null 2>&1; then
+    if launchctl print "gui/${UID}/${label}" >/dev/null 2>&1; then
+      was_loaded=1
+    fi
+  fi
+
+  for helper in orbstack_self_heal.sh ensure_docker_runtime.sh; do
+    source_file="${ROOT_DIR}/scripts/${helper}"
+    target_file="${GLOBAL_SCRIPTS_DIR}/${helper}"
+    if [[ ! -f "$source_file" ]]; then
+      echo "Missing required source script: $source_file" >&2
+      exit 1
+    fi
+    temp_path="${target_file}.tmp.$$"
+    install -m 0755 "$source_file" "$temp_path"
+    mv "$temp_path" "$target_file"
+  done
+
+  # Upgrade an active legacy runner into the safe policy, but never enable a
+  # supervisor that the operator did not already have loaded.
+  if [[ "$was_loaded" == "1" ]]; then
+    CONTEXTLATTICE_GLOBAL_HOME="$GLOBAL_HOME" \
+      CONTEXTLATTICE_ORBSTACK_HEAL_LAUNCH_ROOT="$GLOBAL_HOME" \
+      CONTEXTLATTICE_ORBSTACK_HEAL_VM_RESTART=0 \
+      CONTEXTLATTICE_ORBSTACK_HEAL_SHED_SERVICES="" \
+      "$target_script" start >/dev/null
+    log "Refreshed the active OrbStack supervisor with fail-closed defaults."
+  fi
+}
+
 HOOK_RUNTIME_PYTHON_FILES=(
   scripts/agent/_common.py
   scripts/agent/audit-codex-session-store
@@ -741,6 +776,8 @@ GO_NATIVE_COMMANDS=(
 for command_name in "${GO_NATIVE_COMMANDS[@]}"; do
   install_go_native_link "$command_name"
 done
+
+install_orbstack_host_helpers
 
 if [[ "$INCLUDE_DEV_PYTHON_TOOLS" != "1" ]]; then
   rm -f \

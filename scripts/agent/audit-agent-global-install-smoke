@@ -20,6 +20,8 @@ INSTALLER = REPO_ROOT / "scripts" / "install_global_agent_tools.sh"
 MANAGED_ENV_HEADER = "# Local-only ContextLattice hook policy. Not part of any repo."
 DEFAULT_AGENTS = "codex,claude-code,opencode,hermes-agent,hermes-ultra,omp,mercury-agent,pi,droid"
 REQUIRED_RUNTIME_FILES = [
+    "scripts/orbstack_self_heal.sh",
+    "scripts/ensure_docker_runtime.sh",
     "scripts/agent/_common.py",
     "scripts/agent/audit-codex-session-store",
     "scripts/agent/compaction-handoff-payload",
@@ -154,6 +156,14 @@ def main() -> int:
     for rel in REQUIRED_RUNTIME_FILES:
         path = global_home / rel
         checks.append(check(f"hook_runtime:{rel}", path.is_file(), path=str(path)))
+    launchd_plist = test_home / "Library" / "LaunchAgents" / "io.contextlattice.orbstack-self-heal.plist"
+    checks.append(
+        check(
+            "orbstack_supervisor_not_auto_enabled",
+            not launchd_plist.exists(),
+            path=str(launchd_plist),
+        )
+    )
     for name in [
         "contextlattice",
         "contextlattice_pre_compaction_write",
