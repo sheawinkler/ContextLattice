@@ -326,6 +326,34 @@ exit 0
             self.assertEqual(json.loads(first_stdout)["action"], "docker_unavailable_no_restart")
             self.assertFalse(calls.exists())
 
+    def test_signal_termination_releases_only_the_owned_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            fake_bin, runtime, _, env = self.runtime_fixture(root)
+            write_executable(fake_bin / "docker", "#!/bin/sh\nsleep 5\nexit 1\n")
+            first = subprocess.Popen(
+                ["/bin/bash", str(SELF_HEAL), "run-once", "--event", "signal-test"],
+                cwd=REPO_ROOT,
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            lock_dir = runtime / "orbstack-self-heal.lock"
+            deadline = time.monotonic() + 3
+            while not lock_dir.exists() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertTrue(lock_dir.exists())
+            first.terminate()
+            first.communicate(timeout=3)
+            self.assertEqual(first.returncode, 143)
+            self.assertFalse(lock_dir.exists())
+
+            write_executable(fake_bin / "docker", "#!/bin/sh\nexit 1\n")
+            second = self.run_once(env)
+            self.assertEqual(second.returncode, 1)
+            self.assertEqual(json.loads(second.stdout)["action"], "docker_unavailable_no_restart")
+
     def test_health_parser_requires_root_ok_boolean(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -380,6 +408,52 @@ exit 0
             self.assertEqual(payload["error"], "bootout_failed")
             self.assertTrue(payload["plist_retained"])
             self.assertTrue(plist.exists())
+
+    def test_stop_waits_for_confirmed_unload_before_removing_plist(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            state = root / "print-count"
+            state.write_text("0\n", encoding="utf-8")
+            write_executable(fake_bin / "uname", "#!/bin/sh\necho Darwin\n")
+            write_executable(
+                fake_bin / "launchctl",
+                f"""#!/bin/sh
+if [ "$1" = print ]; then
+  count=$(cat {state})
+  count=$((count + 1))
+  printf '%s\\n' "$count" > {state}
+  [ "$count" -lt 3 ]
+  exit $?
+fi
+exit 0
+""",
+            )
+            plist = root / "self-heal.plist"
+            plist.write_text("remove-after-unload", encoding="utf-8")
+            env = os.environ.copy()
+            env.update(
+                {
+                    "PATH": f"{fake_bin}:{env['PATH']}",
+                    "CONTEXTLATTICE_ORBSTACK_HEAL_RUNTIME_DIR": str(root / "runtime"),
+                    "CONTEXTLATTICE_ORBSTACK_HEAL_LAUNCHD_PLIST": str(plist),
+                    "CONTEXTLATTICE_ORBSTACK_HEAL_LAUNCHD_LABEL": "test.contextlattice.self-heal",
+                }
+            )
+            result = subprocess.run(
+                ["/bin/bash", str(SELF_HEAL), "stop"],
+                cwd=REPO_ROOT,
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=5,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(json.loads(result.stdout)["ok"])
+            self.assertFalse(plist.exists())
+            self.assertEqual(state.read_text(encoding="utf-8").strip(), "3")
 
     def test_global_upgrade_migrates_only_an_already_loaded_runner(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

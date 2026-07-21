@@ -189,6 +189,11 @@ write_state() {
 }
 
 release_lock() {
+  local owner=""
+  if [[ -f "$LOCK_DIR/pid" ]]; then
+    owner="$(cat "$LOCK_DIR/pid" 2>/dev/null || true)"
+  fi
+  [[ "$owner" == "$$" ]] || return 0
   rm -f "$LOCK_DIR/pid" >/dev/null 2>&1 || true
   rmdir "$LOCK_DIR" >/dev/null 2>&1 || true
 }
@@ -488,7 +493,9 @@ run_once() {
     json_emit ok=true action=skipped_locked event="$EVENT" vm_restart_enabled="$([[ "$ALLOW_VM_RESTART" == "1" ]] && echo true || echo false)"
     return 0
   fi
-  trap release_lock EXIT INT TERM
+  trap release_lock EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
 
   now="$(date +%s)"
   if [[ "$(state_uint supervisor_started_ts)" == "0" ]]; then
@@ -711,6 +718,7 @@ EOF
 }
 
 stop() {
+  local attempt unloaded=0
   if [[ "$(uname -s)" == "Darwin" ]]; then
     if ! command -v launchctl >/dev/null 2>&1; then
       json_emit ok=false action=stop launchd_label="$LAUNCHD_LABEL" error=launchctl_missing
@@ -721,7 +729,16 @@ stop() {
         json_emit ok=false action=stop launchd_label="$LAUNCHD_LABEL" error=bootout_failed plist_retained=true
         return 1
       fi
-      if launchctl print "gui/${UID}/${LAUNCHD_LABEL}" >/dev/null 2>&1; then
+      attempt=1
+      while (( attempt <= 10 )); do
+        if ! launchctl print "gui/${UID}/${LAUNCHD_LABEL}" >/dev/null 2>&1; then
+          unloaded=1
+          break
+        fi
+        sleep 0.1
+        attempt=$((attempt + 1))
+      done
+      if [[ "$unloaded" != "1" ]]; then
         json_emit ok=false action=stop launchd_label="$LAUNCHD_LABEL" error=still_loaded plist_retained=true
         return 1
       fi
