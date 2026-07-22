@@ -47,8 +47,11 @@
     "warmup_query_touched_qdrant": false,
     "concurrent_memory_and_payload_index_migrations_prevented": true,
     "live_large_store_verification": "PASS",
-    "live_source_commit": "04f77acc8cf2344dfac204325bec313319b4b9d8",
-    "live_collection_points": 707128,
+    "live_source_commit": "ee48f96cf4fbc4f3292355240d052f39bd248ef0",
+    "live_source_tree": "97d2bf6f95b01eb65280cb4b584e8d47ebee8a68",
+    "index_creation_canary_source_tree": "50b43ef8f1e8f86f6c861f4520ad7c8e4e911db4",
+    "index_creation_canary_commit_label_status": "contradictory_mistyped_label_repaired_by_exact_head_rebuild",
+    "live_collection_points": 707129,
     "live_payload_index_fields": [
       "project",
       "topic_tags"
@@ -98,6 +101,11 @@
       "stage": "live_large_store_canary",
       "failure": "starting payload-index construction while a 2.8 million-entry memory-store migration was active saturated the single-CPU storage lane",
       "resolution": "gate index construction on completion of the existing memory-store migration while keeping filtered Qdrant queries fail-fast"
+    },
+    {
+      "stage": "canary_provenance",
+      "failure": "the initial index-creation canary image carried a mistyped commit label even though its source tree hash matched Git",
+      "resolution": "mark the label contradictory and rebuild the final candidate with exact Git commit and tree identities"
     }
   ],
   "reproduction": [
