@@ -572,6 +572,9 @@ func (s *server) queryQdrantSource(
 	if baseURL == "" {
 		return nil, nil, errors.New("qdrant URL not configured")
 	}
+	if err := s.qdrantPayloadIndexes.queryGate(); err != nil {
+		return nil, []string{"qdrant payload indexes warming; source skipped to protect gateway availability"}, err
+	}
 	collection := nativeQdrantCollection()
 	query := strings.TrimSpace(anyToString(baseRequest["query"]))
 	if query == "" {

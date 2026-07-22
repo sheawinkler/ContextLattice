@@ -1,0 +1,85 @@
+{
+  "schema_id": "contextlattice_eval_ledger.v1",
+  "feature": "qdrant_large_store_stability",
+  "lane": "public_core",
+  "release_train": "v4.0.5",
+  "recorded_at": "2026-07-22T03:09:27Z",
+  "baseline": {
+    "kind": "operator_large_store_observation",
+    "collection_points": 707125,
+    "indexed_vectors": 706832,
+    "payload_index_fields": 0,
+    "filtered_single_row_probe_timeout_secs": 20,
+    "gateway_restart_count": 0,
+    "qdrant_restart_count": 0,
+    "observed_gateway_late_completion_secs_max": 431.091,
+    "interpretation": "unindexed payload filtering on a large on-disk collection caused backend stalls that presented as an application reset without a process restart"
+  },
+  "target": {
+    "required_keyword_indexes": [
+      "project",
+      "topic_tags"
+    ],
+    "startup_hardening_default": true,
+    "query_behavior_until_ready": "fail_fast_and_continue_other_sources",
+    "retry_interval_secs": 5,
+    "request_timeout_secs": 15,
+    "legacy_retention_default_interval_secs": 86400,
+    "legacy_35_minute_agent_retired_on_upgrade": true
+  },
+  "holdout": {
+    "kind": "synthetic_qdrant_http_contract",
+    "simulated_collection_points": 700000,
+    "initial_payload_index_fields": 0,
+    "expected_index_writes": 2,
+    "query_during_warmup_max_millis": 100,
+    "query_calls_to_qdrant_during_warmup": 0
+  },
+  "results": {
+    "focused_go_tests": "PASS",
+    "full_gateway_go_tests": "PASS",
+    "focused_go_race_tests": "PASS",
+    "host_supervisor_safety_audit": "PASS_16_OF_16",
+    "required_indexes_created": 2,
+    "hardener_ready_after_creation": true,
+    "warmup_query_failed_fast": true,
+    "warmup_query_touched_qdrant": false,
+    "live_large_store_verification": "PENDING"
+  },
+  "cost": {
+    "llm_calls": 0,
+    "external_api_calls": 0,
+    "new_services": 0,
+    "new_routes": 0,
+    "payload_index_metadata_writes": 2,
+    "memory_rows_mutated": 0
+  },
+  "latency": {
+    "focused_test_suite_secs": 121.027,
+    "full_gateway_package_test_secs": 336.129,
+    "agent_tools_package_test_secs": 272.735,
+    "focused_race_test_secs": 255.162,
+    "warmup_query_bound_millis": 100
+  },
+  "failures": [
+    {
+      "stage": "baseline",
+      "failure": "payload-index hardening environment flags were shipped without a Go gateway implementation",
+      "resolution": "add idempotent startup creation, health state, bounded retry, and a fail-fast query gate"
+    },
+    {
+      "stage": "host_upgrade",
+      "failure": "an obsolete 35-minute retention LaunchAgent could survive installation of the daily replacement",
+      "resolution": "retire and verify removal of the legacy service during install and uninstall"
+    }
+  ],
+  "reproduction": [
+    "cd services/gateway-go && go test . -run 'TestQdrantPayloadIndex|TestQdrantQueryFailsFast' -count=1",
+    "python3 -m unittest scripts.tests.test_host_supervisor_safety_audit",
+    "scripts/agent/audit-host-supervisor-safety --pretty"
+  ],
+  "rollback": {
+    "disable_startup_hardening": "ORCH_QDRANT_PAYLOAD_INDEX_HARDEN_ENABLED=false",
+    "retention_interval_override": "RETENTION_INTERVAL_SECONDS"
+  }
+}

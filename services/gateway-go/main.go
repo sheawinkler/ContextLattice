@@ -360,6 +360,7 @@ type server struct {
 	continuationDurable             *continuationDurableQueue
 	qdrantWriteFanoutSem            chan struct{}
 	pgvectorWriteFanoutSem          chan struct{}
+	qdrantPayloadIndexes            *qdrantPayloadIndexHardener
 	timeoutContractViolations       atomic.Uint64
 	timeoutContractMu               sync.Mutex
 	timeoutContractBySource         map[string]uint64
@@ -1379,6 +1380,7 @@ func newServer() *server {
 		continuationDurable:             continuationDurable,
 		qdrantWriteFanoutSem:            make(chan struct{}, qdrantWriteFanoutAsyncMaxInflight()),
 		pgvectorWriteFanoutSem:          make(chan struct{}, pgvectorWriteFanoutAsyncMaxInflight()),
+		qdrantPayloadIndexes:            newQdrantPayloadIndexHardener(),
 		timeoutContractBySource:         make(map[string]uint64),
 		timeoutContractLast:             make(map[string]any),
 		driftByClass:                    make(map[string]uint64),
@@ -7309,6 +7311,7 @@ func main() {
 		listenNetwork = "tcp4"
 	}
 	srv := newServer()
+	srv.startQdrantPayloadIndexHardening()
 	mux := buildMux(srv)
 	listener, err := net.Listen(listenNetwork, listenAddr)
 	if err != nil && listenNetwork != "tcp" {
