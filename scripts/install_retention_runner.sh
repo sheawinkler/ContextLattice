@@ -4,8 +4,10 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LABEL="com.sheawinkler.contextlattice-retention"
 PLIST_PATH="$HOME/Library/LaunchAgents/${LABEL}.plist"
+LEGACY_LABEL="com.sheawinkler.memmcp-retention"
+LEGACY_PLIST_PATH="$HOME/Library/LaunchAgents/${LEGACY_LABEL}.plist"
 LOG_DIR="$REPO_ROOT/logs"
-INTERVAL_SECONDS="${RETENTION_INTERVAL_SECONDS:-2100}"
+INTERVAL_SECONDS="${RETENTION_INTERVAL_SECONDS:-86400}"
 RUN_AT_LOAD="${RETENTION_RUN_AT_LOAD:-0}"
 DOCKER_API_VERSION_VALUE="${DOCKER_API_VERSION:-}"
 USER_ID="$(id -u)"
@@ -29,7 +31,25 @@ else
   DOCKER_API_VERSION_XML=""
 fi
 
+retire_legacy_agent() {
+  if launchctl print "gui/${USER_ID}/${LEGACY_LABEL}" >/dev/null 2>&1; then
+    launchctl bootout "gui/${USER_ID}/${LEGACY_LABEL}" >/dev/null 2>&1 || true
+  fi
+  if launchctl print "gui/${USER_ID}/${LEGACY_LABEL}" >/dev/null 2>&1; then
+    echo "Refusing retention install while legacy LaunchAgent remains loaded: ${LEGACY_LABEL}" >&2
+    return 1
+  fi
+  if [[ -f "$LEGACY_PLIST_PATH" ]]; then
+    if ! grep -q "<string>${LEGACY_LABEL}</string>" "$LEGACY_PLIST_PATH"; then
+      echo "Refusing to remove unexpected legacy plist contents: ${LEGACY_PLIST_PATH}" >&2
+      return 1
+    fi
+    rm -f "$LEGACY_PLIST_PATH"
+  fi
+}
+
 install_agent() {
+  retire_legacy_agent
   mkdir -p "$HOME/Library/LaunchAgents" "$LOG_DIR"
 
   cat > "$PLIST_PATH" <<PLIST
@@ -77,10 +97,16 @@ PLIST
 uninstall_agent() {
   launchctl bootout "gui/${USER_ID}" "$PLIST_PATH" >/dev/null 2>&1 || true
   rm -f "$PLIST_PATH"
+  retire_legacy_agent
   echo "Removed LaunchAgent: ${PLIST_PATH}"
 }
 
 status_agent() {
+  if launchctl print "gui/${USER_ID}/${LEGACY_LABEL}" >/dev/null 2>&1; then
+    echo "Legacy LaunchAgent is still loaded: ${LEGACY_LABEL}" >&2
+    launchctl print "gui/${USER_ID}/${LEGACY_LABEL}"
+    return 1
+  fi
   if launchctl print "gui/${USER_ID}/${LABEL}" >/dev/null 2>&1; then
     launchctl print "gui/${USER_ID}/${LABEL}"
     return

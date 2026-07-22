@@ -15,6 +15,7 @@ FIXTURE_PATHS = (
     Path("LICENSE"),
     Path("scripts/orbstack_self_heal.sh"),
     Path("scripts/install_global_agent_tools.sh"),
+    Path("scripts/install_retention_runner.sh"),
     Path("scripts/agent/audit-agent-global-install-smoke"),
     Path("scripts/tests/test_orbstack_self_heal_install.py"),
     Path(".github/workflows/public-product-truth.yml"),
@@ -122,6 +123,22 @@ class HostSupervisorSafetyAuditTests(unittest.TestCase):
             result, payload = run_audit(root)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("global_smoke_isolation", failure_ids(payload))
+
+    def test_retention_upgrade_cannot_restore_legacy_35_minute_scheduler(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            make_fixture(root)
+            path = root / "scripts/install_retention_runner.sh"
+            text = path.read_text(encoding="utf-8")
+            text = text.replace(
+                'INTERVAL_SECONDS="${RETENTION_INTERVAL_SECONDS:-86400}"',
+                'INTERVAL_SECONDS="${RETENTION_INTERVAL_SECONDS:-2100}"',
+            )
+            text = text.replace('rm -f "$LEGACY_PLIST_PATH"', 'echo legacy-retained')
+            path.write_text(text, encoding="utf-8")
+            result, payload = run_audit(root)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("retention_upgrade_policy", failure_ids(payload))
 
     def test_pr_evidence_contract_cannot_be_removed(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

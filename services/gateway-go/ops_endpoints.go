@@ -228,6 +228,7 @@ func (s *server) health(w http.ResponseWriter, r *http.Request) {
 			"batchSize":               batchSize,
 			"continuationMaxInflight": queueCap,
 			"continuationCooldowns":   cooldownActive,
+			"qdrantPayloadIndexes":    s.qdrantPayloadIndexes.snapshot(),
 			"temporalClaimGraph":      s.temporalClaims.snapshot(),
 			"contextPolicy": map[string]any{
 				"enabled": contextPolicyStatus["enabled"], "candidate_count": contextPolicyStatus["candidate_count"],
