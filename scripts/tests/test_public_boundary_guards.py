@@ -839,6 +839,23 @@ class PublicBoundaryGuardTests(unittest.TestCase):
                 for marker in markers:
                     self.assertIn(marker + "=", env)
 
+    def test_qdrant_payload_index_hardening_controls_reach_gateway_only(self) -> None:
+        markers = (
+            "ORCH_QDRANT_PAYLOAD_INDEX_HARDEN_ENABLED",
+            "ORCH_QDRANT_PAYLOAD_INDEX_HARDEN_ON_STARTUP",
+            "ORCH_QDRANT_PAYLOAD_INDEX_HARDEN_WAIT",
+            "ORCH_QDRANT_PAYLOAD_INDEX_HARDEN_WAIT_FOR_MEMORY_STORE",
+            "ORCH_QDRANT_PAYLOAD_INDEX_HARDEN_PREREQUISITE_POLL_SECS",
+            "ORCH_QDRANT_PAYLOAD_INDEX_HARDEN_RETRY_SECS",
+            "ORCH_QDRANT_PAYLOAD_INDEX_HARDEN_REQUEST_TIMEOUT_SECS",
+        )
+        compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+        legacy, gateway = compose.split("\n  gateway-go:\n", 1)
+        for marker in markers:
+            self.assertNotIn(marker, legacy)
+            self.assertIn(marker, gateway)
+            self.assertEqual(compose.count(f"\n      {marker}:"), 1)
+
     def test_requested_cargo_smoke_fails_when_manifest_is_absent(self) -> None:
         with tempfile.TemporaryDirectory(prefix="contextlattice-cargo-smoke-") as tmp:
             result = run(

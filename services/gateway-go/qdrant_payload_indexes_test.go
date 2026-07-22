@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -124,6 +125,49 @@ func TestQdrantQueryFailsFastWhilePayloadIndexesWarm(t *testing.T) {
 	}
 }
 
+func TestQdrantWarmingNeverFallsBackToPythonBackend(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_NATIVE_QDRANT_ENABLED", "true")
+	t.Setenv("QDRANT_LOCAL_URL", "")
+
+	backendCalls := 0
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		backendCalls++
+		writeJSON(w, http.StatusOK, map[string]any{"results": []any{}})
+	}))
+	defer backend.Close()
+	t.Setenv("QDRANT_URL", backend.URL)
+
+	s := &server{
+		backendURL:            backend.URL,
+		client:                &http.Client{Timeout: time.Second},
+		strictNoPythonRuntime: false,
+		qdrantPayloadIndexes:  newQdrantPayloadIndexHardener(),
+	}
+	s.qdrantPayloadIndexes.begin(true)
+	rows, warnings, _, owner, err := s.callBackendSourceQuery(
+		context.Background(),
+		http.Header{},
+		map[string]any{"query": "large store availability", "limit": 2},
+		sourceQdrant,
+		false,
+	)
+	if !errors.Is(err, errQdrantPayloadIndexesWarming) {
+		t.Fatalf("expected warming error, got %v", err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("expected no qdrant rows while warming, got %#v", rows)
+	}
+	if owner != sourceOwnerGoNative {
+		t.Fatalf("expected go-native ownership, got %q", owner)
+	}
+	if backendCalls != 0 {
+		t.Fatalf("warming qdrant source fell through to backend %d time(s)", backendCalls)
+	}
+	if len(warnings) != 1 {
+		t.Fatalf("expected one availability warning, got %v", warnings)
+	}
+}
+
 func TestQdrantPayloadIndexHardenerDisabledDoesNotGateQueries(t *testing.T) {
 	hardener := newQdrantPayloadIndexHardener()
 	hardener.begin(false)
@@ -165,5 +209,37 @@ func TestQdrantPayloadIndexHardeningWaitsForMemoryStoreMigration(t *testing.T) {
 	}
 	if status := anyToString(hardener.snapshot()["status"]); status != "warming" {
 		t.Fatalf("hardener status=%q, want warming", status)
+	}
+}
+
+func TestQdrantPayloadIndexHardenerRejectsWrongSchema(t *testing.T) {
+	qdrant := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"result": map[string]any{
+				"points_count": 700000,
+				"payload_schema": map[string]any{
+					"project":    map[string]any{"data_type": "text"},
+					"topic_tags": map[string]any{"data_type": "keyword"},
+				},
+			},
+		})
+	}))
+	defer qdrant.Close()
+
+	pointsCount, missing, err := inspectQdrantPayloadIndexes(
+		context.Background(),
+		qdrant.Client(),
+		qdrant.URL,
+		"contextlattice_notes",
+		requiredQdrantPayloadIndexes,
+	)
+	if err == nil || !strings.Contains(err.Error(), "field=project got=text want=keyword") {
+		t.Fatalf("expected project schema mismatch, got %v", err)
+	}
+	if pointsCount != 700000 {
+		t.Fatalf("points count=%d, want 700000", pointsCount)
+	}
+	if len(missing) != 1 || missing[0] != "project" {
+		t.Fatalf("missing fields=%v, want [project]", missing)
 	}
 }

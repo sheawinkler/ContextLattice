@@ -18,8 +18,10 @@ SUPERVISOR = Path("scripts/orbstack_self_heal.sh")
 LICENSE = Path("LICENSE")
 INSTALLER = Path("scripts/install_global_agent_tools.sh")
 RETENTION_INSTALLER = Path("scripts/install_retention_runner.sh")
+RETENTION_ENV = Path(".env.example")
 GLOBAL_SMOKE = Path("scripts/agent/audit-agent-global-install-smoke")
 SUPERVISOR_TESTS = Path("scripts/tests/test_orbstack_self_heal_install.py")
+RETENTION_TESTS = Path("scripts/tests/test_retention_runner_install.py")
 PUBLIC_WORKFLOW = Path(".github/workflows/public-product-truth.yml")
 RELEASE_WORKFLOW = Path(".github/workflows/release-installers.yml")
 PR_TEMPLATE = Path(".github/pull_request_template.md")
@@ -49,10 +51,12 @@ WORKFLOW_TRIGGER_PATHS = (
     "scripts/agent/audit-host-supervisor-safety",
     "scripts/install_global_agent_tools.sh",
     "scripts/install_retention_runner.sh",
+    ".env.example",
     "scripts/install_orbstack_self_heal_runner.sh",
     "scripts/orbstack_self_heal.sh",
     "scripts/tests/test_host_supervisor_safety_audit.py",
     "scripts/tests/test_orbstack_self_heal_install.py",
+    "scripts/tests/test_retention_runner_install.py",
     ".github/workflows/release-installers.yml",
     ".github/workflows/public-product-truth.yml",
 )
@@ -63,10 +67,12 @@ HOST_LIFECYCLE_CRITICAL_PATHS = frozenset(
         "scripts/agent/audit-host-supervisor-safety",
         "scripts/install_global_agent_tools.sh",
         "scripts/install_retention_runner.sh",
+        ".env.example",
         "scripts/install_orbstack_self_heal_runner.sh",
         "scripts/orbstack_self_heal.sh",
         "scripts/tests/test_host_supervisor_safety_audit.py",
         "scripts/tests/test_orbstack_self_heal_install.py",
+        "scripts/tests/test_retention_runner_install.py",
         ".github/workflows/release-installers.yml",
         ".github/workflows/public-product-truth.yml",
     }
@@ -133,8 +139,10 @@ def run_audit(root: Path, changed_files: list[str] | None = None, pr_body: str =
         SUPERVISOR,
         INSTALLER,
         RETENTION_INSTALLER,
+        RETENTION_ENV,
         GLOBAL_SMOKE,
         SUPERVISOR_TESTS,
+        RETENTION_TESTS,
         PUBLIC_WORKFLOW,
         PR_TEMPLATE,
         AGENT_RULES,
@@ -146,8 +154,10 @@ def run_audit(root: Path, changed_files: list[str] | None = None, pr_body: str =
     supervisor = read(root, SUPERVISOR)
     installer = read(root, INSTALLER)
     retention_installer = read(root, RETENTION_INSTALLER)
+    retention_env = read(root, RETENTION_ENV)
     global_smoke = read(root, GLOBAL_SMOKE)
     tests = read(root, SUPERVISOR_TESTS)
+    retention_tests = read(root, RETENTION_TESTS)
     public_workflow = read(root, PUBLIC_WORKFLOW)
     release_workflow = read(root, RELEASE_WORKFLOW)
     pr_template = read(root, PR_TEMPLATE)
@@ -224,9 +234,8 @@ def run_audit(root: Path, changed_files: list[str] | None = None, pr_body: str =
         retention_installer,
         (
             'INTERVAL_SECONDS="${RETENTION_INTERVAL_SECONDS:-86400}"',
-            'LEGACY_LABEL="com.sheawinkler.memmcp-retention"',
-            'launchctl bootout "gui/${USER_ID}/${LEGACY_LABEL}"',
-            'launchctl print "gui/${USER_ID}/${LEGACY_LABEL}"',
+            'LEGACY_LABEL="${CONTEXTLATTICE_RETENTION_LEGACY_LAUNCHD_LABEL:-com.sheawinkler.memmcp-retention}"',
+            'unload_agent "$LEGACY_LABEL"',
             'rm -f "$LEGACY_PLIST_PATH"',
         ),
     )
@@ -235,6 +244,49 @@ def run_audit(root: Path, changed_files: list[str] | None = None, pr_body: str =
         RETENTION_INSTALLER,
         retention_ok,
         f"missing={retention_missing}" if retention_missing else "daily default and fail-closed legacy 35-minute scheduler retirement are enforced",
+    )
+
+    retention_env_values = re.findall(r"^RETENTION_INTERVAL_SECONDS=(\S+)$", retention_env, flags=re.MULTILINE)
+    add(
+        "retention_config_default",
+        RETENTION_ENV,
+        retention_env_values == ["86400"],
+        f"values={retention_env_values}" if retention_env_values != ["86400"] else "sample configuration matches the daily scheduler default",
+    )
+
+    retention_proof_ok, retention_proof_missing = contains_all(
+        retention_installer,
+        (
+            'LABEL="${CONTEXTLATTICE_RETENTION_LAUNCHD_LABEL:-com.sheawinkler.contextlattice-retention}"',
+            'LAUNCH_AGENTS_DIR="${CONTEXTLATTICE_RETENTION_LAUNCH_AGENTS_DIR:-$HOME/Library/LaunchAgents}"',
+            'RUNNER_PATH="${CONTEXTLATTICE_RETENTION_RUNNER_PATH:-$REPO_ROOT/scripts/retention_runner.sh}"',
+            "CONTEXTLATTICE_RETENTION_SOURCE_COMMIT",
+            "CONTEXTLATTICE_RETENTION_SOURCE_TREE",
+            "CONTEXTLATTICE_RETENTION_RUNNER_SHA256",
+            'install_error="post_install_identity_missing"',
+            'rollback_install "$was_loaded" "$had_plist" "$backup_path"',
+            'unload_agent "$LABEL"',
+        ),
+    )
+    required_retention_tests = (
+        "test_install_uses_daily_default_and_source_bound_isolated_identity",
+        "test_legacy_bootout_failure_retains_legacy_plist_and_blocks_install",
+        "test_uninstall_bootout_failure_retains_current_plist",
+        "test_failed_replacement_restores_prior_loaded_plist",
+        "test_failed_rollback_unload_retains_prior_plist_backup",
+    )
+    missing_retention_tests = [name for name in required_retention_tests if f"def {name}(" not in retention_tests]
+    retention_proof_ok = retention_proof_ok and not missing_retention_tests
+    retention_proof_detail = []
+    if retention_proof_missing:
+        retention_proof_detail.append(f"installer_missing={retention_proof_missing}")
+    if missing_retention_tests:
+        retention_proof_detail.append(f"tests_missing={missing_retention_tests}")
+    add(
+        "retention_install_proof",
+        RETENTION_TESTS,
+        retention_proof_ok,
+        "; ".join(retention_proof_detail) if retention_proof_detail else "isolated identity, source binding, post-install verification, stop failure, and rollback are behavior-tested",
     )
 
     smoke_ok, smoke_missing = contains_all(
@@ -259,6 +311,7 @@ def run_audit(root: Path, changed_files: list[str] | None = None, pr_body: str =
             "github.event.pull_request.base.sha",
             "github.event.pull_request.head.sha",
             "python3 scripts/tests/test_orbstack_self_heal_install.py",
+            "scripts.tests.test_retention_runner_install",
             "scripts.tests.test_host_supervisor_safety_audit",
         ),
     )
@@ -272,6 +325,7 @@ def run_audit(root: Path, changed_files: list[str] | None = None, pr_body: str =
             (
                 "python3 scripts/agent/audit-host-supervisor-safety --pretty",
                 "python3 scripts/tests/test_orbstack_self_heal_install.py",
+                "python3 -m unittest scripts.tests.test_retention_runner_install",
             ),
         )
         add("paid_release_gate", RELEASE_WORKFLOW, release_gate_ok, f"missing={release_gate_missing}" if release_gate_missing else "paid publication reruns supervisor audit and failure injection")
