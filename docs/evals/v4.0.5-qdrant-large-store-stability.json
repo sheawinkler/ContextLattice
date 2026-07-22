@@ -3,7 +3,7 @@
   "feature": "qdrant_large_store_stability",
   "lane": "public_core",
   "release_train": "v4.0.5",
-  "recorded_at": "2026-07-22T04:08:00Z",
+  "recorded_at": "2026-07-22T19:50:00Z",
   "baseline": {
     "kind": "operator_large_store_observation",
     "collection_points": 707125,
@@ -13,6 +13,11 @@
     "gateway_restart_count": 0,
     "qdrant_restart_count": 0,
     "observed_gateway_late_completion_secs_max": 431.091,
+    "hardener_compose_owner": "legacy_python_service",
+    "warmup_fallback_policy": "python_backend_possible_when_strict_runtime_disabled",
+    "index_readiness_validation": "field_presence_only",
+    "sample_retention_interval_secs": 2100,
+    "retention_install_proof": "static_string_contract_only",
     "interpretation": "unindexed payload filtering on a large on-disk collection caused backend stalls that presented as an application reset without a process restart"
   },
   "target": {
@@ -26,7 +31,12 @@
     "retry_interval_secs": 5,
     "request_timeout_secs": 15,
     "legacy_retention_default_interval_secs": 86400,
-    "legacy_35_minute_agent_retired_on_upgrade": true
+    "legacy_35_minute_agent_retired_on_upgrade": true,
+    "hardener_compose_owner": "gateway_go",
+    "existing_index_schema_required": "keyword",
+    "warmup_python_backend_fallback_allowed": false,
+    "retention_source_identity_required": true,
+    "retention_install_rollback": "restore_prior_loaded_plist_or_retain_backup"
   },
   "holdout": {
     "kind": "synthetic_qdrant_http_contract",
@@ -34,24 +44,37 @@
     "initial_payload_index_fields": 0,
     "expected_index_writes": 2,
     "query_during_warmup_max_millis": 100,
-    "query_calls_to_qdrant_during_warmup": 0
+    "query_calls_to_qdrant_during_warmup": 0,
+    "python_backend_calls_during_warmup": 0,
+    "wrong_existing_schema": "project_text_instead_of_keyword",
+    "wrong_existing_schema_ready": false,
+    "retention_behavior_cases": 5
   },
   "results": {
     "focused_go_tests": "PASS",
     "full_gateway_go_tests": "PASS",
     "focused_go_race_tests": "PASS",
-    "host_supervisor_safety_audit": "PASS_16_OF_16",
+    "host_supervisor_safety_audit": "PASS_18_OF_18",
+    "public_python_regression_tests": "PASS_76",
+    "retention_behavior_tests": "PASS_5",
+    "compose_hardener_owner": "gateway_go_only",
+    "compose_disable_override": "PASS_FALSE_REACHES_GATEWAY",
     "required_indexes_created": 2,
     "hardener_ready_after_creation": true,
     "warmup_query_failed_fast": true,
     "warmup_query_touched_qdrant": false,
+    "warmup_query_touched_python_backend": false,
+    "wrong_existing_index_schema_rejected": true,
     "concurrent_memory_and_payload_index_migrations_prevented": true,
     "live_large_store_verification": "PASS",
-    "live_source_commit": "ee48f96cf4fbc4f3292355240d052f39bd248ef0",
-    "live_source_tree": "97d2bf6f95b01eb65280cb4b584e8d47ebee8a68",
+    "live_source_commit": "bb37edd652b335b40f12f08ca7a4b7d5dec4e8f4",
+    "live_source_tree": "ea433bbc944ee67e61d6da164f283fcd5ae7d4e3",
+    "live_boot_nonce": "935156d5ad5e14c204b4c66487390548",
+    "live_gateway_container_id": "757045ed2946",
+    "live_qdrant_container_id": "a9a3594e6cd4",
     "index_creation_canary_source_tree": "50b43ef8f1e8f86f6c861f4520ad7c8e4e911db4",
     "index_creation_canary_commit_label_status": "contradictory_mistyped_label_repaired_by_exact_head_rebuild",
-    "live_collection_points": 707129,
+    "live_collection_points": 707142,
     "live_payload_index_fields": [
       "project",
       "topic_tags"
@@ -63,7 +86,16 @@
     "live_gateway_oom_killed": false,
     "live_qdrant_oom_killed": false,
     "legacy_35_minute_agent_loaded": false,
-    "daily_retention_interval_secs": 86400
+    "daily_retention_interval_secs": 86400,
+    "isolated_retention_smoke_source_bound": true,
+    "isolated_retention_smoke_runs_before": 2,
+    "isolated_retention_smoke_runs_after": 4,
+    "isolated_retention_smoke_uninstalled": true,
+    "canonical_retention_plist_unchanged": true,
+    "supervisor_soak_runs_before": 2348,
+    "supervisor_soak_runs_after": 2350,
+    "supervisor_soak_gateway_identity_preserved": true,
+    "supervisor_soak_qdrant_identity_preserved": true
   },
   "cost": {
     "llm_calls": 0,
@@ -71,13 +103,24 @@
     "new_services": 0,
     "new_routes": 0,
     "payload_index_metadata_writes": 2,
-    "memory_rows_mutated": 0
+    "memory_rows_mutated": 0,
+    "remediation_payload_index_metadata_writes": 0
+  },
+  "tool_calls": {
+    "qdrant_calls_during_warmup_holdout": 0,
+    "python_backend_calls_during_warmup_holdout": 0,
+    "live_hardener_inspection_attempts": 1,
+    "retention_launchctl_behavior_scenarios": 5
   },
   "latency": {
     "focused_test_suite_secs": 0.576,
-    "full_gateway_package_test_secs": 68.966,
-    "agent_tools_package_test_secs": 3.535,
+    "full_gateway_package_test_secs": 65.225,
+    "agent_tools_package_test_secs": 3.31,
     "focused_race_test_secs": 1.702,
+    "public_python_regression_secs": 58.508,
+    "retention_and_host_safety_secs": 2.233,
+    "live_candidate_readiness_secs": 6,
+    "live_two_supervisor_interval_soak_secs": 76,
     "warmup_query_bound_millis": 100,
     "live_project_filter_cold_secs": 0.824108,
     "live_project_filter_warm_sample_count": 10,
@@ -106,16 +149,43 @@
       "stage": "canary_provenance",
       "failure": "the initial index-creation canary image carried a mistyped commit label even though its source tree hash matched Git",
       "resolution": "mark the label contradictory and rebuild the final candidate with exact Git commit and tree identities"
+    },
+    {
+      "stage": "review_remediation",
+      "failure": "the payload-index hardening controls were attached to the inactive legacy Python service instead of gateway-go",
+      "resolution": "move all seven controls to gateway-go and enforce single-owner placement with a boundary test and rendered Compose check"
+    },
+    {
+      "stage": "review_remediation",
+      "failure": "a Qdrant warming error could fall through to the Python backend when strict runtime mode was disabled",
+      "resolution": "preserve Go-native ownership and return the typed warming error before any backend fallback"
+    },
+    {
+      "stage": "review_remediation",
+      "failure": "an existing payload index was accepted by field name without validating its schema",
+      "resolution": "require the expected keyword data_type and fail closed on mismatched or unknown schemas"
+    },
+    {
+      "stage": "review_remediation",
+      "failure": "the sample retention interval still selected 2100 seconds and installer safety was asserted only through static strings",
+      "resolution": "align the sample to 86400 seconds and behavior-test isolated identity, source binding, unload failure, rollback restoration, and backup retention"
     }
   ],
   "reproduction": [
-    "cd services/gateway-go && go test . -run 'TestQdrantPayloadIndex|TestQdrantQueryFailsFast' -count=1",
+    "cd services/gateway-go && go test . -run 'TestQdrantPayloadIndex|TestQdrantQueryFailsFast|TestQdrantWarming' -count=1",
+    "cd services/gateway-go && go test ./... -count=1",
+    "python3 -m unittest scripts.tests.test_public_boundary_guards scripts.tests.test_public_product_truth scripts.tests.test_host_supervisor_safety_audit scripts.tests.test_retention_runner_install",
+    "DOCKER_CONTEXT=orbstack ORCH_QDRANT_PAYLOAD_INDEX_HARDEN_ENABLED=false docker compose --env-file .env.example --profile core --profile legacy-python config",
     "python3 scripts/tests/test_orbstack_self_heal_install.py",
+    "python3 -m unittest scripts.tests.test_retention_runner_install",
     "python3 -m unittest scripts.tests.test_host_supervisor_safety_audit",
     "scripts/agent/audit-host-supervisor-safety --pretty"
   ],
   "rollback": {
     "disable_startup_hardening": "ORCH_QDRANT_PAYLOAD_INDEX_HARDEN_ENABLED=false",
-    "retention_interval_override": "RETENTION_INTERVAL_SECONDS"
+    "retention_interval_override": "RETENTION_INTERVAL_SECONDS",
+    "retention_failed_replacement": "restore the prior plist and prior loaded state",
+    "retention_failed_rollback_unload": "retain the prior plist backup for manual recovery",
+    "live_candidate_image_rollback": "contextlattice-gateway-go:v405-pre-bb37edd6"
   }
 }
