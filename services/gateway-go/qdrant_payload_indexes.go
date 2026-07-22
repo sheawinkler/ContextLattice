@@ -101,6 +101,17 @@ func (h *qdrantPayloadIndexHardener) observe(pointsCount int, missing []string, 
 	return h.attempts
 }
 
+func (h *qdrantPayloadIndexHardener) setStatus(status string) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.started && h.enabled && !h.ready {
+		h.status = status
+	}
+}
+
 func (h *qdrantPayloadIndexHardener) queryGate() error {
 	if h == nil {
 		return nil
@@ -148,10 +159,46 @@ func (s *server) startQdrantPayloadIndexHardening() {
 		return
 	}
 	go func() {
+		if err := s.waitForQdrantPayloadIndexPrerequisites(context.Background()); err != nil {
+			log.Printf("gateway-go qdrant payload index prerequisites stopped: %v", err)
+			return
+		}
 		if err := s.runQdrantPayloadIndexHardening(context.Background()); err != nil {
 			log.Printf("gateway-go qdrant payload index hardening stopped: %v", err)
 		}
 	}()
+}
+
+func qdrantPayloadIndexMemoryStoreReady(snapshot map[string]any) bool {
+	if !anyToBool(snapshot["configured"]) || anyToBool(snapshot["ready"]) {
+		return true
+	}
+	switch anyToString(snapshot["phase"]) {
+	case "blocked", "disabled", "ready":
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *server) waitForQdrantPayloadIndexPrerequisites(ctx context.Context) error {
+	if s == nil || s.qdrantPayloadIndexes == nil ||
+		!envBool("ORCH_QDRANT_PAYLOAD_INDEX_HARDEN_WAIT_FOR_MEMORY_STORE", true) {
+		return nil
+	}
+	pollInterval := envDurationSeconds("ORCH_QDRANT_PAYLOAD_INDEX_HARDEN_PREREQUISITE_POLL_SECS", 2)
+	for {
+		if s.memoryStore == nil || qdrantPayloadIndexMemoryStoreReady(s.memoryStore.migrationSnapshot()) {
+			s.qdrantPayloadIndexes.setStatus("warming")
+			return nil
+		}
+		s.qdrantPayloadIndexes.setStatus("waiting_for_memory_store")
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(pollInterval):
+		}
+	}
 }
 
 func (s *server) runQdrantPayloadIndexHardening(ctx context.Context) error {

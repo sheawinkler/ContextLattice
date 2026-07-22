@@ -135,3 +135,35 @@ func TestQdrantPayloadIndexHardenerDisabledDoesNotGateQueries(t *testing.T) {
 		t.Fatalf("unexpected disabled snapshot: %#v", snapshot)
 	}
 }
+
+func TestQdrantPayloadIndexHardeningWaitsForMemoryStoreMigration(t *testing.T) {
+	t.Setenv("ORCH_QDRANT_PAYLOAD_INDEX_HARDEN_WAIT_FOR_MEMORY_STORE", "true")
+	t.Setenv("ORCH_QDRANT_PAYLOAD_INDEX_HARDEN_PREREQUISITE_POLL_SECS", "0.01")
+	store := &memoryStore{
+		policy:    memoryStorePolicy{enabled: true},
+		migration: newOwnerOnlyMigrationRuntime("test", true),
+	}
+	hardener := newQdrantPayloadIndexHardener()
+	hardener.begin(true)
+	s := &server{memoryStore: store, qdrantPayloadIndexes: hardener}
+
+	blockedCtx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	if err := s.waitForQdrantPayloadIndexPrerequisites(blockedCtx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected prerequisite wait deadline, got %v", err)
+	}
+	if status := anyToString(hardener.snapshot()["status"]); status != "waiting_for_memory_store" {
+		t.Fatalf("hardener status=%q, want waiting_for_memory_store", status)
+	}
+
+	store.ready.Store(true)
+	store.migration.markReady(ownerOnlyMigrationReport{})
+	readyCtx, readyCancel := context.WithTimeout(context.Background(), time.Second)
+	defer readyCancel()
+	if err := s.waitForQdrantPayloadIndexPrerequisites(readyCtx); err != nil {
+		t.Fatalf("ready prerequisite failed: %v", err)
+	}
+	if status := anyToString(hardener.snapshot()["status"]); status != "warming" {
+		t.Fatalf("hardener status=%q, want warming", status)
+	}
+}

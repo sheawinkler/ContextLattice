@@ -22,6 +22,7 @@
     ],
     "startup_hardening_default": true,
     "query_behavior_until_ready": "fail_fast_and_continue_other_sources",
+    "large_store_startup_order": "complete_memory_store_migration_before_payload_index_build",
     "retry_interval_secs": 5,
     "request_timeout_secs": 15,
     "legacy_retention_default_interval_secs": 86400,
@@ -44,6 +45,7 @@
     "hardener_ready_after_creation": true,
     "warmup_query_failed_fast": true,
     "warmup_query_touched_qdrant": false,
+    "concurrent_memory_and_payload_index_migrations_prevented": true,
     "live_large_store_verification": "PENDING"
   },
   "cost": {
@@ -55,10 +57,10 @@
     "memory_rows_mutated": 0
   },
   "latency": {
-    "focused_test_suite_secs": 121.027,
-    "full_gateway_package_test_secs": 336.129,
-    "agent_tools_package_test_secs": 272.735,
-    "focused_race_test_secs": 255.162,
+    "focused_test_suite_secs": 0.576,
+    "full_gateway_package_test_secs": 68.966,
+    "agent_tools_package_test_secs": 3.535,
+    "focused_race_test_secs": 1.702,
     "warmup_query_bound_millis": 100
   },
   "failures": [
@@ -71,6 +73,11 @@
       "stage": "host_upgrade",
       "failure": "an obsolete 35-minute retention LaunchAgent could survive installation of the daily replacement",
       "resolution": "retire and verify removal of the legacy service during install and uninstall"
+    },
+    {
+      "stage": "live_large_store_canary",
+      "failure": "starting payload-index construction while a 2.8 million-entry memory-store migration was active saturated the single-CPU storage lane",
+      "resolution": "gate index construction on completion of the existing memory-store migration while keeping filtered Qdrant queries fail-fast"
     }
   ],
   "reproduction": [
