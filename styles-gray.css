@@ -1119,10 +1119,12 @@ pre code {
 
 .timeline {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 15px;
 }
 
 .update-card {
+  min-width: 0;
   border: 1.5px solid var(--line);
   border-radius: 0;
   padding: 18px;
@@ -1132,6 +1134,7 @@ pre code {
 
 .update-meta {
   display: inline-flex;
+  max-width: 100%;
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
@@ -1145,6 +1148,7 @@ pre code {
   color: #e3e3e3;
   background: #202020;
   margin-bottom: 10px;
+  overflow-wrap: anywhere;
 }
 
 .update-card ul {
@@ -1152,6 +1156,12 @@ pre code {
   padding-left: 18px;
   color: #d5d5d5;
   line-height: 1.58;
+}
+
+.update-card li,
+.update-card code {
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .spotlight {
