@@ -32,6 +32,7 @@ WORKFLOW_PATHS = (
     "crates/Cargo.toml",
     "crates/**/Cargo.toml",
     "docs/public_overview/**",
+    "docs/wiki/**",
     "docs/releases/**",
     "docs/host-supervisor-release-safety.md",
     "packaging/**",
@@ -48,7 +49,9 @@ WORKFLOW_PATHS = (
     "scripts/agent/audit-agent-global-install-smoke",
     "scripts/agent/audit-host-supervisor-safety",
     "scripts/generate_commercial_truth.py",
+    "scripts/build_public_docs.py",
     "scripts/tests/test_commercial_truth.py",
+    "scripts/tests/test_public_docs.py",
     "scripts/tests/test_host_supervisor_safety_audit.py",
     "scripts/tests/test_public_product_truth.py",
     "services/gateway-go/commercial_contract_generated.go",
@@ -158,6 +161,18 @@ def fixture(root: Path, lane: str = "public") -> None:
     write(root, "docs/public_overview/cli.html", page)
     write(
         root,
+        "docs/public_overview/docs/index.html",
+        page.replace('href="architecture.html"', 'href="/architecture.html"'),
+    )
+    write(root, "docs/public_overview/docs/docs.css", "")
+    write(root, "docs/public_overview/docs/docs.js", "")
+    write(
+        root,
+        "docs/public_overview/docs/search-index.json",
+        json.dumps({"schemaId": "contextlattice_public_docs_search.v1", "documents": []}),
+    )
+    write(
+        root,
         "docs/public_overview/installation.html",
         page + "<p><code>gmake quickstart</code> remains the prescribed path for technical installs.</p>\n",
     )
@@ -170,6 +185,7 @@ def fixture(root: Path, lane: str = "public") -> None:
     sitemap_pages = (
         "",
         "architecture.html",
+        "docs/",
         "cli.html",
         "installation.html",
         "integration.html",
@@ -447,7 +463,7 @@ class PublicProductTruthTests(unittest.TestCase):
             contract = json.loads(contract_path.read_text(encoding="utf-8"))
             contract["product"].update(version="5.1.0", stable_tag="v5.1.0", release_train="5.1")
             contract_path.write_text(json.dumps(contract), encoding="utf-8")
-            for path in [root / "README.md", *sorted((root / "docs/public_overview").glob("*.html")), root / "docs/public_overview/llms.txt"]:
+            for path in [root / "README.md", *sorted((root / "docs/public_overview").rglob("*.html")), root / "docs/public_overview/llms.txt"]:
                 path.write_text(path.read_text(encoding="utf-8").replace("4.0.2", "5.1.0"), encoding="utf-8")
             generated = root / "services/gateway-go/commercial_contract_generated.go"
             generated.write_text(

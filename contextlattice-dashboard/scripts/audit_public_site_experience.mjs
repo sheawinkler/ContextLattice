@@ -9,7 +9,10 @@ const outputDir = path.resolve(
 );
 const browserExecutable = process.env.PUBLIC_SITE_BROWSER_EXECUTABLE
   || "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
-const routes = (process.env.PUBLIC_SITE_AUDIT_ROUTES || "/,/wiki.html")
+const routes = (
+  process.env.PUBLIC_SITE_AUDIT_ROUTES
+  || "/,/docs/,/docs/getting-started/,/wiki.html"
+)
   .split(",")
   .map((route) => route.trim())
   .filter(Boolean);
@@ -20,7 +23,9 @@ const profiles = [
 ];
 
 function routeName(route) {
-  return route === "/" ? "home" : route.replace(/^\/|\.html$/g, "").replaceAll("/", "-");
+  return route === "/"
+    ? "home"
+    : route.replace(/^\/|\/$|\.html$/g, "").replaceAll("/", "-");
 }
 
 async function audit() {
@@ -49,6 +54,21 @@ async function audit() {
         const response = await page.goto(url, { waitUntil: "networkidle", timeout: 30000 });
         await page.evaluate(() => document.fonts.ready);
 
+        let docsSearchResultCount = null;
+        if (route.startsWith("/docs/")) {
+          docsSearchResultCount = await page.evaluate(() => {
+            const input = document.querySelector("#docs-search");
+            const results = document.querySelector("#docs-search-results");
+            if (!input || !results) return -1;
+            input.value = "continuation";
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+            const count = results.querySelectorAll("a[href]").length;
+            input.value = "";
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+            return count;
+          });
+        }
+
         const inspection = await page.evaluate(() => {
           const root = document.documentElement;
           const nav = document.querySelector('[aria-label="Primary"]');
@@ -64,6 +84,11 @@ async function audit() {
             width: root.clientWidth,
             scrollWidth: root.scrollWidth,
             height: root.scrollHeight,
+            isDocs: document.body.classList.contains("docs-page"),
+            docsSourceMetaCount: document.querySelectorAll('meta[name="doc-source"]').length,
+            docsSearchInputCount: document.querySelectorAll("#docs-search").length,
+            codeFrameCount: document.querySelectorAll(".code-frame").length,
+            codeCopyButtonCount: document.querySelectorAll('.code-frame-label button[aria-label="Copy code block"]').length,
             brokenImages: images
               .filter((image) => image.complete && image.naturalWidth === 0)
               .map((image) => image.getAttribute("src") || ""),
@@ -89,6 +114,20 @@ async function audit() {
         if (route === "/" && inspection.skipLinkCount !== 1) {
           failures.push(`${prefix}: homepage must expose one skip link`);
         }
+        if (route.startsWith("/docs/")) {
+          if (!inspection.isDocs) failures.push(`${prefix}: expected documentation shell`);
+          if (inspection.docsSourceMetaCount !== 1) {
+            failures.push(`${prefix}: expected one repository source marker`);
+          }
+          if (inspection.docsSearchInputCount !== 1 || docsSearchResultCount < 1) {
+            failures.push(`${prefix}: documentation search did not return a result`);
+          }
+          if (inspection.codeFrameCount !== inspection.codeCopyButtonCount) {
+            failures.push(
+              `${prefix}: ${inspection.codeFrameCount} code frames but ${inspection.codeCopyButtonCount} copy controls`,
+            );
+          }
+        }
         if (inspection.brokenImages.length) {
           failures.push(`${prefix}: broken images ${inspection.brokenImages.join(", ")}`);
         }
@@ -103,6 +142,7 @@ async function audit() {
           route,
           profile,
           status,
+          docsSearchResultCount,
           screenshot: path.relative(process.cwd(), screenshot),
           ...inspection,
         });

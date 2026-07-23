@@ -243,6 +243,9 @@ done
 if [[ -d "$PUBLIC_SOURCE_DIR/assets" ]]; then
   cp -R "$PUBLIC_SOURCE_DIR/assets" "$PUBLIC_DIR/assets"
 fi
+if [[ -d "$PUBLIC_SOURCE_DIR/docs" ]]; then
+  cp -R "$PUBLIC_SOURCE_DIR/docs" "$PUBLIC_DIR/docs"
+fi
 if [[ -d "$PUBLIC_SOURCE_DIR/.well-known" ]]; then
   cp -R "$PUBLIC_SOURCE_DIR/.well-known" "$PUBLIC_DIR/.well-known"
 fi

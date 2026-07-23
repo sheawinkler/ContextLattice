@@ -13,6 +13,7 @@ on:
       - "crates/**/Cargo.toml"
       - "contextlattice-dashboard/**"
       - "docs/public_overview/**"
+      - "docs/wiki/**"
       - "docs/readme/**"
       - "docs/releases/**"
       - "docs/host-supervisor-release-safety.md"
@@ -30,6 +31,7 @@ on:
       - "scripts/agent/audit-agent-global-install-smoke"
       - "scripts/agent/audit-host-supervisor-safety"
       - "scripts/generate_commercial_truth.py"
+      - "scripts/build_public_docs.py"
       - "scripts/install_public_overview_sync.sh"
       - "scripts/sync_public_overview.sh"
       - "scripts/tests/test_commercial_truth.py"
@@ -38,6 +40,7 @@ on:
       - "scripts/tests/test_retention_runner_install.py"
       - "scripts/tests/test_public_boundary_guards.py"
       - "scripts/tests/test_public_product_truth.py"
+      - "scripts/tests/test_public_docs.py"
       - "scripts/tests/test_t*_public_projection.py"
       - "services/gateway-go/commercial_contract_generated.go"
       - "services/gateway-go/commercial_contract_generated_test.go"
@@ -58,6 +61,7 @@ on:
       - "crates/**/Cargo.toml"
       - "contextlattice-dashboard/**"
       - "docs/public_overview/**"
+      - "docs/wiki/**"
       - "docs/readme/**"
       - "docs/releases/**"
       - "docs/host-supervisor-release-safety.md"
@@ -75,6 +79,7 @@ on:
       - "scripts/agent/audit-agent-global-install-smoke"
       - "scripts/agent/audit-host-supervisor-safety"
       - "scripts/generate_commercial_truth.py"
+      - "scripts/build_public_docs.py"
       - "scripts/install_public_overview_sync.sh"
       - "scripts/sync_public_overview.sh"
       - "scripts/tests/test_commercial_truth.py"
@@ -83,6 +88,7 @@ on:
       - "scripts/tests/test_retention_runner_install.py"
       - "scripts/tests/test_public_boundary_guards.py"
       - "scripts/tests/test_public_product_truth.py"
+      - "scripts/tests/test_public_docs.py"
       - "scripts/tests/test_t*_public_projection.py"
       - "services/gateway-go/commercial_contract_generated.go"
       - "services/gateway-go/commercial_contract_generated_test.go"
@@ -116,14 +122,18 @@ jobs:
         run: >-
           python3 -m py_compile
           scripts/generate_commercial_truth.py
+          scripts/build_public_docs.py
           scripts/agent/audit-public-product-truth
           scripts/agent/audit-host-supervisor-safety
       - name: Verify generated commercial truth
         run: python3 scripts/generate_commercial_truth.py --check
+      - name: Verify generated public documentation
+        run: python3 scripts/build_public_docs.py --check
       - name: Run focused truth-contract tests
         run: >-
           python3 -m unittest
           scripts.tests.test_public_product_truth
+          scripts.tests.test_public_docs
           scripts.tests.test_host_supervisor_safety_audit
           scripts.tests.test_retention_runner_install
           scripts.tests.test_commercial_truth.CommercialTruthTests.test_contract_decisions
