@@ -303,13 +303,42 @@ func inspectQdrantPayloadIndexes(
 	pointsCount := anyToInt(result["points_count"], 0)
 	payloadSchema, _ := result["payload_schema"].(map[string]any)
 	missing := make([]string, 0, len(specs))
+	mismatched := make([]string, 0)
 	for _, spec := range specs {
-		if _, ok := payloadSchema[spec.field]; !ok {
+		rawSchema, ok := payloadSchema[spec.field]
+		if !ok {
 			missing = append(missing, spec.field)
+			continue
+		}
+		actualSchema := qdrantPayloadIndexSchema(rawSchema)
+		if actualSchema != strings.ToLower(strings.TrimSpace(spec.schema)) {
+			missing = append(missing, spec.field)
+			if actualSchema == "" {
+				actualSchema = "unknown"
+			}
+			mismatched = append(
+				mismatched,
+				fmt.Sprintf("field=%s got=%s want=%s", spec.field, actualSchema, spec.schema),
+			)
 		}
 	}
 	sort.Strings(missing)
+	if len(mismatched) > 0 {
+		sort.Strings(mismatched)
+		return pointsCount, missing, errors.New("qdrant payload index schema mismatch: " + strings.Join(mismatched, "; "))
+	}
 	return pointsCount, missing, nil
+}
+
+func qdrantPayloadIndexSchema(raw any) string {
+	switch typed := raw.(type) {
+	case string:
+		return strings.ToLower(strings.TrimSpace(typed))
+	case map[string]any:
+		return strings.ToLower(strings.TrimSpace(anyToString(typed["data_type"])))
+	default:
+		return ""
+	}
 }
 
 func requiredQdrantPayloadIndexFields(specs []qdrantPayloadIndexSpec) []string {

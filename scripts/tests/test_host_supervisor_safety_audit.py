@@ -12,12 +12,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 AUDIT = ROOT / "scripts/agent/audit-host-supervisor-safety"
 FIXTURE_PATHS = (
+    Path(".env.example"),
     Path("LICENSE"),
     Path("scripts/orbstack_self_heal.sh"),
     Path("scripts/install_global_agent_tools.sh"),
     Path("scripts/install_retention_runner.sh"),
     Path("scripts/agent/audit-agent-global-install-smoke"),
     Path("scripts/tests/test_orbstack_self_heal_install.py"),
+    Path("scripts/tests/test_retention_runner_install.py"),
     Path(".github/workflows/public-product-truth.yml"),
     Path(".github/workflows/release-installers.yml"),
     Path(".github/pull_request_template.md"),
@@ -139,6 +141,46 @@ class HostSupervisorSafetyAuditTests(unittest.TestCase):
             result, payload = run_audit(root)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("retention_upgrade_policy", failure_ids(payload))
+
+    def test_retention_sample_config_cannot_override_daily_default(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            make_fixture(root)
+            path = root / ".env.example"
+            path.write_text(
+                path.read_text(encoding="utf-8").replace(
+                    "RETENTION_INTERVAL_SECONDS=86400",
+                    "RETENTION_INTERVAL_SECONDS=2100",
+                ),
+                encoding="utf-8",
+            )
+            result, payload = run_audit(root)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("retention_config_default", failure_ids(payload))
+
+    def test_retention_installer_cannot_drop_source_identity_or_rollback_test(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            make_fixture(root)
+            installer = root / "scripts/install_retention_runner.sh"
+            installer.write_text(
+                installer.read_text(encoding="utf-8").replace(
+                    "CONTEXTLATTICE_RETENTION_RUNNER_SHA256",
+                    "REMOVED_RETENTION_RUNNER_SHA256",
+                ),
+                encoding="utf-8",
+            )
+            tests = root / "scripts/tests/test_retention_runner_install.py"
+            tests.write_text(
+                tests.read_text(encoding="utf-8").replace(
+                    "test_failed_replacement_restores_prior_loaded_plist",
+                    "removed_rollback_case",
+                ),
+                encoding="utf-8",
+            )
+            result, payload = run_audit(root)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("retention_install_proof", failure_ids(payload))
 
     def test_pr_evidence_contract_cannot_be_removed(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

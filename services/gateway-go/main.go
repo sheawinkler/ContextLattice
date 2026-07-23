@@ -4931,6 +4931,9 @@ func (s *server) callBackendSourceQuery(
 		if err == nil {
 			return rows, warnings, nil, sourceOwnerGoNative, nil
 		}
+		if errors.Is(err, errQdrantPayloadIndexesWarming) {
+			return []map[string]any{}, warnings, nil, sourceOwnerGoNative, err
+		}
 		fallbackWarnings = append(
 			fallbackWarnings,
 			"qdrant go-adapter fallback to backend retrieval lane: "+err.Error(),
