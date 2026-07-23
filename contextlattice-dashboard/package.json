@@ -16,6 +16,7 @@
     "db:generate": "prisma generate",
     "audit:export": "TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\",\"jsx\":\"react-jsx\"}' node --require tsconfig-paths/register --require ts-node/register scripts/export_audit_logs.ts",
     "audit:prune": "TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\",\"jsx\":\"react-jsx\"}' node --require tsconfig-paths/register --require ts-node/register scripts/prune_audit_logs.ts",
+    "visual:site": "node scripts/audit_public_site_experience.mjs",
     "pretest": "prisma generate",
     "test": "TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\",\"jsx\":\"react-jsx\"}' node --require tsconfig-paths/register --test --require ts-node/register tests/auth-boundary.test.ts tests/dashboardMetrics.test.ts tests/overrides-api.test.ts tests/overrides-panel.test.tsx tests/sidecar-health-api.test.ts tests/sidecar-health-panel.test.tsx tests/charts-panel.test.tsx tests/alerts-panel.test.tsx tests/strategy-panel.test.tsx tests/recall-quality-panel.test.tsx tests/retrieval-panel.test.tsx tests/continuations-api.test.ts tests/agent-packet-api.test.ts tests/agent-packet-panel.test.tsx"
   },
@@ -36,6 +37,7 @@
     "@types/nodemailer": "^8.0.0",
     "@types/react": "18.3.3",
     "@types/react-dom": "18.3.0",
+    "playwright": "^1.54.2",
     "prisma": "^5.20.0",
     "ts-node": "10.9.2",
     "tsconfig-paths": "^4.2.0",

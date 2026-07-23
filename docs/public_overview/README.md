@@ -24,6 +24,7 @@ This folder is the source for the public ContextLattice overview web pages.
 - `styles.css` - shared styles
 - `styles-gray.css` - grayscale/brutalist theme
 - `styles-fracture.css` - fracture-ledger visual treatment
+- `styles-editorial.css` - dashboard-derived brutalist editorial theme for the simplified front door
 - `assets/` - listing/social graphics (`contextlattice-og-1200x630.png`, `contextlattice-icon-512.png`)
 - `templates/` - copy-ready agent instruction templates (`AGENTS.contextlattice.md`, `SKILLS.contextlattice.md`)
 - `templates/agents/` - agent-profile templates (`codex`, `claude-code`, `opencode`, `hermes-agent`, `omp`, `mercury-agent`, `pi`, `droid`, `chatgpt`, `claude`)
@@ -72,6 +73,7 @@ This syncs:
 - `styles.css`
 - `styles-gray.css`
 - `styles-fracture.css`
+- `styles-editorial.css`
 - `assets/`
 - `.well-known/glama.json`
 - `.nojekyll`
