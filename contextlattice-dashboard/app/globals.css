@@ -3031,6 +3031,11 @@ body,
     font-size: clamp(1.55rem, 12vw, 2.15rem);
   }
 
+  .cl-metric-grid,
+  .cl-metric-grid--status {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .cl-hero h2,
   .cl-hero--compact h2,
   .auth-title {

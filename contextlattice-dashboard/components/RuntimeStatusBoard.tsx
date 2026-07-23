@@ -159,7 +159,10 @@ export function RuntimeStatusBoard() {
   const apiRows = useMemo(() => checks.filter((row) => row.kind === "api"), [checks]);
 
   return (
-    <div className="cl-page cl-status-page">
+    <div
+      className="cl-page cl-status-page"
+      data-visual-state={updatedAt ? "settled" : "loading"}
+    >
       <section className="cl-hero cl-hero--compact">
         <div className="cl-hero-copy">
           <p className="cl-kicker">Status // runtime truth</p>

@@ -20,7 +20,7 @@
   <meta name="twitter:description" content="The local-first intelligence layer that gives AI agents durable continuity, explainable retrieval, portable context, and verified learning across harnesses." />
   <meta name="twitter:image" content="https://contextlattice.io/assets/social/contextlattice-architecture-social-v2-2026-04-28.png?v=20260428a" />
   <link rel="icon" type="image/png" sizes="512x512" href="assets/contextlattice-icon-512.png" />
-  <link rel="stylesheet" href="styles-gray.css?v=20260720a" />
+  <link rel="stylesheet" href="styles-gray.css?v=20260723a" />
   <link rel="stylesheet" href="styles-fracture.css?v=20260601e" />
   <script type="application/ld+json">
     {
@@ -71,13 +71,13 @@
         <details class="fold download-fold">
           <summary>Download options + technical bundles</summary>
           <div class="download-grid">
-            <a class="cta secondary" href="https://github.com/sheawinkler/ContextLattice/releases/latest/download/ContextLattice-macOS-universal.dmg" target="_blank" rel="noreferrer">Download macOS DMG</a>
+            <a class="cta secondary" href="https://github.com/sheawinkler/ContextLattice/releases/latest/download/ContextLattice-macOS-universal.dmg" target="_blank" rel="noreferrer">macOS DMG (unsigned preview)</a>
             <a class="cta secondary" href="https://github.com/sheawinkler/ContextLattice/releases/latest/download/ContextLattice-linux-bootstrap.tar.gz" target="_blank" rel="noreferrer">Download Linux Bundle</a>
             <a class="cta secondary" href="https://github.com/sheawinkler/ContextLattice/releases/latest/download/ContextLattice-windows-x64.msi" target="_blank" rel="noreferrer">Download Windows MSI</a>
             <a class="cta secondary" href="app.html">App Surface</a>
             <a class="cta secondary" href="https://github.com/sheawinkler/ContextLattice/archive/refs/heads/main.zip" target="_blank" rel="noreferrer">Download main (ZIP)</a>
           </div>
-          <p class="muted-note">Less technical users: DMG/Linux bundle/MSI. Technical/dev users: repo + ZIP remain the default.</p>
+          <p class="muted-note">The macOS DMG is an unsigned technical preview until Developer ID notarization is configured and may trigger Gatekeeper warnings. Source/CLI remains the recommended macOS path.</p>
           <p class="muted-note">Clone: <code>git clone git@github.com:sheawinkler/ContextLattice.git</code></p>
         </details>
       </div>
@@ -532,7 +532,7 @@ gmake monitor-check</code></pre>
           <!-- END GENERATED COMMERCIAL TRUTH: index-orb-white-release-heading -->
           <ul class="spec-list">
             <!-- BEGIN GENERATED COMMERCIAL TRUTH: index-orb-white-release-summary -->
-            <li><strong>Current public release:</strong> <code>v4.0.4</code></li>
+            <li><strong>Current public release:</strong> <code>v4.0.5</code></li>
             <li><strong>Primary interface:</strong> CLI workflows for install, context, resume, remember, finish, correct, and doctor; dashboard, HTTP, and MCP are companion surfaces</li>
             <!-- END GENERATED COMMERCIAL TRUTH: index-orb-white-release-summary -->
             <li><strong>Frontdoor:</strong> <code>gateway-go</code> on <code>:8075</code></li>

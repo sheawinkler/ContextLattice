@@ -79,7 +79,10 @@ export function OverviewCommandDeck() {
   const vectorBackend = toText(runtimePolicy.vector_backend).replace(/_/g, " ");
 
   return (
-    <div className="cl-page cl-overview-page">
+    <div
+      className="cl-page cl-overview-page"
+      data-visual-state={overview && mindmap && topics ? "settled" : "loading"}
+    >
       <section className="cl-hero cl-hero--compact">
         <div className="cl-hero-copy">
           <p className="cl-kicker">Overview // intelligence layer</p>

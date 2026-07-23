@@ -18,7 +18,7 @@
       "tier": "P0",
       "name": "GitHub Release",
       "listing_url": "https://github.com/sheawinkler/ContextLattice/releases/new",
-      "submission_path": "Publish the lane-approved v4.0.4 release with notes, checksums, provenance, and installers",
+      "submission_path": "Publish the lane-approved v4.0.5 release with notes, checksums, provenance, and installers",
       "lead_time": "Same day",
       "cost_signal": "Free",
       "owner": "Shea",
@@ -345,8 +345,8 @@
   ],
   "copy_blocks": {
     "github_release": {
-      "title": "{product_name} v4.0.4",
-      "body": "ContextLattice v4.0.4 gives every public surface one product truth. The CLI is the primary interface; the dashboard, HTTP, and MCP are companion surfaces. Durable continuity, explainable retrieval, portable context, verified skill evolution, and controlled Aggregate Signal now share one generated contract across source, docs, dashboard, and release proof.\n\nAggregate Signal remains a controlled preview: raw memory and prompts stay outside the signal boundary, and production cohort learning remains blocked pending independent privacy and utility review.\n\nStart with the CLI:\n- Docs: {docs_url}\n- Troubleshooting: {troubleshooting_url}\n- Repo: {repo_url}"
+      "title": "{product_name} v4.0.5",
+      "body": "ContextLattice v4.0.5 gives every public surface one product truth. The CLI is the primary interface; the dashboard, HTTP, and MCP are companion surfaces. Durable continuity, explainable retrieval, portable context, verified skill evolution, and controlled Aggregate Signal now share one generated contract across source, docs, dashboard, and release proof.\n\nAggregate Signal remains a controlled preview: raw memory and prompts stay outside the signal boundary, and production cohort learning remains blocked pending independent privacy and utility review.\n\nStart with the CLI:\n- Docs: {docs_url}\n- Troubleshooting: {troubleshooting_url}\n- Repo: {repo_url}"
     },
     "custom_domain": {
       "title": "{product_name} docs go-live",
@@ -379,11 +379,11 @@
     },
     "x_thread": {
       "title": "X launch post",
-      "body": "Open an agent. The mission is already there.\n\nContextLattice v4.0.4 is the local-first intelligence layer for durable continuity, explainable retrieval, portable context, and verified learning across harnesses.\n\nCLI first. Raw memory local. Every useful result with receipts.\n\nStart here: {docs_url}"
+      "body": "Open an agent. The mission is already there.\n\nContextLattice v4.0.5 is the local-first intelligence layer for durable continuity, explainable retrieval, portable context, and verified learning across harnesses.\n\nCLI first. Raw memory local. Every useful result with receipts.\n\nStart here: {docs_url}"
     },
     "linkedin": {
       "title": "LinkedIn launch post",
-      "body": "ContextLattice v4.0.4 gives long-horizon agent work a durable center. Objectives, evidence, decisions, context, skills, and outcomes can move across sessions and harnesses without turning every prompt into an archive dump.\n\nThe CLI is the primary interface. The dashboard makes the proof visible. HTTP and MCP remain companion integration surfaces.\n\nAggregate Signal stays a controlled preview until independent privacy and utility reviews pass.\n\nDocs: {docs_url}\nRepo: {repo_url}"
+      "body": "ContextLattice v4.0.5 gives long-horizon agent work a durable center. Objectives, evidence, decisions, context, skills, and outcomes can move across sessions and harnesses without turning every prompt into an archive dump.\n\nThe CLI is the primary interface. The dashboard makes the proof visible. HTTP and MCP remain companion integration surfaces.\n\nAggregate Signal stays a controlled preview until independent privacy and utility reviews pass.\n\nDocs: {docs_url}\nRepo: {repo_url}"
     },
     "reddit": {
       "title": "Reddit launch variant",

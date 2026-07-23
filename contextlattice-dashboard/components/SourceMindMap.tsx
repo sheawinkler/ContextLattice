@@ -273,7 +273,7 @@ export function SourceMindMap() {
   }, [focusedSource, runReview]);
 
   return (
-    <div className="ops-shell">
+    <div className="ops-shell" data-visual-state={loading ? "loading" : "settled"}>
       <section className="ops-card">
         <div className="ops-mindmap-head">
           <div>
