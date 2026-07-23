@@ -6,7 +6,7 @@
   <title>Context Lattice Updates</title>
   <meta name="description" content="The ContextLattice release journal: durable continuity, explainable retrieval, portable context, verified learning, privacy boundaries, and immutable release proof." />
   <link rel="canonical" href="https://contextlattice.io/updates.html" />
-  <link rel="stylesheet" href="styles-gray.css?v=20260720a" />
+  <link rel="stylesheet" href="styles-gray.css?v=20260723a" />
 </head>
 <body class="home">
   <main class="container">
@@ -48,18 +48,33 @@
     <section class="section">
       <article class="card">
         <div class="kicker">Current launch boundary</div>
-        <h3>v4.0.4 makes recovery fail closed before it ever reaches the machine beneath the stack.</h3>
+        <h3>v4.0.5 keeps large memory stores responsive and makes the release surface prove it.</h3>
         <ul class="spec-list">
-          <li><strong>Observe first:</strong> health-only failure and high CPU can never stop the host runtime.</li>
-          <li><strong>Repair once:</strong> gateway recovery waits for sustained failure and runs once per outage.</li>
-          <li><strong>Restart by consent:</strong> VM recovery is off by default and remains fenced by grace, threshold, cooldown, and circuit-breaker gates.</li>
-          <li><strong>No destructive fallback:</strong> recovery never force-stops the VM or kills its processes.</li>
-          <li><strong>Upgrades inherit safety:</strong> existing supervisors migrate to the current policy; new installs remain disabled until explicitly started.</li>
+          <li><strong>Index the real filters:</strong> Qdrant indexes project and topic tags before large-store retrieval carries traffic.</li>
+          <li><strong>One migration owner:</strong> startup hardening is serialized so concurrent services cannot race the same collection changes.</li>
+          <li><strong>Patch the visible surface:</strong> Next.js, Auth.js, and image processing dependencies ship without known npm audit findings.</li>
+          <li><strong>Prove both viewports:</strong> live-data screenshots wait for settled state and fail on horizontal escape or mobile grid regression.</li>
+          <li><strong>Tell the distribution truth:</strong> the macOS DMG is labeled an unsigned preview until notarization credentials exist.</li>
         </ul>
       </article>
     </section>
 
     <section class="section timeline">
+      <article class="update-card">
+        <span class="update-meta">2026-07-23 · v4.0.5 · Stable at Scale.</span>
+        <h2>A healthy container is not enough when retrieval stalls behind an unindexed filter.</h2>
+        <p>
+          ContextLattice now treats large-store responsiveness as part of uptime. Startup migrations are serialized,
+          Qdrant filters used by real project and topic retrieval are indexed, and the release dashboard is gated on
+          settled desktop and mobile output.
+        </p>
+        <ul>
+          <li><strong>Large-store proof:</strong> bounded retrieval was exercised against more than 707,000 live points without restart or OOM churn.</li>
+          <li><strong>Security baseline:</strong> the shipped dashboard dependency tree reports zero known npm audit vulnerabilities.</li>
+          <li><strong>Honest macOS lane:</strong> unsigned artifacts remain available as technical previews, never presented as notarized consumer downloads.</li>
+        </ul>
+      </article>
+
       <article class="update-card">
         <span class="update-meta">2026-07-20 · v4.0.4 · Recovery Without Collateral Damage.</span>
         <h2>A self-healer should restore the service, not fight the machine beneath it.</h2>

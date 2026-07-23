@@ -205,7 +205,10 @@ export function CommandCenterDashboard() {
   const diskPressure = toText(storageRecord.pressureBand) || toText(asRecord(asRecord(overview).storage).pressureBand) || "tracked";
 
   return (
-    <div className="cl-page cl-console-page">
+    <div
+      className="cl-page cl-console-page"
+      data-visual-state={loading ? "loading" : "settled"}
+    >
       <section className="cl-hero">
         <div className="cl-hero-copy">
           <p className="cl-kicker">Lattice // live operations</p>
