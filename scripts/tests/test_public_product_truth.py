@@ -324,6 +324,7 @@ def run_sync(
     target: Path,
     *,
     proof_tag: str | None = None,
+    interpreter: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env.pop("PUBLIC_RELEASE_PROOF_TAG", None)
@@ -337,8 +338,11 @@ def run_sync(
     )
     if proof_tag is not None:
         env["PUBLIC_RELEASE_PROOF_TAG"] = proof_tag
+    command = [str(root / "scripts/sync_public_overview.sh"), mode]
+    if interpreter is not None:
+        command = [interpreter, "-f", *command]
     return subprocess.run(
-        [str(root / "scripts/sync_public_overview.sh"), mode],
+        command,
         cwd=root,
         env=env,
         text=True,
@@ -575,6 +579,22 @@ class PublicProductTruthTests(unittest.TestCase):
                 check=True,
             )
             self.assertEqual(status.stdout, "")
+
+    @unittest.skipUnless(Path("/bin/zsh").is_file(), "requires /bin/zsh")
+    def test_sync_check_is_zsh_compatible(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="public-product-sync-zsh-") as tmp:
+            sandbox = Path(tmp)
+            root = sandbox / "repo"
+            sync_fixture(root)
+            result = run_sync(
+                root,
+                "--check",
+                sandbox / "audit-called",
+                sandbox / "published-site",
+                interpreter="/bin/zsh",
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("no clone, destination write, commit, or push performed", result.stdout)
 
     def test_sync_refuses_dirty_or_unaudited_source_before_publishing(self) -> None:
         cases = (("dirty", True), ("unaudited", False))

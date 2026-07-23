@@ -14,6 +14,12 @@ PAID_T9_PATHS = (
     "services/gateway-go/frontier_t9_continuity_zero_entitled.go",
     "services/gateway-go/frontier_t9_continuity_zero_entitled_test.go",
 )
+LATER_PAID_PATHS = (
+    "services/gateway-go/frontier_t10_aggregate_signal_entitled.go",
+    "services/gateway-go/frontier_t10_aggregate_signal_entitled_test.go",
+    "services/gateway-go/frontier_t10_secure_aggregation_research_private.go",
+    "services/gateway-go/frontier_t10_secure_aggregation_research_private_test.go",
+)
 
 
 def run(
@@ -85,14 +91,14 @@ exec /usr/bin/grep -EnH -- "$pattern" "$@"
 
 
 class T9PublicProjectionTests(unittest.TestCase):
-    def test_public_projection_compiles_without_entitled_kernel(self) -> None:
+    def test_public_projection_compiles_without_t9_or_later_entitled_kernels(self) -> None:
         go = os.environ.get("GO") or shutil.which("go")
         if not go:
             self.skipTest("Go is unavailable")
         with tempfile.TemporaryDirectory(prefix="t9-public-projection-") as tmp:
             projected = Path(tmp) / "gateway-go"
             shutil.copytree(GATEWAY, projected)
-            for relative in PAID_T9_PATHS:
+            for relative in PAID_T9_PATHS + LATER_PAID_PATHS:
                 target = projected / Path(relative).relative_to("services/gateway-go")
                 target.unlink(missing_ok=True)
             result = run([go, "test", "-run", "^$", "."], projected)

@@ -41,7 +41,7 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
+REPO_ROOT=$(cd "$(dirname "$0")/.." && pwd -P)
 CANONICAL_PUBLIC_SOURCE_DIR="${REPO_ROOT}/docs/public_overview"
 PUBLIC_SOURCE_DIR="${PUBLIC_SOURCE_DIR:-$CANONICAL_PUBLIC_SOURCE_DIR}"
 PUBLIC_REPO="${PUBLIC_REPO:-ContextLattice}"
@@ -58,10 +58,10 @@ PUBLIC_SOURCE_DIR="$RESOLVED_PUBLIC_SOURCE_DIR"
 
 assert_clean_source() {
   local phase="$1"
-  local status
-  status=$(git -C "$REPO_ROOT" status --porcelain=v1 --untracked-files=all --ignore-submodules=none)
-  if [[ -n "$status" ]]; then
-    echo "$status" >&2
+  local git_status
+  git_status=$(git -C "$REPO_ROOT" status --porcelain=v1 --untracked-files=all --ignore-submodules=none)
+  if [[ -n "$git_status" ]]; then
+    echo "$git_status" >&2
     fail "source worktree is dirty ${phase}"
   fi
 }
@@ -164,8 +164,8 @@ PY
 fi
 
 canonical_html_files=()
-while IFS= read -r path; do
-  filename=${path##*/}
+while IFS= read -r source_path; do
+  filename=${source_path##*/}
   if [[ "$filename" != "index-orb-white.html" ]]; then
     canonical_html_files+=("$filename")
   fi
