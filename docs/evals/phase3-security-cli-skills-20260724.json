@@ -77,6 +77,11 @@
       "stage": "current_dashboard_audit",
       "failure": "A newly published high-severity brace-expansion advisory appeared after the earlier zero-vulnerability PostCSS gate.",
       "resolution": "Updated the existing override from 5.0.7 to patched 5.0.8, reinstalled from the lock, and reran audit, 122 tests, and the production build."
+    },
+    {
+      "stage": "first_live_gateway_readback",
+      "failure": "The secret-filter telemetry snapshot computed counters but the /telemetry/memory response did not expose them.",
+      "resolution": "Wired the bounded counter-only object into the response and added a regression proving mode and counters are present without matched values."
     }
   ],
   "known_unrelated_local_gate_failures": [

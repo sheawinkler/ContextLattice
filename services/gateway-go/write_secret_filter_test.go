@@ -217,6 +217,31 @@ func TestWriteBatchBlockModeIsAtomic(t *testing.T) {
 	}
 }
 
+func TestMemoryTelemetryExposesSecretFilterWithoutValues(t *testing.T) {
+	t.Setenv("SECRETS_STORAGE_MODE", "redact")
+	s := newTestServer(t, "")
+	s.recordWriteSecretFilter(writeSecretFilterResult{
+		Mode:       "redact",
+		Findings:   3,
+		Redactions: 2,
+	}, true)
+	payload := s.telemetryMemoryPayload()
+	secretFilter := anyMap(payload["secretFilter"])
+	if anyToString(secretFilter["mode"]) != "redact" ||
+		anyToInt(secretFilter["findings"], 0) != 3 ||
+		anyToInt(secretFilter["redactions"], 0) != 2 ||
+		anyToInt(secretFilter["blocked"], 0) != 1 {
+		t.Fatalf("unexpected secret filter telemetry: %#v", secretFilter)
+	}
+	serialized, err := json.Marshal(secretFilter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(serialized), syntheticAssignedSecret()) {
+		t.Fatal("secret filter telemetry exposed a matched value")
+	}
+}
+
 func BenchmarkWriteSecretFilter(b *testing.B) {
 	tests := []struct {
 		name    string

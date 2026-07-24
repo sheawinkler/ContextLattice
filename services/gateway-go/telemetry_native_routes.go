@@ -293,6 +293,7 @@ func (s *server) telemetryMemoryPayload() map[string]any {
 		"updatedAt":               updatedAt,
 		"lastWriteAt":             lastWriteAt,
 		"lastWriteLatencyMs":      lastWriteLatency,
+		"secretFilter":            writeSnapshot["secretFilter"],
 		"memoryBank": map[string]any{
 			"queueDepth": queueDepth,
 			"queueMax":   queueMax,
