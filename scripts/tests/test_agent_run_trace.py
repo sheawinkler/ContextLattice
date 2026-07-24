@@ -62,6 +62,25 @@ def proof_payload() -> dict:
 
 
 class AgentRunTraceTests(unittest.TestCase):
+    def test_trace_presets_select_coherent_defaults(self) -> None:
+        proof = TRACE.apply_trace_preset(
+            SimpleNamespace(preset="proof", proof=False, json=False, tree=False, markdown=False)
+        )
+        export = TRACE.apply_trace_preset(
+            SimpleNamespace(preset="export", proof=False, json=False, tree=False, markdown=False)
+        )
+        machine = TRACE.apply_trace_preset(
+            SimpleNamespace(preset="machine", proof=False, json=False, tree=False, markdown=False)
+        )
+        explicit = TRACE.apply_trace_preset(
+            SimpleNamespace(preset="machine", proof=False, json=False, tree=True, markdown=False)
+        )
+        self.assertTrue(proof.proof)
+        self.assertTrue(export.markdown)
+        self.assertTrue(machine.json)
+        self.assertTrue(explicit.tree)
+        self.assertFalse(explicit.json)
+
     def test_proof_renderers_surface_integrity_gaps_and_timeline(self) -> None:
         tree = TRACE.render_proof_tree(proof_payload())
         markdown = TRACE.render_proof_markdown(proof_payload())

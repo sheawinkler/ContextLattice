@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
-from _common import emit, read_agent_session_state, request_json
+from _common import emit, read_agent_session_state, request_json, resolve_pretty
 
 
 def as_dict(value: Any) -> dict[str, Any]:
@@ -288,28 +288,49 @@ def write_or_print(body: str, output: str) -> None:
     sys.stdout.write(body)
 
 
+def apply_trace_preset(args: argparse.Namespace) -> argparse.Namespace:
+    preset = text(args.preset, "overview").lower()
+    if preset == "proof":
+        args.proof = True
+    elif preset == "export" and not (args.json or args.tree or args.markdown):
+        args.markdown = True
+    elif preset == "machine" and not (args.json or args.tree or args.markdown):
+        args.json = True
+    return args
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Render the ContextLattice trace for an agent session.")
     parser.add_argument("--session-id", default="", help="Agent session id. Defaults to CONTEXTLATTICE_SESSION_ID or persisted state.")
     parser.add_argument("--project", default=os.getenv("CONTEXTLATTICE_PROJECT", "contextlattice"))
     parser.add_argument("--timeout", type=float, default=15.0)
     parser.add_argument("--output", default="", help="Write rendered output to this path instead of stdout.")
-    parser.add_argument("--pretty", action="store_true", help="Pretty-print JSON when --json is used.")
+    parser.add_argument(
+        "--preset",
+        choices=("overview", "proof", "export", "machine"),
+        default=os.getenv("CONTEXTLATTICE_TRACE_PRESET", "overview"),
+        help="Select a coherent default view. Explicit view flags override the preset.",
+    )
+    output_mode = parser.add_mutually_exclusive_group()
+    output_mode.add_argument("--pretty", dest="pretty", action="store_true", help="Pretty-print JSON when --json is used.")
+    output_mode.add_argument("--compact", dest="pretty", action="store_false", help="Force compact JSON.")
+    parser.set_defaults(pretty=None)
     parser.add_argument("--proof", action="store_true", help="Join the integrity-checked proof timeline; feature rollback returns the existing trace.")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--json", action="store_true", help="Emit the raw contract-valid trace JSON.")
     mode.add_argument("--tree", action="store_true", help="Emit a compact terminal tree.")
     mode.add_argument("--markdown", action="store_true", help="Emit the exportable Markdown run card.")
-    args = parser.parse_args()
+    args = apply_trace_preset(parser.parse_args())
 
     trace = fetch_trace(args)
     ok = bool(trace.get("ok"))
     if args.json:
+        pretty = resolve_pretty(args.pretty, output_path=args.output)
         if args.output:
-            body = json.dumps(trace, indent=2 if args.pretty else None, sort_keys=args.pretty) + "\n"
+            body = json.dumps(trace, indent=2 if pretty else None, sort_keys=pretty) + "\n"
             write_or_print(body, args.output)
         else:
-            emit(trace, args.pretty)
+            emit(trace, pretty)
         return 0 if ok else 1
     if text(trace.get("schema_id")) == "agent_proof_timeline.v1" and not args.markdown:
         write_or_print(render_proof_tree(trace), args.output)

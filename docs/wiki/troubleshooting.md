@@ -53,7 +53,7 @@ Use `wrong` when the retrieved claim was false, `stale` when it aged out, `super
 
 ```zsh
 contextlattice_async_inbox_drain --session-id <session-id>
-contextlattice_agent_trace --session-id <session-id> --tree
+contextlattice_agent_trace --session-id <session-id> --preset proof
 ```
 
 Inspect whether the slow source is still running, terminally degraded, or disconnected. Do not hide terminal degradation by repeatedly launching the same deep query.

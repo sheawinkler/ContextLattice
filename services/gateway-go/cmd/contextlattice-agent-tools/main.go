@@ -182,6 +182,65 @@ func newCLI(stdout, stderr io.Writer) *cli {
 	}
 }
 
+func cliWriterIsTerminal(writer io.Writer) bool {
+	file, ok := writer.(*os.File)
+	if !ok {
+		return false
+	}
+	info, err := file.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
+}
+
+func cliArgPresent(args []string, names ...string) bool {
+	wanted := map[string]struct{}{}
+	for _, name := range names {
+		wanted[strings.TrimLeft(strings.TrimSpace(name), "-")] = struct{}{}
+	}
+	for _, arg := range args {
+		if !strings.HasPrefix(arg, "-") || arg == "-" {
+			continue
+		}
+		name := strings.TrimLeft(arg, "-")
+		if index := strings.Index(name, "="); index >= 0 {
+			name = name[:index]
+		}
+		if _, ok := wanted[name]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func applyCLIOutputDefaults(command string, args []string, terminal bool, configuredMode string) []string {
+	mode := strings.ToLower(strings.TrimSpace(configuredMode))
+	switch mode {
+	case "", "auto":
+		if !terminal {
+			return args
+		}
+	case "compact", "raw":
+		return args
+	case "pretty":
+	default:
+		mode = "auto"
+		if !terminal {
+			return args
+		}
+	}
+	if cliArgPresent(args, "pretty", "raw", "output") {
+		return args
+	}
+	if mode == "auto" {
+		switch command {
+		case "trace", "run-advisor", "async-inbox-drain":
+			if !cliArgPresent(args, "json") {
+				return args
+			}
+		}
+	}
+	return append(append([]string{}, args...), "--pretty")
+}
+
 func (c *cli) run(argv []string) error {
 	if len(argv) == 0 {
 		return errors.New("missing argv")
@@ -196,6 +255,12 @@ func (c *cli) run(argv []string) error {
 		command = strings.TrimSpace(args[0])
 		args = args[1:]
 	}
+	args = applyCLIOutputDefaults(
+		command,
+		args,
+		cliWriterIsTerminal(c.stdout),
+		envString("CONTEXTLATTICE_CLI_OUTPUT", "auto"),
+	)
 	switch command {
 	case "context":
 		return c.cmdContext(args)
@@ -3497,9 +3562,43 @@ func renderAsyncInboxDrainText(result map[string]any) string {
 	return strings.Join(lines, "\n") + "\n"
 }
 
+func applyTracePreset(parsed parsedArgs) (parsedArgs, error) {
+	preset := strings.ToLower(parsed.string("preset", envString("CONTEXTLATTICE_TRACE_PRESET", "overview")))
+	switch preset {
+	case "", "overview":
+		preset = "overview"
+	case "proof":
+		if !parsed.has("proof") {
+			parsed.bools["proof"] = true
+		}
+	case "export", "markdown":
+		if !parsed.bool("json") && !parsed.bool("tree") && !parsed.bool("markdown") {
+			parsed.bools["markdown"] = true
+		}
+	case "machine", "json":
+		if !parsed.bool("json") && !parsed.bool("tree") && !parsed.bool("markdown") {
+			parsed.bools["json"] = true
+		}
+	default:
+		return parsed, errors.New("trace preset must be overview, proof, export, or machine")
+	}
+	selectedViews := 0
+	for _, name := range []string{"json", "tree", "markdown"} {
+		if parsed.bool(name) {
+			selectedViews++
+		}
+	}
+	if selectedViews > 1 {
+		return parsed, errors.New("trace view flags --tree, --markdown, and --json are mutually exclusive")
+	}
+	parsed.values["preset"] = preset
+	return parsed, nil
+}
+
 func (c *cli) cmdTrace(args []string) error {
 	parsed := parseArgs(args, mergeStringFlags(commonStringFlags(), map[string]string{
 		"session-id": "session_id",
+		"preset":     "preset",
 		"output":     "output",
 	}), mergeBoolFlags(commonBoolFlags(), map[string]string{
 		"json":     "json",
@@ -3508,7 +3607,12 @@ func (c *cli) cmdTrace(args []string) error {
 		"proof":    "proof",
 	}))
 	if parsed.bool("help") {
-		return c.emitUsage("contextlattice_agent_trace --session-id <id> [--proof] [--tree|--markdown|--json] [--pretty] [--output path]")
+		return c.emitUsage("contextlattice_agent_trace --session-id <id> [--preset overview|proof|export|machine] [--proof] [--tree|--markdown|--json] [--pretty] [--output path]")
+	}
+	var presetErr error
+	parsed, presetErr = applyTracePreset(parsed)
+	if presetErr != nil {
+		return presetErr
 	}
 	c.applyBaseURL(parsed)
 	sessionID := parsed.string("session_id", envString("CONTEXTLATTICE_SESSION_ID", ""))
