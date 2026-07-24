@@ -6,7 +6,8 @@
   <title>Context Lattice Updates</title>
   <meta name="description" content="The ContextLattice release journal: durable continuity, explainable retrieval, portable context, verified learning, privacy boundaries, and immutable release proof." />
   <link rel="canonical" href="https://contextlattice.io/updates.html" />
-  <link rel="stylesheet" href="styles-gray.css?v=20260723a" />
+  <link rel="icon" type="image/png" sizes="512x512" href="assets/contextlattice-icon-512.png" />
+  <link rel="stylesheet" href="styles-gray.css?v=20260724c" />
 </head>
 <body class="home">
   <main class="container">
@@ -16,58 +17,30 @@
         <span class="brand-copy"><span class="brand-label">Context Lattice</span><span class="brand-sub">By Private Memory Corp</span></span>
       </a>
       <nav class="nav" aria-label="Primary">
-        <a href="index.html">Home</a>
-        <a href="architecture.html">Architecture</a>
-        <a href="local-ai-workspaces.html">Compare</a>
-        <a href="scaling-memory.html">Memory at Scale</a>
-        <a href="wiki.html">Wiki</a>
+        <a href="docs/">Docs</a>
+        <a href="premium.html">Pricing</a>
         <a class="active" href="updates.html">Updates</a>
-        <a href="roadmap.html">Roadmap</a>
-        <a href="installation.html">Installation</a>
-        <a href="cli.html">CLI</a>
-        <a href="integration.html">Integrations</a>
-        <a href="troubleshooting.html">Troubleshooting</a>
-        <a href="contact.html">Contact</a>
+        <a href="https://app.contextlattice.io/console">Dashboard</a>
         <a href="https://github.com/sheawinkler/ContextLattice" target="_blank" rel="noreferrer">GitHub</a>
       </nav>
     </header>
 
     <section class="hero">
       <span class="badge">Release journal</span>
-      <h1>Product updates and rollout notes</h1>
+      <h1>Product updates</h1>
       <p class="sub">
-        This page tracks meaningful platform updates over time. It starts with the new pilot page content and
-        the latest orchestrator retrieval and reliability upgrades.
+        Release facts only. Each item names what changed; repository notes carry the full proof.
       </p>
       <div class="cta-row">
         <a class="cta primary" href="index.html">Back to overview</a>
-        <a class="cta secondary" href="mailto:hello@contextlattice.io?subject=Context%20Lattice%20Update%20Question">Ask a question</a>
+        <a class="cta secondary" href="https://github.com/sheawinkler/ContextLattice/tree/main/docs/releases" target="_blank" rel="noreferrer">Open release notes</a>
       </div>
-    </section>
-
-    <section class="section">
-      <article class="card">
-        <div class="kicker">Current launch boundary</div>
-        <h3>v4.0.5 keeps large memory stores responsive and makes the release surface prove it.</h3>
-        <ul class="spec-list">
-          <li><strong>Index the real filters:</strong> Qdrant indexes project and topic tags before large-store retrieval carries traffic.</li>
-          <li><strong>One migration owner:</strong> startup hardening is serialized so concurrent services cannot race the same collection changes.</li>
-          <li><strong>Patch the visible surface:</strong> Next.js, Auth.js, and image processing dependencies ship without known npm audit findings.</li>
-          <li><strong>Prove both viewports:</strong> live-data screenshots wait for settled state and fail on horizontal escape or mobile grid regression.</li>
-          <li><strong>Tell the distribution truth:</strong> the macOS DMG is labeled an unsigned preview until notarization credentials exist.</li>
-        </ul>
-      </article>
     </section>
 
     <section class="section timeline">
       <article class="update-card">
         <span class="update-meta">2026-07-23 · v4.0.5 · Stable at Scale.</span>
         <h2>A healthy container is not enough when retrieval stalls behind an unindexed filter.</h2>
-        <p>
-          ContextLattice now treats large-store responsiveness as part of uptime. Startup migrations are serialized,
-          Qdrant filters used by real project and topic retrieval are indexed, and the release dashboard is gated on
-          settled desktop and mobile output.
-        </p>
         <ul>
           <li><strong>Large-store proof:</strong> bounded retrieval was exercised against more than 707,000 live points without restart or OOM churn.</li>
           <li><strong>Security baseline:</strong> the shipped dashboard dependency tree reports zero known npm audit vulnerabilities.</li>
@@ -78,11 +51,6 @@
       <article class="update-card">
         <span class="update-meta">2026-07-20 · v4.0.4 · Recovery Without Collateral Damage.</span>
         <h2>A self-healer should restore the service, not fight the machine beneath it.</h2>
-        <p>
-          ContextLattice now treats host recovery as a fail-closed state machine. Transient health and Docker
-          failures are observed, serialized, and thresholded; bounded repair acts once, while destructive host
-          escalation stays unavailable unless an operator explicitly opts in.
-        </p>
         <ul>
           <li><strong>One outage, one attempt:</strong> gateway and VM recovery both latch until full health returns.</li>
           <li><strong>Graceful means graceful:</strong> the supervisor has no force-stop or process-kill path.</li>
@@ -93,11 +61,6 @@
       <article class="update-card">
         <span class="update-meta">2026-07-20 · v4.0.3 · Production Means Production.</span>
         <h2>The intelligence layer now ships a dashboard with no development-mode disguise.</h2>
-        <p>
-          ContextLattice now builds and starts its dashboard as an optimized production artifact. Runtime mode is
-          resolved before environment-specific probes begin, container health follows that same contract, and long
-          graph paths stay inside their visual boundary on desktop and mobile.
-        </p>
         <ul>
           <li><strong>No HMR theater:</strong> production startup removes Fast Refresh, development overlays, and surprise runtime package fetching.</li>
           <li><strong>No false alarms:</strong> local mode skips hosted-only billing probes while retaining the complete runtime status surface.</li>
@@ -108,11 +71,6 @@
       <article class="update-card">
         <span class="update-meta">2026-07-20 · v4.0.2 · One Product. One Truth.</span>
         <h2>The intelligence layer can now prove what it is, where it runs, and what every lane includes.</h2>
-        <p>
-          ContextLattice now projects one machine-readable product contract into its public story, dashboard,
-          generated runtime metadata, release notes, and lane-aware audits. The result is less launch theater and
-          more trust: the interface hierarchy, license boundary, product category, and release number must agree.
-        </p>
         <ul>
           <li><strong>CLI first:</strong> installation, adoption, context, continuity, correction, and diagnosis all begin from one prescribed interface.</li>
           <li><strong>Visible intelligence:</strong> the dashboard exposes continuity, explainable retrieval, portable context, verified learning, and controlled Aggregate Signal truth.</li>
@@ -123,10 +81,6 @@
       <article class="update-card">
         <span class="update-meta">2026-07-19 · v4.0.1 · Installer boundary repair.</span>
         <h2>Fail closed. Not false closed.</h2>
-        <p>
-          The v4.0.0 source and privacy boundary passed review, but its public installer guard mistook a disabled
-          compatibility status for paid runtime code. v4.0.1 repaired the classifier without weakening the wall.
-        </p>
         <ul>
           <li><strong>Same runtime:</strong> Aggregate Signal behavior, consent, suppression, accounting, and product boundaries were unchanged.</li>
           <li><strong>Sharper gate:</strong> the public status shim was accepted while every real paid governance marker remained forbidden.</li>
@@ -137,10 +91,6 @@
       <article class="update-card">
         <span class="update-meta">2026-07-19 · v4.0.0 · Aggregate Signal.</span>
         <h2>Memory that compounds without giving itself away.</h2>
-        <p>
-          ContextLattice can now learn from bounded outcome statistics while raw memory, prompts, paths, projects,
-          and stable identities stay outside the signal boundary.
-        </p>
         <ul>
           <li><strong>Local by default:</strong> preview, queue, accounting, reporting, and opt-out perform zero external network calls.</li>
           <li><strong>Privacy has hard edges:</strong> clipping, cohort suppression, composition budgets, replay rejection, expiry, and revocation are enforced contracts.</li>
@@ -151,10 +101,6 @@
       <article class="update-card">
         <span class="update-meta">2026-07-19 · v3.26.0 · Continuity Zero.</span>
         <h2>Open an agent. Already there.</h2>
-        <p>
-          ContextLattice can now identify one safe active mission and assemble everything needed for the next useful
-          action before another giant prompt, repeated setup ritual, or archaeological dig consumes the session.
-        </p>
         <ul>
           <li><strong>Zero-entry manifest:</strong> packet, checkpoint, profile, preparation, repository commit, provenance, risks, and next move share one digest.</li>
           <li><strong>Fail-closed continuity:</strong> multiple objectives abstain; stale or conflicting evidence rejects rather than guessing.</li>
@@ -165,10 +111,6 @@
       <article class="update-card">
         <span class="update-meta">2026-07-19 · v3.25.0 · Verified Skill Evolution.</span>
         <h2>Memory now compounds into capability.</h2>
-        <p>
-          ContextLattice can now recognize a workflow that repeatedly survived real verification, turn it into a
-          complete skill candidate, and catch capability decay before stale behavior hardens into habit.
-        </p>
         <ul>
           <li><strong>Proof-qualified candidates:</strong> discovery joins persisted utility and session evidence before Foundry handoff.</li>
           <li><strong>Atomic evolution:</strong> workflow material, evaluation, and updated draft commit as one replay-safe transaction.</li>
@@ -179,10 +121,6 @@
       <article class="update-card">
         <span class="update-meta">2026-07-19 · v3.24.0 · Portable Continuation.</span>
         <h2>The work can move. The trust boundary does not.</h2>
-        <p>
-          ContextLattice can now package the exact state of serious work into a signed, encrypted continuation,
-          let the operator move it through any chosen channel, and re-prove authorization before the receiver continues.
-        </p>
         <ul>
           <li><strong>Least privilege:</strong> collaborative grants are recipient-, project-, purpose-, time-, usage-, delegation-, and revocation-bound.</li>
           <li><strong>Proof-preserving movement:</strong> deterministic import plans retain provenance while external workers own execution.</li>
@@ -193,10 +131,6 @@
       <article class="update-card">
         <span class="update-meta">2026-07-19 · v3.23.0 · Agent Fit.</span>
         <h2>The memory layer learned how each agent works.</h2>
-        <p>
-          ContextLattice can now shape the briefing, carry live steering, compare the available runner or model,
-          and prepare context before compute without becoming the harness or quietly taking control of execution.
-        </p>
         <ul>
           <li><strong>Live steering:</strong> durable events, replay cursors, acknowledgements, backpressure, and honest pull fallback survive reconnects.</li>
           <li><strong>Adaptive briefings:</strong> explicit, stored, and generic profiles resolve deterministically against capabilities and context limits.</li>
@@ -207,10 +141,6 @@
       <article class="update-card">
         <span class="update-meta">2026-07-18 · v3.22.0 · Policy Laboratory.</span>
         <h2>Retrieval policy stopped running on vibes.</h2>
-        <p>
-          ContextLattice can now replay a candidate, show the trade, learn the right fit for one project, and refuse
-          promotion when assignments, uncertainty, drift, or survivor bias do not survive inspection.
-        </p>
         <ul>
           <li><strong>Evidence-gated policy:</strong> same-snapshot simulation and promotion receipts separate predicted deltas from observed outcomes.</li>
           <li><strong>Reversible memory evolution:</strong> retirement, contradiction resolution, and hot/warm/deep/retired movement preserve history and legal holds.</li>
@@ -221,11 +151,6 @@
       <article class="update-card">
         <span class="update-meta">2026-07-18 · v3.21.0 · Retrieval Receipts.</span>
         <h2>Recall stopped being a black box.</h2>
-        <p>
-          ContextLattice now returns the evidence packet and the decision trail that shaped it. Suspicious memory gets
-          zero influence, legitimate runbooks remain useful, and causal synthesis says "not proven" before similarity
-          can masquerade as explanation.
-        </p>
         <ul>
           <li><strong>Trust isolation:</strong> prompt overrides, secret exfiltration, encoded instructions, destructive claims, and coordinated risky paraphrases fail closed.</li>
           <li><strong>Counterfactual proof:</strong> same-snapshot ablation reports exact result, rank, and citation deltas without inventing utility.</li>
@@ -237,11 +162,6 @@
       <article class="update-card">
         <span class="update-meta">2026-07-18 · v3.20.3 · Receipts Before Release.</span>
         <h2>The artifact gate passed. The claim gate did not. Nothing shipped.</h2>
-        <p>
-          The paid release had exact source provenance and a healthy runtime proof, but its compact evidence file did not
-          satisfy the complete evaluation contract. v3.20.3 closes that split: the same full program audit now runs before
-          a release can be authorized and again before paid installers can build.
-        </p>
         <ul>
           <li><strong>One metric contract:</strong> causal utility, exact denominators, latency, cost, storage, failures, rollback, review, and entitlement proof travel together.</li>
           <li><strong>Clean product boundary:</strong> Starter and Team keep read analytics; governed efficiency-policy operations require Operator or Enterprise.</li>
@@ -253,11 +173,6 @@
       <article class="update-card">
         <span class="update-meta">2026-07-18 · v3.20.2 · One Source. Every Lane.</span>
         <h2>The comparator found one line of drift. Nothing shipped.</h2>
-        <p>
-          Canonical and paid runtime behavior matched, but two test files had been edited per lane to account for a
-          developer-only profile that paid must never contain. The release gate rejected the split before build.
-          v3.20.2 replaces both variants with one source-identical contract that understands the boundary explicitly.
-        </p>
         <ul>
           <li><strong>One test source:</strong> canonical and public-paid now prove commercial truth and storage controls with byte-identical code.</li>
           <li><strong>No boundary blur:</strong> developer-only configuration remains excluded from every paid artifact.</li>
@@ -269,11 +184,6 @@
       <article class="update-card">
         <span class="update-meta">2026-07-18 · v3.20.1 · Receipts Bound to the Release.</span>
         <h2>The gate caught the drift. The patch killed the loophole.</h2>
-        <p>
-          The first paid v3.20.0 workflow stopped before publishing a single asset because its current-release
-          provenance still named the previous Frontier train. v3.20.1 repairs the proof chain and makes that drift
-          a pre-release failure instead of a tag-time surprise.
-        </p>
         <ul>
           <li><strong>Current means current:</strong> the active T3 activation, tested source, evidence hashes, and release provenance must agree.</li>
           <li><strong>History stays provable:</strong> older T2 evidence verifies from immutable hashes without hijacking the current-release record.</li>
@@ -285,10 +195,6 @@
       <article class="update-card">
         <span class="update-meta">2026-07-17 · v3.20.0 · Intelligence With Receipts.</span>
         <h2>Context economics grew a spine.</h2>
-        <p>
-          The Utility Ledger joins exact context costs to independently verified outcomes, then refuses to call a
-          correlation causal unless a locked matched control survives every task, model, runner, and leakage check.
-        </p>
         <ul>
           <li><strong>Exact where exact matters:</strong> model-visible ContextLattice tokens never blend with wire or provider totals.</li>
           <li><strong>Two actors, one witnessed result:</strong> reporting and verification are distinct CLI receipts, with self-verification rejected.</li>
@@ -300,10 +206,6 @@
       <article class="update-card">
         <span class="update-meta">2026-07-17 · v3.19.2 · Proof That Refuses to Lie.</span>
         <h2>The release gate stayed sharp.</h2>
-        <p>
-          Strict paid-source provenance stopped an incomplete artifact before publication. The repair restores the
-          private/public-paid proof boundary without importing private program machinery or relaxing one check.
-        </p>
         <ul>
           <li><strong>Shared means identical:</strong> every approved shared proof source now matches byte for byte.</li>
           <li><strong>Private means private:</strong> Frontier program regression logic executes only in the private proof lane.</li>
@@ -315,10 +217,6 @@
       <article class="update-card">
         <span class="update-meta">2026-07-17 · v3.19.1 · Sessions That Actually End.</span>
         <h2>Complete means complete.</h2>
-        <p>
-          The CLI now turns a terminal command into terminal system truth: no panic, no active-session ghost,
-          and no disagreement between the event, session, rollup, and agent lifecycle.
-        </p>
         <ul>
           <li><strong>Panic removed:</strong> <code>complete</code> and <code>fail</code> accept a flag-only summary safely.</li>
           <li><strong>Canonical lifecycle:</strong> the CLI emits <code>session.completed</code> and <code>session.failed</code>.</li>
@@ -330,10 +228,6 @@
       <article class="update-card">
         <span class="update-meta">2026-07-16 · v3.19.0 · The Delta and the Proof.</span>
         <h2>Less context baggage. More evidence.</h2>
-        <p>
-          Agent Packets now transmit only the verified delta when it is smaller, while one bounded proof timeline shows
-          what the agent knew, did, fixed, proved, and taught the system.
-        </p>
         <ul>
           <li><strong>Digest-verified deltas:</strong> acknowledged bases, canonical operations, tombstones, and reconstruction digests preserve exact model-visible context.</li>
           <li><strong>Safe fallback:</strong> stale, tampered, mismatched, expired, or uneconomic bases return the full packet instead of gambling on compression.</li>
@@ -345,10 +239,6 @@
       <article class="update-card">
         <span class="update-meta">2026-07-14 · v3.18.0 · Continuity Has an Identity.</span>
         <h2>Agents stop starting over.</h2>
-        <p>
-          Work now keeps one durable identity across agents, accounts, models, sessions, branches, and worktrees.
-          Exact evidence wins first; deterministic semantic continuity reconnects only unambiguous work and abstains on doubt.
-        </p>
         <ul>
           <li><strong>Holdout-proven continuity:</strong> the locked scorer resolves the release holdout with zero false merges and no provider calls.</li>
           <li><strong>Living objective history:</strong> shared graphs expose bounded nodes, edges, and transitions without flattening time.</li>
@@ -360,11 +250,6 @@
       <article class="update-card">
         <span class="update-meta">2026-07-13 · v3.17.5 · Current Means Current.</span>
         <h2>State stops haunting recall.</h2>
-        <p>
-          A live position, policy snapshot, or runtime mode is not a diary entry. ContextLattice now keeps one exact
-          current value and prevents stale copies from resurfacing through semantic history, vector stores, Mongo-derived
-          snapshots, Rust accelerators, or Meilisearch.
-        </p>
         <ul>
           <li><strong>Latest-only by construction:</strong> state mirrors overwrite their canonical file and never enter ordinary history, rollups, graph confidence, or semantic fanout.</li>
           <li><strong>Source-agnostic suppression:</strong> the gateway filters stale state at the final retrieval boundary, regardless of which backend returned it.</li>
@@ -376,10 +261,6 @@
       <article class="update-card">
         <span class="update-meta">2026-07-13 · v3.17.4 · Trust, Delivered.</span>
         <h2>The boundary caught the residue. The patch made the boundary permanent.</h2>
-        <p>
-          The v3.17.3 installer gate rejected one unused paid-lane environment key in a public test fixture.
-          v3.17.4 removes it, adds a regression assertion, and publishes the exact public tree forward-only.
-        </p>
         <ul>
           <li><strong>No tag games:</strong> the failed release remains immutable and the correction ships as a new patch.</li>
           <li><strong>No runtime churn:</strong> every v3.17.3 storage, approval, temporal, routing, and ownership hardening remains unchanged.</li>
@@ -390,10 +271,6 @@
       <article class="update-card">
         <span class="update-meta">2026-07-13 · v3.17.3 · Trust Before Magic.</span>
         <h2>Before memory gets more magical, its floor gets harder.</h2>
-        <p>
-          ContextLattice now turns six quiet assumptions into enforced contracts: private storage, pre-execution approval,
-          evidence-qualified runner advice, time-aware recall, canonical task routes, and exact native route ownership.
-        </p>
         <ul>
           <li><strong>Owner-only means owner-only:</strong> sensitive files use restrictive POSIX modes or protected Windows ACLs, with bounded resumable migration and symlink containment.</li>
           <li><strong>No approval, no work:</strong> blocked tasks stop before routing, context expansion, inference, adapters, or memory writeback.</li>
@@ -406,10 +283,6 @@
       <article class="update-card">
         <span class="update-meta">2026-07-13 · v3.17.2 · Your Models. Your Disk.</span>
         <h2>Local-first should not mean internal-disk-first.</h2>
-        <p>
-          ContextLattice now lets operators place Ollama model data on any explicit absolute path while preserving
-          the existing home-directory default. The runtime verifies what was mounted, not merely what was requested.
-        </p>
         <ul>
           <li><strong>One deliberate override:</strong> <code>OLLAMA_DATA</code> moves model blobs without changing quickstart behavior for everyone else.</li>
           <li><strong>Proof before pressure:</strong> the storage verifier checks the running container's actual source and fails on mount drift.</li>
@@ -421,10 +294,6 @@
       <article class="update-card">
         <span class="update-meta">2026-07-12 · v3.17.0 · One Promise. One Proof.</span>
         <h2>Paid stopped being a label. It became a cryptographic boundary.</h2>
-        <p>
-          ContextLattice now generates pricing, entitlements, release identity, and buyer-facing feature truth from one contract.
-          The artifact a customer downloads carries its lane, source commit, payload digest, and offline-verifiable runtime license path with it.
-        </p>
         <ul>
           <li><strong>Self-contained delivery:</strong> macOS, Windows, and Linux packages embed the tagged payload and hard-fail if it is absent; no public clone fallback exists.</li>
           <li><strong>Signed local access:</strong> Ed25519 runtime licenses derive plan, role, and feature permission from signed claims while local development stays keyless only in an explicit non-production, feature-complete mode; production authorization rejects that bypass.</li>
@@ -436,10 +305,6 @@
       <article class="update-card">
         <span class="update-meta">2026-07-12 · v3.16.0 · The Agent Packet</span>
         <h2>Memory stopped arriving as luggage. It arrives as leverage.</h2>
-        <p>
-          ContextLattice now compresses task truth into one bounded packet that shows its evidence, uncertainty,
-          provenance, next move, continuation state, and permission to act, verify, or abstain.
-        </p>
         <ul>
           <li><strong>One front door:</strong> <code>context</code>, <code>resume</code>, <code>remember</code>, <code>finish</code>, <code>correct</code>, and <code>doctor</code> replace lifecycle ceremony without removing advanced surfaces.</li>
           <li><strong>One task, one live session:</strong> exact task/native identity is reused; idle, completed, failed, canceled, and expired sessions cannot masquerade as active work.</li>
@@ -451,10 +316,6 @@
       <article class="update-card">
         <span class="update-meta">2026-07-12 · v3.15.1 · One Runtime. Zero Drift.</span>
         <h2>The app and its release machinery now live in the same JavaScript era.</h2>
-        <p>
-          ContextLattice-owned Node surfaces converge on Node 24 LTS, with executable contracts that catch
-          package, container, and GitHub Actions drift before it reaches a user.
-        </p>
         <ul>
           <li><strong>Exact runtime:</strong> local version files, strict package engines, Node types, and container images agree on Node 24.18.0.</li>
           <li><strong>Actual execution:</strong> CI performs a clean install, full dashboard test suite, and production build on Node 24.</li>
@@ -466,10 +327,6 @@
       <article class="update-card">
         <span class="update-meta">2026-07-12 · v3.15.0 · The Graph Earns Its Keep</span>
         <h2>Memory links stopped being decorative.</h2>
-        <p>
-          A graph is not intelligence because it stores edges. It earns that name when it recovers evidence
-          ordinary ranking misses, fits inside the prompt budget, and proves the gain without hiding a regression.
-        </p>
         <ul>
           <li><strong>Identity-first repair:</strong> explicit references and session continuity reconnect the hot corpus before broader topic or opt-in inferred relationships.</li>
           <li><strong>Measured lift:</strong> separate direct seeds and graph targets make graph contribution impossible to fake by denominator dilution.</li>
@@ -481,10 +338,6 @@
       <article class="update-card">
         <span class="update-meta">2026-07-12 · v3.14.0 · Context That Can Travel Without Losing Its Proof</span>
         <h2>Your agent's working truth is no longer trapped on one machine.</h2>
-        <p>
-          Context Passports turn proof-carrying synthesis into a signed, bounded, expiring artifact. Context Mesh
-          encrypts that artifact to explicit project-scoped recipients while keeping transport outside ContextLattice.
-        </p>
         <ul>
           <li><strong>Portable proof:</strong> objective state, claims, evidence, lineage, capabilities, redactions, and replay inputs stay bound to one signed digest.</li>
           <li><strong>Trust before action:</strong> verify, diff, and dry-run replay expose exactly what arrived; imported content never becomes an executable instruction.</li>
@@ -496,10 +349,6 @@
       <article class="update-card">
         <span class="update-meta">2026-07-12 · v3.13.0 · Memory That Learns Without Grabbing the Wheel</span>
         <h2>Outcomes became policy evidence. Repeated wins became skill drafts.</h2>
-        <p>
-          ContextLattice can now learn from completed work without quietly rewriting retrieval or installing generated behavior.
-          Policy candidates move one phase at a time. Skill drafts must reproduce on evidence that was never used to create them.
-        </p>
         <ul>
           <li><strong>Outcome policy:</strong> calibration-eligible rows only, explicit policy arms, controlled canary gates, and automatic rollback advice on material regression.</li>
           <li><strong>Skill Foundry:</strong> three stable verified runs, three independent holdouts, collision detection, named approval, and inactive export.</li>
@@ -511,11 +360,6 @@
       <article class="update-card">
         <span class="update-meta">2026-07-11 · v3.12.0 · Proof, Not Vibes</span>
         <h2>Memory learned time. Synthesis inherited a burden of proof.</h2>
-        <p>
-          v3.12 can preserve what is true now, what used to be true, what replaced it, and what contests it.
-          The new planner names the evidence a task owes before acting, while Synthesis v2 refuses to turn an
-          uncited retrieval fragment into a confident claim.
-        </p>
         <ul>
           <li><strong>Temporal Claim Graph:</strong> validity, provenance, verification, contradiction, supersession, causality, branch, and commit identity survive restart.</li>
           <li><strong>Adaptive planner:</strong> evidence obligations, source/query selection, token allocation, graph advice, and stop conditions remain transparent and <code>shadow_only</code>.</li>
@@ -527,11 +371,6 @@
       <article class="update-card">
         <span class="update-meta">2026-07-11 · v3.11.2 · Sparse Evidence Preservation</span>
         <h2>The smallest pack still carries proof.</h2>
-        <p>
-          v3.11.2 changes the final context boundary from an empty shell into an evidence kernel. When a full
-          Context Pack exceeds its output contract, ContextLattice now keeps the four highest-ranked compact
-          evidence cards and rebuilds synthesis from those citations.
-        </p>
         <ul>
           <li><strong>Priority:</strong> high-impact evidence survives before duplicated prompt structure.</li>
           <li><strong>Truthful accounting:</strong> compiler and token-budget metadata report both pre-boundary and returned evidence counts.</li>
@@ -542,11 +381,6 @@
       <article class="update-card">
         <span class="update-meta">2026-07-11 · v3.11.1 · Upgrade-Safe Runner Discovery</span>
         <h2>Long-lived agents can find the current install.</h2>
-        <p>
-          v3.11.1 prevents a stale inherited checkout path from hiding valid Pi and Droid adapters after an
-          in-place ContextLattice upgrade. Discovery now consults the installer-owned root and installed
-          contract registry while preserving explicit repository selection.
-        </p>
         <ul>
           <li><strong>Upgrade safety:</strong> agents launched before an install refresh no longer need a manual environment rewrite to see the current runner adapters.</li>
           <li><strong>Contract truth:</strong> runner capability detection can use the installed, versioned contract registry.</li>
@@ -557,11 +391,6 @@
       <article class="update-card">
         <span class="update-meta">2026-07-11 · v3.11.0 · Cognition Core</span>
         <h2>Memory became a decision surface.</h2>
-        <p>
-          v3.11.0 adds deterministic Synthesis Packs, keeps sparse context contract-valid, labels queued
-          retrieval as warming instead of degraded, and closes the outcome loop without letting infrastructure
-          failures poison retrieval calibration.
-        </p>
         <ul>
           <li><strong>Synthesis:</strong> CLI and HTTP surfaces turn ranked evidence, topic gravity, graph links, constraints, and open questions into a bounded brief.</li>
           <li><strong>Honest graph proof:</strong> project graph quality rose from <code>20</code> to <code>74</code>; saved recall passed <code>5/5</code>, while measured graph lift remained <code>0.0</code>, so expansion stays disabled.</li>
@@ -574,11 +403,6 @@
       <article class="update-card">
         <span class="update-meta">2026-07-06 · v3.10.2 · Go-Native Feedback Submit</span>
         <h2>The feedback loop moved onto the hot path.</h2>
-        <p>
-          v3.10.2 makes <code>/tools/feedback_submit</code> a native Go route with bounded
-          validation, idempotency, preference projection, telemetry, and strict ownership coverage.
-          The active runtime no longer needs a Python backend proxy for agent feedback.
-        </p>
         <ul>
           <li><strong>Native route:</strong> <code>/tools/feedback_submit</code> is served by <code>gateway-go</code>.</li>
           <li><strong>Safety:</strong> duplicate idempotency keys replay safely; mismatched payloads return conflict.</li>
@@ -589,11 +413,6 @@
       <article class="update-card">
         <span class="update-meta">2026-07-06 · v3.10.1 · OMP + Mercury Install Hooks</span>
         <h2>New installs now wire more local agents without another round trip.</h2>
-        <p>
-          v3.10.1 adds first-class OMP and Mercury agent profiles, default adoption coverage,
-          and installer-managed instruction hooks when those harnesses are detected locally.
-          ContextLattice still does not install third-party agent binaries.
-        </p>
         <ul>
           <li><strong>OMP:</strong> detected installs receive a managed ContextLattice block in the OMP user instruction file.</li>
           <li><strong>Mercury:</strong> detected installs receive a managed ContextLattice block in the Mercury user instruction file.</li>
@@ -605,11 +424,6 @@
       <article class="update-card">
         <span class="update-meta">2026-07-06 · v3.10.0 · Agent Runner Layer</span>
         <h2>Agents can now do real local runner work without turning ContextLattice into a swarm manager.</h2>
-        <p>
-          v3.10.0 adds optional Pi and Droid runner adapters, task-worker execution through safe repo-local
-          adapters, bounded runner-quality telemetry, and CLI-first operator guidance. ContextLattice coordinates
-          context, contracts, checkpoints, and evidence; external runners still execute the work.
-        </p>
         <ul>
           <li><strong>Runner adapters:</strong> Pi and Droid stay optional, explicit, and outside Docker Compose.</li>
           <li><strong>Advisor telemetry:</strong> <code>contextlattice_runner_quality</code> and the dashboard show bounded, task-class-aware runner evidence.</li>
@@ -621,11 +435,6 @@
       <article class="update-card">
         <span class="update-meta">2026-07-03 · v3.9.1 · Dashboard Polish</span>
         <h2>The cockpit is quieter, sharper, and harder to misread.</h2>
-        <p>
-          v3.9.1 packages the dashboard polish pass after the outcome-telemetry release: stronger contrast,
-          calmer titles, cleaner Settings, restored topic/mind-map context, and current public guidance for
-          humans and agents landing on the project.
-        </p>
         <ul>
           <li><strong>Dashboard:</strong> denser proof cards, clearer disk pressure labels, and less visual noise.</li>
           <li><strong>Settings:</strong> real local values, no placeholder model defaults, and paid runtime-key gating.</li>
@@ -636,11 +445,6 @@
       <article class="update-card">
         <span class="update-meta">2026-07-01 · v3.9.0 · Observed Outcome Telemetry</span>
         <h2>Agents can now report whether the context pack actually worked.</h2>
-        <p>
-          v3.9.0 closes the loop between context allocation and real agent outcomes. Context packs now carry an
-          outcome-report contract, the adapter can post first-pass/repair/retry facts at completion, and provider
-          token counters stay separate from modeled inference avoidance.
-        </p>
         <ul>
           <li><strong>Agent contract:</strong> <code>contextlattice_agent_adapter outcome</code> and completion outcome flags.</li>
           <li><strong>Telemetry:</strong> compact provider prompt/completion/total token counters in the quality ledger.</li>
@@ -651,11 +455,6 @@
       <article class="update-card">
         <span class="update-meta">2026-07-01 · v3.8.0 · Context Pack Quality Ledger</span>
         <h2>Context packs now measure quality, not just size.</h2>
-        <p>
-          v3.8.0 separates exact prompt-token savings from confidence-banded inference avoidance. The new quality
-          ledger records compact pack-quality rows and lets agents post first-pass, repair, retry, and follow-up-token
-          outcomes for calibration.
-        </p>
         <ul>
           <li><strong>Runtime:</strong> gateway now uses the MongoDB Go driver v2 line.</li>
           <li><strong>Proof:</strong> exact prompt savings stay exact; modeled inference avoidance is labeled as modeled until outcomes calibrate it.</li>
@@ -666,10 +465,6 @@
       <article class="update-card">
         <span class="update-meta">2026-07-01 · v3.7.1 · Security Patch</span>
         <h2>MongoDB driver advisory closed for the v3.7 train.</h2>
-        <p>
-          v3.7.1 upgrades the Go MongoDB driver past the patched advisory floor while keeping tokenizer-exact
-          prompt economics and bounded token-impact ledger persistence unchanged.
-        </p>
         <ul>
           <li><strong>Security:</strong> resolves <code>GHSA-cp6g-7hqx-qxhp</code> in the Go gateway dependency graph.</li>
           <li><strong>Upgrade path:</strong> dependency-only patch; no migration required from v3.7.0.</li>
@@ -679,11 +474,6 @@
       <article class="update-card">
         <span class="update-meta">2026-07-01 · v3.7.0 · Token Impact Engine</span>
         <h3>The memory layer now proves its prompt economics with tokenizer-exact accounting.</h3>
-        <p class="spotlight">
-          v3.7.0 upgrades ContextLattice from directional token-savings estimates to a restart-safe prompt economics ledger.
-          Context packs report exact tokenizer counts when the configured encoding is available, and the gateway persists compact
-          proof rows without storing raw prompts or recalled source text.
-        </p>
         <ul>
           <li><strong>Exact accounting:</strong> context packs expose <code>tokenizer_exact</code>, <code>estimate_method</code>, and <code>tokenizer_encoding</code>.</li>
           <li><strong>Bounded ledger:</strong> token-impact rows are compact, capped, and reloaded on gateway startup.</li>
@@ -695,11 +485,6 @@
       <article class="update-card">
         <span class="update-meta">2026-06-30 · v3.6.2 · Agent-Actionable Quickstart</span>
         <h3>A fresh agent can now land on the README and wire ContextLattice without a second prompt.</h3>
-        <p class="spotlight">
-          v3.6.2 makes the public adoption path explicit: clone the canonical repo, run the quickstart, verify the gateway,
-          integrate supported local agent profiles, and run the doctor. The release keeps ContextLattice positioned as the
-          durable operating layer around agent memory rather than another cockpit.
-        </p>
         <ul>
           <li><strong>Agent prompt:</strong> README now tells AI agents reading the page to follow the install + integration section directly.</li>
           <li><strong>Canonical repo:</strong> the quickstart spells out <code>https://github.com/sheawinkler/ContextLattice.git</code>.</li>
@@ -712,11 +497,6 @@
       <article class="update-card">
         <span class="update-meta">2026-06-22 · v3.5.0 · Dream Mode Intelligence + Lite Surface Contract</span>
         <h3>The public lane now draws the intelligence and profile boundaries explicitly.</h3>
-        <p class="spotlight">
-          Dream Mode is again treated as an LLM-derived synthesis surface, not a deterministic placeholder. Lite stays small,
-          but Local Lite keeps Qdrant-backed recall and memory edges/neighbors as core product intelligence while hosted/Glama
-          Lite remains sidecar-free.
-        </p>
         <ul>
           <li><strong>Dream Mode:</strong> fails closed unless model synthesis is available.</li>
           <li><strong>Hosted/Glama Lite:</strong> keeps the single-container, topic-rollups-only compliance profile.</li>
@@ -729,10 +509,6 @@
       <article class="update-card">
         <span class="update-meta">2026-06-19 · v3.4.25 · Go 1.26.4 Build Surface + Qdrant Writeback</span>
         <h3>The public build lane now targets Go 1.26.4 end to end.</h3>
-        <p class="spotlight">
-          This release updates the Go module and Docker builder surface while packaging the post-v3.4.24 agent/runtime train:
-          Go helper binaries, graph-aware context packs, Review Mode, bounded output contracts, and Qdrant-first writeback closure.
-        </p>
         <ul>
           <li><strong>Go toolchain:</strong> gateway and orchestrator modules now declare <code>go 1.26</code> with <code>toolchain go1.26.4</code>.</li>
           <li><strong>Container builders:</strong> Go builder stages now use exact <code>golang:1.26.4</code> Alpine/Bookworm tags.</li>
@@ -744,11 +520,6 @@
       <article class="update-card">
         <span class="update-meta">2026-06-11 · v3.4.13 · Zero-Friction Agent Adoption Kit</span>
         <h3>One command now tells a new agent whether ContextLattice is ready.</h3>
-        <p class="spotlight">
-          The adoption front door wraps install checks, runtime doctor output, profile detection, profiles, and proof
-          output so Codex, Claude Code, OpenCode, Hermes, web agents, and custom
-          LLM apps can start from the same local contract.
-        </p>
         <ul>
           <li><strong>Status:</strong> run <code>contextlattice_adopt status --pretty</code> to inspect gateway, helper, PATH, storage, session-store, and profile readiness.</li>
           <li><strong>Install:</strong> run <code>contextlattice_adopt install --pretty</code> from the repo to wire global helpers and Codex hooks.</li>
@@ -761,11 +532,6 @@
       <article class="update-card">
         <span class="update-meta">2026-06-12 · v3.4.13 · Async Recall Steering</span>
         <h3>Slow recall can now steer the requesting agent when it finishes.</h3>
-        <p class="spotlight">
-          Staged retrieval still returns fast context first, but continuation progress is now contract-visible across
-          HTTP, CLI, session rollups, traces, and the dashboard. Local agents can watch their own session and receive a
-          bounded steering comment when deeper recall is warming, ready, or terminally degraded.
-        </p>
         <ul>
           <li><strong>Progress contract:</strong> responses include <code>retrieval_progress.v1</code> with progress, confidence, source state, poll URL, and event URL.</li>
           <li><strong>Agent steering:</strong> <code>steering_comment.v1</code> lands in the requesting session as <code>retrieval.continuation.progress</code>, <code>retrieval.continuation.ready</code>, or terminal <code>retrieval.continuation.degraded</code>.</li>
@@ -777,11 +543,6 @@
       <article class="update-card">
         <span class="update-meta">2026-06-11 · v3.4.12 · Run Advisor + Graph Quality Audit</span>
         <h3>Agent runs now come with a readiness signal, not just a transcript trail.</h3>
-        <p class="spotlight">
-          ContextLattice now attaches a bounded Run Advisor to context packs and session traces. Agents can see
-          prompt readiness, continuation state, objective coherence, graph quality, and concrete next actions before
-          handing work to the next model call.
-        </p>
         <ul>
           <li><strong>Run Advisor:</strong> <code>contextlattice_run_advisor "current task" --pretty</code> renders prompt quality, retrieval advice, continuation repair, graph status, and next actions.</li>
           <li><strong>Context packs:</strong> <code>/memory/context-pack</code> now includes <code>run_advisor</code> beside ranked evidence, prompt sections, source coverage, and the reference prompt.</li>
@@ -794,10 +555,6 @@
       <article class="update-card">
         <span class="update-meta">2026-06-10 · v3.4.11 · Agent Run Trace Visibility</span>
         <h3>The proof cockpit can now show what shaped an agent run.</h3>
-        <p class="spotlight">
-          Session traces expose bounded evidence about context packages, source coverage, skills, graph touches,
-          handoffs, checkpoints, risks, and recent timeline events without leaking raw prompts or oversized payloads.
-        </p>
         <ul>
           <li><strong>Trace endpoint:</strong> <code>/v1/agents/sessions/&lt;id&gt;/trace</code> returns the contract-valid run-shaping package.</li>
           <li><strong>Terminal view:</strong> <code>contextlattice_agent_trace --session-id &lt;id&gt; --tree</code> renders the session as a compact operator trace.</li>
@@ -809,11 +566,6 @@
       <article class="update-card">
         <span class="update-meta">2026-06-09 · v3.4.10 · Seamless Agent Adoption Proofs</span>
         <h3>One command now proves the agent memory lifecycle across runtimes.</h3>
-        <p class="spotlight">
-          ContextLattice can validate that configured agent profiles share the same bootstrap, context package,
-          checkpoint, handoff, completion, session rollup, and prompt-ready evidence path. The proof reports the
-          skills, context, graph touches, and handoff artifacts that shaped each run.
-        </p>
         <ul>
           <li><strong>Matrix proof:</strong> run <code>contextlattice_agent_adoption_proof --pretty</code> after global install, or <code>scripts/agent/agent-adoption-proof-matrix --pretty</code> from the repo.</li>
           <li><strong>Agent coverage:</strong> profiles include Codex, Claude Code, OpenCode, Hermes Agent, Pi, ChatGPT web/desktop, and Claude web/desktop patterns.</li>
@@ -825,11 +577,6 @@
       <article class="update-card">
         <span class="update-meta">2026-06-08 · v3.4.x · Session Rollups + Context Packages</span>
         <h3>Agent runs can now package what matters for the next model call.</h3>
-        <p class="spotlight">
-          ContextLattice now turns a live agent session into a bounded reference package: objective, evidence,
-          source coverage, artifacts, missing checks, risks, and next action. Agents get a sharper handoff than a
-          transcript replay, while operators see prompt readiness in Agent Radar.
-        </p>
         <ul>
           <li><strong>Session rollups:</strong> <code>/v1/agents/sessions/&lt;id&gt;/rollup</code> summarizes lifecycle phases, memory contribution, source coverage, artifacts, and risk signals.</li>
           <li><strong>Context package:</strong> <code>/v1/agents/sessions/&lt;id&gt;/context-package</code> emits a bounded reference prompt and structured package for the next model call.</li>
@@ -844,10 +591,6 @@
       <article class="update-card">
         <span class="update-meta">2026-06-06 · v3.4.2 · Agent Runtime Proof Pack</span>
         <h3>The agent memory contract now proves itself in one command.</h3>
-        <p class="spotlight">
-          ContextLattice v3.4.2 adds a live proof pack for the whole agent lifecycle: bootstrap, scoped recall,
-          checkpoint, handoff, completion, status, and runtime telemetry. Not a demo script. A contract probe.
-        </p>
         <ul>
           <li><strong>One command:</strong> run <code>contextlattice_agent_runtime_proof --pretty</code> after global install, or <code>scripts/agent/agent-runtime-proof-pack --pretty</code> from the repo.</li>
           <li><strong>Real writes:</strong> the proof starts a real session, retrieves bounded context, writes a checkpoint, creates a handoff, and completes the session.</li>
@@ -859,11 +602,6 @@
       <article class="update-card">
         <span class="update-meta">2026-06-06 · v3.4.1 · Runtime Hardening + Security Patch</span>
         <h3>The agent runtime contract gets its first field hardening patch.</h3>
-        <p class="spotlight">
-          ContextLattice v3.4.1 tightens the local memory spine after real operator pressure: storage governance now follows
-          the mounted data lane, Codex transcript storage gets an explicit doctor check, and the LanceDB adapter clears the
-          public PyArrow security alert.
-        </p>
         <ul>
           <li><strong>Storage truth:</strong> <code>gateway-go</code> now receives <code>ORCH_STORAGE_GOVERNANCE_DISK_ROOT=/data</code> so status checks measure the memory lane, not container overlay.</li>
           <li><strong>Mount guard:</strong> <code>scripts/verify_storage_mounts.sh</code> now rejects unset, relative, root, or overlay-oriented storage-governance roots.</li>
@@ -875,10 +613,6 @@
       <article class="update-card">
         <span class="update-meta">2026-06-05 · v3.4.0 · Agent Runtime Contract + Universal Adapter</span>
         <h3>Agents now get one local memory contract instead of every stack inventing its own.</h3>
-        <p class="spotlight">
-          ContextLattice now gives agents a shared runtime: session identity, scoped recall, checkpoints, handoffs,
-          objective state, behavior provenance, and completion all move through one durable local contract.
-        </p>
         <ul>
           <li><strong>Universal adapter:</strong> <code>contextlattice_agent_adapter</code> handles bootstrap, context-pack, lifecycle state, checkpoint, handoff, event, and complete flows.</li>
           <li><strong>Agent discovery:</strong> <code>contextlattice_agent_discover</code> reports best-effort process, profile, hook, and repo-instruction evidence for local agents.</li>
@@ -892,10 +626,6 @@
       <article class="update-card">
         <span class="update-meta">2026-04-02 · v3.3.1 · Public Spike-Lab Guardrails + Release Sync</span>
         <h3>Public main now documents spike-lab as advanced opt-in with one-lane controls</h3>
-        <p class="spotlight">
-          We kept spike benchmarking transparent for advanced operators while reducing default-user risk: public startup remains clean,
-          and spike-lab now has explicit lane-by-lane control and published benchmark references.
-        </p>
         <ul>
           <li><strong>No default runtime expansion:</strong> default profiles stay <code>core,llm,observability</code>.</li>
           <li><strong>One-lane operator controls:</strong> <code>gmake mem-spike-ls</code>, <code>gmake mem-spike-up SPIKE_LANE=&lt;lane&gt;</code>, <code>gmake mem-spike-down SPIKE_LANE=&lt;lane&gt;</code>.</li>
@@ -908,10 +638,6 @@
       <article class="update-card">
         <span class="update-meta">2026-03-24 · v3.2.13 · Glama-lite SQLite Acceleration</span>
         <h3>Lite mode now ships sqlite WAL + FTS5 BM25 acceleration with optional sqlite-vec detection</h3>
-        <p class="spotlight">
-          The public lite lane was upgraded for single-container deployments: topic rollup search now uses a local sqlite
-          acceleration index with fail-open fallback, while full multi-backend mode remains unchanged.
-        </p>
         <ul>
           <li><strong>Lite architecture:</strong> <code>topic_rollups</code> + sqlite outbox + sqlite rollup index (WAL + FTS5 BM25).</li>
           <li><strong>Full architecture:</strong> staged fast lane <code>topic_rollups + qdrant</code> in local lite, Qdrant plus pgvector in full/operator stacks, plus deep async continuation <code>mindsdb + mongo_raw + letta + memory_bank</code>.</li>
@@ -924,9 +650,6 @@
       <article class="update-card">
         <span class="update-meta">2026-03-19 · v3.2.3 · Launch Readiness Docs Alignment</span>
         <h3>Finalized install/deployment mode copy to match staged retrieval runtime lanes</h3>
-        <p class="spotlight">
-          Completed a final launch-readiness docs pass so installation and deployment-mode guidance clearly reflects current v3.2 runtime behavior.
-        </p>
         <div class="cta-row">
           <a class="cta secondary" href="https://github.com/sheawinkler/ContextLattice/releases/latest/download/ContextLattice-macOS-universal.dmg" target="_blank" rel="noreferrer">Download macOS DMG</a>
           <a class="cta secondary" href="https://github.com/sheawinkler/ContextLattice/releases/latest/download/ContextLattice-linux-bootstrap.tar.gz" target="_blank" rel="noreferrer">Download Linux Bundle</a>
@@ -943,9 +666,6 @@
       <article class="update-card">
         <span class="update-meta">2026-03-19 · v3.2.2 · Graphics + Architecture Alignment</span>
         <h3>Synced README + website diagrams to current staged retrieval/runtime ownership</h3>
-        <p class="spotlight">
-          Reviewed architecture graphics and corrected source-lane/runtime ownership drift so GitHub README visuals and website architecture pages now match live v3.2 behavior.
-        </p>
         <ul>
           <li>Updated shared SVG architecture panels used by both README and website.</li>
           <li>Reflected current staged retrieval lanes: fast <code>topic_rollups + qdrant</code> in local lite, Qdrant plus pgvector for full/operator stacks, deep async <code>mindsdb + mongo_raw + letta + memory_bank</code>.</li>
@@ -957,10 +677,6 @@
       <article class="update-card">
         <span class="update-meta">2026-03-19 · v3.2.1 · Config Canonicalization + Fallback Audit</span>
         <h3>Unified configuration paths under <code>config/</code> and verified Python fallback utility</h3>
-        <p class="spotlight">
-          We standardized configuration layout to one canonical root and completed a Python fallback audit to confirm
-          runtime-critical Python remains justified while Go/Rust stay primary.
-        </p>
         <ul>
           <li>Moved former <code>configs/</code> content to <code>config/mcp/</code> and rewired compose/script paths.</li>
           <li>Kept runtime lock authority at <code>config/env/strict_runtime.env</code>.</li>
@@ -973,10 +689,6 @@
       <article class="update-card">
         <span class="update-meta">2026-03-19 · v3.2.0 · Public V3 Runtime Cutover</span>
         <h3>Go-first read runtime is now default on public V3 (Python moved to fallback lane)</h3>
-        <p class="spotlight">
-          Public V3 now serves through <code>gateway-go</code> on <code>:8075</code> by default, with Python retained as a rollback-only fallback lane.
-          We also promoted full <code>icm_spike</code> memory-bank policy wiring into gateway runtime and moved memory-bank to async slow-source continuation.
-        </p>
         <ul>
           <li>Primary path switch: <code>/memory/search</code> executes in Go staged retrieval by default; Python fallback is exposed on <code>:18075</code>.</li>
           <li>Memory-bank reliability fix: gateway now consumes <code>ORCH_MEMORY_BANK_SEARCH_BACKEND=icm_spike</code> and configured fallback chain.</li>
@@ -989,10 +701,6 @@
       <article class="update-card">
         <span class="update-meta">2026-03-13 · Runtime Tuning</span>
         <h3>Qdrant staged-fetch caps tuned by retrieval mode + compose passthrough hardening</h3>
-        <p class="spotlight">
-          Added mode-specific Qdrant sync timeout caps in <code>gateway-go</code> and exposed tuning envs in
-          compose so operators can tune fast/balanced/deep behavior without code edits.
-        </p>
         <ul>
           <li>New knobs: <code>ORCH_RETRIEVAL_QDRANT_SYNC_TIMEOUT_CAP_FAST_SECS</code>, <code>..._BALANCED_...</code>, <code>..._DEEP_...</code>.</li>
           <li>A/B artifact pair: <code>bench/results/qdrant_tuning_20260313T004405Z.json</code> vs <code>bench/results/qdrant_tuning_20260313T213430Z.json</code>.</li>
@@ -1004,10 +712,6 @@
       <article class="update-card">
         <span class="update-meta">2026-03-05 · V3 Planning</span>
         <h3>Published V3 roadmap for issues #68-#72</h3>
-        <p class="spotlight">
-          We published the V3 execution roadmap to show how performance, deep-read stability,
-          recall quality, and runner interoperability will be integrated and tested as one program.
-        </p>
         <ul>
           <li>Roadmap page: <a href="roadmap.html">roadmap.html</a></li>
           <li>Includes grouped tracks, integration scope, and benchmark + recall + security gates.</li>
@@ -1018,10 +722,6 @@
       <article class="update-card">
         <span class="update-meta">2026-03-04 · v2.0.0 · Runtime Cutover Benchmark</span>
         <h3>Rust+Go runtime is now default; Python retained as legacy fallback</h3>
-        <p class="spotlight">
-          We ran a live A/B on the same <code>/memory/search</code> path before and after cutover.
-          Test profile: <code>tooling/python/bench/phase1_runtime_comparison.py</code>, <code>8</code> requests, <code>20s</code> timeout.
-        </p>
         <ul>
           <li>Cutover ON (Rust+Go): mean <code>3557ms</code>, p50 <code>2334ms</code>, p95 <code>8494ms</code>, p99 <code>9359ms</code>, errors <code>0/8</code>.</li>
           <li>Legacy OFF (Python): mean <code>17565ms</code>, p50 <code>20006ms</code>, p95 <code>20008ms</code>, p99 <code>20008ms</code>, errors <code>7/8</code> (timeouts).</li>
@@ -1032,51 +732,50 @@
 
       <article class="update-card">
         <span class="update-meta">2026-02-18 · Messaging Surface + Cloud Validation</span>
-        <h3>Channel command bridge live, with optional Qdrant Cloud gRPC validation</h3>
+        <h3>Messaging bridge + Qdrant Cloud validation</h3>
         <ul>
-          <li>Added orchestrator-native messaging endpoints for OpenClaw/ZeroClaw, Telegram, and Slack command routing.</li>
-          <li>Added command parsing for <code>@ContextLattice remember|recall|status</code> with project/topic directives.</li>
-          <li>Added a one-shot 04:30 MT launch gate scheduler command and status/cancel controls.</li>
-          <li>Added Qdrant Cloud BYO connectivity check script that validates both HTTP and gRPC paths while keeping local-first default behavior.</li>
+          <li>Added native OpenClaw/ZeroClaw, Telegram, and Slack command routes.</li>
+          <li>Added <code>@ContextLattice remember|recall|status</code> with project/topic directives.</li>
+          <li>Added one-shot launch-gate scheduling with status and cancel controls.</li>
+          <li>Added BYO Qdrant Cloud HTTP + gRPC validation; local-first remains default.</li>
         </ul>
       </article>
 
       <article class="update-card">
         <span class="update-meta">2026-02-18 · Launch Readiness</span>
-        <h3>Public beta hardening and release packaging complete</h3>
+        <h3>Public beta release gates</h3>
         <ul>
-          <li>Added launch-readiness gate automation for authenticated load, queue drain, backup/restore drill, and production security preflight simulation.</li>
-          <li>Published release image lockfile for reproducible deployments with pinned digest references.</li>
-          <li>Finalized legal package (terms, privacy, DPA baseline, acceptable use, subprocessors, commercial licensing baseline).</li>
-          <li>Published public messaging package and next-track messaging-surface expansion plan.</li>
+          <li>Automated authenticated load, queue drain, restore, and security preflight gates.</li>
+          <li>Published a digest-pinned release image lockfile.</li>
+          <li>Finalized terms, privacy, DPA, acceptable-use, subprocessor, and licensing baselines.</li>
+          <li>Published public messaging and its next expansion track.</li>
         </ul>
       </article>
 
       <article class="update-card">
         <span class="update-meta">2026-02-18 · Throughput + Integration</span>
-        <h3>New integrations guide, dark visual refresh, and faster sink fanout tuning</h3>
+        <h3>More integrations; faster fanout</h3>
         <ul>
-          <li>Added a dedicated Integrations page for ChatGPT app, Claude chat apps (desktop and web), Claude Code, Codex, and OpenClaw/ZeroClaw wiring.</li>
-          <li>Moved public overview pages to a dark-first theme and aligned navigation across Home, Architecture, Updates, Installation, and Troubleshooting.</li>
-          <li>Expanded compose env passthrough for fanout and Mongo pool tuning to speed queue drain and improve sustained write throughput.</li>
-          <li>Documented the default launch path (<code>gmake mem-up</code>) and explicit full/lite commands for local-first deployment.</li>
+          <li>Added wiring guides for ChatGPT, Claude, Claude Code, Codex, and OpenClaw/ZeroClaw.</li>
+          <li>Aligned public pages on one dark-first theme and navigation.</li>
+          <li>Expanded fanout and Mongo pool tuning for faster sustained writes.</li>
+          <li>Documented <code>gmake mem-up</code> plus explicit full/lite launch commands.</li>
         </ul>
       </article>
 
       <article class="update-card">
         <span class="update-meta">2026-02-16 · Architecture Clarity</span>
-        <h3>Landing page now explains each service and why it exists</h3>
+        <h3>Each service now explains its job</h3>
         <ul>
-          <li>Added component-by-component breakdown for Orchestrator, Memory Bank, Qdrant, Mongo, MindsDB, Letta, outbox, and retention.</li>
-          <li>Added explicit “benefit + why” summaries so operators understand service intent at a glance.</li>
-          <li>Connected these components directly to learning retrieval outcomes and ranking quality over time.</li>
+          <li>Mapped Orchestrator, Memory Bank, Qdrant, Mongo, MindsDB, Letta, outbox, and retention.</li>
+          <li>Added one-line benefit and purpose summaries.</li>
+          <li>Connected each service to retrieval and ranking outcomes.</li>
         </ul>
       </article>
 
       <article class="update-card">
         <span class="update-meta">2026-02-16 · Pilot Experience</span>
         <h3>New pilot landing page published</h3>
-        <p>We shipped a new public pilot page with a clearer value narrative and current platform capabilities.</p>
         <ul>
           <li>Headline focus: fix context drift before it burns token budget.</li>
           <li>Pilot structure: week-by-week baseline, optimization, and ROI readout.</li>
@@ -1088,11 +787,6 @@
       <article class="update-card">
         <span class="update-meta">2026-02-16 · Retrieval Intelligence</span>
         <h3>Orchestrator learning schema + Letta RAG emphasis</h3>
-        <p class="spotlight">
-          The orchestrator becomes more accurate over time by learning from feedback signals and applying
-          preference-aware reranking during retrieval. This learned ranking is further supported by RAG via
-          Letta archival memory, alongside Qdrant semantic recall and raw-source fallbacks.
-        </p>
         <ul>
           <li>Learning loop reinforces what sources and patterns are actually useful in your workflows.</li>
           <li>Federated retrieval merges Qdrant, Mongo raw, MindsDB, Letta, and memory-bank lexical fallback.</li>
@@ -1102,12 +796,12 @@
 
       <article class="update-card">
         <span class="update-meta">2026-02-16 · Reliability + Scale</span>
-        <h3>Queue and storage safety upgrades</h3>
+        <h3>Queue and storage guards</h3>
         <ul>
-          <li>Fanout coalescer reduces duplicate hot-file writes before they hit outbox depth.</li>
-          <li>Letta admission control protects throughput by shedding low-value Letta writes under backlog.</li>
-          <li>Low-value retention sweeps for Qdrant and Letta keep storage pressure bounded.</li>
-          <li>Shared HTTP client pools and batched fanout improve write-path efficiency.</li>
+          <li>Fanout coalescing removes duplicate hot-file writes before outbox.</li>
+          <li>Letta admission sheds low-value writes under backlog.</li>
+          <li>Qdrant and Letta retention sweeps bound storage pressure.</li>
+          <li>Shared HTTP pools and batched fanout reduce write overhead.</li>
         </ul>
       </article>
     </section>

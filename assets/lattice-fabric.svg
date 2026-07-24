@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="192" height="192" viewBox="0 0 192 192" fill="none">
+  <g stroke="#e9e2cf" stroke-linecap="round" stroke-width=".72">
+    <g opacity=".12">
+      <path d="M0 0C30 7 66-7 96 0s66 7 96 0"/>
+      <path d="M0 24c30 7 66-7 96 0s66 7 96 0"/>
+      <path d="M0 48c30 7 66-7 96 0s66 7 96 0"/>
+      <path d="M0 72c30 7 66-7 96 0s66 7 96 0"/>
+      <path d="M0 96c30 7 66-7 96 0s66 7 96 0"/>
+      <path d="M0 120c30 7 66-7 96 0s66 7 96 0"/>
+      <path d="M0 144c30 7 66-7 96 0s66 7 96 0"/>
+      <path d="M0 168c30 7 66-7 96 0s66 7 96 0"/>
+      <path d="M0 192c30 7 66-7 96 0s66 7 96 0"/>
+    </g>
+    <g opacity=".09">
+      <path d="M0 0c7 30-7 66 0 96s7 66 0 96"/>
+      <path d="M24 0c7 30-7 66 0 96s7 66 0 96"/>
+      <path d="M48 0c7 30-7 66 0 96s7 66 0 96"/>
+      <path d="M72 0c7 30-7 66 0 96s7 66 0 96"/>
+      <path d="M96 0c7 30-7 66 0 96s7 66 0 96"/>
+      <path d="M120 0c7 30-7 66 0 96s7 66 0 96"/>
+      <path d="M144 0c7 30-7 66 0 96s7 66 0 96"/>
+      <path d="M168 0c7 30-7 66 0 96s7 66 0 96"/>
+      <path d="M192 0c7 30-7 66 0 96s7 66 0 96"/>
+    </g>
+  </g>
+  <path d="M0 72c30 7 66-7 96 0s66 7 96 0" stroke="#c7ff4a" stroke-linecap="round" stroke-width=".82" opacity=".075"/>
+  <path d="M120 0c7 30-7 66 0 96s7 66 0 96" stroke="#ffbd4a" stroke-linecap="round" stroke-width=".82" opacity=".06"/>
+</svg>

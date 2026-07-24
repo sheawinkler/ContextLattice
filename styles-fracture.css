@@ -52,11 +52,9 @@ body.home::after {
 
 body.home::before {
   z-index: 0;
-  background:
-    linear-gradient(to right, rgba(255, 255, 255, 0.045) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
-  background-size: 40px 40px;
-  opacity: 0.28;
+  background: url("assets/lattice-fabric.svg");
+  background-size: 224px 224px;
+  opacity: 0.24;
 }
 
 body.home::after {
@@ -68,19 +66,10 @@ body.home::after {
       rgba(255, 255, 255, 0.015) 2px,
       transparent 2px,
       transparent 38px
-    );
+  );
   mix-blend-mode: screen;
   opacity: 0.35;
-  animation: fxNoiseDrift 14s linear infinite;
-}
-
-@keyframes fxNoiseDrift {
-  from {
-    transform: translate3d(0, 0, 0);
-  }
-  to {
-    transform: translate3d(-90px, 45px, 0);
-  }
+  animation: none;
 }
 
 .container {
@@ -1537,10 +1526,9 @@ html body.home {
 }
 
 html body.home::before {
-  background:
-    repeating-linear-gradient(90deg, rgba(241, 239, 231, 0.34) 0 1px, transparent 1px 88px),
-    repeating-linear-gradient(0deg, rgba(241, 239, 231, 0.16) 0 1px, transparent 1px 88px);
-  opacity: 0.08;
+  background: url("assets/lattice-fabric.svg");
+  background-size: 352px 352px;
+  opacity: 0.16;
   animation: none;
 }
 
