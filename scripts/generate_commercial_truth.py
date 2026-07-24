@@ -645,29 +645,79 @@ def feature_labels(contract: dict[str, Any]) -> dict[str, str]:
     return labels
 
 
-def plan_price_label(plan: dict[str, Any]) -> str:
+def render_plan_price(plan: dict[str, Any]) -> str:
     if plan["pricing"]["custom"]:
-        return "Custom"
+        return "Custom<small>Configured with sales</small>"
     monthly = plan["pricing"]["monthly_usd"]
     annual = plan["pricing"]["annual_usd"]
     if monthly == 0 and annual == 0:
-        return "$0"
-    return f"${monthly}/mo or ${annual}/yr"
+        return "$0<small>Local-first core</small>"
+    return (
+        f"${monthly}<small>per month&nbsp; · &nbsp;${annual} annually</small>"
+    )
 
 
 def render_plan_rows(contract: dict[str, Any]) -> str:
     labels = feature_labels(contract)
+    free_plan = next(plan for plan in contract["plans"] if plan["id"] == "free")
+    free_features = set(free_plan["feature_ids"])
     rows: list[str] = []
-    for plan in contract["plans"]:
-        included = ", ".join(labels[feature_id] for feature_id in plan["feature_ids"])
+    plan_count = len(contract["plans"])
+    for index, plan in enumerate(contract["plans"], start=1):
+        plan_id = html.escape(plan["id"], quote=True)
+        buyer_label = html.escape(plan["buyer_label"])
+        feature_ids = plan["feature_ids"]
+        delta_ids = (
+            feature_ids
+            if not plan["paid"]
+            else [feature_id for feature_id in feature_ids if feature_id not in free_features]
+        )
+        highlight_ids = (delta_ids or feature_ids)[:4]
+        highlights = "\n".join(
+            f"    <li>{html.escape(labels[feature_id])}</li>"
+            for feature_id in highlight_ids
+        )
+        entitlements = "\n".join(
+            f"    <li>{html.escape(labels[feature_id])}</li>"
+            for feature_id in feature_ids
+        )
+        if plan["paid"]:
+            action_href = "https://app.contextlattice.io/billing"
+            action_label = "Configure Enterprise" if plan["pricing"]["custom"] else f"Choose {plan['buyer_label']}"
+            action_attrs = ' target="_blank" rel="noreferrer"'
+            highlight_label = "Paid lane highlights"
+        else:
+            action_href = "installation.html"
+            action_label = "Install Free"
+            action_attrs = ""
+            highlight_label = "Core capabilities"
         rows.extend(
             [
-                "<tr>",
-                f"  <td><strong>{html.escape(plan['buyer_label'])}</strong></td>",
-                f"  <td>{html.escape(plan_price_label(plan))}</td>",
-                f"  <td>{html.escape(plan['description'])}</td>",
-                f"  <td>{html.escape(included)}</td>",
-                "</tr>",
+                f'<article class="plan-card" data-plan="{plan_id}">',
+                '  <div class="plan-cell">',
+                f'    <p class="plan-sequence">P{index - 1:02d} / {index:02d} OF {plan_count:02d}</p>',
+                f'    <h3 class="plan-title">{buyer_label}</h3>',
+                "  </div>",
+                '  <div class="plan-cell">',
+                f'    <p class="plan-price">{render_plan_price(plan)}</p>',
+                "  </div>",
+                '  <div class="plan-cell">',
+                f'    <p class="plan-fit">{html.escape(plan["description"])}</p>',
+                f'    <ul class="plan-highlights" aria-label="{highlight_label}">',
+                highlights,
+                "    </ul>",
+                "  </div>",
+                '  <div class="plan-cell plan-action">',
+                f'    <p class="plan-count"><strong>{len(feature_ids):02d}</strong> verified capabilities</p>',
+                f'    <a class="plan-cta" href="{action_href}"{action_attrs}>{html.escape(action_label)}</a>',
+                "  </div>",
+                '  <details class="plan-entitlements">',
+                "    <summary>Complete capability set</summary>",
+                "    <ul>",
+                entitlements,
+                "    </ul>",
+                "  </details>",
+                "</article>",
             ]
         )
     return "\n".join(rows)
@@ -687,13 +737,25 @@ def render_capability_rows(contract: dict[str, Any]) -> str:
             premium_label = "Controlled activation preview: " + ", ".join(eligible)
         else:
             premium_label = "Included" if len(eligible) == len([plan for plan in plans if plan["paid"]]) else ", ".join(eligible)
+        public_state = "is-included" if public_label == "Included" else "is-excluded"
+        if premium_label.startswith("Controlled activation preview"):
+            premium_state = "is-preview"
+        elif premium_label and premium_label != "Not included":
+            premium_state = "is-included"
+        else:
+            premium_state = "is-excluded"
         rows.extend(
             [
-                "<tr>",
-                f"  <td><strong>{html.escape(feature['buyer_label'])}</strong><br><span class=\"muted-note\">{html.escape(feature['description'])}</span></td>",
-                f"  <td>{public_label}</td>",
-                f"  <td>{html.escape(premium_label or 'Not included')}</td>",
-                "</tr>",
+                '<article class="capability-row">',
+                '  <div class="capability-copy">',
+                f"    <h3>{html.escape(feature['buyer_label'])}</h3>",
+                f"    <p>{html.escape(feature['description'])}</p>",
+                "  </div>",
+                '  <div class="capability-availability">',
+                f'    <div class="availability-cell {public_state}"><span>Public free</span><strong>{public_label}</strong></div>',
+                f'    <div class="availability-cell {premium_state}"><span>Premium</span><strong>{html.escape(premium_label or "Not included")}</strong></div>',
+                "  </div>",
+                "</article>",
             ]
         )
     return "\n".join(rows)
