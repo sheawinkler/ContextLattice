@@ -335,6 +335,9 @@ type server struct {
 	memoryTelemetryLastWriteLatency float64
 	memoryTelemetryProcessed        int64
 	memoryTelemetryDropped          int64
+	writeSecretFindings             atomic.Uint64
+	writeSecretRedactions           atomic.Uint64
+	writeSecretBlocked              atomic.Uint64
 	tradingMu                       sync.Mutex
 	tradingState                    map[string]any
 	tradingHistory                  []map[string]any

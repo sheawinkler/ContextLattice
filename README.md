@@ -334,6 +334,13 @@ MLX_API_BASE=http://127.0.0.1:18087/v1
 LLAMA_CPP_BASE_URL=http://127.0.0.1:8080
 ```
 
+## Security defaults
+
+- `SECRETS_STORAGE_MODE=redact` runs the Go-native ingress filter and redacts secret-like material before memory persistence/fanout.
+- `SECRETS_STORAGE_MODE=block` rejects writes containing secret-like material (`422`).
+- `SECRETS_STORAGE_MODE=allow` stores write payloads as-is (operator opt-in).
+- The filter is deterministic and local: sensitive JSON keys and high-confidence token/key formats are checked without sending content to a model or third party.
+
 ## Agent CLI
 
 Installer and quickstart paths install agent helpers under `$HOME/.contextlattice/bin`.

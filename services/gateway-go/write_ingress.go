@@ -56,9 +56,22 @@ func (s *server) handleWriteIngress(w http.ResponseWriter, r *http.Request, path
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
 	}
+	secretFilter := writeSecretFilterResult{Mode: writeSecretsStorageMode()}
+	item, secretFilter, err = secureNormalizedWrite(item)
+	if err != nil {
+		s.recordWriteSecretFilter(secretFilter, true)
+		s.recordMemoryWriteTelemetry(startedAt, 0, 1)
+		writeJSON(w, http.StatusUnprocessableEntity, attachWriteSecretFilter(map[string]any{
+			"ok":     false,
+			"error":  "potential_secret_detected",
+			"detail": err.Error(),
+		}, secretFilter))
+		return
+	}
+	s.recordWriteSecretFilter(secretFilter, false)
 	recordMetadataContractObservation(item)
 	if err := s.writePolicy.validateWrite(item); err != nil {
-		writeJSON(w, http.StatusUnprocessableEntity, maybeAttachWritebackContract(path, map[string]any{"ok": false, "error": err.Error()}, item, http.StatusUnprocessableEntity))
+		writeJSON(w, http.StatusUnprocessableEntity, maybeAttachWritebackContract(path, attachWriteSecretFilter(map[string]any{"ok": false, "error": err.Error()}, secretFilter), item, http.StatusUnprocessableEntity))
 		return
 	}
 	item = s.classifyWrite(item)
@@ -66,27 +79,27 @@ func (s *server) handleWriteIngress(w http.ResponseWriter, r *http.Request, path
 	if s.writePolicy.isTelemetryLike(item) {
 		response, status, ingestErr := s.routeTelemetryWrite(r.Context(), item, path)
 		if ingestErr != nil {
-			writeJSON(w, http.StatusBadGateway, maybeAttachWritebackContract(path, map[string]any{
+			writeJSON(w, http.StatusBadGateway, maybeAttachWritebackContract(path, attachWriteSecretFilter(map[string]any{
 				"ok":     false,
 				"error":  "telemetry ingest failed",
 				"detail": ingestErr.Error(),
-			}, item, http.StatusBadGateway))
+			}, secretFilter), item, http.StatusBadGateway))
 			return
 		}
 		if status >= 200 && status < 400 {
 			s.recordMemoryWriteTelemetry(startedAt, 1, 0)
 		}
-		writeJSON(w, status, maybeAttachWritebackContract(path, response, item, status))
+		writeJSON(w, status, maybeAttachWritebackContract(path, attachWriteSecretFilter(response, secretFilter), item, status))
 		return
 	}
 	if s.memoryStore != nil && s.memoryStore.isEnabled() {
 		entry, deduped, storeErr := s.memoryStore.put(item)
 		if storeErr != nil {
-			writeJSON(w, http.StatusBadGateway, maybeAttachWritebackContract(path, map[string]any{
+			writeJSON(w, http.StatusBadGateway, maybeAttachWritebackContract(path, attachWriteSecretFilter(map[string]any{
 				"ok":     false,
 				"error":  "memory store write failed",
 				"detail": storeErr.Error(),
-			}, item, http.StatusBadGateway))
+			}, secretFilter), item, http.StatusBadGateway))
 			return
 		}
 		fanout := map[string]any{
@@ -98,7 +111,7 @@ func (s *server) handleWriteIngress(w http.ResponseWriter, r *http.Request, path
 			fanout[source] = status
 		}
 		s.recordMemoryWriteTelemetry(startedAt, 1, 0)
-		writeJSON(w, http.StatusOK, maybeAttachWritebackContract(path, map[string]any{
+		writeJSON(w, http.StatusOK, maybeAttachWritebackContract(path, attachWriteSecretFilter(map[string]any{
 			"ok":                    true,
 			"event_id":              entry.EventID,
 			"source":                "go_memory_store",
@@ -111,7 +124,7 @@ func (s *server) handleWriteIngress(w http.ResponseWriter, r *http.Request, path
 			"deduped":               deduped,
 			"latest_hash_unchanged": deduped,
 			"fanout":                fanout,
-		}, item, http.StatusOK))
+		}, secretFilter), item, http.StatusOK))
 		return
 	}
 	if s.strictNoPythonRuntime {
@@ -123,18 +136,18 @@ func (s *server) handleWriteIngress(w http.ResponseWriter, r *http.Request, path
 	forwardPayload := mergeForwardPayload(path, payload, item, s.writePolicy.fanoutExcludeTargetsFor(item))
 	response, status, backendErr := s.callBackendJSON(r.Context(), incomingHeaders, http.MethodPost, path, forwardPayload)
 	if backendErr != nil {
-		writeJSON(w, http.StatusBadGateway, maybeAttachWritebackContract(path, map[string]any{
+		writeJSON(w, http.StatusBadGateway, maybeAttachWritebackContract(path, attachWriteSecretFilter(map[string]any{
 			"ok":         false,
 			"error":      "backend unavailable",
 			"detail":     backendErr.Error(),
 			"backendUrl": s.backendURL,
-		}, item, http.StatusBadGateway))
+		}, secretFilter), item, http.StatusBadGateway))
 		return
 	}
 	if status >= 200 && status < 400 {
 		s.recordMemoryWriteTelemetry(startedAt, 1, 0)
 	}
-	writeJSON(w, status, maybeAttachWritebackContract(path, response, item, status))
+	writeJSON(w, status, maybeAttachWritebackContract(path, attachWriteSecretFilter(response, secretFilter), item, status))
 }
 
 func (s *server) memoryWriteBatch(w http.ResponseWriter, r *http.Request) {
@@ -175,17 +188,34 @@ func (s *server) handleWriteBatchIngress(
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": err.Error()})
 		return
 	}
+	secretFilter := writeSecretFilterResult{Mode: writeSecretsStorageMode()}
 	for idx, item := range items {
+		secured, itemSecretFilter, secureErr := secureNormalizedWrite(item)
+		secretFilter = mergeWriteSecretFilterResults(secretFilter, itemSecretFilter)
+		if secureErr != nil {
+			s.recordWriteSecretFilter(secretFilter, true)
+			s.recordMemoryWriteTelemetry(startedAt, 0, 1)
+			writeJSON(w, http.StatusUnprocessableEntity, attachWriteSecretFilter(map[string]any{
+				"ok":     false,
+				"error":  "potential_secret_detected",
+				"detail": secureErr.Error(),
+				"index":  idx,
+			}, secretFilter))
+			return
+		}
+		items[idx] = secured
+		item = secured
 		recordMetadataContractObservation(item)
 		if err := s.writePolicy.validateWrite(item); err != nil {
-			writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
+			writeJSON(w, http.StatusUnprocessableEntity, attachWriteSecretFilter(map[string]any{
 				"error":  "invalid write item",
 				"detail": err.Error(),
 				"index":  idx,
-			})
+			}, secretFilter))
 			return
 		}
 	}
+	s.recordWriteSecretFilter(secretFilter, false)
 
 	type batchOutcome struct {
 		index  int
@@ -359,7 +389,7 @@ func (s *server) handleWriteBatchIngress(
 	if succeeded > 0 || failed > 0 {
 		s.recordMemoryWriteTelemetry(startedAt, succeeded, failed)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	writeJSON(w, http.StatusOK, attachWriteSecretFilter(map[string]any{
 		"ok":        failed == 0,
 		"partial":   failed > 0 && succeeded > 0,
 		"source":    batchPath,
@@ -367,7 +397,7 @@ func (s *server) handleWriteBatchIngress(
 		"succeeded": succeeded,
 		"failed":    failed,
 		"results":   resultRows,
-	})
+	}, secretFilter))
 }
 
 func mergeForwardPayload(
@@ -377,7 +407,10 @@ func mergeForwardPayload(
 	fanoutExcludeTargets []string,
 ) map[string]any {
 	if path == "/memory/write" {
-		forward := cloneMap(original)
+		forward := cloneMap(item.raw)
+		if len(forward) == 0 {
+			forward = cloneMap(original)
+		}
 		forward["projectName"] = item.project
 		forward["fileName"] = item.fileName
 		forward["content"] = item.content
@@ -402,11 +435,8 @@ func mergeForwardPayload(
 		return forward
 	}
 	if path == "/v1/memory/put" {
-		forward := cloneMap(original)
-		rawItem, _ := forward["item"].(map[string]any)
-		if rawItem == nil {
-			rawItem = map[string]any{}
-		}
+		forward := map[string]any{}
+		rawItem := cloneMap(item.raw)
 		rawItem["project"] = item.project
 		rawItem["file_name"] = item.fileName
 		rawItem["content"] = item.content
