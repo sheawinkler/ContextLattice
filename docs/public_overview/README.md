@@ -82,6 +82,7 @@ This syncs:
 - `styles-gray.css`
 - `styles-fracture.css`
 - `styles-editorial.css`
+- `styles-hero-lattice.css`
 - `docs/`
 - `assets/`
 - `.well-known/glama.json`

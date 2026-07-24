@@ -123,6 +123,7 @@ class PublicDocsTests(unittest.TestCase):
         sync = (ROOT / "scripts/sync_public_overview.sh").read_text(encoding="utf-8")
         self.assertIn('if [[ -d "$PUBLIC_SOURCE_DIR/docs" ]]; then', sync)
         self.assertIn('cp -R "$PUBLIC_SOURCE_DIR/docs" "$PUBLIC_DIR/docs"', sync)
+        self.assertIn("styles-hero-lattice.css", sync)
 
     def test_documentation_assets_keep_editorial_contract(self) -> None:
         css = (DOCS_ROOT / "docs.css").read_text(encoding="utf-8")
