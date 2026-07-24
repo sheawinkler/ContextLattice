@@ -9,15 +9,40 @@ const outputDir = path.resolve(
 );
 const browserExecutable = process.env.PUBLIC_SITE_BROWSER_EXECUTABLE
   || "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
-const routes = (
-  process.env.PUBLIC_SITE_AUDIT_ROUTES
-  || "/,/premium.html,/docs/,/docs/getting-started/,/wiki.html"
-)
-  .split(",")
-  .map((route) => route.trim())
-  .filter(Boolean);
+const defaultRoutes = [
+  "/",
+  "/docs/",
+  "/docs/getting-started/",
+  "/docs/concepts/",
+  "/docs/cli/",
+  "/docs/integrations/",
+  "/docs/operations/",
+  "/docs/troubleshooting/",
+  "/docs/releases/",
+  "/architecture.html",
+  "/local-ai-workspaces.html",
+  "/scaling-memory.html",
+  "/installation.html",
+  "/cli.html",
+  "/integration.html",
+  "/premium.html",
+  "/app.html",
+  "/frontier-t5-policy-laboratory.html",
+  "/wiki.html",
+  "/roadmap.html",
+  "/updates.html",
+  "/troubleshooting.html",
+  "/contact.html",
+];
+const routes = process.env.PUBLIC_SITE_AUDIT_ROUTES
+  ? process.env.PUBLIC_SITE_AUDIT_ROUTES
+    .split(",")
+    .map((route) => route.trim())
+    .filter(Boolean)
+  : defaultRoutes;
 const profiles = [
   { name: "desktop", width: 1440, height: 1000 },
+  { name: "compact-desktop", width: 1024, height: 900 },
   { name: "tablet", width: 768, height: 1024 },
   { name: "mobile", width: 390, height: 844 },
 ];
@@ -43,13 +68,20 @@ async function audit() {
       });
       const page = await context.newPage();
       const consoleErrors = [];
+      const failedResources = [];
       page.on("console", (message) => {
         if (message.type() === "error") consoleErrors.push(message.text());
       });
       page.on("pageerror", (error) => consoleErrors.push(error.message));
+      page.on("response", (response) => {
+        if (response.status() >= 400) {
+          failedResources.push(`${response.status()} ${response.url()}`);
+        }
+      });
 
       for (const route of routes) {
         consoleErrors.length = 0;
+        failedResources.length = 0;
         const url = new URL(route, baseUrl).toString();
         const response = await page.goto(url, { waitUntil: "networkidle", timeout: 30000 });
         await page.evaluate(() => document.fonts.ready);
@@ -76,6 +108,35 @@ async function audit() {
           const interactive = [
             ...document.querySelectorAll("a[href], button:not([disabled]), summary"),
           ];
+          const headingMidWordBreaks = [
+            ...document.querySelectorAll("h1, h2, h3"),
+          ].flatMap((heading) => {
+            const walker = document.createTreeWalker(heading, NodeFilter.SHOW_TEXT);
+            const brokenWords = [];
+            let node = walker.nextNode();
+            while (node) {
+              if (!node.parentElement?.closest(".heading-anchor")) {
+                for (const match of node.data.matchAll(/[A-Za-z0-9][A-Za-z0-9_]+/g)) {
+                  const range = document.createRange();
+                  range.setStart(node, match.index);
+                  range.setEnd(node, match.index + match[0].length);
+                  const lineTops = new Set(
+                    [...range.getClientRects()]
+                      .filter((rect) => rect.width > 0 && rect.height > 0)
+                      .map((rect) => Math.round(rect.top)),
+                  );
+                  if (lineTops.size > 1) brokenWords.push(match[0]);
+                }
+              }
+              node = walker.nextNode();
+            }
+            if (!brokenWords.length) return [];
+            return [{
+              tag: heading.tagName.toLowerCase(),
+              text: (heading.textContent || "").replace(/#$/, "").trim().slice(0, 120),
+              words: [...new Set(brokenWords)],
+            }];
+          });
           return {
             title: document.title,
             h1Count: document.querySelectorAll("h1").length,
@@ -109,6 +170,7 @@ async function audit() {
             unnamedInteractive: interactive
               .filter((element) => !(element.textContent || "").trim() && !element.getAttribute("aria-label"))
               .map((element) => element.outerHTML.slice(0, 120)),
+            headingMidWordBreaks,
           };
         });
 
@@ -173,6 +235,14 @@ async function audit() {
         if (inspection.unnamedInteractive.length) {
           failures.push(`${prefix}: unnamed controls ${inspection.unnamedInteractive.join(", ")}`);
         }
+        if (inspection.headingMidWordBreaks.length) {
+          failures.push(
+            `${prefix}: headings split inside words ${JSON.stringify(inspection.headingMidWordBreaks)}`,
+          );
+        }
+        if (failedResources.length) {
+          failures.push(`${prefix}: failed resources ${[...new Set(failedResources)].join(" | ")}`);
+        }
         if (consoleErrors.length) {
           failures.push(`${prefix}: browser errors ${consoleErrors.join(" | ")}`);
         }
@@ -182,6 +252,7 @@ async function audit() {
           profile,
           status,
           docsSearchResultCount,
+          failedResources: [...new Set(failedResources)],
           screenshot: path.relative(process.cwd(), screenshot),
           ...inspection,
         });
