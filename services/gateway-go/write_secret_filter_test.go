@@ -216,3 +216,38 @@ func TestWriteBatchBlockModeIsAtomic(t *testing.T) {
 		t.Fatalf("blocked metric=%d", s.writeSecretBlocked.Load())
 	}
 }
+
+func BenchmarkWriteSecretFilter(b *testing.B) {
+	tests := []struct {
+		name    string
+		content string
+	}{
+		{name: "safe", content: "Durable context with ordinary security policy prose and no credentials."},
+		{name: "redact", content: "credential follows: " + syntheticAssignedSecret()},
+	}
+	for _, test := range tests {
+		b.Run(test.name, func(b *testing.B) {
+			b.Setenv("SECRETS_STORAGE_MODE", "redact")
+			item := normalizedWrite{
+				project:   "contextlattice",
+				fileName:  "notes/filter-benchmark.md",
+				content:   test.content,
+				topicPath: "runbooks/security",
+				raw: map[string]any{
+					"projectName": "contextlattice",
+					"fileName":    "notes/filter-benchmark.md",
+					"content":     test.content,
+					"topicPath":   "runbooks/security",
+					"metadata":    map[string]any{"source": "benchmark"},
+				},
+			}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				if _, _, err := secureNormalizedWrite(item); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
