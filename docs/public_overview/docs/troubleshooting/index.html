@@ -88,7 +88,7 @@ contextlattice doctor --pretty</code></pre></div>
 <p>Use <code>wrong</code> when the retrieved claim was false, <code>stale</code> when it aged out, <code>superseded</code> when a newer decision replaced it, and <code>useful</code> when it materially helped.</p>
 <h2 id="continuation-never-completes">Continuation never completes<a class="heading-anchor" href="#continuation-never-completes" aria-label="Link to Continuation never completes">#</a></h2>
 <div class="code-frame"><div class="code-frame-label"><span>zsh</span></div><pre><code class="language-zsh">contextlattice_async_inbox_drain --session-id &lt;session-id&gt;
-contextlattice_agent_trace --session-id &lt;session-id&gt; --tree</code></pre></div>
+contextlattice_agent_trace --session-id &lt;session-id&gt; --preset proof</code></pre></div>
 <p>Inspect whether the slow source is still running, terminally degraded, or disconnected. Do not hide terminal degradation by repeatedly launching the same deep query.</p>
 <h2 id="disk-or-index-pressure">Disk or index pressure<a class="heading-anchor" href="#disk-or-index-pressure" aria-label="Link to Disk or index pressure">#</a></h2>
 <p>Check free space at the canonical storage root, current index size, snapshots, and active write load. Resolve symlinks and mounts before cleanup or relocation. Prefer owner-native retention and snapshot tools over direct deletion of uncertain backend files.</p>
