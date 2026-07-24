@@ -14,6 +14,7 @@ BUILDER = ROOT / "scripts/build_public_docs.py"
 SOURCE_ROOT = ROOT / "docs/wiki"
 PUBLIC_ROOT = ROOT / "docs/public_overview"
 DOCS_ROOT = PUBLIC_ROOT / "docs"
+WORKFLOW = ROOT / ".github/workflows/public-docs.yml"
 SOURCE_FILES = (
     "README.md",
     "getting-started.md",
@@ -129,6 +130,26 @@ class PublicDocsTests(unittest.TestCase):
         self.assertIn("border: 1px solid var(--cl-line)", css)
         self.assertIn("@media (max-width: 760px)", css)
         self.assertIn("@media (prefers-reduced-motion: reduce)", css)
+
+    def test_public_docs_workflow_covers_sources_outputs_and_drift_gates(self) -> None:
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        for path in (
+            "docs/public_overview/**",
+            "docs/wiki/**",
+            "scripts/build_public_docs.py",
+            "scripts/tests/test_public_docs.py",
+            ".github/workflows/public-docs.yml",
+        ):
+            self.assertGreaterEqual(workflow.count(f'- "{path}"'), 2, path)
+        self.assertIn("python3 scripts/build_public_docs.py --check", workflow)
+        self.assertIn(
+            "python3 -m unittest scripts.tests.test_public_docs scripts.tests.test_public_product_truth",
+            workflow,
+        )
+        self.assertIn(
+            "scripts/agent/audit-public-product-truth --lane public --pretty",
+            workflow,
+        )
 
 
 if __name__ == "__main__":
