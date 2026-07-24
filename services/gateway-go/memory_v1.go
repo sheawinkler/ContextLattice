@@ -137,18 +137,30 @@ func (s *server) memoryV1Update(w http.ResponseWriter, r *http.Request) {
 	if topicPath := strings.TrimSpace(anyToString(patch["topic_path"])); topicPath != "" {
 		item["topic_path"] = topicPath
 	}
+	normalized, secretFilter, secretErr := secureNormalizedWrite(normalizedWrite{
+		project:   project,
+		fileName:  fileName,
+		content:   anyToString(item["content"]),
+		topicPath: anyToString(item["topic_path"]),
+		raw:       item,
+	})
+	if secretErr != nil {
+		s.recordWriteSecretFilter(secretFilter, true)
+		writeJSON(w, http.StatusUnprocessableEntity, attachWriteSecretFilter(map[string]any{
+			"ok":     false,
+			"error":  "potential_secret_detected",
+			"detail": secretErr.Error(),
+		}, secretFilter))
+		return
+	}
+	s.recordWriteSecretFilter(secretFilter, false)
 	var (
 		putResponse map[string]any
 		putStatus   int
 		putErr      error
 	)
 	if s.memoryStore != nil && s.memoryStore.isEnabled() {
-		normalized := s.classifyWrite(normalizedWrite{
-			project:   project,
-			fileName:  fileName,
-			content:   anyToString(item["content"]),
-			topicPath: anyToString(item["topic_path"]),
-		})
+		normalized = s.classifyWrite(normalized)
 		entry, _, storeErr := s.memoryStore.put(normalized)
 		if storeErr != nil {
 			putErr = storeErr
@@ -170,7 +182,7 @@ func (s *server) memoryV1Update(w http.ResponseWriter, r *http.Request) {
 			http.MethodPost,
 			"/v1/memory/put",
 			incomingHeaders,
-			map[string]any{"item": item},
+			buildForwardPayload("/v1/memory/put", normalized, s.writePolicy.fanoutExcludeTargetsFor(normalized)),
 		)
 	}
 	if putErr != nil {
@@ -194,10 +206,10 @@ func (s *server) memoryV1Update(w http.ResponseWriter, r *http.Request) {
 	if updatedID == "" {
 		updatedID = memoryID
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	writeJSON(w, http.StatusOK, attachWriteSecretFilter(map[string]any{
 		"ok":        true,
 		"memory_id": updatedID,
-	})
+	}, secretFilter))
 }
 
 func (s *server) memoryV1Neighbors(w http.ResponseWriter, r *http.Request) {

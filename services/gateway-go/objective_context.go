@@ -643,6 +643,16 @@ func (s *server) captureObjectiveContextDatapoint(
 			tags:      spec.tags,
 			createdAt: nowUTCISO(),
 		}
+		securedItem, secretFilter, secretErr := secureNormalizedWrite(item)
+		s.recordWriteSecretFilter(secretFilter, secretErr != nil)
+		if secretErr != nil {
+			result["status"] = "error"
+			result["reason"] = "secret_filter_blocked"
+			result["scope"] = spec.scope
+			result["secret_filter"] = writeSecretFilterPayload(secretFilter)
+			return result, secretErr
+		}
+		item = securedItem
 		entry, deduped, err := s.memoryStore.put(item)
 		if err != nil {
 			result["status"] = "error"
@@ -660,6 +670,9 @@ func (s *server) captureObjectiveContextDatapoint(
 			"deduped":     deduped,
 			"event_id":    entry.EventID,
 			"content_ref": entry.ContentRef,
+		}
+		if secretFilter.Findings > 0 {
+			write["secret_filter"] = writeSecretFilterPayload(secretFilter)
 		}
 		writes = append(writes, write)
 		if _, present := result["file"]; !present {

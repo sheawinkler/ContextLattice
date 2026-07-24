@@ -39,8 +39,22 @@ def read_text(path: Path) -> str:
     return path.read_text(encoding="utf-8", errors="replace")
 
 
-def emit(payload: dict[str, Any], pretty: bool = False) -> None:
-    print(json.dumps(payload, indent=2 if pretty else None, sort_keys=pretty))
+def resolve_pretty(explicit: bool | None = None, *, output_path: str = "") -> bool:
+    if explicit is not None:
+        return explicit
+    mode = os.getenv("CONTEXTLATTICE_CLI_OUTPUT", "auto").strip().lower()
+    if mode == "pretty":
+        return True
+    if mode in {"compact", "raw"}:
+        return False
+    if output_path:
+        return False
+    return bool(sys.stdout.isatty())
+
+
+def emit(payload: dict[str, Any], pretty: bool | None = None) -> None:
+    resolved = resolve_pretty(pretty)
+    print(json.dumps(payload, indent=2 if resolved else None, sort_keys=resolved))
 
 
 def now_iso() -> str:

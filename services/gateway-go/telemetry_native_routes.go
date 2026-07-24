@@ -206,6 +206,12 @@ func (s *server) memoryWriteTelemetrySnapshot() (map[string]any, int, int) {
 		"lastWriteLatencyMs": lastWriteLatency,
 		"processed":          s.memoryTelemetryProcessed,
 		"dropped":            s.memoryTelemetryDropped,
+		"secretFilter": map[string]any{
+			"mode":       writeSecretsStorageMode(),
+			"findings":   s.writeSecretFindings.Load(),
+			"redactions": s.writeSecretRedactions.Load(),
+			"blocked":    s.writeSecretBlocked.Load(),
+		},
 	}, int(s.memoryTelemetryProcessed), int(s.memoryTelemetryDropped)
 }
 
@@ -287,6 +293,7 @@ func (s *server) telemetryMemoryPayload() map[string]any {
 		"updatedAt":               updatedAt,
 		"lastWriteAt":             lastWriteAt,
 		"lastWriteLatencyMs":      lastWriteLatency,
+		"secretFilter":            writeSnapshot["secretFilter"],
 		"memoryBank": map[string]any{
 			"queueDepth": queueDepth,
 			"queueMax":   queueMax,

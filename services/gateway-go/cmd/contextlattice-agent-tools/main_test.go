@@ -37,6 +37,110 @@ func TestParseArgsAllowsFlagsAfterPositionalQuery(t *testing.T) {
 	}
 }
 
+func TestCLIOutputDefaultsPreferHumansWithoutBreakingPipes(t *testing.T) {
+	tests := []struct {
+		name     string
+		command  string
+		args     []string
+		terminal bool
+		mode     string
+		want     []string
+	}{
+		{
+			name:    "interactive json command defaults pretty",
+			command: "search", args: []string{"release readiness"},
+			terminal: true, mode: "auto",
+			want: []string{"release readiness", "--pretty"},
+		},
+		{
+			name:    "pipe remains compact",
+			command: "search", args: []string{"release readiness"},
+			terminal: false, mode: "auto",
+			want: []string{"release readiness"},
+		},
+		{
+			name:    "raw is authoritative",
+			command: "search", args: []string{"release readiness", "--raw"},
+			terminal: true, mode: "auto",
+			want: []string{"release readiness", "--raw"},
+		},
+		{
+			name:    "trace defaults to its human tree",
+			command: "trace", args: []string{"--session-id", "sess"},
+			terminal: true, mode: "auto",
+			want: []string{"--session-id", "sess"},
+		},
+		{
+			name:    "interactive trace json is readable",
+			command: "trace", args: []string{"--session-id", "sess", "--json"},
+			terminal: true, mode: "auto",
+			want: []string{"--session-id", "sess", "--json", "--pretty"},
+		},
+		{
+			name:    "global compact override",
+			command: "search", args: []string{"release readiness"},
+			terminal: true, mode: "compact",
+			want: []string{"release readiness"},
+		},
+		{
+			name:    "global pretty override works without tty",
+			command: "search", args: []string{"release readiness"},
+			terminal: false, mode: "pretty",
+			want: []string{"release readiness", "--pretty"},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := applyCLIOutputDefaults(test.command, test.args, test.terminal, test.mode)
+			if strings.Join(got, "\x00") != strings.Join(test.want, "\x00") {
+				t.Fatalf("got=%#v want=%#v", got, test.want)
+			}
+		})
+	}
+}
+
+func TestTracePresetsResolveOneDeterministicView(t *testing.T) {
+	tests := []struct {
+		preset       string
+		wantProof    bool
+		wantTree     bool
+		wantMarkdown bool
+		wantJSON     bool
+	}{
+		{preset: "overview"},
+		{preset: "proof", wantProof: true},
+		{preset: "export", wantMarkdown: true},
+		{preset: "machine", wantJSON: true},
+	}
+	for _, test := range tests {
+		t.Run(test.preset, func(t *testing.T) {
+			parsed := parseArgs(
+				[]string{"--preset", test.preset},
+				map[string]string{"preset": "preset"},
+				map[string]string{"proof": "proof", "tree": "tree", "markdown": "markdown", "json": "json"},
+			)
+			resolved, err := applyTracePreset(parsed)
+			if err != nil {
+				t.Fatalf("apply preset: %v", err)
+			}
+			if resolved.bool("proof") != test.wantProof ||
+				resolved.bool("tree") != test.wantTree ||
+				resolved.bool("markdown") != test.wantMarkdown ||
+				resolved.bool("json") != test.wantJSON {
+				t.Fatalf("unexpected resolved preset: %#v", resolved)
+			}
+		})
+	}
+	parsed := parseArgs(
+		[]string{"--tree", "--markdown"},
+		map[string]string{},
+		map[string]string{"tree": "tree", "markdown": "markdown"},
+	)
+	if _, err := applyTracePreset(parsed); err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Fatalf("expected conflicting view error, got %v", err)
+	}
+}
+
 func TestSessionTerminalCommandsAcceptFlagOnlySummary(t *testing.T) {
 	tests := []struct {
 		command string
@@ -2150,7 +2254,7 @@ func TestTraceCommandProofUsesCanonicalProofRouteAndRenderer(t *testing.T) {
 	var stdout bytes.Buffer
 	c := newCLI(&stdout, ioDiscard{})
 	c.baseURL = gateway.URL
-	if err := c.run([]string{"contextlattice_agent_trace", "--session-id", "sess-proof", "--proof", "--tree"}); err != nil {
+	if err := c.run([]string{"contextlattice_agent_trace", "--session-id", "sess-proof", "--preset", "proof"}); err != nil {
 		t.Fatalf("run proof trace: %v", err)
 	}
 	rendered := stdout.String()

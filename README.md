@@ -334,6 +334,13 @@ MLX_API_BASE=http://127.0.0.1:18087/v1
 LLAMA_CPP_BASE_URL=http://127.0.0.1:8080
 ```
 
+## Security defaults
+
+- `SECRETS_STORAGE_MODE=redact` runs the Go-native ingress filter and redacts secret-like material before memory persistence/fanout.
+- `SECRETS_STORAGE_MODE=block` rejects writes containing secret-like material (`422`).
+- `SECRETS_STORAGE_MODE=allow` stores write payloads as-is (operator opt-in).
+- The filter is deterministic and local: sensitive JSON keys and high-confidence token/key formats are checked without sending content to a model or third party.
+
 ## Agent CLI
 
 Installer and quickstart paths install agent helpers under `$HOME/.contextlattice/bin`.
@@ -388,7 +395,8 @@ ContextLattice tracks live agent work as first-class sessions, independent of th
 - The same doctor works for other agent profiles: `contextlattice_doctor --agents claude-code --skip-provider-smoke --pretty`, `contextlattice_doctor --agents opencode --skip-provider-smoke --pretty`, or `contextlattice_doctor --agents codex,claude-code,opencode --skip-provider-smoke --pretty`.
 - Run `scripts/agent/agent-runtime-proof-pack --pretty` or global `contextlattice_agent_runtime_proof --pretty` for a one-command live proof that bootstrap, scoped recall, checkpoint, handoff, completion, status, and runtime telemetry are wired end to end.
 - Use `scripts/agent/contextlattice-session` for CLI start/event/complete/fail/status/runtime/trace flows.
-- Use `scripts/agent/agent-run-trace --session-id <id> --tree` or global `contextlattice_agent_trace --session-id <id> --tree` to see the terminal trace, then `--markdown` to export the run card.
+- Use `contextlattice_agent_trace --session-id <id>` for the default overview, `--preset proof` for the six-stage proof timeline, `--preset export` for Markdown, or `--preset machine` for compact JSON. Explicit `--tree`, `--markdown`, `--json`, and `--proof` remain available.
+- Human terminal output defaults to readable, pretty formatting. Pipes and redirected output remain compact JSON; set `CONTEXTLATTICE_CLI_OUTPUT=pretty|compact` or pass `--pretty`/`--raw` to override that policy.
 - Use global `contextlattice_runner_quality --pretty` to inspect bounded runner-quality telemetry for adapter success/block/failure rates, context-pack quality linkage, exact prompt-token savings, modeled inference-avoidance signals, and advisor-only runner recommendations. Repo-local `scripts/agent/runner-quality --pretty` remains available for development fallback.
 - Use `scripts/agent/contextlattice-session sweep-stale-audits --all-projects --pretty` for dry-run-first cleanup of stale objective-runtime audit/preflight sessions; add `--confirm` only after reviewing matches.
 - `scripts/agent/contextlattice-pack`, `scripts/agent/contextlattice-dream`, `scripts/agent/writeback`, and compaction hooks auto-start or recover a session when `CONTEXTLATTICE_SESSION_ID` is absent.
@@ -467,6 +475,28 @@ ContextLattice exposes active skills as a native Go Skills Index so agents can d
 - Tool alias: `GET|POST /tools/skills_quarantine_search`
 - Reindex endpoint: `POST /v1/skills/quarantine/reindex` (off by default; enable explicitly)
 
+The native active index is a live filesystem scan, so an approved local skill is visible without rebuilding a static index. Upstream repositories are not pulled during startup, retrieval, or search. The host-native source workflow records exact commits and digests, refreshes only quarantine, and requires a separate promotion:
+
+```zsh
+# Normalize current results from Vercel's npx skills finder. No install occurs.
+contextlattice_skills_index discover "browser automation" --pretty
+
+# Clone without hooks/submodules, locate one exact SKILL.md, scan it, and stage
+# the bounded skill tree under the quarantine root.
+contextlattice_skills_index stage owner/repo@skill --pretty
+
+# Scheduler-friendly: checks only registered sources whose last check is due.
+# Changed content remains quarantined and never replaces an active skill.
+contextlattice_skills_index refresh --due --pretty
+
+# Explicit activation after reviewing the manifest and scan.
+contextlattice_skills_index promote owner/repo@skill --yes --pretty
+```
+
+Embedded secrets block promotion. Executable content, instruction overrides, pipe-to-shell commands, destructive commands, privilege escalation, and credential-store access require both human review and `--accept-review`. An existing active skill additionally requires `--replace`; the prior directory is retained under the hidden active-root backup directory. Source trees are bounded by file count, per-file bytes, total bytes, and traversal count; symlinks and special files are rejected. Discovery and staging never execute retrieved skill content.
+
+`refresh --due` defaults to a 24-hour interval and is safe to call from an operator-owned scheduler. ContextLattice intentionally does not install or mutate a host scheduler implicitly.
+
 Runtime knobs:
 
 ```bash
@@ -485,6 +515,10 @@ ORCH_SKILLS_QUARANTINE_REINDEX_ENABLED=false
 CODEX_SKILLS_QUARANTINE_ROOT=/opt/contextlattice/skills_quarantine
 CODEX_SKILLS_QUARANTINE_INDEX_DIR=/opt/contextlattice/skills_quarantine/index
 CODEX_SKILLS_QUARANTINE_INDEX=/opt/contextlattice/skills_quarantine/index/skills_index.jsonl
+CONTEXTLATTICE_SKILLS_QUARANTINE_ROOT=${HOME}/.codex/skills_quarantine
+CONTEXTLATTICE_SKILLS_ACTIVE_ROOT=${HOME}/.codex/skills
+CONTEXTLATTICE_SKILLS_REFRESH_INTERVAL_HOURS=24
+CONTEXTLATTICE_SKILLS_NPX_PACKAGE=skills@1.5.9
 ```
 
 ## Security and Privacy

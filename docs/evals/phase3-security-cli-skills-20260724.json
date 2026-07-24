@@ -1,0 +1,105 @@
+{
+  "schema_id": "contextlattice_eval_ledger.v1",
+  "feature": "phase3_security_cli_skills",
+  "recorded_at": "2026-07-24T22:28:19Z",
+  "baseline": {
+    "write_ingress": "The Go write paths had no shared content-level secret filter before persistence or backend fanout.",
+    "dashboard_supply_chain": {
+      "command": "npm audit --json",
+      "high": 2,
+      "advisory": "GHSA-r28c-9q8g-f849",
+      "affected_postcss": "<=8.5.17"
+    },
+    "cli": "Readable JSON and trace views required repeated flags; no named trace presets existed.",
+    "skills_index": "The native index live-scanned configured local roots but did not discover, register, refresh, scan, or explicitly promote upstream skill sources."
+  },
+  "metrics": {
+    "write_secret_filter_safe_median_ns_per_op": 23050,
+    "write_secret_filter_safe_median_bytes_per_op": 3846,
+    "write_secret_filter_safe_allocs_per_op": 37,
+    "write_secret_filter_redact_median_ns_per_op": 17417,
+    "write_secret_filter_redact_median_bytes_per_op": 4233,
+    "write_secret_filter_redact_allocs_per_op": 43,
+    "dashboard_high_advisories_after": 0,
+    "dashboard_postcss_after": "8.5.23",
+    "dashboard_brace_expansion_after": "5.0.8",
+    "dashboard_tests_passed": 122,
+    "gateway_full_test_seconds": 65.353,
+    "native_cli_full_test_seconds": 3.483,
+    "skills_discovery_smoke_returned": 1,
+    "skills_discovery_smoke_duration_ms": 1655,
+    "skills_source_max_files": 256,
+    "skills_source_max_file_bytes": 4194304,
+    "skills_source_max_total_bytes": 16777216,
+    "skills_source_max_repository_entries": 20000
+  },
+  "holdouts": [
+    "ordinary password, token-budget, API-key naming, and secret-policy prose remains unchanged",
+    "structured sensitive keys redact recursively",
+    "block-mode batches fail before any backend fanout",
+    "interactive output becomes readable while pipes remain compact",
+    "explicit raw and output flags remain authoritative",
+    "trace presets select one deterministic view and reject conflicting explicit views",
+    "skill package traversal and unsafe refs are rejected",
+    "ANSI discovery output is normalized and deduplicated",
+    "embedded secret findings never include matched values",
+    "symlinks and special source files are rejected",
+    "review-required source content needs explicit acceptance",
+    "candidate digest tampering blocks promotion",
+    "active-skill collisions need explicit replacement and preserve a recoverable backup",
+    "refresh mutates quarantine only"
+  ],
+  "cost": {
+    "llm_calls": 0,
+    "provider_tokens": 0,
+    "new_services": 0,
+    "new_gateway_routes": 0,
+    "write_hot_path_external_calls": 0,
+    "skills_discover_external_processes": 1,
+    "skills_stage_external_processes": 2,
+    "skills_refresh_external_processes_per_source": 2,
+    "skills_promote_external_processes": 0,
+    "skills_cli_package": "skills@1.5.9"
+  },
+  "latency": {
+    "write_filter_note": "Five-run median from the checked-in Go benchmark on darwin/arm64 Apple M1 Max.",
+    "skills_discovery_note": "Measured from the command result, excluding Go compile time.",
+    "skills_source_manager_unit_suite_seconds": 3.327,
+    "skills_refresh_is_retrieval_hot_path": false
+  },
+  "failures": [
+    {
+      "stage": "isolated_provider_smoke",
+      "failure": "The first package name requested from the official repository did not exist as an exact SKILL.md identity.",
+      "resolution": "The command failed without publishing a candidate; the smoke was repeated with the repository's exact web-design-guidelines identity."
+    },
+    {
+      "stage": "current_dashboard_audit",
+      "failure": "A newly published high-severity brace-expansion advisory appeared after the earlier zero-vulnerability PostCSS gate.",
+      "resolution": "Updated the existing override from 5.0.7 to patched 5.0.8, reinstalled from the lock, and reran audit, 122 tests, and the production build."
+    },
+    {
+      "stage": "first_live_gateway_readback",
+      "failure": "The secret-filter telemetry snapshot computed counters but the /telemetry/memory response did not expose them.",
+      "resolution": "Wired the bounded counter-only object into the response and added a regression proving mode and counters are present without matched values."
+    }
+  ],
+  "known_unrelated_local_gate_failures": [
+    "audit-agent-context reports 495 oversized active-user third-party skills plus pre-existing global and repo instruction files; all product-facing subchecks passed",
+    "audit-agent-repo-integration reports that this checkout's pre-existing instruction files are not generated managed integration blocks"
+  ],
+  "reproduction": [
+    "cd services/gateway-go && go test . -run 'Test(MemoryWrite|ToolMemoryWrite|Skills)' -count=1",
+    "cd services/gateway-go && go test -race . -run 'TestWriteSecretFilter|TestWriteIngressRedacts|TestWriteBatchBlock' -count=1",
+    "cd services/gateway-go && go test . -run '^$' -bench '^BenchmarkWriteSecretFilter$' -benchmem -count=5",
+    "cd services/gateway-go && go test ./cmd/contextlattice-agent-tools -count=1",
+    "cd services/gateway-go && go vet ./cmd/contextlattice-agent-tools",
+    "cd contextlattice-dashboard && npm audit --audit-level=high",
+    "cd contextlattice-dashboard && npm test",
+    "cd contextlattice-dashboard && npm run build",
+    "python3 -m unittest scripts.tests.test_agent_run_trace",
+    "CONTEXTLATTICE_SKILLS_QUARANTINE_ROOT=<isolated-temp> contextlattice_skills_index stage vercel-labs/agent-skills@web-design-guidelines --pretty",
+    "CONTEXTLATTICE_SKILLS_QUARANTINE_ROOT=<isolated-temp> contextlattice_skills_index refresh --due --interval-hours 0 --pretty",
+    "CONTEXTLATTICE_SKILLS_QUARANTINE_ROOT=<isolated-temp> CONTEXTLATTICE_SKILLS_ACTIVE_ROOT=<isolated-temp> contextlattice_skills_index promote vercel-labs/agent-skills@web-design-guidelines --yes --pretty"
+  ]
+}

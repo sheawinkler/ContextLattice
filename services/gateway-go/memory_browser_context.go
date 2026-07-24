@@ -158,17 +158,29 @@ func (s *server) memoryBrowserContext(w http.ResponseWriter, r *http.Request) {
 		"content":     content,
 		"topicPath":   normalizedTopicPath,
 	}
+	writeItem, secretFilter, secretErr := secureNormalizedWrite(normalizedWrite{
+		project:   projectName,
+		fileName:  fileName,
+		content:   content,
+		topicPath: normalizedTopicPath,
+		raw:       writePayload,
+	})
+	if secretErr != nil {
+		s.recordWriteSecretFilter(secretFilter, true)
+		writeJSON(w, http.StatusUnprocessableEntity, attachWriteSecretFilter(map[string]any{
+			"ok":     false,
+			"error":  "potential_secret_detected",
+			"detail": secretErr.Error(),
+		}, secretFilter))
+		return
+	}
+	s.recordWriteSecretFilter(secretFilter, false)
 	var (
 		response map[string]any
 		status   int
 	)
 	if s.memoryStore != nil && s.memoryStore.isEnabled() {
-		entry, deduped, storeErr := s.memoryStore.put(normalizedWrite{
-			project:   projectName,
-			fileName:  fileName,
-			content:   content,
-			topicPath: normalizedTopicPath,
-		})
+		entry, deduped, storeErr := s.memoryStore.put(writeItem)
 		if storeErr != nil {
 			writeJSON(w, http.StatusBadGateway, map[string]any{
 				"error":  "memory store write failed",
@@ -190,7 +202,13 @@ func (s *server) memoryBrowserContext(w http.ResponseWriter, r *http.Request) {
 			},
 		}
 	} else {
-		backendResponse, backendStatus, backendErr := s.callBackendJSON(r.Context(), incomingHeaders, http.MethodPost, "/memory/write", writePayload)
+		backendResponse, backendStatus, backendErr := s.callBackendJSON(
+			r.Context(),
+			incomingHeaders,
+			http.MethodPost,
+			"/memory/write",
+			buildForwardPayload("/memory/write", writeItem, s.writePolicy.fanoutExcludeTargetsFor(writeItem)),
+		)
 		if backendErr != nil {
 			writeJSON(w, http.StatusBadGateway, map[string]any{
 				"error":      "backend unavailable",
@@ -214,5 +232,5 @@ func (s *server) memoryBrowserContext(w http.ResponseWriter, r *http.Request) {
 		"topicPath": normalizedTopicPath,
 		"url":       pageURL,
 	}
-	writeJSON(w, status, response)
+	writeJSON(w, status, attachWriteSecretFilter(response, secretFilter))
 }
