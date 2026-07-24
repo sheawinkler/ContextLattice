@@ -1,0 +1,138 @@
+{
+  "schemaId": "contextlattice_public_docs_search.v1",
+  "release": "v4.0.5",
+  "documents": [
+    {
+      "title": "Documentation",
+      "summary": "The public field manual for installing, operating, and integrating ContextLattice without losing the thread.",
+      "href": "/docs/",
+      "headings": [
+        "Choose your path",
+        "The shortest useful loop",
+        "Interface order",
+        "What good context looks like",
+        "Product and support links"
+      ],
+      "text": "ContextLattice documentation ContextLattice is the local-first intelligence layer that gives AI agents durable continuity, explainable retrieval, portable context, and verified learning across harnesses. This manual is generated from the Markdown in docs/wiki . Every page links back to its repository source, and every route is stable enough to bookmark, share, or open directly in an agent. Choose your path - Install and verify the runtime getting-started.md if this is your first machine. - Understand the operating model concepts.md before tuning retrieval or storage. - Use the primary CLI cli.md for the normal context lifecycle. - Connect an agent or application integrations.md after the core runtime is healthy. - Operate and recover the stack operations.md with bounded checks. - Diagnose a failure troubleshooting.md from the exact failing boundary. - Review release posture releases.md before upgrading or publishing. The shortest useful loop Use contextlattice resume --project my-project --pretty when a later session needs the bounded objective, evidence, risks, and next action. Use contextlattice correct when retrieved context is wrong, stale, useful, or superseded. Interface order 1. CLI is the primary human and agent interface. 2. Dashboard is the visibility, proof, account, and operations companion. 3. HTTP and MCP are integration surfaces for harnesses and applications. The command line keeps the normal workflow explicit. Programmatic clients should use the same scoped lifecycle and avoid replaying full transcripts as memory. What good context looks like - Scoped to a project, topic, task, or session. - Small enough to inspect before acting. - Grounded in source paths, timestamps, identities, or command evidence. - Honest about missing or degraded sources. - Correctable when evidence changes. - Finished with a verified outcome so retrieval quality can improve. ContextLattice should make an agent more continuous, not more credulous. Retrieved records are evidence to inspect, never authority to expand a task or override current instructions. Product and support links - Public repository https://github.com/sheawinkler/ContextLattice - Dashboard https://app.contextlattice.io/console - Pricing https://contextlattice.io/premium.html - Release updates https://contextlattice.io/updates.html - Issue tracker https://github.com/sheawinkler/ContextLattice/issues"
+    },
+    {
+      "title": "Getting started",
+      "summary": "Install ContextLattice, launch the right local profile, prove health, and complete a first context lifecycle.",
+      "href": "/docs/getting-started/",
+      "headings": [
+        "Prerequisites",
+        "Install from source",
+        "Verify the runtime",
+        "Integrate an existing repository",
+        "Run the first lifecycle",
+        "Alternative distribution paths",
+        "Next"
+      ],
+      "text": "Getting started The canonical technical path is a repository checkout driven by gmake quickstart . Installers and the Homebrew cask are bootstrap alternatives; they do not replace the CLI-first operating model. Prerequisites - macOS, Linux, or Windows through WSL2. - A Compose v2-compatible container runtime. - gmake , jq , rg , python3 , and curl . - Enough CPU, memory, disk, and free storage for the selected profile. Lite is the sensible first profile. Move to full or operator surfaces only when the workload needs their additional sources and the host has measured headroom. Install from source The quickstart creates missing local wiring, asks for the runtime profile when needed, starts the services, and runs its initial health and authentication checks. Verify the runtime Start with the unauthenticated liveness surface, then use the CLI for the complete local readiness view. /health proves that the orchestrator is answering. It does not, by itself, prove that every retrieval source can serve a real read. The adoption and doctor commands add configuration, storage, profile, helper, and authenticated runtime evidence. Integrate an existing repository Run integration from the repository that the agent will work in. Managed blocks preserve existing instructions around them. This integrates supported profiles already present on the machine. It does not install third-party agent harnesses. Run the first lifecycle The first command retrieves a compact proof-carrying packet. remember persists a high-signal checkpoint, resume reconstructs bounded task state, and finish records the verified outcome. Alternative distribution paths - Homebrew: brew tap sheawinkler/contextlattice && brew install --cask contextlattice - macOS, Windows, and Linux bootstrap artifacts: use the assets attached to the latest public release https://github.com/sheawinkler/ContextLattice/releases/latest . - Container-only hosted experiments: follow the public deployment guidance in the repository. After any bootstrap path, return to the verification and first-lifecycle sections above. Next Read Core concepts concepts.md to understand why ContextLattice separates liveness, retrieval evidence, checkpoints, and outcome feedback."
+    },
+    {
+      "title": "Core concepts",
+      "summary": "A concise model of continuity, scoped retrieval, evidence, continuation, corrections, and storage lanes.",
+      "href": "/docs/concepts/",
+      "headings": [
+        "The five product pillars",
+        "Context is not a transcript",
+        "Projects, topics, and sessions",
+        "Retrieval modes",
+        "Liveness, readiness, and real retrieval",
+        "Evidence and provenance",
+        "Outcomes and corrections",
+        "Local-first storage posture",
+        "Next"
+      ],
+      "text": "Core concepts ContextLattice sits between agent harnesses and durable context. Models still reason and harnesses still act; ContextLattice preserves the mission, selects relevant evidence, carries bounded state forward, and records what actually worked. The five product pillars - Durable continuity preserves objectives, decisions, constraints, and verified checkpoints across sessions. - Explainable retrieval returns evidence and scope, not an unexplained text blob. - Portable context lets the same mission move between supported harnesses without transcript replay. - Verified skill evolution records outcomes and corrections so reusable behavior can improve under evidence. - Aggregate Signal remains a controlled preview gated by independent privacy and utility review. Context is not a transcript Raw conversation history is large, noisy, and often stale. A useful context packet is a bounded reconstruction of what matters now: - the current objective; - relevant evidence and provenance; - constraints and risks; - unresolved questions; - likely next actions; - explicit uncertainty. This shape gives the receiving agent something it can inspect rather than something it must blindly trust. Projects, topics, and sessions A project is the durable top-level scope used by the normal CLI lifecycle. A topic path narrows memory inside that project. A session tracks the live objective and its retrieval, checkpoint, correction, and completion events. Use stable project names. Create narrower topics when a repository, incident, release, or customer thread would otherwise collide with unrelated work. Retrieval modes Start with the least expensive mode that can answer the task. 1. Fast favors the fast-now sources for narrow engineering loops. 2. Balanced mixes immediate results with measured continuation and is the normal broad-read posture. 3. Deep widens recall for audits, migrations, and root-cause work. Slow sources may continue after the first bounded answer. Continuation tokens and events let clients receive that depth without making every interaction wait for the slowest dependency. Liveness, readiness, and real retrieval These are separate claims: - /health says the orchestrator can answer a liveness request. - Authenticated status and doctor output describe dependency and configuration posture. - A bounded write/search or context-pack proof demonstrates the actual retrieval path. A healthy container is useful evidence, but it is not a substitute for a real readback when retrieval correctness matters. Evidence and provenance High-value records carry enough context to be checked later: source identity, project, topic, file or artifact, timestamps, and the command or observation that produced the conclusion. Memory without provenance should be treated as a lead, not a confirmed fact. Outcomes and corrections contextlattice finish reports whether the task succeeded, required repair, or failed. contextlattice correct labels retrieved context as useful, wrong, stale, or superseded. These signals close the loop without pretending that model confidence is ground truth. Local-first storage posture The public local-lite core uses topic rollups and Qdrant. Full and operator stacks can add more sources behind the same agent-facing contract. Storage selection does not change the basic rule: preserve the durable record, keep retrieval scoped, and expose degraded sources rather than manufacturing certainty. Next Use the CLI reference cli.md for the normal workflow, or move to Integrations integrations.md when an application needs HTTP or MCP."
+    },
+    {
+      "title": "CLI reference",
+      "summary": "The primary commands for context, resume, remember, correct, finish, adoption, proof, and capability discovery.",
+      "href": "/docs/cli/",
+      "headings": [
+        "Normal task lifecycle",
+        "Context",
+        "Resume",
+        "Remember",
+        "Correct",
+        "Finish",
+        "Readiness and adoption",
+        "Agent integration",
+        "Capability discovery",
+        "Advanced packets and traces",
+        "Exit discipline"
+      ],
+      "text": "CLI reference The CLI is the primary ContextLattice interface. It keeps scope, evidence, corrections, and completion explicit while hiding lower-level adapter plumbing during ordinary work. Normal task lifecycle Use one stable project name throughout a task. The CLI automatically associates the latest pending retrieval outcome when finish is called. Context This is the default pre-planning read. It returns a bounded agent packet.v1 with the objective, ranked evidence, uncertainty, risks, and next action. Use raw or file output only when a programmatic consumer needs it. Resume Resume reconstructs the latest bounded objective state. It is preferable to replaying an entire transcript into a new session. Remember Persist decisions, verified results, blockers, and exact next actions. Do not use checkpoints as a dumping ground for logs or speculative narration. Correct Available correction categories include useful , wrong , stale , and superseded . A correction should explain the evidence mismatch clearly enough that a later retrieval can avoid repeating it. Finish Choose --success , --repair , or --failure to match the verified outcome. Completion is an evidence record, not a confidence score. Readiness and adoption Use doctor when runtime readiness is unclear. Use adoption commands when a new machine, account, or repository needs profile-aware integration. Agent integration Remove --check to write or update managed instruction blocks. Existing user-authored content outside those blocks is preserved. Capability discovery Skills Index searches configured capability roots without loading every skill body into startup context. Advanced packets and traces Use synthesis packs when a complex decision needs findings, topic gravity, graph bridges, constraints, next actions, and open questions over the same bounded evidence. Use traces to inspect the run-shaping trail; missing links remain visible rather than inferred. Exit discipline Commands that report JSON or --pretty output should still be judged by their exit status and concrete fields. Keep secrets out of pasted examples and logs."
+    },
+    {
+      "title": "Integrations",
+      "summary": "Connect supported agent profiles, HTTP clients, and MCP consumers after proving the core runtime.",
+      "href": "/docs/integrations/",
+      "headings": [
+        "Supported agent profiles",
+        "Agent operating contract",
+        "HTTP base and authentication",
+        "Write and search smoke proof",
+        "Endpoint map",
+        "MCP",
+        "Continuations",
+        "Next"
+      ],
+      "text": "Integrations Integrate only after the runtime has passed its own health and readback checks. The CLI is the normal agent surface; HTTP and MCP exist for applications and harnesses that need programmatic access. Supported agent profiles ContextLattice ships profile-aware templates for Codex, Claude Code, OpenCode, Hermes Agent, Hermes Ultra, OMP, Mercury, Pi, Droid, ChatGPT, and Claude surfaces. The integration command writes bounded managed blocks to the instruction files each selected profile actually reads. It does not install the agent binaries. Agent operating contract 1. Retrieve scoped context before substantial planning or implementation. 2. Inspect provenance and degraded sources before acting. 3. Persist concise, verified checkpoints during long work. 4. Correct wrong, stale, useful, or superseded context explicitly. 5. Finish with the verified result and matching outcome. The reusable public templates live in docs/public overview/templates/agents/ . HTTP base and authentication The default local orchestrator is http://127.0.0.1:8075 . - GET /health is the liveness endpoint. - GET /status requires x-api-key . - Protected /memory/ , /telemetry/ , and operator routes require the configured API key. - Callers should read secrets from local runtime configuration and never print them. Write and search smoke proof Treat a successful write plus attributable readback as stronger evidence than container state alone. Endpoint map - POST /memory/write persists a checkpoint and reports fanout status. - POST /memory/search returns scoped results, grounding, debug posture, and continuation metadata. - POST /memory/context-pack builds a hierarchical context pack for complex work. - POST /memory/synthesis-pack assembles high-signal findings and bridges over bounded evidence. - POST /v1/memory/neighbors expands from a known memory record. - GET /memory/search/continuations/{token}/events streams slow-source continuation events. - GET /v1/agents/sessions/{id}/rollup returns bounded objective and evidence state. - GET /v1/agents/sessions/{id}/context-package prepares the next-model handoff. MCP The default memory MCP hub endpoint is http://127.0.0.1:53130/memorymcp/mcp . Full or operator stacks may expose additional MCP adapters. Keep orchestrator memory writes as the durable control plane even when the client retrieves through MCP. Continuations When a search returns continuation metadata, consume its event stream or use the CLI inbox drain instead of immediately repeating the same deep query. The hook is fail-open and is appropriate only for runtimes with a supported post-tool boundary. Next Read Operations operations.md before changing runtime profiles, restarting services, or responding to degraded retrieval."
+    },
+    {
+      "title": "Operations",
+      "summary": "Operate ContextLattice with evidence-first health checks, scoped restarts, storage discipline, and release gates.",
+      "href": "/docs/operations/",
+      "headings": [
+        "The operating ladder",
+        "Health checks",
+        "Retrieval verification",
+        "Restart discipline",
+        "Storage discipline",
+        "Retrieval modes under load",
+        "Checkpoints",
+        "Release posture",
+        "Next"
+      ],
+      "text": "Operations Stable uptime comes from separating liveness, dependency readiness, real retrieval, process identity, and storage pressure. Diagnose the failing layer before changing the runtime. The operating ladder 1. Confirm the exact host and runtime profile under test. 2. Check /health for orchestrator liveness. 3. Check authenticated /status and contextlattice doctor --pretty . 4. Run a bounded real search or write/readback in the affected scope. 5. Inspect dependency, queue, continuation, and storage evidence. 6. Change only the smallest reversible component implicated by that evidence. Health checks The one-command runtime proof exercises bootstrap, scoped recall, checkpoint, handoff, context package, completion, status, and telemetry. Use it when a release or incident needs more than a liveness check. Retrieval verification Use the normal CLI against the affected project and query. Inspect which sources answered, which degraded, whether continuation is pending, and whether returned evidence belongs to the requested scope. Restart discipline Before stopping or restarting anything, identify the exact process or container, executable, parent, working directory, and dependents. Avoid family-wide kills and broad container restarts. For a runtime change, rebuild the affected artifact fully, restart only its owned service, and rerun the real retrieval proof before claiming live verification. Storage discipline - Resolve symlinks and mount ownership before moving data. - Confirm the canonical hot and cold storage tiers. - Measure free space and current write load. - Keep snapshot, index, and telemetry growth inside explicit ceilings. - Avoid placing a large read or rebuild on an already hot write lane. Storage guardrails should fail visibly before a backend silently consumes the host. Retrieval modes under load Use fast, scoped reads during tight engineering loops. Let continuation handle slower sources. Escalate to balanced or deep only when coverage is insufficient, and preserve the exact query and source evidence when comparing modes. Checkpoints Write checkpoints after meaningful verified transitions: a reproduced failure, a merged fix, a passed gate, a deployment identity, or a known blocker. A checkpoint should be small enough for a future agent to use without re-reading the entire incident. Release posture Local deterministic gates are the primary engineering proof. Hosted CI adds a second environment and audit trail but cannot convert an unrun or externally blocked job into a green claim. Record: - exact source SHA and tree; - commands and counts for local gates; - build and runtime identities; - real endpoint or retrieval proof; - projected public and paid lane identities; - hosted status, including infrastructure blockers. Next Use Troubleshooting troubleshooting.md for symptom-oriented diagnosis or Releases releases.md for promotion and upgrade posture."
+    },
+    {
+      "title": "Troubleshooting",
+      "summary": "Diagnose installation, authentication, retrieval, continuation, and storage failures from the exact boundary.",
+      "href": "/docs/troubleshooting/",
+      "headings": [
+        "The runtime does not answer",
+        "Health passes but retrieval stalls",
+        "HTTP returns 401",
+        "The CLI cannot find context",
+        "Results are wrong or stale",
+        "Continuation never completes",
+        "Disk or index pressure",
+        "Agent integration is missing",
+        "A local gate and hosted CI disagree",
+        "Still blocked"
+      ],
+      "text": "Troubleshooting Start with the exact failing command, endpoint, project, runtime identity, and error. Do not convert a generic bootstrap failure into a permission, network, or data-loss diagnosis without matching evidence. The runtime does not answer If /health fails, inspect the orchestrator process or container and its immediate logs. Confirm that the caller is reaching the intended host and port before restarting anything. Health passes but retrieval stalls A healthy container can coexist with a stalled dependency. Run the exact scoped retrieval and inspect source-level timing, continuation, DNS, queue, and backend evidence. If the same process identity remains stable while a request spends minutes waiting, investigate the retrieval path before labeling the event a restart. HTTP returns 401 - Confirm the protected route actually requires x-api-key . - Confirm the caller reads the current local runtime configuration. - Restart only the caller that cached stale configuration. - Do not paste the key into issue reports, screenshots, or shell history. GET /health is intentionally unauthenticated. /status and protected memory routes are not. The CLI cannot find context Check project spelling, topic scope, session identity, and whether the expected record was ever written. Retry a broader scoped read once if the narrow recall is empty or degraded, then inspect local source truth rather than inventing a memory. Results are wrong or stale Use wrong when the retrieved claim was false, stale when it aged out, superseded when a newer decision replaced it, and useful when it materially helped. Continuation never completes Inspect whether the slow source is still running, terminally degraded, or disconnected. Do not hide terminal degradation by repeatedly launching the same deep query. Disk or index pressure Check free space at the canonical storage root, current index size, snapshots, and active write load. Resolve symlinks and mounts before cleanup or relocation. Prefer owner-native retention and snapshot tools over direct deletion of uncertain backend files. Agent integration is missing Run the check from the target repository. A failed headless bootstrap without EACCES , EPERM , Permission denied , or Operation not permitted is environment evidence, not proof of a filesystem permission problem. A local gate and hosted CI disagree Treat both as evidence. Reproduce a hosted test failure locally when it actually executed. If a hosted job has zero steps and no runner because of an external billing or platform block, report it as unrun infrastructure—not as a product regression and not as a passing gate. Still blocked Open an issue https://github.com/sheawinkler/ContextLattice/issues with the release tag, operating system, selected profile, exact command, sanitized output, and the smallest reproducible scope. Never attach .env , API keys, tokens, or private memory records."
+    },
+    {
+      "title": "Releases",
+      "summary": "Verify the current release, upgrade with evidence, and distinguish local proof from hosted or deployment state.",
+      "href": "/docs/releases/",
+      "headings": [
+        "Before upgrading",
+        "Install or upgrade",
+        "Verify after upgrade",
+        "Release evidence ledger",
+        "Static website publication",
+        "macOS posture",
+        "Hosted CI posture",
+        "Rollback",
+        "Follow updates"
+      ],
+      "text": "Releases The current public release baseline is v4.0.5 . Release identity comes from the canonical commercial truth contract, signed or attributable artifacts, exact source SHAs, and deterministic verification—not from a page label alone. Before upgrading - Read the release notes https://github.com/sheawinkler/ContextLattice/releases/latest . - Record the current source SHA, runtime profile, and storage locations. - Preserve a bounded backup or snapshot appropriate to the active backends. - Run a representative context query and save its evidence. - Confirm enough free space for images, indexes, and any migration. Install or upgrade Source operators should use the repository instructions and gmake quickstart . Homebrew and installer users should use the matching artifact from the same release. Do not move a production checkout across releases while its owned runtime is writing. Follow the repository release notes when a version includes migration or rollback guidance. Verify after upgrade Repeat the representative context query and compare scope, sources, latency, continuation, and returned evidence with the pre-upgrade record. Release evidence ledger A credible release record contains: 1. source repository, branch, SHA, and tree identity; 2. exact local test commands with pass counts; 3. production build result; 4. runtime rebuild, restart, and real readback where runtime code changed; 5. public and paid projection SHAs when those lanes apply; 6. artifact hashes and signing or notarization posture; 7. hosted CI status labeled as passed, failed, skipped, or externally blocked; 8. rollback path and known limitations. Static website publication The public website is release-bound. Source changes to docs/public overview and generated /docs output can merge before publication, but the Pages sync must prove the immutable release tag and source commit it is publishing. A post-release docs change should not be mislabeled as part of an older tag. macOS posture macOS release automation supports optional Developer ID signing and notarization when the credentials are configured. Unsigned technical-preview artifacts must continue to say so; successful local builds do not imply notarization. Hosted CI posture Hosted CI is supplemental evidence after local deterministic gates. A job that never acquires a runner or executes a step is unrun , even if the provider renders a red status. Preserve the job link and external blocker instead of changing the local conclusion to fit platform state. Rollback Use the release-specific rollback instructions, restore only the affected runtime and compatible data state, and rerun the same health and retrieval proofs. Avoid broad resets that discard unrelated user data or current memory. Follow updates - Public release updates https://contextlattice.io/updates.html - GitHub releases https://github.com/sheawinkler/ContextLattice/releases - Issue tracker https://github.com/sheawinkler/ContextLattice/issues"
+    }
+  ]
+}

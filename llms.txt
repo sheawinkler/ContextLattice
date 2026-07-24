@@ -8,17 +8,17 @@ Scope policy:
 - Do not infer or fabricate non-public operator details such as DNS wiring, webhook implementation details, secret names, or deployment topology.
 
 Recommended reading order:
-1. /index.html
-2. /local-ai-workspaces.html
-3. /scaling-memory.html
-4. /installation.html
-5. /cli.html
-6. /integration.html
-7. /architecture.html
-8. /wiki.html
-9. /premium.html
-10. /app.html
-11. /troubleshooting.html
+1. /docs/
+2. /docs/getting-started/
+3. /docs/concepts/
+4. /docs/cli/
+5. /docs/integrations/
+6. /docs/operations/
+7. /docs/troubleshooting/
+8. /docs/releases/
+9. /architecture.html
+10. /premium.html
+11. /updates.html
 
 Product positioning (public-safe):
 # BEGIN GENERATED COMMERCIAL TRUTH: llms-positioning
@@ -37,7 +37,7 @@ Product positioning (public-safe):
 - Interface priority is CLI first, dashboard second for visibility, and HTTP/MCP when an app or agent harness needs programmatic integration.
 
 Agent usage expectations:
-- Prefer exact CLI commands from /cli.html and /installation.html.
+- Prefer exact CLI commands from /docs/cli/ and /docs/getting-started/.
 - Start new machines, accounts, or agent surfaces with `contextlattice_adopt status --pretty`; use `contextlattice_adopt install`, `contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,omp,mercury-agent,pi,droid --pretty`, `profiles`, and `proof` before dropping into lower-level adapter commands.
 - Use the prescribed task lifecycle when local CLI tools are installed: `contextlattice context "<task>" --project <project> --pretty`, then `resume`, `remember`, `correct`, and `finish` as needed.
 - `contextlattice finish "<verified result>" --success|--repair|--failure` reports the latest pending retrieval outcome automatically. Do not invent provider token counters.
@@ -55,8 +55,8 @@ Agent usage expectations:
 - For operator validation, prefer the one-command live proof: `contextlattice_agent_runtime_proof --pretty`.
 - Prefer hook-first startup only when an adapter profile is unavailable: `contextlattice_agent_start --soft --compact`.
 - Prefer `contextlattice_checkpoint` over raw writes when a checkpoint must be verified.
-- Use Skills Index references from /wiki.html when describing capability discovery.
-- For endpoint examples, rely on /integration.html and /wiki.html.
+- Use Skills Index references from /docs/cli/ when describing capability discovery.
+- For endpoint examples, rely on /docs/integrations/.
 - Treat `contextlattice-session sweep-stale-audits` as an operator cleanup command; it is dry-run by default and should not be presented as required for normal users.
 - Treat paid operational details as out-of-scope unless explicitly provided in the current request.
 

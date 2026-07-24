@@ -27,9 +27,9 @@ body {
   font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
   color: var(--ink);
   background:
-    linear-gradient(180deg, #11110f 0%, #0b0b0a 100%),
-    repeating-linear-gradient(0deg, var(--grid) 0 1px, transparent 1px 32px),
-    repeating-linear-gradient(90deg, var(--grid) 0 1px, transparent 1px 32px);
+    url("assets/lattice-fabric.svg"),
+    linear-gradient(180deg, #11110f 0%, #0b0b0a 100%);
+  background-size: 224px 224px, auto;
   min-height: 100vh;
 }
 
@@ -47,10 +47,9 @@ body.home::after {
 
 body.home::before {
   inset: 6vh 8vw 8vh;
-  opacity: 0.08;
-  background:
-    repeating-linear-gradient(90deg, rgba(241, 239, 231, 0.42) 0 1px, transparent 1px 86px),
-    repeating-linear-gradient(0deg, rgba(241, 239, 231, 0.22) 0 1px, transparent 1px 86px);
+  opacity: 0.22;
+  background: url("assets/lattice-fabric.svg");
+  background-size: 352px 352px;
   transform: none;
   mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.76), transparent 86%);
 }

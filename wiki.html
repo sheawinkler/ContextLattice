@@ -3,324 +3,42 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Wiki | Context Lattice</title>
-  <meta name="description" content="ContextLattice operator wiki: launch flows, endpoint atlas, retrieval modes, continuation policy, and release runbooks." />
-  <link rel="canonical" href="https://contextlattice.io/wiki.html" />
-  <link rel="stylesheet" href="styles-gray.css?v=20260723a" />
+  <meta http-equiv="refresh" content="0; url=docs/" />
+  <title>Documentation moved | ContextLattice</title>
+  <meta name="description" content="The ContextLattice operator wiki has moved to the repository-backed documentation endpoint." />
+  <link rel="canonical" href="https://contextlattice.io/docs/" />
+  <link rel="icon" type="image/png" sizes="512x512" href="assets/contextlattice-icon-512.png" />
+  <link rel="stylesheet" href="styles-editorial.css?v=20260724c" />
 </head>
-<body class="home wiki-page">
-  <main class="container">
-    <header class="topbar">
-      <a class="brand" href="index.html">
-        <span class="brand-mark" aria-hidden="true"></span>
-        <span class="brand-copy"><span class="brand-label">Context Lattice</span><span class="brand-sub">By Private Memory Corp</span></span>
-      </a>
-      <nav class="nav" aria-label="Primary">
-        <a href="index.html">Home</a>
-        <a href="architecture.html">Architecture</a>
-        <a href="local-ai-workspaces.html">Compare</a>
-        <a href="scaling-memory.html">Memory at Scale</a>
-        <a class="active" href="wiki.html">Wiki</a>
-        <a href="updates.html">Updates</a>
-        <a href="roadmap.html">Roadmap</a>
-        <a href="installation.html">Installation</a>
-        <a href="cli.html">CLI</a>
-        <a href="integration.html">Integrations</a>
-        <a href="troubleshooting.html">Troubleshooting</a>
-        <a href="contact.html">Contact</a>
-        <a href="https://github.com/sheawinkler/ContextLattice" target="_blank" rel="noreferrer">GitHub</a>
-      </nav>
-    </header>
-
-    <section class="hero">
-      <span class="badge">Operator wiki</span>
-      <h1>The complete public/main operating manual for ContextLattice.</h1>
-      <p class="sub">One place for launch commands, endpoint behavior, retrieval mode policy, continuation mechanics, and production-safe workflows.</p>
-      <p class="hero-local">Designed for humans and agents running real systems.</p>
-      <div class="cta-row">
-        <a class="cta primary" href="#wiki-quickstart">Start in 5 minutes</a>
-        <a class="cta secondary" href="#wiki-endpoints">Endpoint atlas</a>
-        <a class="cta secondary" href="#wiki-retrieval">Retrieval modes</a>
-        <a class="cta secondary" href="#wiki-playbooks">Playbooks</a>
+<body>
+  <a class="skip-link" href="#main-content">Skip to notice</a>
+  <header class="site-header">
+    <a class="site-brand" href="index.html" aria-label="ContextLattice home">
+      <span class="site-brand-mark" aria-hidden="true"></span>
+      <span><strong>ContextLattice</strong><small>Durable agent continuity</small></span>
+    </a>
+    <nav class="site-nav" aria-label="Primary">
+      <a href="docs/">Docs</a>
+      <a href="premium.html">Pricing</a>
+      <a href="updates.html">Updates</a>
+      <a href="https://app.contextlattice.io/console">Dashboard</a>
+      <a href="https://github.com/sheawinkler/ContextLattice" target="_blank" rel="noreferrer">GitHub</a>
+    </nav>
+  </header>
+  <main id="main-content">
+    <section class="closing-cta">
+      <div>
+        <p class="section-index">Compatibility route / wiki.html</p>
+        <h1>The field manual moved to /docs/.</h1>
+      </div>
+      <div>
+        <a class="cta primary" href="docs/">Open documentation</a>
       </div>
     </section>
-
-    <section class="section section-tight" id="wiki-quickstart">
-      <article class="card quick-path-card">
-        <div class="kicker">Quick path</div>
-        <h3>Fastest route from install to reliable memory retrieval</h3>
-        <ol class="step-list">
-          <li>Launch with <code>gmake quickstart</code> and choose <code>lite</code> or <code>full</code> profile based on machine resources.</li>
-          <li>Validate <code>/health</code> and authenticated <code>/status</code>.</li>
-          <li>Run one <code>/memory/write</code> + one <code>/memory/search</code> smoke call.</li>
-          <li>Use <code>fast</code> mode first; escalate to <code>balanced</code> or <code>deep</code> only when scope or recall quality requires it.</li>
-          <li>On partial results, use continuation token/events instead of re-running expensive full-depth queries immediately.</li>
-        </ol>
-      </article>
-    </section>
-
-    <section class="section section-tight">
-      <nav class="page-nav-inline" aria-label="On this page">
-        <a href="#wiki-map">Tool map</a>
-        <a href="#wiki-endpoints">Endpoint atlas</a>
-        <a href="#wiki-retrieval">Retrieval modes</a>
-        <a href="#wiki-playbooks">Playbooks</a>
-        <a href="#wiki-agents">Agent templates</a>
-        <a href="#wiki-release">Release checklist</a>
-      </nav>
-    </section>
-
-    <section class="section" id="wiki-map">
-      <div class="kicker">Visual atlas</div>
-      <h2>How best-tools routing works in production</h2>
-      <article class="card architecture-board wiki-map-panel">
-        <figure class="arch-diagram-figure">
-          <img class="arch-diagram-image" src="assets/wiki-tool-atlas.svg?v=20260422a" alt="ContextLattice wiki tool atlas" loading="lazy" decoding="async" />
-          <figcaption class="arch-diagram-caption"><strong>Tool Atlas:</strong> orchestrator ingress, fast-now sources, slow async continuation, and evidence return path.</figcaption>
-        </figure>
-      </article>
-      <div class="grid component-grid wiki-kpi-grid">
-        <article class="card component-card wiki-kpi">
-          <div class="kicker">Ingress</div>
-          <h3>Single API surface</h3>
-          <ul class="spec-list">
-            <li><strong>Primary:</strong> <code>http://127.0.0.1:8075</code></li>
-            <li><strong>Auth:</strong> API key required for protected routes</li>
-            <li><strong>Runtime:</strong> Go orchestrator + Rust retrieval hot paths</li>
-          </ul>
-        </article>
-        <article class="card component-card wiki-kpi">
-          <div class="kicker">Fast-now plane</div>
-          <h3>Low-latency answers</h3>
-          <ul class="spec-list">
-            <li><code>topic_rollups</code></li>
-            <li><code>qdrant</code> + <code>weaviate</code></li>
-            <li><code>postgres_pgvector</code></li>
-          </ul>
-        </article>
-        <article class="card component-card wiki-kpi">
-          <div class="kicker">Continuation plane</div>
-          <h3>Depth without blocking UX</h3>
-          <ul class="spec-list">
-            <li><code>letta</code> + <code>memory_bank</code> + <code>mongo_raw</code></li>
-            <li>Continuation token + SSE events for async completion</li>
-            <li>Fail-open policy preserves immediate responses</li>
-          </ul>
-        </article>
-      </div>
-    </section>
-
-    <section class="section" id="wiki-endpoints">
-      <div class="kicker">Endpoint atlas</div>
-      <h2>Best tools to call, by intent</h2>
-      <article class="card">
-        <table class="lane-table">
-          <thead>
-            <tr>
-              <th>Intent</th>
-              <th>Endpoint</th>
-              <th>When to use</th>
-              <th>Output shape</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td>Write checkpoint</td>
-              <td><code>POST /memory/write</code></td>
-              <td>Persist a decision/result during long tasks</td>
-              <td><code>ok</code>, sink fanout status, queue details</td>
-            </tr>
-            <tr>
-              <td>Context retrieval</td>
-              <td><code>POST /memory/search</code></td>
-              <td>Scoped recall before planning/coding/inference</td>
-              <td>Results + grounding + retrieval debug + continuation metadata</td>
-            </tr>
-            <tr>
-              <td>Hierarchical context pack</td>
-              <td><code>POST /memory/context-pack</code></td>
-              <td>Multi-file/topic synthesis for complex tasks</td>
-              <td>Structured pack with topical grouping</td>
-            </tr>
-            <tr>
-              <td>Agent session rollup</td>
-              <td><code>GET /v1/agents/sessions/{id}/rollup</code></td>
-              <td>Summarize current objective state, evidence coverage, risks, and next action</td>
-              <td>Contracted <code>agent_session_rollup.v1</code> payload with runtime confidence</td>
-            </tr>
-            <tr>
-              <td>Next-model context package</td>
-              <td><code>GET /v1/agents/sessions/{id}/context-package</code></td>
-              <td>Prepare a bounded reference packet before a hard model handoff or follow-up prompt</td>
-              <td>Contracted <code>agent_prompt_context_package.v1</code> payload plus <code>reference_prompt</code></td>
-            </tr>
-            <tr>
-              <td>Capability discovery</td>
-              <td><code>GET|POST /tools/skills_index_search</code></td>
-              <td>Find relevant skills/tools without loading every capability into startup context</td>
-              <td>Ranked Skills Index matches with paths, score, and matched terms</td>
-            </tr>
-            <tr>
-              <td>Typed memory edges</td>
-              <td><code>GET|POST /v1/memory/edges</code>, <code>POST /v1/memory/edges/backfill</code></td>
-              <td>Persist explicit relationships and audit/apply deterministic retroactive or opt-in inferred edges</td>
-              <td>Durable edge records in the local memory graph index with dry-run counts and bounded inferred scoring</td>
-            </tr>
-            <tr>
-              <td>Graph neighbors</td>
-              <td><code>POST /v1/memory/neighbors</code></td>
-              <td>Detail dives from a known memory id</td>
-              <td>Explicit edge neighbors merged with semantic/topic neighbors</td>
-            </tr>
-            <tr>
-              <td>Health</td>
-              <td><code>GET /health</code>, <code>GET /status</code></td>
-              <td>Preflight and operator checks</td>
-              <td>Service health, queue/retention/runtime ownership</td>
-            </tr>
-            <tr>
-              <td>Async continuation</td>
-              <td><code>GET /memory/search/continuations/{token}/events</code></td>
-              <td>Stream slow-source completion events after staged fetch</td>
-              <td>SSE lifecycle updates + completed source payloads</td>
-            </tr>
-          </tbody>
-        </table>
-      </article>
-    </section>
-
-    <section class="section" id="wiki-retrieval">
-      <div class="kicker">Retrieval policy</div>
-      <h2>Mode selection: speed first, depth on demand</h2>
-      <div class="grid component-grid">
-        <article class="card component-card">
-          <h3>Fast mode</h3>
-          <ul class="spec-list">
-            <li><strong>Use for:</strong> iterative engineering loops and narrow scoped reads.</li>
-            <li><strong>Behavior:</strong> prioritize fast-now plane, defer deep sources.</li>
-            <li><strong>Timeout guidance:</strong> ~25s client budget.</li>
-          </ul>
-        </article>
-        <article class="card component-card">
-          <h3>Balanced mode</h3>
-          <ul class="spec-list">
-            <li><strong>Use for:</strong> most default operator/agent reads.</li>
-            <li><strong>Behavior:</strong> mixed fast-now + measured continuation.</li>
-            <li><strong>Timeout guidance:</strong> ~60s client budget.</li>
-          </ul>
-        </article>
-        <article class="card component-card">
-          <h3>Deep mode</h3>
-          <ul class="spec-list">
-            <li><strong>Use for:</strong> long-horizon recall, audit, migration, root-cause.</li>
-            <li><strong>Behavior:</strong> maximizes recall breadth; continuation still applies.</li>
-            <li><strong>Timeout guidance:</strong> ~75s client budget.</li>
-          </ul>
-        </article>
-      </div>
-      <article class="card mermaid-card">
-        <h3>Mode ladder</h3>
-        <div class="mermaid">
-flowchart LR
-  A[Need context] --> B{Scope known?}
-  B -- yes --> C[Fast mode with project/topic]
-  B -- no --> D[Balanced mode broad project]
-  C --> E{Enough coverage?}
-  D --> E
-  E -- yes --> F[Proceed + checkpoint writes]
-  E -- no --> G[Deep mode + continuation stream]
-  G --> H[Use neighbors/context-pack for detail dives]
-  H --> F
-        </div>
-      </article>
-    </section>
-
-    <section class="section" id="wiki-playbooks">
-      <div class="kicker">Playbooks</div>
-      <h2>Production runbooks by job-to-be-done</h2>
-      <div class="timeline">
-        <article class="update-card">
-          <span class="update-meta">PB-01 · Launch</span>
-          <h3>Bring up safely and verify in under five minutes</h3>
-          <ul>
-            <li><code>gmake quickstart</code> chooses profile + launches services.</li>
-            <li>Run <code>/health</code> then authenticated <code>/status</code>.</li>
-            <li>Smoke test one write and one search before real traffic.</li>
-          </ul>
-        </article>
-        <article class="update-card">
-          <span class="update-meta">PB-02 · Retrieval quality</span>
-          <h3>Increase recall without overpaying latency</h3>
-          <ul>
-            <li>Start scoped + fast, widen only when coverage is insufficient.</li>
-            <li>Use continuation stream instead of blocking every request on slow lanes.</li>
-            <li>Persist concise checkpoints so future queries hit high-signal facts first.</li>
-          </ul>
-        </article>
-        <article class="update-card">
-          <span class="update-meta">PB-03 · Incident response</span>
-          <h3>Fail-open by design, recover without losing context</h3>
-          <ul>
-            <li>Use <code>/status</code> and dashboard to identify degraded sources.</li>
-            <li>Continue operations on healthy fast-now sources while continuation queues warm slow lanes.</li>
-            <li>Escalate only when protected/non-degradable lanes are unhealthy.</li>
-          </ul>
-        </article>
-        <article class="update-card">
-          <span class="update-meta">PB-04 · Release</span>
-          <h3>Promote only with evidence</h3>
-          <ul>
-            <li>Run benchmark + recall quality + soak checks.</li>
-            <li>Tag release notes with behavior changes and operator guidance.</li>
-            <li>Keep deterministic artifacts and changelog links in each release.</li>
-          </ul>
-        </article>
-      </div>
-    </section>
-
-    <section class="section" id="wiki-agents">
-      <div class="kicker">Agent integration</div>
-      <h2>Copy-ready templates for Codex, Claude, OpenCode, Hermes, OMP, Mercury, Pi, and Droid</h2>
-      <article class="card">
-        <p>Use these templates to get consistent ContextLattice usage behavior across popular agent interfaces:</p>
-        <ul class="spec-list">
-          <li><code>docs/public_overview/templates/AGENTS.contextlattice.md</code></li>
-          <li><code>docs/public_overview/templates/SKILLS.contextlattice.md</code></li>
-          <li><code>docs/public_overview/templates/agents/codex.md</code></li>
-          <li><code>docs/public_overview/templates/agents/claude-code.md</code></li>
-          <li><code>docs/public_overview/templates/agents/opencode.md</code></li>
-          <li><code>docs/public_overview/templates/agents/hermes-agent.md</code></li>
-        </ul>
-      </article>
-    </section>
-
-    <section class="section" id="wiki-release">
-      <div class="kicker">Release readiness</div>
-      <h2>Public/main checklist before each post or launch</h2>
-      <article class="card">
-        <ol class="step-list">
-          <li>All critical paths healthy on <code>/status</code> with no unresolved alerts.</li>
-          <li>Write/read smoke test passes with API-key auth.</li>
-          <li>Continuation metadata present for deferred slow sources.</li>
-          <li>README links, website nav, and release notes updated together.</li>
-          <li>Tagged release exists and matches the intended commit SHA.</li>
-        </ol>
-      </article>
-    </section>
-
-    <footer class="footer">
-      <span>ContextLattice Wiki</span>
-      <span>Public/main operator reference for fast + reliable memory systems.</span>
-    </footer>
   </main>
-  <script type="module">
-    import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
-    mermaid.initialize({
-      startOnLoad: true,
-      theme: "dark",
-      securityLevel: "loose",
-      flowchart: { curve: "basis" }
-    });
-  </script>
+  <footer class="site-footer">
+    <span>ContextLattice / redirect</span>
+    <nav aria-label="Footer"><a href="docs/">Repository-backed docs</a></nav>
+  </footer>
 </body>
 </html>

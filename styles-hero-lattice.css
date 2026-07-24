@@ -1,0 +1,655 @@
+/* Restored ContextLattice hero field; scoped to the homepage asset. */
+.signal-lattice.hero-art {
+  display: grid;
+  place-items: center;
+  contain: layout paint;
+  filter: saturate(1.08) contrast(1.05);
+  opacity: 0.94;
+}
+
+.hero-lattice {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.hero-lattice .hl-frame-main,
+.hero-lattice .hl-frame-ghost {
+  fill: rgba(255, 255, 255, 0.012);
+  stroke-width: 1.15;
+}
+
+.hero-lattice .hl-frame-main {
+  stroke: rgba(228, 236, 250, 0.42);
+}
+
+.hero-lattice .hl-frame-ghost {
+  stroke: rgba(228, 236, 250, 0.24);
+}
+
+.hero-lattice .hl-grid {
+  stroke: rgba(233, 240, 255, 0.09);
+  stroke-width: 0.95;
+}
+
+.hero-lattice .hl-lane {
+  fill: none;
+  stroke: rgba(216, 225, 239, 0.64);
+  stroke-width: 1.35;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  shape-rendering: geometricPrecision;
+  vector-effect: non-scaling-stroke;
+  transform-box: fill-box;
+  transform-origin: center;
+  backface-visibility: hidden;
+}
+
+.hero-lattice .hl-lanes-flow {
+  mix-blend-mode: screen;
+  animation: fxLaneBreath 14.8s cubic-bezier(0.3, 0, 0.15, 1) infinite;
+  transform: translateZ(0);
+  will-change: transform, opacity;
+}
+
+.hero-lattice .hl-lane-field {
+  opacity: 0.74;
+  animation: fxLaneFieldSwell 12.4s cubic-bezier(0.3, 0, 0.2, 1) infinite;
+}
+
+.hero-lattice .hl-lane-weave {
+  opacity: 0.7;
+  stroke-width: 1.22;
+  stroke-dasharray: 1.95 6.8;
+  animation: fxLaneFlowWide 9.4s linear infinite, fxLaneGlint 8.8s ease-in-out infinite;
+}
+
+.hero-lattice .hl-lane-serpentine {
+  stroke-linecap: round;
+  stroke-dasharray: 0.85 3.1 1.3 4.2 0.95 5.6;
+  animation:
+    fxLaneSnakeDash 4.8s linear infinite,
+    fxLaneSnakeUndulate 7.2s cubic-bezier(0.37, 0, 0.25, 1) infinite,
+    fxLaneSlitherDrift 8.6s ease-in-out infinite,
+    fxLaneGlint 9.6s ease-in-out infinite;
+  shape-rendering: geometricPrecision;
+  vector-effect: non-scaling-stroke;
+  will-change: stroke-dashoffset, opacity, stroke-width, transform;
+  filter: drop-shadow(0 0 2px rgba(160, 220, 255, 0.12));
+}
+
+.hero-lattice .hl-lane-serpentine-fast {
+  stroke-dasharray: 0.7 2.4 1.05 3.2 0.9 4.1;
+  animation:
+    fxLaneSnakeDashFast 3.2s linear infinite,
+    fxLaneSnakeUndulateFast 4.8s cubic-bezier(0.37, 0, 0.25, 1) infinite,
+    fxLaneSlitherDriftFast 5.6s ease-in-out infinite,
+    fxLaneGlint 7.2s ease-in-out infinite;
+}
+
+.hero-lattice .hl-lane-serpentine.snake-a { animation-delay: -0.2s, -1.3s, -0.5s; }
+.hero-lattice .hl-lane-serpentine.snake-b { animation-delay: -1.1s, -2.4s, -1.2s; }
+.hero-lattice .hl-lane-serpentine.snake-c { animation-delay: -0.7s, -0.8s, -1.9s; }
+.hero-lattice .hl-lane-serpentine.snake-d { animation-delay: -1.6s, -3.1s, -0.1s; }
+.hero-lattice .hl-lane-serpentine.snake-e { animation-delay: -2.3s, -1.6s, -2.2s; }
+.hero-lattice .hl-lane-serpentine.snake-f { animation-delay: -0.95s, -2.9s, -1.5s; }
+.hero-lattice .hl-lane-serpentine-fast.snake-g { animation-delay: -0.45s, -1.2s, -0.8s; }
+.hero-lattice .hl-lane-serpentine-fast.snake-h { animation-delay: -1.05s, -0.4s, -1.7s; }
+
+.hero-lattice .hl-lane-motion {
+  stroke-dasharray: 2.6 7.4;
+  animation: fxLaneGlint 8.2s ease-in-out infinite, fxLaneFlow 3.8s linear infinite;
+}
+
+.hero-lattice .hl-lane-surge {
+  stroke-dasharray: 1.4 5.2;
+  stroke-width: 1.92;
+  opacity: 0.88;
+  animation: fxLaneFlowTight 2.8s linear infinite, fxLaneGlint 6.8s ease-in-out infinite;
+}
+
+.hero-lattice .hl-lane.cool {
+  stroke: url(#hl-lane-cool);
+  stroke-width: 1.78;
+  animation: fxLaneGlint 5.6s ease-in-out infinite;
+}
+
+.hero-lattice .hl-lane.warm {
+  stroke: url(#hl-lane-warm);
+  stroke-width: 1.82;
+  animation: fxLaneGlint 5.6s ease-in-out infinite 1.4s;
+}
+
+.hero-lattice .hl-progress-panel {
+  opacity: 0.92;
+}
+
+.hero-lattice .hl-progress-back {
+  fill: rgba(8, 12, 20, 0.72);
+  stroke: rgba(228, 236, 250, 0.32);
+  stroke-width: 0.8;
+}
+
+.hero-lattice .hl-progress-fill {
+  fill: rgba(121, 220, 252, 0.78);
+  filter: drop-shadow(0 0 4px rgba(121, 220, 252, 0.38));
+}
+
+.hero-lattice .hl-progress-pulse {
+  fill: rgba(255, 241, 194, 0.96);
+  filter: drop-shadow(0 0 4px rgba(255, 214, 134, 0.42));
+}
+
+.hero-lattice .hl-progress-label {
+  font: 600 6px "IBM Plex Mono", monospace;
+  letter-spacing: 0;
+  fill: rgba(238, 242, 250, 0.78);
+}
+
+.hero-lattice .hl-progress-label.warm {
+  fill: rgba(251, 218, 151, 0.8);
+}
+
+.hero-lattice .hl-progress-label.steering {
+  fill: rgba(245, 248, 255, 0.86);
+}
+
+.hero-lattice .hl-steering-link {
+  fill: none;
+  stroke: rgba(255, 230, 168, 0.72);
+  stroke-width: 1;
+  stroke-dasharray: 2 3;
+  animation: fxLaneFlow 3.6s linear infinite;
+}
+
+.hero-lattice .hl-steering-chip {
+  fill: rgba(17, 22, 34, 0.78);
+  stroke: rgba(255, 230, 168, 0.52);
+  stroke-width: 0.8;
+}
+
+.hero-lattice .hl-node {
+  fill: rgba(222, 228, 236, 0.86);
+  stroke: rgba(5, 8, 14, 0.95);
+  stroke-width: 1;
+}
+
+.hero-lattice .hl-node-square {
+  fill: rgba(212, 220, 236, 0.86);
+}
+
+.hero-lattice .hl-node-diamond {
+  fill: rgba(223, 186, 124, 0.88);
+}
+
+.hero-lattice .hl-node-tri {
+  fill: rgba(250, 171, 97, 0.88);
+}
+
+.hero-lattice .hl-node.cool {
+  fill: rgba(100, 207, 247, 0.96);
+}
+
+.hero-lattice .hl-node.warm {
+  fill: rgba(216, 169, 90, 0.94);
+}
+
+.hero-lattice .hl-source-aura {
+  fill: url(#hl-source-aura);
+  filter: url(#hl-soft-bloom);
+  animation: fxSourceBloom 6.8s cubic-bezier(0.37, 0, 0.21, 1) infinite;
+}
+
+.hero-lattice .hl-source-ring {
+  fill: none;
+  stroke: rgba(239, 247, 255, 0.78);
+  stroke-width: 1.28;
+  opacity: 0.72;
+}
+
+.hero-lattice .hl-source-ring.r1 {
+  animation: fxRingPulse 3.8s ease-out infinite;
+}
+
+.hero-lattice .hl-source-ring.r2 {
+  animation: fxRingPulse 3.8s ease-out infinite 1.2s;
+}
+
+.hero-lattice .hl-source-ring.r3 {
+  animation: fxRingPulse 3.8s ease-out infinite 2.4s;
+}
+
+.hero-lattice .hl-capture-sink {
+  fill: rgba(255, 246, 220, 0.68);
+  mix-blend-mode: screen;
+  filter: blur(0.24px);
+  animation: fxSinkCatch 2.4s cubic-bezier(0.5, 0, 0.24, 1) infinite;
+}
+
+.hero-lattice .hl-source-core {
+  fill: url(#hl-source-core-blend);
+  stroke: rgba(255, 242, 211, 0.2);
+  stroke-width: 0.3;
+  filter: blur(0.14px);
+  animation: fxCorePulse 5.4s cubic-bezier(0.41, 0, 0.24, 1) infinite;
+}
+
+.hero-lattice .hl-source-orbit {
+  fill: none;
+  stroke: rgba(255, 221, 162, 0.32);
+  stroke-width: 0.95;
+  stroke-dasharray: 2.4 3.6;
+  opacity: 0.8;
+  animation: fxOrbitRotate 10.4s linear infinite;
+}
+
+.hero-lattice .hl-source-orbit.o2 {
+  stroke: rgba(255, 145, 171, 0.28);
+  animation-duration: 7.2s;
+  animation-direction: reverse;
+}
+
+.hero-lattice .hl-source-orb {
+  mix-blend-mode: screen;
+  filter: drop-shadow(0 0 7px rgba(255, 241, 194, 0.48));
+}
+
+.hero-lattice .hl-source-orb.orb-a {
+  fill: url(#hl-source-orb-a);
+}
+
+.hero-lattice .hl-source-orb.orb-b {
+  fill: url(#hl-source-orb-b);
+}
+
+.hero-lattice .hl-source-orb.orb-c {
+  fill: rgba(255, 231, 184, 0.88);
+}
+
+.hero-lattice .hl-source-orb.orb-d {
+  fill: rgba(255, 168, 196, 0.78);
+}
+
+.hero-lattice .hl-source {
+  animation: fxSourceDrift 8.6s cubic-bezier(0.38, 0, 0.22, 1) infinite;
+}
+
+.hero-lattice .hl-stream-particles {
+  opacity: 0.94;
+  mix-blend-mode: screen;
+  filter: drop-shadow(0 0 5px rgba(255, 225, 168, 0.35));
+}
+
+.hero-lattice .hl-stream-dot {
+  fill: rgba(244, 208, 138, 0.9);
+}
+
+.hero-lattice .hl-stream-dot.s2,
+.hero-lattice .hl-stream-dot.s5 {
+  fill: rgba(131, 223, 255, 0.85);
+}
+
+.hero-lattice .hl-stream-dot.s8 {
+  fill: rgba(255, 220, 150, 0.92);
+}
+
+.hero-lattice .hl-stream-dot.s9 {
+  fill: rgba(136, 226, 255, 0.9);
+}
+
+.hero-lattice .hl-stream-square {
+  fill: rgba(230, 238, 255, 0.84);
+}
+
+.hero-lattice .hl-stream-square.s10 {
+  fill: rgba(228, 241, 255, 0.92);
+}
+
+.hero-lattice .hl-stream-tri {
+  fill: rgba(251, 150, 120, 0.86);
+}
+
+.hero-lattice .hl-stream-tri.s11 {
+  fill: rgba(249, 196, 116, 0.88);
+}
+
+.hero-lattice .hl-stream-hex {
+  fill: rgba(228, 237, 255, 0.88);
+}
+
+.hero-lattice .hl-anomaly-signals {
+  opacity: 0.98;
+  mix-blend-mode: screen;
+  pointer-events: none;
+}
+
+.hero-lattice .hl-anomaly-signal {
+  fill: rgba(255, 80, 56, 0.98);
+  stroke: rgba(255, 186, 168, 0.54);
+  stroke-width: 0.42;
+  vector-effect: non-scaling-stroke;
+  filter: drop-shadow(0 0 8px rgba(255, 56, 24, 0.85)) drop-shadow(0 0 16px rgba(255, 96, 64, 0.42));
+}
+
+@keyframes fxLaneBreath {
+  0%,
+  100% {
+    opacity: 0.92;
+    transform: translateX(0);
+  }
+  40% {
+    opacity: 1;
+    transform: translateX(0.6px);
+  }
+  72% {
+    opacity: 0.95;
+    transform: translateX(-0.45px);
+  }
+}
+
+@keyframes fxLaneGlint {
+  0%,
+  100% {
+    opacity: 0.62;
+  }
+  45% {
+    opacity: 1;
+  }
+  75% {
+    opacity: 0.7;
+  }
+}
+
+@keyframes fxLaneFieldSwell {
+  0%,
+  100% {
+    opacity: 0.58;
+    stroke-width: 1.2;
+  }
+  33% {
+    opacity: 0.78;
+    stroke-width: 1.42;
+  }
+  67% {
+    opacity: 0.64;
+    stroke-width: 1.28;
+  }
+}
+
+@keyframes fxLaneFlow {
+  0% {
+    stroke-dashoffset: 26;
+  }
+  100% {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes fxLaneFlowWide {
+  0% {
+    stroke-dashoffset: 22;
+  }
+  100% {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes fxLaneFlowTight {
+  0% {
+    stroke-dashoffset: 14;
+  }
+  100% {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes fxLaneSnakeDash {
+  0% {
+    stroke-dashoffset: 24;
+    stroke-dasharray: 0.72 2.9 1.34 4.6 0.86 5.8;
+  }
+  24% {
+    stroke-dashoffset: 17.4;
+    stroke-dasharray: 0.86 3.12 1.18 4.25 0.92 5.18;
+  }
+  50% {
+    stroke-dashoffset: 12;
+    stroke-dasharray: 1.03 3.4 1.08 3.82 1.12 4.82;
+  }
+  76% {
+    stroke-dashoffset: 5.4;
+    stroke-dasharray: 0.89 3.08 1.2 4.18 0.95 5.06;
+  }
+  100% {
+    stroke-dashoffset: 0;
+    stroke-dasharray: 0.72 2.9 1.34 4.6 0.86 5.8;
+  }
+}
+
+@keyframes fxLaneSnakeDashFast {
+  0% {
+    stroke-dashoffset: 16;
+    stroke-dasharray: 0.62 2.1 0.98 3.2 0.82 4.2;
+  }
+  22% {
+    stroke-dashoffset: 12.4;
+    stroke-dasharray: 0.74 2.28 0.9 3.02 0.86 3.94;
+  }
+  50% {
+    stroke-dashoffset: 8;
+    stroke-dasharray: 0.92 2.72 0.84 2.82 0.98 3.72;
+  }
+  78% {
+    stroke-dashoffset: 3.2;
+    stroke-dasharray: 0.79 2.4 0.9 2.96 0.92 3.86;
+  }
+  100% {
+    stroke-dashoffset: 0;
+    stroke-dasharray: 0.62 2.1 0.98 3.2 0.82 4.2;
+  }
+}
+
+@keyframes fxLaneSnakeUndulate {
+  0%,
+  100% {
+    opacity: 0.72;
+    stroke-width: 1.16;
+  }
+  18% {
+    opacity: 0.79;
+    stroke-width: 1.24;
+  }
+  38% {
+    opacity: 0.89;
+    stroke-width: 1.37;
+  }
+  58% {
+    opacity: 0.82;
+    stroke-width: 1.28;
+  }
+  78% {
+    opacity: 0.75;
+    stroke-width: 1.2;
+  }
+}
+
+@keyframes fxLaneSnakeUndulateFast {
+  0%,
+  100% {
+    opacity: 0.86;
+    stroke-width: 1.8;
+  }
+  17% {
+    opacity: 0.93;
+    stroke-width: 1.92;
+  }
+  36% {
+    opacity: 1;
+    stroke-width: 2.06;
+  }
+  58% {
+    opacity: 0.95;
+    stroke-width: 1.98;
+  }
+  80% {
+    opacity: 0.9;
+    stroke-width: 1.86;
+  }
+}
+
+@keyframes fxLaneSlitherDrift {
+  0%,
+  100% {
+    transform: translate(0, 0);
+  }
+  25% {
+    transform: translate(0.34px, -0.42px);
+  }
+  50% {
+    transform: translate(-0.22px, 0.34px);
+  }
+  75% {
+    transform: translate(0.28px, 0.18px);
+  }
+}
+
+@keyframes fxLaneSlitherDriftFast {
+  0%,
+  100% {
+    transform: translate(0, 0);
+  }
+  20% {
+    transform: translate(0.44px, -0.56px);
+  }
+  47% {
+    transform: translate(-0.34px, 0.44px);
+  }
+  73% {
+    transform: translate(0.36px, 0.22px);
+  }
+}
+
+@keyframes fxSourceBloom {
+  0%,
+  100% {
+    opacity: 0.72;
+    transform: translate(0px, 0px) scale(0.99);
+  }
+  18% {
+    opacity: 0.87;
+    transform: translate(-2.8px, 1.8px) scale(1.01);
+  }
+  41% {
+    opacity: 0.98;
+    transform: translate(1.6px, -1px) scale(1.045);
+  }
+  67% {
+    opacity: 0.84;
+    transform: translate(-1.4px, -2.3px) scale(1.02);
+  }
+}
+
+@keyframes fxRingPulse {
+  0% {
+    opacity: 0.68;
+    stroke-width: 1.2;
+    transform: translate(0px, 0px);
+  }
+  25% {
+    opacity: 0.48;
+    stroke-width: 1.1;
+    transform: translate(-1.65px, 1.1px);
+  }
+  50% {
+    opacity: 0.32;
+    stroke-width: 1.03;
+    transform: translate(0px, 0px);
+  }
+  74% {
+    opacity: 0.2;
+    stroke-width: 0.95;
+    transform: translate(1.65px, -1.1px);
+  }
+  100% {
+    opacity: 0.04;
+    stroke-width: 0.8;
+    transform: translate(0px, 0px);
+  }
+}
+
+@keyframes fxSinkCatch {
+  0%,
+  100% {
+    opacity: 0.34;
+    transform: scale(0.76);
+  }
+  45% {
+    opacity: 0.78;
+    transform: scale(1.12);
+  }
+  72% {
+    opacity: 0.22;
+    transform: scale(0.5);
+  }
+}
+
+@keyframes fxCorePulse {
+  0%,
+  100% {
+    opacity: 0.74;
+    transform: translate(0px, 0px) scale(0.94);
+  }
+  22% {
+    opacity: 0.88;
+    transform: translate(-1.8px, 1.2px) scale(0.99);
+  }
+  47% {
+    opacity: 0.95;
+    transform: translate(1.6px, -1.2px) scale(1.06);
+  }
+  73% {
+    opacity: 0.82;
+    transform: translate(-0.9px, -2.2px) scale(1);
+  }
+}
+
+@keyframes fxOrbitRotate {
+  0% {
+    transform-origin: 292px 62px;
+    transform: rotate(0deg);
+  }
+  100% {
+    transform-origin: 292px 62px;
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes fxSourceDrift {
+  0%,
+  100% {
+    transform: translate(0px, 0px);
+  }
+  31% {
+    transform: translate(-2.1px, 1.4px);
+  }
+  58% {
+    transform: translate(1.6px, -1.25px);
+  }
+  82% {
+    transform: translate(-1.3px, -1.7px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-lattice *,
+  .hero-lattice .hl-lanes-flow {
+    animation: none !important;
+    will-change: auto;
+  }
+
+  .hero-lattice animate,
+  .hero-lattice animateMotion,
+  .hero-lattice animateTransform {
+    display: none;
+  }
+}
