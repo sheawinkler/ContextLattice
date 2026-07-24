@@ -88,10 +88,16 @@ Remove `--check` to write or update managed instruction blocks. Existing user-au
 
 ```zsh
 contextlattice_skills_index search "browser automation" --pretty
+contextlattice_skills_index discover "browser automation" --pretty
+contextlattice_skills_index stage owner/repo@skill --pretty
+contextlattice_skills_index refresh --due --pretty
+contextlattice_skills_index promote owner/repo@skill --yes --pretty
 contextlattice_agent_adapter profiles
 ```
 
-Skills Index searches configured capability roots without loading every skill body into startup context.
+`search` scans configured active roots without loading every skill body into startup context. `discover` normalizes results from Vercel's `npx skills find` without installing them. `stage` clones a bounded GitHub-backed source into quarantine, records its commit and digest, and scans for secrets and hazardous instructions. `refresh --due` updates registered quarantine candidates only; it never changes active skills. `promote` is the only activation path and requires `--yes`. Review findings additionally require `--accept-review`; collisions require `--replace` and preserve the previous directory as a recoverable backup.
+
+The default refresh interval is 24 hours (`CONTEXTLATTICE_SKILLS_REFRESH_INTERVAL_HOURS`). Invoke `refresh --due` from an operator-owned scheduler when periodic checks are desired; ContextLattice does not create a background job implicitly.
 
 ## Advanced packets and traces
 

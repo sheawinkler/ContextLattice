@@ -460,7 +460,7 @@ Advanced/compatibility commands:
   memory-topology                audit /telemetry/storage memory topology
   memory-graph-repair            audit or apply bounded identity-first hot-corpus edges
   memory-graph-efficacy          refresh graph holdouts and prove measured graph contribution
-  skills-index                   active Skills Index search/reindex helper
+  skills-index                   active search plus quarantine-first source management
   async-inbox-drain              bounded async continuation inbox drain for any agent
   agent-fit                      steering, advisory selection, profiles, and context preparation
   continuity-zero               restore one unambiguous active objective with bounded proof and next move
@@ -6476,7 +6476,7 @@ func (c *cli) cmdMemoryGraphEfficacy(args []string) error {
 
 func (c *cli) cmdSkillsIndex(args []string) error {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
-		return c.emitUsage("contextlattice_skills_index {search|reindex} [options]")
+		return c.emitUsage("contextlattice_skills_index {search|reindex|discover|stage|refresh|promote} [options]")
 	}
 	sub := args[0]
 	args = args[1:]
@@ -6485,6 +6485,14 @@ func (c *cli) cmdSkillsIndex(args []string) error {
 		return c.skillsIndexSearch(args)
 	case "reindex":
 		return c.skillsIndexReindex(args)
+	case "discover":
+		return c.skillsIndexDiscover(args)
+	case "stage":
+		return c.skillsIndexStage(args)
+	case "refresh":
+		return c.skillsIndexRefresh(args)
+	case "promote":
+		return c.skillsIndexPromote(args)
 	default:
 		return fmt.Errorf("unknown contextlattice_skills_index command %q", sub)
 	}

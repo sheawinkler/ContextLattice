@@ -475,6 +475,28 @@ ContextLattice exposes active skills as a native Go Skills Index so agents can d
 - Tool alias: `GET|POST /tools/skills_quarantine_search`
 - Reindex endpoint: `POST /v1/skills/quarantine/reindex` (off by default; enable explicitly)
 
+The native active index is a live filesystem scan, so an approved local skill is visible without rebuilding a static index. Upstream repositories are not pulled during startup, retrieval, or search. The host-native source workflow records exact commits and digests, refreshes only quarantine, and requires a separate promotion:
+
+```zsh
+# Normalize current results from Vercel's npx skills finder. No install occurs.
+contextlattice_skills_index discover "browser automation" --pretty
+
+# Clone without hooks/submodules, locate one exact SKILL.md, scan it, and stage
+# the bounded skill tree under the quarantine root.
+contextlattice_skills_index stage owner/repo@skill --pretty
+
+# Scheduler-friendly: checks only registered sources whose last check is due.
+# Changed content remains quarantined and never replaces an active skill.
+contextlattice_skills_index refresh --due --pretty
+
+# Explicit activation after reviewing the manifest and scan.
+contextlattice_skills_index promote owner/repo@skill --yes --pretty
+```
+
+Embedded secrets block promotion. Executable content, instruction overrides, pipe-to-shell commands, destructive commands, privilege escalation, and credential-store access require both human review and `--accept-review`. An existing active skill additionally requires `--replace`; the prior directory is retained under the hidden active-root backup directory. Source trees are bounded by file count, per-file bytes, total bytes, and traversal count; symlinks and special files are rejected. Discovery and staging never execute retrieved skill content.
+
+`refresh --due` defaults to a 24-hour interval and is safe to call from an operator-owned scheduler. ContextLattice intentionally does not install or mutate a host scheduler implicitly.
+
 Runtime knobs:
 
 ```bash
@@ -493,6 +515,10 @@ ORCH_SKILLS_QUARANTINE_REINDEX_ENABLED=false
 CODEX_SKILLS_QUARANTINE_ROOT=/opt/contextlattice/skills_quarantine
 CODEX_SKILLS_QUARANTINE_INDEX_DIR=/opt/contextlattice/skills_quarantine/index
 CODEX_SKILLS_QUARANTINE_INDEX=/opt/contextlattice/skills_quarantine/index/skills_index.jsonl
+CONTEXTLATTICE_SKILLS_QUARANTINE_ROOT=${HOME}/.codex/skills_quarantine
+CONTEXTLATTICE_SKILLS_ACTIVE_ROOT=${HOME}/.codex/skills
+CONTEXTLATTICE_SKILLS_REFRESH_INTERVAL_HOURS=24
+CONTEXTLATTICE_SKILLS_NPX_PACKAGE=skills@1.5.9
 ```
 
 ## Security and Privacy

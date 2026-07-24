@@ -1067,6 +1067,8 @@ log "  contextlattice_agent_trace --session-id <session-id> --preset proof"
 log "  contextlattice_run_advisor 'current task context' --pretty"
 log "  contextlattice_memory_topology --pretty"
 log "  contextlattice_skills_index search 'agent runtime' --pretty"
+log "  contextlattice_skills_index discover 'browser automation' --pretty"
+log "  contextlattice_skills_index refresh --due --pretty"
 log "  contextlattice_runner_quality --pretty"
 log "  contextlattice_async_inbox_hook --session-id <session-id>"
 if [[ "$INCLUDE_DEV_PYTHON_TOOLS" == "1" ]]; then
