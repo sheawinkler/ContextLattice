@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import tempfile
 import unittest
@@ -709,6 +710,50 @@ class PublicProductTruthTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertFalse(target.exists())
                 self.assertIn(f"missing required deployment file: {missing_file}", result.stderr)
+
+    def test_pricing_uses_generated_hyperframe_cards(self) -> None:
+        premium = (ROOT / "docs/public_overview/premium.html").read_text(encoding="utf-8")
+        contract = json.loads((ROOT / "config/commercial_truth.v1.json").read_text(encoding="utf-8"))
+        cards = re.findall(
+            r'<article class="plan-card" data-plan="([^"]+)">(.*?)</article>',
+            premium,
+            re.DOTALL,
+        )
+
+        self.assertEqual([plan_id for plan_id, _ in cards], [plan["id"] for plan in contract["plans"]])
+        self.assertNotIn('class="lane-table"', premium)
+        self.assertIn('href="styles-editorial.css?v=20260723a"', premium)
+        self.assertIn('href="styles-pricing.css?v=20260724a"', premium)
+
+        for plan, (plan_id, card) in zip(contract["plans"], cards, strict=True):
+            with self.subTest(plan=plan_id):
+                self.assertEqual(card.count('class="plan-cta"'), 1)
+                self.assertEqual(card.count('class="plan-entitlements"'), 1)
+                details = re.search(
+                    r'<details class="plan-entitlements">.*?<ul>(.*?)</ul>.*?</details>',
+                    card,
+                    re.DOTALL,
+                )
+                self.assertIsNotNone(details)
+                self.assertEqual(details.group(1).count("<li>"), len(plan["feature_ids"]))
+
+        self.assertEqual(premium.count('class="capability-register"'), 1)
+        self.assertEqual(premium.count('class="capability-row"'), len(contract["features"]))
+
+    def test_pricing_responsive_contract_is_part_of_local_browser_gate(self) -> None:
+        css = (ROOT / "docs/public_overview/styles-pricing.css").read_text(encoding="utf-8")
+        visual_audit = (
+            ROOT / "contextlattice-dashboard/scripts/audit_public_site_experience.mjs"
+        ).read_text(encoding="utf-8")
+        sync = SYNC.read_text(encoding="utf-8")
+
+        self.assertIn('grid-template-columns: minmax(110px, 0.52fr)', css)
+        self.assertIn("@media (max-width: 760px)", css)
+        self.assertIn(".plan-card", css)
+        self.assertIn(".capability-register", css)
+        self.assertIn("/premium.html", visual_audit)
+        self.assertIn("pricingLegacyTableCount", visual_audit)
+        self.assertIn("styles-pricing.css", sync)
 
 
 if __name__ == "__main__":

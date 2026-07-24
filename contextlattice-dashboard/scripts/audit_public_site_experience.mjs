@@ -11,7 +11,7 @@ const browserExecutable = process.env.PUBLIC_SITE_BROWSER_EXECUTABLE
   || "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const routes = (
   process.env.PUBLIC_SITE_AUDIT_ROUTES
-  || "/,/docs/,/docs/getting-started/,/wiki.html"
+  || "/,/premium.html,/docs/,/docs/getting-started/,/wiki.html"
 )
   .split(",")
   .map((route) => route.trim())
@@ -85,10 +85,24 @@ async function audit() {
             scrollWidth: root.scrollWidth,
             height: root.scrollHeight,
             isDocs: document.body.classList.contains("docs-page"),
+            isPricing: document.body.classList.contains("pricing-page"),
             docsSourceMetaCount: document.querySelectorAll('meta[name="doc-source"]').length,
             docsSearchInputCount: document.querySelectorAll("#docs-search").length,
             codeFrameCount: document.querySelectorAll(".code-frame").length,
             codeCopyButtonCount: document.querySelectorAll('.code-frame-label button[aria-label="Copy code block"]').length,
+            pricingPlanCardCount: document.querySelectorAll(".plan-card").length,
+            pricingPlanCtaCount: document.querySelectorAll(".plan-card .plan-cta").length,
+            pricingPlanDisclosureCount: document.querySelectorAll(".plan-card details.plan-entitlements").length,
+            pricingCapabilityRegisterCount: document.querySelectorAll("details.capability-register").length,
+            pricingCapabilityRowCount: document.querySelectorAll(".capability-row").length,
+            pricingLegacyTableCount: document.querySelectorAll(".lane-table").length,
+            pricingMaxTitleLines: Math.max(
+              0,
+              ...[...document.querySelectorAll(".plan-title")].map((title) => {
+                const lineHeight = Number.parseFloat(getComputedStyle(title).lineHeight);
+                return lineHeight > 0 ? Math.ceil(title.getBoundingClientRect().height / lineHeight) : 0;
+              }),
+            ),
             brokenImages: images
               .filter((image) => image.complete && image.naturalWidth === 0)
               .map((image) => image.getAttribute("src") || ""),
@@ -126,6 +140,31 @@ async function audit() {
             failures.push(
               `${prefix}: ${inspection.codeFrameCount} code frames but ${inspection.codeCopyButtonCount} copy controls`,
             );
+          }
+        }
+        if (route === "/premium.html") {
+          if (!inspection.isPricing) failures.push(`${prefix}: expected pricing shell`);
+          if (inspection.pricingPlanCardCount !== 5) {
+            failures.push(`${prefix}: expected 5 plan cards, got ${inspection.pricingPlanCardCount}`);
+          }
+          if (inspection.pricingPlanCtaCount !== inspection.pricingPlanCardCount) {
+            failures.push(
+              `${prefix}: ${inspection.pricingPlanCardCount} plan cards but ${inspection.pricingPlanCtaCount} plan actions`,
+            );
+          }
+          if (inspection.pricingPlanDisclosureCount !== inspection.pricingPlanCardCount) {
+            failures.push(
+              `${prefix}: ${inspection.pricingPlanCardCount} plan cards but ${inspection.pricingPlanDisclosureCount} entitlement disclosures`,
+            );
+          }
+          if (inspection.pricingCapabilityRegisterCount !== 1 || inspection.pricingCapabilityRowCount < 1) {
+            failures.push(`${prefix}: generated capability register is incomplete`);
+          }
+          if (inspection.pricingLegacyTableCount !== 0) {
+            failures.push(`${prefix}: legacy pricing table is still present`);
+          }
+          if (inspection.pricingMaxTitleLines > 1) {
+            failures.push(`${prefix}: plan title wrapped to ${inspection.pricingMaxTitleLines} lines`);
           }
         }
         if (inspection.brokenImages.length) {
