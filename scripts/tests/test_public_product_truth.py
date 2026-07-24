@@ -722,7 +722,7 @@ class PublicProductTruthTests(unittest.TestCase):
 
         self.assertEqual([plan_id for plan_id, _ in cards], [plan["id"] for plan in contract["plans"]])
         self.assertNotIn('class="lane-table"', premium)
-        self.assertIn('href="styles-editorial.css?v=20260723a"', premium)
+        self.assertIn('href="styles-editorial.css?v=20260724c"', premium)
         self.assertIn('href="styles-pricing.css?v=20260724a"', premium)
 
         for plan, (plan_id, card) in zip(contract["plans"], cards, strict=True):

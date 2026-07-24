@@ -317,7 +317,7 @@ def render_page(docs: list[Doc], doc: Doc, stable_tag: str) -> str:
   <meta name="doc-source" content="{html.escape(doc.source_relative, quote=True)}" />
   <link rel="canonical" href="{canonical}" />
   <link rel="icon" type="image/png" sizes="512x512" href="/assets/contextlattice-icon-512.png" />
-  <link rel="stylesheet" href="/styles-editorial.css?v=20260723a" />
+  <link rel="stylesheet" href="/styles-editorial.css?v=20260724c" />
   <link rel="stylesheet" href="/docs/docs.css?v=20260724b" />
   <script src="/docs/docs.js?v=20260723a" defer></script>
 </head>
@@ -348,13 +348,13 @@ def render_page(docs: list[Doc], doc: Doc, stable_tag: str) -> str:
   <main class="docs-shell" id="main-content">
     <aside class="docs-sidebar" aria-label="Documentation">
       <div class="docs-sidebar-head">
-        <div><span>CL / DOCS</span><strong>Field Manual</strong></div>
+        <div><span>CL / DOCS</span><strong>Continuity Fieldbook</strong></div>
         <button class="docs-menu-toggle" type="button" aria-expanded="false" aria-controls="docs-sidebar-body">Index</button>
       </div>
       <div class="docs-sidebar-body" id="docs-sidebar-body">
         <div class="docs-search">
           <label for="docs-search">Search <kbd>⌘ K</kbd></label>
-          <input id="docs-search" type="search" placeholder="Search the field manual" autocomplete="off" />
+          <input id="docs-search" type="search" placeholder="Search the continuity fieldbook" autocomplete="off" />
           <div class="docs-search-results" id="docs-search-results" aria-live="polite"></div>
         </div>
         <nav class="docs-nav" aria-label="Documentation sections">

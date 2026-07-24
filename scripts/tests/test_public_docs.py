@@ -134,6 +134,54 @@ class PublicDocsTests(unittest.TestCase):
         self.assertIn("@media (max-width: 980px)", css)
         self.assertIn("@media (max-width: 760px)", css)
         self.assertIn("@media (prefers-reduced-motion: reduce)", css)
+        for route in ROUTES:
+            page_path = DOCS_ROOT / (
+                "index.html" if route == "/docs/" else f"{route.removeprefix('/docs/').strip('/')}/index.html"
+            )
+            page = page_path.read_text(encoding="utf-8")
+            self.assertIn("<strong>Continuity Fieldbook</strong>", page)
+            self.assertIn('placeholder="Search the continuity fieldbook"', page)
+            self.assertNotIn("<strong>Field Manual</strong>", page)
+
+    def test_homepage_restores_the_full_bounded_lattice_field(self) -> None:
+        page = (PUBLIC_ROOT / "index.html").read_text(encoding="utf-8")
+        editorial_css = (PUBLIC_ROOT / "styles-editorial.css").read_text(encoding="utf-8")
+        hero_css = (PUBLIC_ROOT / "styles-hero-lattice.css").read_text(encoding="utf-8")
+
+        self.assertIn('class="signal-lattice hero-art"', page)
+        self.assertEqual(page.count('class="hero-lattice"'), 1)
+        self.assertGreaterEqual(page.count('class="hl-lane '), 10)
+        self.assertNotIn('class="signal-line ', page)
+        self.assertIn("aspect-ratio: 340 / 210", editorial_css)
+        self.assertIn("contain: layout paint", hero_css)
+        self.assertIn("@media (prefers-reduced-motion: reduce)", hero_css)
+        self.assertNotIn("hl-lane-flow-haze", page)
+
+    def test_updates_are_a_direct_itemized_release_ledger(self) -> None:
+        page = (PUBLIC_ROOT / "updates.html").read_text(encoding="utf-8")
+        cards = re.findall(
+            r'<article class="update-card">(.*?)</article>',
+            page,
+            re.DOTALL,
+        )
+        self.assertGreaterEqual(len(cards), 60)
+        self.assertNotRegex(page, r"<ul>\s*<ul>")
+        for index, card in enumerate(cards, start=1):
+            with self.subTest(card=index):
+                self.assertNotRegex(card, r"<p(?:\s|>)")
+                items = re.findall(r"<li(?:\s[^>]*)?>(.*?)</li>", card, re.DOTALL)
+                self.assertGreaterEqual(len(items), 1)
+                for item in items:
+                    plain = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", item)).strip()
+                    self.assertLessEqual(len(plain), 260)
+
+    def test_public_background_is_static_fabric_not_an_animated_grid(self) -> None:
+        fabric = (PUBLIC_ROOT / "assets/lattice-fabric.svg").read_text(encoding="utf-8")
+        for stylesheet in ("styles-editorial.css", "styles-gray.css", "styles-fracture.css"):
+            css = (PUBLIC_ROOT / stylesheet).read_text(encoding="utf-8")
+            self.assertIn('url("assets/lattice-fabric.svg")', css)
+        self.assertGreaterEqual(fabric.count("<path"), 18)
+        self.assertNotIn("<animate", fabric)
 
     def test_public_docs_workflow_covers_sources_outputs_and_drift_gates(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
@@ -174,6 +222,8 @@ class PublicDocsTests(unittest.TestCase):
         self.assertIn('{ name: "compact-desktop", width: 1024, height: 900 }', visual_audit)
         self.assertIn("headingMidWordBreaks", visual_audit)
         self.assertIn("failedResources", visual_audit)
+        self.assertIn("homeHeroAspectRatio", visual_audit)
+        self.assertIn("updatesDirectSummaryCount", visual_audit)
 
     def test_every_public_html_route_declares_the_site_icon(self) -> None:
         sitemap = ElementTree.fromstring(

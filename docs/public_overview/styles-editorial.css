@@ -35,11 +35,10 @@ body {
   color: var(--cl-ink);
   font-family: var(--cl-mono);
   background:
-    linear-gradient(rgba(233, 226, 207, 0.034) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(233, 226, 207, 0.03) 1px, transparent 1px),
+    url("assets/lattice-fabric.svg"),
     radial-gradient(circle at 77% -7%, rgba(199, 255, 74, 0.1), transparent 30rem),
     linear-gradient(180deg, #0d0d0a 0%, #050504 100%);
-  background-size: 28px 28px, 28px 28px, auto, auto;
+  background-size: 224px 224px, auto, auto;
 }
 
 a {
@@ -286,7 +285,8 @@ h1 {
 
 .signal-board {
   display: grid;
-  grid-template-rows: auto minmax(260px, 1fr) auto;
+  grid-template-rows: auto auto auto;
+  align-self: start;
   min-width: 0;
   border: 1px solid var(--cl-line);
   padding: 0.85rem;
@@ -318,14 +318,12 @@ h1 {
 
 .signal-lattice {
   position: relative;
-  min-height: 260px;
+  min-height: 0;
+  aspect-ratio: 340 / 210;
   margin: 0.8rem 0;
   overflow: hidden;
   border: 1px solid rgba(216, 207, 184, 0.22);
-  background:
-    linear-gradient(rgba(233, 226, 207, 0.055) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(233, 226, 207, 0.05) 1px, transparent 1px);
-  background-size: 22px 22px;
+  background: #070806;
 }
 
 .signal-line {
@@ -879,11 +877,7 @@ h1 {
   }
 
   .signal-board {
-    grid-template-rows: auto minmax(210px, 1fr) auto;
-  }
-
-  .signal-lattice {
-    min-height: 210px;
+    grid-template-rows: auto auto auto;
   }
 
   .truth-tape {
@@ -979,12 +973,12 @@ h1 {
   }
 
   .signal-board {
-    grid-template-rows: auto 170px auto;
+    grid-template-rows: auto auto auto;
     padding: 0.65rem;
   }
 
   .signal-lattice {
-    min-height: 170px;
+    min-height: 0;
   }
 
   .truth-tape {
