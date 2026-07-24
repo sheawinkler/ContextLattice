@@ -105,6 +105,9 @@ async function audit() {
           const root = document.documentElement;
           const nav = document.querySelector('[aria-label="Primary"]');
           const images = [...document.images];
+          const homeHeroField = document.querySelector(".signal-lattice.hero-art");
+          const homeHeroBounds = homeHeroField?.getBoundingClientRect();
+          const updateCards = [...document.querySelectorAll(".update-card")];
           const interactive = [
             ...document.querySelectorAll("a[href], button:not([disabled]), summary"),
           ];
@@ -157,6 +160,18 @@ async function audit() {
             pricingCapabilityRegisterCount: document.querySelectorAll("details.capability-register").length,
             pricingCapabilityRowCount: document.querySelectorAll(".capability-row").length,
             pricingLegacyTableCount: document.querySelectorAll(".lane-table").length,
+            homeHeroLatticeCount: document.querySelectorAll(".signal-lattice.hero-art .hero-lattice").length,
+            homeLegacySignalLineCount: document.querySelectorAll(".signal-line").length,
+            homeHeroAspectRatio: homeHeroBounds?.height
+              ? Number((homeHeroBounds.width / homeHeroBounds.height).toFixed(4))
+              : null,
+            updatesCardCount: updateCards.length,
+            updatesDirectSummaryCount: updateCards
+              .filter((card) => [...card.children].some((child) => child.tagName === "P"))
+              .length,
+            updatesItemlessCardCount: updateCards
+              .filter((card) => card.querySelectorAll("li").length === 0)
+              .length,
             pricingMaxTitleLines: Math.max(
               0,
               ...[...document.querySelectorAll(".plan-title")].map((title) => {
@@ -189,6 +204,23 @@ async function audit() {
         }
         if (route === "/" && inspection.skipLinkCount !== 1) {
           failures.push(`${prefix}: homepage must expose one skip link`);
+        }
+        if (route === "/") {
+          if (inspection.homeHeroLatticeCount !== 1) {
+            failures.push(`${prefix}: expected one restored hero lattice`);
+          }
+          if (inspection.homeLegacySignalLineCount !== 0) {
+            failures.push(`${prefix}: legacy simplified signal lines remain`);
+          }
+          const targetHeroRatio = 340 / 210;
+          if (
+            inspection.homeHeroAspectRatio === null
+            || Math.abs(inspection.homeHeroAspectRatio - targetHeroRatio) > 0.03
+          ) {
+            failures.push(
+              `${prefix}: hero aspect ${inspection.homeHeroAspectRatio}; expected ${targetHeroRatio.toFixed(4)}`,
+            );
+          }
         }
         if (route.startsWith("/docs/")) {
           if (!inspection.isDocs) failures.push(`${prefix}: expected documentation shell`);
@@ -227,6 +259,21 @@ async function audit() {
           }
           if (inspection.pricingMaxTitleLines > 1) {
             failures.push(`${prefix}: plan title wrapped to ${inspection.pricingMaxTitleLines} lines`);
+          }
+        }
+        if (route === "/updates.html") {
+          if (inspection.updatesCardCount < 60) {
+            failures.push(`${prefix}: expected the full update ledger`);
+          }
+          if (inspection.updatesDirectSummaryCount !== 0) {
+            failures.push(
+              `${prefix}: ${inspection.updatesDirectSummaryCount} verbose card summaries remain`,
+            );
+          }
+          if (inspection.updatesItemlessCardCount !== 0) {
+            failures.push(
+              `${prefix}: ${inspection.updatesItemlessCardCount} cards have no itemized change line`,
+            );
           }
         }
         if (inspection.brokenImages.length) {
