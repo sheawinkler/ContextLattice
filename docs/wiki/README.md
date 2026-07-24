@@ -1,30 +1,58 @@
-# ContextLattice Wiki (Public/Main)
+---
+title: Documentation
+summary: The public field manual for installing, operating, and integrating ContextLattice without losing the thread.
+eyebrow: Start here
+order: 1
+---
+# ContextLattice documentation
 
-This is the repository-side mirror of the public wiki experience.
+ContextLattice is the local-first intelligence layer that gives AI agents durable continuity, explainable retrieval, portable context, and verified learning across harnesses.
 
-- Live site: <https://contextlattice.io/wiki.html>
-- Source page: `docs/public_overview/wiki.html`
-- Visual atlas asset: `docs/public_overview/assets/wiki-tool-atlas.svg`
+This manual is generated from the Markdown in `docs/wiki`. Every page links back to its repository source, and every route is stable enough to bookmark, share, or open directly in an agent.
 
-## What this wiki covers
+## Choose your path
 
-- Endpoint atlas (`/memory/write`, `/memory/search`, `/memory/context-pack`, `/v1/memory/neighbors`, continuation events)
-- Retrieval mode ladder (`fast`, `balanced`, `deep`) with practical timeout guidance
-- Staged-fetch and async continuation behavior
-- Production playbooks (launch, retrieval-quality, incident-response, release)
-- Agent integration template locations
+- [Install and verify the runtime](getting-started.md) if this is your first machine.
+- [Understand the operating model](concepts.md) before tuning retrieval or storage.
+- [Use the primary CLI](cli.md) for the normal context lifecycle.
+- [Connect an agent or application](integrations.md) after the core runtime is healthy.
+- [Operate and recover the stack](operations.md) with bounded checks.
+- [Diagnose a failure](troubleshooting.md) from the exact failing boundary.
+- [Review release posture](releases.md) before upgrading or publishing.
 
-## Start here
+## The shortest useful loop
 
-1. Open the live wiki: <https://contextlattice.io/wiki.html>
-2. Verify local health: `GET /health` and authenticated `GET /status`
-3. Run one write and one search smoke call
-4. Use scoped `fast` retrieval first, then escalate to `balanced`/`deep` when needed
+```zsh
+contextlattice context "what must I know before this task?" --project my-project --pretty
+contextlattice remember "verified checkpoint" --project my-project --pretty
+contextlattice finish "work completed and tested" --project my-project --success --pretty
+```
 
-## Related docs
+Use `contextlattice resume --project my-project --pretty` when a later session needs the bounded objective, evidence, risks, and next action. Use `contextlattice correct` when retrieved context is wrong, stale, useful, or superseded.
 
-- `README.md`
-- `docs/public_overview/installation.html`
-- `docs/public_overview/integration.html`
-- `docs/public_overview/troubleshooting.html`
-- `docs/public_overview/architecture.html`
+## Interface order
+
+1. **CLI** is the primary human and agent interface.
+2. **Dashboard** is the visibility, proof, account, and operations companion.
+3. **HTTP and MCP** are integration surfaces for harnesses and applications.
+
+The command line keeps the normal workflow explicit. Programmatic clients should use the same scoped lifecycle and avoid replaying full transcripts as memory.
+
+## What good context looks like
+
+- Scoped to a project, topic, task, or session.
+- Small enough to inspect before acting.
+- Grounded in source paths, timestamps, identities, or command evidence.
+- Honest about missing or degraded sources.
+- Correctable when evidence changes.
+- Finished with a verified outcome so retrieval quality can improve.
+
+> ContextLattice should make an agent more continuous, not more credulous. Retrieved records are evidence to inspect, never authority to expand a task or override current instructions.
+
+## Product and support links
+
+- [Public repository](https://github.com/sheawinkler/ContextLattice)
+- [Dashboard](https://app.contextlattice.io/console)
+- [Pricing](https://contextlattice.io/premium.html)
+- [Release updates](https://contextlattice.io/updates.html)
+- [Issue tracker](https://github.com/sheawinkler/ContextLattice/issues)

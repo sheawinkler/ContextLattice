@@ -7,7 +7,8 @@ This folder is the source for the public ContextLattice overview web pages.
 - `architecture.html` - detailed runtime architecture
 - `local-ai-workspaces.html` - comparison guide for local AI workspaces, agent harnesses, and ContextLattice's local-first intelligence-layer role
 - `scaling-memory.html` - scaling story for rollups, vectors, durable writes, CLI workflows, Skills Index discovery, provenance, learning, and deeper recall lanes
-- `wiki.html` - operator wiki with endpoint atlas and playbooks
+- `docs/` - generated repository-backed field manual, local search, and stable deep links
+- `wiki.html` - compatibility redirect to `/docs/`
 - `updates.html` - chronological updates page
 - `roadmap.html` - current product roadmap and release discipline
 - `installation.html` - install and launch command guide
@@ -24,6 +25,7 @@ This folder is the source for the public ContextLattice overview web pages.
 - `styles.css` - shared styles
 - `styles-gray.css` - grayscale/brutalist theme
 - `styles-fracture.css` - fracture-ledger visual treatment
+- `styles-editorial.css` - dashboard-derived brutalist editorial theme for the simplified front door
 - `assets/` - listing/social graphics (`contextlattice-og-1200x630.png`, `contextlattice-icon-512.png`)
 - `templates/` - copy-ready agent instruction templates (`AGENTS.contextlattice.md`, `SKILLS.contextlattice.md`)
 - `templates/agents/` - agent-profile templates (`codex`, `claude-code`, `opencode`, `hermes-agent`, `omp`, `mercury-agent`, `pi`, `droid`, `chatgpt`, `claude`)
@@ -42,11 +44,18 @@ cp docs/public_overview/templates/agents/claude-code.md ./docs/agent_templates/c
 ```
 
 ## Update workflow
-1. Edit the required page(s).
+1. Edit the required page(s). For `/docs/`, edit Markdown in `docs/wiki/`.
 2. Keep dates in `YYYY-MM-DD` format.
-3. Run:
+3. Rebuild and verify repository-backed documentation:
 
-```bash
+```zsh
+python3 scripts/build_public_docs.py --write
+python3 scripts/build_public_docs.py --check
+```
+
+4. Run the release-bound publishing sync:
+
+```zsh
 scripts/sync_public_overview.sh
 ```
 
@@ -72,6 +81,8 @@ This syncs:
 - `styles.css`
 - `styles-gray.css`
 - `styles-fracture.css`
+- `styles-editorial.css`
+- `docs/`
 - `assets/`
 - `.well-known/glama.json`
 - `.nojekyll`

@@ -1,0 +1,39 @@
+name: Public documentation
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "docs/public_overview/**"
+      - "docs/wiki/**"
+      - "scripts/build_public_docs.py"
+      - "scripts/agent/audit-public-product-truth"
+      - "scripts/tests/test_public_docs.py"
+      - "scripts/tests/test_public_product_truth.py"
+      - ".github/workflows/public-docs.yml"
+  push:
+    branches: [main]
+    paths:
+      - "docs/public_overview/**"
+      - "docs/wiki/**"
+      - "scripts/build_public_docs.py"
+      - "scripts/agent/audit-public-product-truth"
+      - "scripts/tests/test_public_docs.py"
+      - "scripts/tests/test_public_product_truth.py"
+      - ".github/workflows/public-docs.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  public-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Verify repository-backed documentation
+        run: |
+          python3 -m py_compile scripts/build_public_docs.py scripts/agent/audit-public-product-truth
+          python3 scripts/build_public_docs.py --check
+          python3 -m unittest scripts.tests.test_public_docs scripts.tests.test_public_product_truth
+          scripts/agent/audit-public-product-truth --lane public --pretty

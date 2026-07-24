@@ -41,6 +41,10 @@ REQUIRED_PUBLIC_PATHS = KEY_PUBLIC_PATHS + (
     Path("docs/public_overview/commercial-truth.json"),
     Path("docs/public_overview/robots.txt"),
     Path("docs/public_overview/sitemap.xml"),
+    Path("docs/public_overview/docs/index.html"),
+    Path("docs/public_overview/docs/docs.css"),
+    Path("docs/public_overview/docs/docs.js"),
+    Path("docs/public_overview/docs/search-index.json"),
     Path("docs/readme/contextlattice-architecture-readme-v2-2026-04-28.png"),
 )
 DASHBOARD_IDENTITY_PATHS = (
@@ -247,6 +251,15 @@ def resolve_local_reference(public_root: Path, page: Path, raw: str) -> Path | N
     if path_text.endswith("/"):
         candidate /= "index.html"
     return candidate.resolve(strict=False)
+
+
+def canonical_public_path(public_root: Path, page: Path) -> str:
+    relative = page.relative_to(public_root)
+    if relative == Path("index.html"):
+        return "/"
+    if relative.name == "index.html":
+        return f"/{relative.parent.as_posix().strip('/')}/"
+    return f"/{relative.as_posix()}"
 
 
 def run_audit(root: Path, requested_lane: str) -> dict[str, Any]:
@@ -463,7 +476,7 @@ def run_audit(root: Path, requested_lane: str) -> dict[str, Any]:
     )
 
     all_public_text: list[str] = []
-    html_paths = sorted((root / PUBLIC_ROOT).glob("*.html")) if (root / PUBLIC_ROOT).is_dir() else []
+    html_paths = sorted((root / PUBLIC_ROOT).rglob("*.html")) if (root / PUBLIC_ROOT).is_dir() else []
     robots_path = Path("docs/public_overview/robots.txt")
     try:
         robots_text = read_text(root, robots_path)
@@ -497,9 +510,9 @@ def run_audit(root: Path, requested_lane: str) -> dict[str, Any]:
         sitemap_error = str(exc)
     sitemap_url_paths = {urlsplit(value).path or "/" for value in sitemap_locations}
     canonical_html_paths = {
-        "/" if path.name == "index.html" else f"/{path.name}"
+        canonical_public_path(root / PUBLIC_ROOT, path)
         for path in html_paths
-        if path.name != "index-orb-white.html"
+        if path.relative_to(root / PUBLIC_ROOT) != Path("index-orb-white.html")
     }
     missing_sitemap_paths = sorted(canonical_html_paths - sitemap_url_paths)
     invalid_sitemap_locations = sorted(
@@ -596,7 +609,7 @@ def run_audit(root: Path, requested_lane: str) -> dict[str, Any]:
         "; ".join(broken_fragments[:12]) or "all local HTML fragments resolve",
     )
     broken_css_assets: list[str] = []
-    for stylesheet in sorted((root / PUBLIC_ROOT).glob("*.css")) if (root / PUBLIC_ROOT).is_dir() else []:
+    for stylesheet in sorted((root / PUBLIC_ROOT).rglob("*.css")) if (root / PUBLIC_ROOT).is_dir() else []:
         css_text = stylesheet.read_text(encoding="utf-8")
         for match in CSS_URL_PATTERN.finditer(css_text):
             raw = match.group(2).strip()

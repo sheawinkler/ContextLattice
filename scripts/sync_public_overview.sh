@@ -235,13 +235,16 @@ for filename in "${required_files[@]}"; do
   cp "$PUBLIC_SOURCE_DIR/$filename" "$PUBLIC_DIR/$filename"
 done
 
-for optional_file in CNAME styles-gray.css styles-fracture.css .nojekyll; do
+for optional_file in CNAME styles-gray.css styles-fracture.css styles-editorial.css .nojekyll; do
   if [[ -f "$PUBLIC_SOURCE_DIR/$optional_file" ]]; then
     cp "$PUBLIC_SOURCE_DIR/$optional_file" "$PUBLIC_DIR/$optional_file"
   fi
 done
 if [[ -d "$PUBLIC_SOURCE_DIR/assets" ]]; then
   cp -R "$PUBLIC_SOURCE_DIR/assets" "$PUBLIC_DIR/assets"
+fi
+if [[ -d "$PUBLIC_SOURCE_DIR/docs" ]]; then
+  cp -R "$PUBLIC_SOURCE_DIR/docs" "$PUBLIC_DIR/docs"
 fi
 if [[ -d "$PUBLIC_SOURCE_DIR/.well-known" ]]; then
   cp -R "$PUBLIC_SOURCE_DIR/.well-known" "$PUBLIC_DIR/.well-known"

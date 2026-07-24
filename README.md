@@ -26,7 +26,7 @@
 <p align="center">
   <a href="https://contextlattice.io/">Overview</a> |
   <a href="https://contextlattice.io/architecture.html">Architecture</a> |
-  <a href="https://contextlattice.io/wiki.html">Wiki</a> |
+  <a href="https://contextlattice.io/docs/">Docs</a> |
   <a href="https://contextlattice.io/roadmap.html">Roadmap</a> |
   <a href="https://contextlattice.io/installation.html">Installation</a> |
   <a href="https://contextlattice.io/integration.html">Integrations</a> |
@@ -83,14 +83,15 @@ The **CLI is the primary interface**. The dashboard makes behavior and proof vis
   </tr>
 </table>
 
-## Operator Wiki
+## Documentation
 
-Use the new operator wiki as the canonical “best tools + graphics” runtime manual for `public/main`.
+Use the repository-backed field manual as the canonical public runtime and integration guide.
 
-- Website wiki (recommended): `https://contextlattice.io/wiki.html`
-- Repo mirror: `docs/wiki/README.md`
+- Website docs (recommended): `https://contextlattice.io/docs/`
+- Canonical Markdown: `docs/wiki/`
+- Deterministic builder: `scripts/build_public_docs.py`
 - Retrieval receipts and trust model: [`docs/retrieval-receipts.md`](docs/retrieval-receipts.md)
-- Scope: endpoint atlas, retrieval mode policy, continuation behavior, release-ready playbooks, and agent templates
+- Scope: getting started, concepts, CLI, integrations, operations, troubleshooting, and releases
 
 ### Cognition Core CLI
 
