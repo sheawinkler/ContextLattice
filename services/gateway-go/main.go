@@ -7446,7 +7446,7 @@ func (handler *gatewayStartupHandler) ServeHTTP(w http.ResponseWriter, r *http.R
 }
 
 func gatewayInitializing(w http.ResponseWriter, r *http.Request) {
-	path := normalizeHTTPPath(r.URL.Path)
+	path := strings.TrimSpace(r.URL.Path)
 	if path != "/healthz" && path != "/readyz" {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
 			"ok":    false,
