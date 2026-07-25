@@ -174,6 +174,7 @@ type memoryStore struct {
 	exactStateCount      atomic.Int64
 	pathLocksMu          sync.Mutex
 	pathLocks            map[string]*memoryPathLock
+	beforeInitialize     func()
 	beforeOrdinaryCommit func()
 	beforeEdgeCommit     func()
 }
@@ -380,6 +381,11 @@ func newMemoryStoreFromEnv() (*memoryStore, error) {
 		maxDuration: ownerOnlyMigrationStartupBudget(),
 	})
 	if err == nil {
+		if envBool("GO_MEMORY_STORE_BACKGROUND_HYDRATION_ENABLED", true) {
+			store.startOwnerOnlyHydrationBackground(report)
+			return store, nil
+		}
+		store.migration.markHydrating(report, false)
 		if err := store.finishOwnerOnlyMigration(report); err != nil {
 			return store, fmt.Errorf("initialize memory store after owner-only migration: %w", err)
 		}

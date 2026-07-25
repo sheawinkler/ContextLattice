@@ -22,9 +22,18 @@ Stable uptime comes from separating liveness, dependency readiness, real retriev
 
 ```zsh
 curl -fsS http://127.0.0.1:8075/health | jq
+curl -fsS http://127.0.0.1:8075/healthz | jq
+curl -fsS http://127.0.0.1:8075/readyz | jq
 contextlattice doctor --pretty
 contextlattice_agent_runtime_proof --pretty
 ```
+
+`/healthz` is gateway liveness: it binds before full server construction and
+remains HTTP 200 while a large local store hydrates behind a fail-closed route
+gate. `/readyz` is dependency readiness: it returns HTTP 503 until server
+construction, required memory state, and Qdrant payload indexes are ready. In
+strict Go/Rust mode the legacy Python backend is explicitly `not_required`; it
+is not reported as a failed dependency.
 
 The one-command runtime proof exercises bootstrap, scoped recall, checkpoint, handoff, context package, completion, status, and telemetry. Use it when a release or incident needs more than a liveness check.
 

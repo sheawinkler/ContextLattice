@@ -18,6 +18,7 @@ type nativeOwnedRoute struct {
 func strictRuntimeOwnedRoutes() []nativeOwnedRoute {
 	routes := []nativeOwnedRoute{
 		{Path: "/health", Surface: "runtime", Owner: sourceOwnerGoNative, Status: "native", Detail: "gateway liveness and queue health", Required: true},
+		{Path: "/readyz", Surface: "runtime", Owner: sourceOwnerGoNative, Status: "native", Detail: "fail-closed required dependency readiness", Required: true},
 		{Path: "/status", Surface: "runtime", Owner: sourceOwnerGoNative, Status: "native", Detail: "strict runtime status and service health", Required: true},
 		{Path: "/migration/runtime", Surface: "runtime", Owner: sourceOwnerGoNative, Status: "native", Detail: "Go/Rust migration flags", Required: true},
 		{Path: "/ops/capabilities", Surface: "runtime", Owner: sourceOwnerGoNative, Status: "native", Detail: "agent-facing capability map", Required: true},

@@ -7289,6 +7289,113 @@ func TestHealthzIncludesBackendStatus(t *testing.T) {
 	if healthy, ok := payload["backendHealth"].(bool); !ok || !healthy {
 		t.Fatalf("expected backendHealth=true, got %v", payload["backendHealth"])
 	}
+	if !anyToBool(payload["backendRequired"]) || anyToString(payload["backendStatus"]) != "healthy" {
+		t.Fatalf("expected required healthy backend contract, got %#v", payload)
+	}
+	if !anyToBool(payload["ready"]) {
+		t.Fatalf("expected ready gateway, got %#v", payload["readiness"])
+	}
+}
+
+func TestHealthzStrictRuntimeMarksLegacyBackendNotRequired(t *testing.T) {
+	s := newTestServer(t, "http://127.0.0.1:1")
+	s.strictNoPythonRuntime = true
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	resp, err := http.Get(gateway.URL + "/healthz")
+	if err != nil {
+		t.Fatalf("healthz request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode healthz: %v", err)
+	}
+	if !anyToBool(payload["backendHealth"]) ||
+		anyToBool(payload["backendRequired"]) ||
+		anyToBool(payload["backendProbeChecked"]) ||
+		anyToString(payload["backendStatus"]) != "not_required" {
+		t.Fatalf("strict runtime reported a false backend dependency failure: %#v", payload)
+	}
+	if !anyToBool(payload["ready"]) || anyToString(payload["liveness"]) != "healthy" {
+		t.Fatalf("strict runtime health/readiness contract failed: %#v", payload)
+	}
+}
+
+func TestGatewayStartupHandlerServesLivenessAndFailsClosedUntilActivation(t *testing.T) {
+	t.Setenv("GO_RUNTIME_STRICT_NO_PYTHON", "true")
+	t.Setenv("GO_MEMORY_STORE_ENABLED", "true")
+	t.Setenv("ORCH_QDRANT_PAYLOAD_INDEX_HARDEN_ENABLED", "true")
+	handler := newGatewayStartupHandler()
+	gateway := httptest.NewServer(handler)
+	defer gateway.Close()
+
+	healthResponse, err := http.Get(gateway.URL + "/healthz")
+	if err != nil {
+		t.Fatalf("bootstrap healthz request failed: %v", err)
+	}
+	defer healthResponse.Body.Close()
+	if healthResponse.StatusCode != http.StatusOK {
+		t.Fatalf("bootstrap healthz status=%d, want 200", healthResponse.StatusCode)
+	}
+	var health map[string]any
+	if err := json.NewDecoder(healthResponse.Body).Decode(&health); err != nil {
+		t.Fatalf("decode bootstrap healthz: %v", err)
+	}
+	if !anyToBool(health["ok"]) ||
+		anyToBool(health["ready"]) ||
+		anyToString(health["liveness"]) != "healthy" ||
+		anyToBool(health["backendRequired"]) ||
+		!anyToBool(health["backendHealth"]) ||
+		anyToString(health["backendStatus"]) != "not_required" {
+		t.Fatalf("unexpected bootstrap liveness contract: %#v", health)
+	}
+	readiness := anyMap(health["readiness"])
+	reasons, _ := readiness["reasons"].([]any)
+	if len(reasons) != 1 || anyToString(reasons[0]) != "server_initializing" {
+		t.Fatalf("bootstrap readiness did not identify initialization: %#v", readiness)
+	}
+
+	readyResponse, err := http.Get(gateway.URL + "/readyz")
+	if err != nil {
+		t.Fatalf("bootstrap readyz request failed: %v", err)
+	}
+	defer readyResponse.Body.Close()
+	if readyResponse.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("bootstrap readyz status=%d, want 503", readyResponse.StatusCode)
+	}
+
+	protectedResponse, err := http.Get(gateway.URL + "/status")
+	if err != nil {
+		t.Fatalf("bootstrap protected request failed: %v", err)
+	}
+	defer protectedResponse.Body.Close()
+	if protectedResponse.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("bootstrap protected status=%d, want 503", protectedResponse.StatusCode)
+	}
+
+	handler.activate(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "phase": "active"})
+	}))
+	activeResponse, err := http.Get(gateway.URL + "/status")
+	if err != nil {
+		t.Fatalf("active handler request failed: %v", err)
+	}
+	defer activeResponse.Body.Close()
+	if activeResponse.StatusCode != http.StatusOK {
+		t.Fatalf("active handler status=%d, want 200", activeResponse.StatusCode)
+	}
+	var active map[string]any
+	if err := json.NewDecoder(activeResponse.Body).Decode(&active); err != nil {
+		t.Fatalf("decode active response: %v", err)
+	}
+	if anyToString(active["phase"]) != "active" {
+		t.Fatalf("startup handler did not activate delegate: %#v", active)
+	}
 }
 
 func TestContinuationEventsEndpointStreamsHistoryAndUpdates(t *testing.T) {

@@ -2781,33 +2781,137 @@ func (s *server) continuationEvents(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *server) backendHealthy(ctx context.Context) bool {
+func (s *server) backendHealthSnapshot(ctx context.Context) map[string]any {
 	if s.strictNoPythonRuntime {
-		return false
+		return map[string]any{
+			"required": false,
+			"healthy":  true,
+			"checked":  false,
+			"status":   "not_required",
+		}
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.backendURL+"/health", nil)
 	if err != nil {
-		return false
+		return map[string]any{
+			"required": true,
+			"healthy":  false,
+			"checked":  false,
+			"status":   "invalid_request",
+		}
 	}
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return false
+		return map[string]any{
+			"required": true,
+			"healthy":  false,
+			"checked":  true,
+			"status":   "unreachable",
+		}
 	}
 	defer resp.Body.Close()
-	return resp.StatusCode < 500
+	healthy := resp.StatusCode < 500
+	status := "healthy"
+	if !healthy {
+		status = "unhealthy"
+	}
+	return map[string]any{
+		"required": true,
+		"healthy":  healthy,
+		"checked":  true,
+		"status":   status,
+	}
+}
+
+func (s *server) runtimeReadinessSnapshot(backend map[string]any) map[string]any {
+	memory := s.memoryStore.migrationSnapshot()
+	memoryConfigured := anyToBool(memory["configured"])
+	memoryReady := !memoryConfigured || anyToBool(memory["ready"])
+
+	qdrant := s.qdrantPayloadIndexes.snapshot()
+	qdrantEnabled := anyToBool(qdrant["enabled"])
+	qdrantReady := !qdrantEnabled || anyToBool(qdrant["ready"])
+
+	backendRequired := anyToBool(backend["required"])
+	backendReady := !backendRequired || anyToBool(backend["healthy"])
+	ready := memoryReady && qdrantReady && backendReady
+	reasons := make([]string, 0, 3)
+	if !memoryReady {
+		reasons = append(reasons, "memory_store_not_ready")
+	}
+	if !qdrantReady {
+		reasons = append(reasons, "qdrant_payload_indexes_not_ready")
+	}
+	if !backendReady {
+		reasons = append(reasons, "required_backend_not_ready")
+	}
+	return map[string]any{
+		"schema_id": "contextlattice_runtime_readiness.v1",
+		"ready":     ready,
+		"reasons":   reasons,
+		"checks": map[string]any{
+			"memoryStore": map[string]any{
+				"configured": memoryConfigured,
+				"ready":      memoryReady,
+				"phase":      anyToString(memory["phase"]),
+			},
+			"qdrantPayloadIndexes": map[string]any{
+				"enabled": qdrantEnabled,
+				"ready":   qdrantReady,
+				"status":  anyToString(qdrant["status"]),
+			},
+			"backend": backend,
+		},
+	}
 }
 
 func (s *server) healthz(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 	defer cancel()
+	backend := s.backendHealthSnapshot(ctx)
+	readiness := s.runtimeReadinessSnapshot(backend)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":                    true,
+		"ready":                 anyToBool(readiness["ready"]),
+		"liveness":              "healthy",
 		"service":               "gateway-go",
 		"build":                 contextLatticeBuildIdentity(),
 		"backendUrl":            s.backendURL,
-		"backendHealth":         s.backendHealthy(ctx),
+		"backendHealth":         anyToBool(backend["healthy"]),
+		"backendRequired":       anyToBool(backend["required"]),
+		"backendStatus":         anyToString(backend["status"]),
+		"backendProbeChecked":   anyToBool(backend["checked"]),
 		"strictNoPythonRuntime": s.strictNoPythonRuntime,
 		"memoryStore":           s.memoryStore.migrationSnapshot(),
+		"qdrantPayloadIndexes":  s.qdrantPayloadIndexes.snapshot(),
+		"readiness":             readiness,
+	})
+}
+
+func (s *server) readyz(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+	backend := s.backendHealthSnapshot(ctx)
+	readiness := s.runtimeReadinessSnapshot(backend)
+	statusCode := http.StatusOK
+	if !anyToBool(readiness["ready"]) {
+		statusCode = http.StatusServiceUnavailable
+	}
+	writeJSON(w, statusCode, map[string]any{
+		"ok":                    anyToBool(readiness["ready"]),
+		"ready":                 anyToBool(readiness["ready"]),
+		"service":               "gateway-go",
+		"build":                 contextLatticeBuildIdentity(),
+		"backendHealth":         anyToBool(backend["healthy"]),
+		"backendRequired":       anyToBool(backend["required"]),
+		"backendStatus":         anyToString(backend["status"]),
+		"strictNoPythonRuntime": s.strictNoPythonRuntime,
+		"memoryStore":           s.memoryStore.migrationSnapshot(),
+		"qdrantPayloadIndexes":  s.qdrantPayloadIndexes.snapshot(),
+		"readiness":             readiness,
 	})
 }
 
@@ -2952,7 +3056,7 @@ func (s *server) strictRuntimeServices() []map[string]any {
 			if s.memoryStore != nil && s.memoryStore.isEnabled() {
 				return "healthy"
 			}
-			if memoryStorePhase == "migrating" || memoryStorePhase == "blocked" {
+			if memoryStorePhase == "migrating" || memoryStorePhase == "hydrating" || memoryStorePhase == "blocked" {
 				return memoryStorePhase
 			}
 			return "disabled"
@@ -7064,15 +7168,19 @@ func (s *server) retrievalBatchQuery(w http.ResponseWriter, r *http.Request) {
 func (s *server) retrievalHealth(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 	defer cancel()
+	backend := s.backendHealthSnapshot(ctx)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":            true,
-		"impl":          "go-staged-retrieval",
-		"service":       "gateway-go",
-		"backendUrl":    s.backendURL,
-		"backendHealth": s.backendHealthy(ctx),
-		"stagedEnabled": s.retrieval.enabled,
-		"fastSources":   s.retrieval.fastSources,
-		"slowSources":   s.retrieval.slowSources,
+		"ok":                  true,
+		"impl":                "go-staged-retrieval",
+		"service":             "gateway-go",
+		"backendUrl":          s.backendURL,
+		"backendHealth":       anyToBool(backend["healthy"]),
+		"backendRequired":     anyToBool(backend["required"]),
+		"backendStatus":       anyToString(backend["status"]),
+		"backendProbeChecked": anyToBool(backend["checked"]),
+		"stagedEnabled":       s.retrieval.enabled,
+		"fastSources":         s.retrieval.fastSources,
+		"slowSources":         s.retrieval.slowSources,
 	})
 }
 
@@ -7097,6 +7205,7 @@ func strictRuntimeRequiredNativeMuxPattern(path string) string {
 func buildNativeMux(s *server) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.healthz)
+	mux.HandleFunc("/readyz", s.readyz)
 	mux.HandleFunc("/health", s.health)
 	mux.HandleFunc("/status", s.status)
 	mux.HandleFunc("/v1/info", s.info)
@@ -7299,6 +7408,104 @@ func newGatewayHTTPServer(handler http.Handler) *http.Server {
 	}
 }
 
+type gatewayHandlerState struct {
+	handler http.Handler
+}
+
+type gatewayStartupHandler struct {
+	active atomic.Pointer[gatewayHandlerState]
+}
+
+func newGatewayStartupHandler() *gatewayStartupHandler {
+	handler := &gatewayStartupHandler{}
+	handler.active.Store(&gatewayHandlerState{handler: http.HandlerFunc(gatewayInitializing)})
+	return handler
+}
+
+func (handler *gatewayStartupHandler) activate(next http.Handler) {
+	if handler == nil || next == nil {
+		return
+	}
+	handler.active.Store(&gatewayHandlerState{handler: next})
+}
+
+func (handler *gatewayStartupHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if handler == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+			"ok":    false,
+			"error": "gateway_initializing",
+		})
+		return
+	}
+	state := handler.active.Load()
+	if state == nil || state.handler == nil {
+		gatewayInitializing(w, r)
+		return
+	}
+	state.handler.ServeHTTP(w, r)
+}
+
+func gatewayInitializing(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimSpace(r.URL.Path)
+	if path != "/healthz" && path != "/readyz" {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+			"ok":    false,
+			"error": "gateway_initializing",
+			"code":  "server_initializing",
+		})
+		return
+	}
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+		return
+	}
+	strictNoPythonRuntime := envBool("GO_RUNTIME_STRICT_NO_PYTHON", false)
+	backendRequired := !strictNoPythonRuntime
+	backendStatus := "initializing"
+	if strictNoPythonRuntime {
+		backendStatus = "not_required"
+	}
+	readiness := map[string]any{
+		"schema_id": "contextlattice_runtime_readiness.v1",
+		"ready":     false,
+		"reasons":   []string{"server_initializing"},
+		"checks": map[string]any{
+			"server": map[string]any{
+				"ready": false,
+				"phase": "initializing",
+			},
+		},
+	}
+	payload := map[string]any{
+		"ok":                    path == "/healthz",
+		"ready":                 false,
+		"service":               "gateway-go",
+		"build":                 contextLatticeBuildIdentity(),
+		"backendHealth":         strictNoPythonRuntime,
+		"backendRequired":       backendRequired,
+		"backendStatus":         backendStatus,
+		"backendProbeChecked":   false,
+		"strictNoPythonRuntime": strictNoPythonRuntime,
+		"memoryStore": map[string]any{
+			"configured": envBool("GO_MEMORY_STORE_ENABLED", false),
+			"ready":      false,
+			"phase":      "server_initializing",
+		},
+		"qdrantPayloadIndexes": map[string]any{
+			"enabled": envBool("ORCH_QDRANT_PAYLOAD_INDEX_HARDEN_ENABLED", false),
+			"ready":   false,
+			"status":  "server_initializing",
+		},
+		"readiness": readiness,
+	}
+	if path == "/healthz" {
+		payload["liveness"] = "healthy"
+		writeJSON(w, http.StatusOK, payload)
+		return
+	}
+	writeJSON(w, http.StatusServiceUnavailable, payload)
+}
+
 func main() {
 	if handled, exitCode := runOwnerOnlyMigrationCommand(os.Args, os.Stdout, os.Stderr); handled {
 		os.Exit(exitCode)
@@ -7316,9 +7523,6 @@ func main() {
 	if listenNetwork == "" {
 		listenNetwork = "tcp4"
 	}
-	srv := newServer()
-	srv.startQdrantPayloadIndexHardening()
-	mux := buildMux(srv)
 	listener, err := net.Listen(listenNetwork, listenAddr)
 	if err != nil && listenNetwork != "tcp" {
 		log.Printf("gateway-go listen fallback: network=%s addr=%s err=%v", listenNetwork, listenAddr, err)
@@ -7328,8 +7532,15 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Printf("gateway-go listening on %s (%s)", listenAddr, listenNetwork)
-	httpServer := newGatewayHTTPServer(mux)
+	log.Printf("gateway-go listening on %s (%s) phase=initializing", listenAddr, listenNetwork)
+	startupHandler := newGatewayStartupHandler()
+	go func() {
+		srv := newServer()
+		srv.startQdrantPayloadIndexHardening()
+		startupHandler.activate(buildMux(srv))
+		log.Printf("gateway-go runtime handler activated")
+	}()
+	httpServer := newGatewayHTTPServer(startupHandler)
 	if err := httpServer.Serve(listener); err != nil {
 		log.Fatal(err)
 	}

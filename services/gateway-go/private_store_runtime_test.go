@@ -73,6 +73,157 @@ func TestOwnerOnlyMemoryStoreStartupYieldsAndBecomesReadyInBackground(t *testing
 	assertMode(t, filepath.Join(root, "entry-02047.json"), 0o600)
 }
 
+func TestCompletedOwnerOnlyStoreHydratesFailClosedInBackground(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "store")
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("GO_MEMORY_STORE_ENABLED", "false")
+	store, err := newMemoryStoreFromEnv()
+	if err != nil {
+		t.Fatalf("create memory store fixture: %v", err)
+	}
+	configureOwnerOnlyMemoryStoreTest(t, root)
+	store.policy = loadMemoryStorePolicy()
+	store.migration = newOwnerOnlyMigrationRuntime(root, true)
+
+	hydrationStarted := make(chan struct{})
+	releaseHydration := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() {
+		releaseOnce.Do(func() { close(releaseHydration) })
+	}
+	t.Cleanup(release)
+	store.beforeInitialize = func() {
+		close(hydrationStarted)
+		<-releaseHydration
+	}
+
+	report := ownerOnlyMigrationReport{
+		SchemaID:         ownerOnlyMigrationReportSchemaID,
+		OK:               true,
+		Complete:         true,
+		ProcessedEntries: 2804233,
+		DurationMillis:   12,
+	}
+	store.migration.markStarted(false)
+	startedAt := time.Now()
+	store.startOwnerOnlyHydrationBackground(report)
+	if elapsed := time.Since(startedAt); elapsed > 100*time.Millisecond {
+		t.Fatalf("background hydration blocked startup for %s", elapsed)
+	}
+	select {
+	case <-hydrationStarted:
+	case <-time.After(time.Second):
+		t.Fatal("background hydration did not start")
+	}
+
+	initial := store.migrationSnapshot()
+	if anyToString(initial["phase"]) != "hydrating" ||
+		!anyToBool(initial["background"]) ||
+		anyToBool(initial["ready"]) ||
+		anyToInt64(initial["processed_entries"], 0) != report.ProcessedEntries {
+		t.Fatalf("unexpected fail-closed hydration status: %#v", initial)
+	}
+
+	qdrant := newQdrantPayloadIndexHardener()
+	qdrant.begin(false)
+	s := &server{
+		strictNoPythonRuntime: true,
+		memoryStore:           store,
+		qdrantPayloadIndexes:  qdrant,
+	}
+	readiness := httptest.NewRecorder()
+	s.readyz(readiness, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if readiness.Code != http.StatusServiceUnavailable {
+		t.Fatalf("readyz status=%d, want 503 while hydrating", readiness.Code)
+	}
+	protected := httptest.NewRecorder()
+	if s.enforceMemoryStoreReadiness(protected, httptest.NewRequest(http.MethodPost, "/memory/write", nil)) {
+		t.Fatal("protected memory route was available while hydrating")
+	}
+	if protected.Code != http.StatusServiceUnavailable ||
+		!strings.Contains(protected.Body.String(), `"code":"memory_store_hydrating"`) {
+		t.Fatalf("unexpected protected-route response: status=%d body=%s", protected.Code, protected.Body.String())
+	}
+
+	release()
+	deadline := time.Now().Add(5 * time.Second)
+	for !store.isEnabled() && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !store.isEnabled() {
+		t.Fatalf("memory store never became ready: %#v", store.migrationSnapshot())
+	}
+	ready := httptest.NewRecorder()
+	s.readyz(ready, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if ready.Code != http.StatusOK {
+		t.Fatalf("readyz status=%d, want 200 after hydration: %s", ready.Code, ready.Body.String())
+	}
+	final := store.migrationSnapshot()
+	if anyToString(final["phase"]) != "ready" ||
+		!anyToBool(final["ready"]) ||
+		anyToInt64(final["total_duration_ms"], -1) < 0 {
+		t.Fatalf("unexpected completed hydration status: %#v", final)
+	}
+}
+
+func TestBackgroundMigrationMarksHydratingBeforeInitialization(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "store")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "entry.json"), []byte(`{"private":true}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("GO_MEMORY_STORE_ENABLED", "false")
+	store, err := newMemoryStoreFromEnv()
+	if err != nil {
+		t.Fatalf("create memory store fixture: %v", err)
+	}
+	configureOwnerOnlyMemoryStoreTest(t, root)
+	store.policy = loadMemoryStorePolicy()
+	store.migration = newOwnerOnlyMigrationRuntime(root, true)
+
+	hydrationStarted := make(chan struct{})
+	releaseHydration := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() {
+		releaseOnce.Do(func() { close(releaseHydration) })
+	}
+	t.Cleanup(release)
+	store.beforeInitialize = func() {
+		close(hydrationStarted)
+		<-releaseHydration
+	}
+
+	store.migration.markWaiting(ownerOnlyMigrationReport{}, errOwnerOnlyMigrationYield)
+	store.startOwnerOnlyMigrationBackground()
+	select {
+	case <-hydrationStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("background migration did not reach hydration")
+	}
+
+	initial := store.migrationSnapshot()
+	if anyToString(initial["phase"]) != "hydrating" ||
+		!anyToBool(initial["background"]) ||
+		anyToBool(initial["ready"]) {
+		t.Fatalf("expected fail-closed hydration after migration, got %#v", initial)
+	}
+
+	release()
+	deadline := time.Now().Add(5 * time.Second)
+	for !store.isEnabled() && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !store.isEnabled() {
+		t.Fatalf("memory store never became ready: %#v", store.migrationSnapshot())
+	}
+}
+
 func TestOwnerOnlyMigrationSerializesConcurrentWorkers(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "store")
 	if err := os.MkdirAll(root, 0o755); err != nil {
