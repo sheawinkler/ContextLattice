@@ -41,6 +41,8 @@ type skillFoundryStore struct {
 	exports         []map[string]any
 	retirements     []map[string]any
 	transactions    map[string]map[string]any
+	usageReceipts   map[string]map[string]any
+	efficacyReviews map[string]map[string]any
 	logEntries      int
 	parseErrors     int
 	compactionCount int
@@ -50,16 +52,18 @@ type skillFoundryStore struct {
 
 func newSkillFoundryStoreFromEnv() (*skillFoundryStore, error) {
 	store := &skillFoundryStore{
-		enabled:      envBool("CONTEXTLATTICE_SKILL_FOUNDRY_ENABLED", true),
-		path:         resolveStoragePath("CONTEXTLATTICE_SKILL_FOUNDRY_PATH", filepath.Join(".data", "orchestrator", "skill_foundry.ndjson")),
-		maxBytes:     int64(clampInt(envInt("CONTEXTLATTICE_SKILL_FOUNDRY_MAX_BYTES", 4*1024*1024), 64*1024, 64*1024*1024)),
-		maxEntries:   clampInt(envInt("CONTEXTLATTICE_SKILL_FOUNDRY_MAX_ENTRIES", 2000), 20, 20000),
-		fsync:        envBool("CONTEXTLATTICE_SKILL_FOUNDRY_FSYNC", true),
-		drafts:       map[string]map[string]any{},
-		evaluations:  make([]map[string]any, 0, 100),
-		exports:      make([]map[string]any, 0, 100),
-		retirements:  make([]map[string]any, 0, 100),
-		transactions: map[string]map[string]any{},
+		enabled:         envBool("CONTEXTLATTICE_SKILL_FOUNDRY_ENABLED", true),
+		path:            resolveStoragePath("CONTEXTLATTICE_SKILL_FOUNDRY_PATH", filepath.Join(".data", "orchestrator", "skill_foundry.ndjson")),
+		maxBytes:        int64(clampInt(envInt("CONTEXTLATTICE_SKILL_FOUNDRY_MAX_BYTES", 4*1024*1024), 64*1024, 64*1024*1024)),
+		maxEntries:      clampInt(envInt("CONTEXTLATTICE_SKILL_FOUNDRY_MAX_ENTRIES", 2000), 20, 20000),
+		fsync:           envBool("CONTEXTLATTICE_SKILL_FOUNDRY_FSYNC", true),
+		drafts:          map[string]map[string]any{},
+		evaluations:     make([]map[string]any, 0, 100),
+		exports:         make([]map[string]any, 0, 100),
+		retirements:     make([]map[string]any, 0, 100),
+		transactions:    map[string]map[string]any{},
+		usageReceipts:   map[string]map[string]any{},
+		efficacyReviews: map[string]map[string]any{},
 	}
 	if !store.enabled || strings.TrimSpace(store.path) == "" {
 		store.enabled = false
@@ -142,6 +146,7 @@ func (s *skillFoundryStore) trimLocked() {
 	s.evaluations = retainLatestGroupedRows(s.evaluations, "draft_id", s.maxEntries)
 	s.exports = retainLatestGroupedRows(s.exports, "draft_id", s.maxEntries)
 	s.retirements = retainLatestGroupedRows(s.retirements, "draft_id", s.maxEntries)
+	s.trimSkillEfficacyLocked()
 	if len(s.drafts) <= s.maxEntries {
 		s.trimTransactionsLocked()
 		return
@@ -203,6 +208,23 @@ func (s *skillFoundryStore) applyRowLocked(row map[string]any) map[string]any {
 		s.exports = append(s.exports, cloneMap(row))
 	case skillRetirementContractID:
 		s.retirements = append(s.retirements, cloneMap(row))
+	case skillUsageReceiptContractID:
+		if id := anyToString(row["usage_id"]); id != "" {
+			if s.usageReceipts == nil {
+				s.usageReceipts = map[string]map[string]any{}
+			}
+			existing := s.usageReceipts[id]
+			if len(existing) == 0 || anyToInt(row["revision"], 0) >= anyToInt(existing["revision"], 0) {
+				s.usageReceipts[id] = cloneMap(row)
+			}
+		}
+	case skillEfficacyReviewContractID:
+		if id := anyToString(row["review_id"]); id != "" {
+			if s.efficacyReviews == nil {
+				s.efficacyReviews = map[string]map[string]any{}
+			}
+			s.efficacyReviews[id] = cloneMap(row)
+		}
 	}
 	return row
 }
@@ -441,10 +463,25 @@ func (s *skillFoundryStore) compactLockedIO() error {
 	evaluations := append([]map[string]any{}, s.evaluations...)
 	exports := append([]map[string]any{}, s.exports...)
 	retirements := append([]map[string]any{}, s.retirements...)
+	usageReceipts := make([]map[string]any, 0, len(s.usageReceipts))
+	for _, receipt := range s.usageReceipts {
+		usageReceipts = append(usageReceipts, cloneMap(receipt))
+	}
+	efficacyReviews := make([]map[string]any, 0, len(s.efficacyReviews))
+	for _, review := range s.efficacyReviews {
+		efficacyReviews = append(efficacyReviews, cloneMap(review))
+	}
 	transactions := make([]map[string]any, 0, len(s.transactions))
 	for _, transaction := range s.transactions {
 		receipt := cloneMap(transaction)
-		delete(receipt, "rows")
+		// Usage chains are revisioned snapshots. Their transaction row is the
+		// only exact replay material for an earlier stage once the latest
+		// receipt supersedes it, so retain that bounded row during compaction.
+		switch anyToString(receipt["kind"]) {
+		case "skill_efficacy_usage", "skill_efficacy_review":
+		default:
+			delete(receipt, "rows")
+		}
 		receipt["compacted"] = true
 		transactions = append(transactions, receipt)
 	}
@@ -453,9 +490,17 @@ func (s *skillFoundryStore) compactLockedIO() error {
 	sort.Slice(transactions, func(i, j int) bool {
 		return anyToString(transactions[i]["transaction_id"]) < anyToString(transactions[j]["transaction_id"])
 	})
+	sort.Slice(usageReceipts, func(i, j int) bool {
+		return anyToString(usageReceipts[i]["usage_id"]) < anyToString(usageReceipts[j]["usage_id"])
+	})
+	sort.Slice(efficacyReviews, func(i, j int) bool {
+		return anyToString(efficacyReviews[i]["review_id"]) < anyToString(efficacyReviews[j]["review_id"])
+	})
 	history := append(evaluations, exports...)
 	history = append(history, retirements...)
 	rows := append(drafts, history...)
+	rows = append(rows, usageReceipts...)
+	rows = append(rows, efficacyReviews...)
 	rows = append(rows, transactions...)
 	tmp := s.path + ".tmp"
 	file, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
@@ -524,12 +569,34 @@ func (s *skillFoundryStore) snapshot() map[string]any {
 		delete(copyDraft, "skill_markdown")
 		items = append(items, copyDraft)
 	}
+	reviews := make([]map[string]any, 0, len(s.efficacyReviews))
+	for _, review := range s.efficacyReviews {
+		reviews = append(reviews, cloneMap(review))
+	}
+	sort.Slice(reviews, func(i, j int) bool {
+		return anyToString(reviews[i]["created_at"]) > anyToString(reviews[j]["created_at"])
+	})
+	reviewItems := make([]any, 0, minInt(len(reviews), 20))
+	for _, review := range reviews[:minInt(len(reviews), 20)] {
+		proposal := anyMap(review["proposal"])
+		artifact := anyMap(review["artifact"])
+		reviewItems = append(reviewItems, map[string]any{
+			"review_id": review["review_id"], "review_digest": review["review_digest"],
+			"project": review["project"], "skill_id": review["skill_id"], "name": review["name"],
+			"status": review["status"], "decision": review["decision"], "created_at": review["created_at"],
+			"proposal": map[string]any{
+				"kind": proposal["kind"], "summary": proposal["summary"],
+				"delivery": proposal["delivery"], "content_digest": proposal["content_digest"],
+			},
+			"artifact": map[string]any{"mode": artifact["mode"], "state": artifact["state"]},
+		})
+	}
 	return map[string]any{
 		"schema_id": skillFoundryStatusSchemaID, "version": 1, "enabled": s.enabled,
 		"activation_state": "inactive", "automatic_activation": false,
 		"draft_count": len(s.drafts), "evaluation_count": len(s.evaluations), "export_count": len(s.exports), "retirement_count": len(s.retirements),
-		"transaction_count": len(s.transactions),
-		"status_counts":     statusCounts, "drafts": items,
+		"transaction_count": len(s.transactions), "skill_usage_count": len(s.usageReceipts), "efficacy_review_count": len(s.efficacyReviews),
+		"status_counts": statusCounts, "drafts": items, "efficacy_reviews": reviewItems,
 		"storage":    map[string]any{"enabled": s.enabled, "max_bytes": s.maxBytes, "max_entries": s.maxEntries, "log_entries": s.logEntries, "parse_errors": s.parseErrors, "compaction_count": s.compactionCount, "last_persisted_at": s.lastPersistedAt, "last_error": s.lastError},
 		"updated_at": nowUTCISO(),
 	}

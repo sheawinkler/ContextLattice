@@ -160,10 +160,14 @@ Only allowlisted, clipped numerical or categorical sufficient statistics enter t
 ### Verified Skill Evolution
 
 Use `contextlattice_agent_tools skill-evolution` as the canonical interface for
-`reusable-candidate`, explicit `foundry-handoff`, and
-`retirement-candidate`. Every operation reads one bounded owner-only JSON file;
-the gateway authoritatively resolves referenced Utility Ledger outcomes and
-agent-session verification receipts before returning a contract-valid result.
+append-only `usage-record`, inactive `efficacy-review`, `reusable-candidate`,
+explicit `foundry-handoff`, and `retirement-candidate`. Every operation reads
+one bounded owner-only JSON file. Usage advances through searched, selected,
+invoked, and verified-outcome snapshots; search never receives efficacy
+credit. The gateway authoritatively resolves referenced Utility Ledger outcomes
+and matching agent-session outcome receipts before returning a contract-valid
+result. See [`skill-efficacy-review.md`](skill-efficacy-review.md) for the
+receipt and review payloads.
 Operator and Enterprise runtimes also expose the `governance` operation for
 reviewed scheduling, activation, replacement, monitoring, and rollback
 metadata. That paid route never runs a model, subprocess, filesystem mutation,

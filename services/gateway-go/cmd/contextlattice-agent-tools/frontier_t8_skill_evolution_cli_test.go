@@ -30,6 +30,8 @@ func TestFrontierT8SkillEvolutionCLIUsesSingleCanonicalRouteFamily(t *testing.T)
 		contractID      string
 		explicitHandoff bool
 	}{
+		{operation: "usage-record", wireOperation: "record_usage_receipt", contractID: "skill_usage_receipt.v1"},
+		{operation: "efficacy-review", wireOperation: "derive_efficacy_review", contractID: "skill_efficacy_review.v1"},
 		{operation: "reusable-candidate", wireOperation: "derive_reusable_candidate", contractID: "reusable_skill_candidate.v1"},
 		{operation: "foundry-handoff", wireOperation: "handoff_reusable_candidate", contractID: "reusable_skill_candidate.v1", explicitHandoff: true},
 		{operation: "retirement-candidate", wireOperation: "derive_retirement_candidate", contractID: "skill_retirement_candidate.v1"},

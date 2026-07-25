@@ -1,7 +1,7 @@
 {
   "registry_id": "contextlattice_agent_output_contracts",
-  "registry_version": 53,
-  "updated_at": "2026-07-19T18:18:52Z",
+  "registry_version": 54,
+  "updated_at": "2026-07-25T21:15:00Z",
   "default_validator": "contextlattice.boundary.v1",
   "purpose": "Agent-facing ContextLattice payloads must carry explicit contract identifiers and pass boundary validation before being returned or handed to another agent.",
   "shared_fragments": {
@@ -8393,6 +8393,330 @@
       ],
       "forbidden_scope": "recursive"
     },
+    "skill_usage_receipt.v1": {
+      "contract_version": 1,
+      "payload_kind": "append_only_skill_usage_receipt",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "reject_skipped_stale_cross_scope_or_unverified_usage_without_efficacy_credit_or_active_skill_mutation",
+      "max_total_json_bytes": 65536,
+      "max_string_bytes": 1200,
+      "max_list_items": 32,
+      "allowed_fields": [
+        "ok",
+        "schema_id",
+        "operation",
+        "receipt",
+        "recorded",
+        "replayed",
+        "persistence",
+        "safety",
+        "format_contract"
+      ],
+      "required_fields": [
+        "ok",
+        "schema_id",
+        "operation",
+        "receipt",
+        "recorded",
+        "replayed",
+        "persistence",
+        "safety",
+        "format_contract"
+      ],
+      "field_types": {
+        "ok": "bool",
+        "schema_id": "string",
+        "operation": "string",
+        "receipt": "object",
+        "recorded": "bool",
+        "replayed": "bool",
+        "persistence": "object",
+        "safety": "object",
+        "format_contract": "object"
+      },
+      "required_fields_by_path": {
+        "receipt": [
+          "schema_id",
+          "version",
+          "usage_id",
+          "revision",
+          "project",
+          "session_id",
+          "agent_id",
+          "skill",
+          "search",
+          "stage",
+          "stage_events",
+          "recorded_at",
+          "previous_receipt_digest",
+          "receipt_digest",
+          "evidence_class",
+          "discoverability_evidence",
+          "efficacy_eligible",
+          "active_skill_mutated"
+        ],
+        "receipt.skill": [
+          "id",
+          "name",
+          "version",
+          "digest",
+          "source_kind",
+          "source_ref"
+        ],
+        "receipt.search": [
+          "query_digest",
+          "rank",
+          "matched_terms",
+          "raw_query_stored",
+          "efficacy_credit"
+        ],
+        "persistence": [
+          "store",
+          "transaction_id",
+          "append_only",
+          "active_skill_mutated"
+        ],
+        "safety": [
+          "provider_calls",
+          "network_calls",
+          "subprocess_calls",
+          "filesystem_mutations",
+          "ledger_writes",
+          "activation_performed"
+        ],
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ]
+      },
+      "required_true_paths": [
+        "ok",
+        "recorded",
+        "receipt.discoverability_evidence",
+        "persistence.append_only"
+      ],
+      "required_false_paths": [
+        "receipt.search.raw_query_stored",
+        "receipt.search.efficacy_credit",
+        "receipt.active_skill_mutated",
+        "persistence.active_skill_mutated",
+        "safety.activation_performed"
+      ],
+      "required_string_contains": {
+        "schema_id": "skill_usage_receipt.v1",
+        "operation": "record_usage_receipt",
+        "receipt.schema_id": "skill_usage_receipt.v1",
+        "format_contract.schema_id": "skill_usage_receipt.v1"
+      },
+      "forbidden_fields": [
+        "secret",
+        "secrets",
+        "api_key",
+        "password",
+        "authorization",
+        "raw_query",
+        "query",
+        "raw_prompt",
+        "prompt",
+        "messages",
+        "chain_of_thought",
+        "raw_logs",
+        "raw_content"
+      ],
+      "forbidden_scope": "recursive"
+    },
+    "skill_efficacy_review.v1": {
+      "contract_version": 1,
+      "payload_kind": "inactive_skill_efficacy_review",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "abstain_without_mutation_when_usage_attribution_holdout_lift_novelty_budget_or_source_policy_is_insufficient",
+      "max_total_json_bytes": 131072,
+      "max_string_bytes": 8192,
+      "max_list_items": 64,
+      "allowed_fields": [
+        "ok",
+        "schema_id",
+        "operation",
+        "review",
+        "recorded",
+        "replayed",
+        "persistence",
+        "safety",
+        "format_contract"
+      ],
+      "required_fields": [
+        "ok",
+        "schema_id",
+        "operation",
+        "review",
+        "recorded",
+        "replayed",
+        "persistence",
+        "safety",
+        "format_contract"
+      ],
+      "field_types": {
+        "ok": "bool",
+        "schema_id": "string",
+        "operation": "string",
+        "review": "object",
+        "recorded": "bool",
+        "replayed": "bool",
+        "persistence": "object",
+        "safety": "object",
+        "format_contract": "object"
+      },
+      "required_fields_by_path": {
+        "review": [
+          "schema_id",
+          "version",
+          "review_id",
+          "review_digest",
+          "project",
+          "skill_id",
+          "name",
+          "skill",
+          "status",
+          "decision",
+          "created_at",
+          "discoverability",
+          "attribution",
+          "gates",
+          "proposal",
+          "artifact",
+          "governance",
+          "safety",
+          "measurement_limit"
+        ],
+        "review.discoverability": [
+          "searched_count",
+          "selected_count",
+          "invoked_count",
+          "verified_outcome_count",
+          "search_only_count",
+          "search_efficacy_credit",
+          "measurement_limit"
+        ],
+        "review.attribution": [
+          "baseline",
+          "holdout",
+          "exact_matched_pairs",
+          "mean_utility_lift",
+          "baseline_usage_ids",
+          "holdout_usage_ids",
+          "outcome_authority"
+        ],
+        "review.artifact": [
+          "mode",
+          "state",
+          "suggested_target",
+          "bounded_delta",
+          "stored_in_review_ledger",
+          "filesystem_write_performed",
+          "vendor_source_mutated",
+          "upstream_request_created"
+        ],
+        "review.governance": [
+          "human_review_required",
+          "human_approved",
+          "promotion_allowed",
+          "automatic_promotion",
+          "active_skill_mutated",
+          "installation_performed",
+          "next_surface"
+        ],
+        "review.safety": [
+          "advisory_only",
+          "provider_calls",
+          "network_calls",
+          "subprocess_calls",
+          "filesystem_mutations",
+          "ledger_writes",
+          "active_skill_mutations",
+          "vendor_source_mutations",
+          "activation_performed",
+          "deactivation_performed",
+          "retirement_performed"
+        ],
+        "persistence": [
+          "store",
+          "transaction_id",
+          "append_only",
+          "candidate_status"
+        ],
+        "safety": [
+          "provider_calls",
+          "network_calls",
+          "subprocess_calls",
+          "filesystem_mutations",
+          "ledger_writes",
+          "active_skill_mutations",
+          "activation_performed",
+          "retirement_performed"
+        ],
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ]
+      },
+      "required_true_paths": [
+        "ok",
+        "recorded",
+        "review.artifact.stored_in_review_ledger",
+        "review.safety.advisory_only",
+        "persistence.append_only"
+      ],
+      "required_false_paths": [
+        "review.discoverability.search_efficacy_credit",
+        "review.artifact.filesystem_write_performed",
+        "review.artifact.vendor_source_mutated",
+        "review.artifact.upstream_request_created",
+        "review.governance.human_approved",
+        "review.governance.promotion_allowed",
+        "review.governance.automatic_promotion",
+        "review.governance.active_skill_mutated",
+        "review.governance.installation_performed",
+        "review.safety.activation_performed",
+        "review.safety.deactivation_performed",
+        "review.safety.retirement_performed",
+        "safety.activation_performed",
+        "safety.retirement_performed"
+      ],
+      "required_string_contains": {
+        "schema_id": "skill_efficacy_review.v1",
+        "operation": "derive_efficacy_review",
+        "review.schema_id": "skill_efficacy_review.v1",
+        "review.status": "inactive",
+        "review.artifact.state": "inactive",
+        "persistence.candidate_status": "inactive",
+        "format_contract.schema_id": "skill_efficacy_review.v1"
+      },
+      "forbidden_fields": [
+        "secret",
+        "secrets",
+        "api_key",
+        "password",
+        "authorization",
+        "raw_prompt",
+        "prompt",
+        "messages",
+        "chain_of_thought",
+        "raw_logs",
+        "raw_content",
+        "absolute_path"
+      ],
+      "forbidden_scope": "recursive"
+    },
     "reusable_skill_candidate.v1": {
       "contract_version": 1,
       "payload_kind": "inactive_verified_reusable_skill_candidate",
@@ -9064,11 +9388,42 @@
         "format_contract": "object"
       },
       "required_fields_by_path": {
-        "cohort": ["minimum_size", "exact_count_disclosed"],
-        "privacy_accountant": ["schema_id", "release_epsilon", "rolling_90_day_epsilon", "delta", "budget_remaining"],
-        "receipt": ["receipt_id", "request_digest", "release_window", "expires_on", "idempotent"],
-        "safety": ["network_calls", "bytes_sent", "raw_memory_exported", "raw_prompt_exported", "stable_installation_id_exported", "external_transport_performed", "formal_privacy_claim"],
-        "format_contract": ["registry_id", "registry_version", "schema_id", "contract_version", "required_output_mode", "validator", "validation"]
+        "cohort": [
+          "minimum_size",
+          "exact_count_disclosed"
+        ],
+        "privacy_accountant": [
+          "schema_id",
+          "release_epsilon",
+          "rolling_90_day_epsilon",
+          "delta",
+          "budget_remaining"
+        ],
+        "receipt": [
+          "receipt_id",
+          "request_digest",
+          "release_window",
+          "expires_on",
+          "idempotent"
+        ],
+        "safety": [
+          "network_calls",
+          "bytes_sent",
+          "raw_memory_exported",
+          "raw_prompt_exported",
+          "stable_installation_id_exported",
+          "external_transport_performed",
+          "formal_privacy_claim"
+        ],
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ]
       },
       "required_false_paths": [
         "safety.raw_memory_exported",
@@ -9147,10 +9502,35 @@
         "format_contract": "object"
       },
       "required_fields_by_path": {
-        "limits": ["minimum_cohort", "release_epsilon_max", "rolling_90_day_epsilon_max", "delta_max", "max_bytes", "max_records"],
-        "promotion_gate": ["passed", "required_reviews"],
-        "safety": ["network_calls", "bytes_sent", "raw_memory_exported", "raw_prompt_exported", "stable_installation_id_exported", "external_transport_performed"],
-        "format_contract": ["registry_id", "registry_version", "schema_id", "contract_version", "required_output_mode", "validator", "validation"]
+        "limits": [
+          "minimum_cohort",
+          "release_epsilon_max",
+          "rolling_90_day_epsilon_max",
+          "delta_max",
+          "max_bytes",
+          "max_records"
+        ],
+        "promotion_gate": [
+          "passed",
+          "required_reviews"
+        ],
+        "safety": [
+          "network_calls",
+          "bytes_sent",
+          "raw_memory_exported",
+          "raw_prompt_exported",
+          "stable_installation_id_exported",
+          "external_transport_performed"
+        ],
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ]
       },
       "required_false_paths": [
         "promotion_gate.passed",
@@ -9233,12 +9613,39 @@
         "format_contract": "object"
       },
       "required_fields_by_path": {
-        "authorization": ["mode", "plan", "role", "credential_derived"],
-        "privacy_gate": ["status", "production_promotion_allowed", "required_reviews"],
-        "safety": ["opt_in_required", "network_calls", "raw_memory_exported", "raw_prompt_exported", "stable_installation_id_exported", "gateway_model_execution", "gateway_runner_execution"],
-        "format_contract": ["registry_id", "registry_version", "schema_id", "contract_version", "required_output_mode", "validator", "validation"]
+        "authorization": [
+          "mode",
+          "plan",
+          "role",
+          "credential_derived"
+        ],
+        "privacy_gate": [
+          "status",
+          "production_promotion_allowed",
+          "required_reviews"
+        ],
+        "safety": [
+          "opt_in_required",
+          "network_calls",
+          "raw_memory_exported",
+          "raw_prompt_exported",
+          "stable_installation_id_exported",
+          "gateway_model_execution",
+          "gateway_runner_execution"
+        ],
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ]
       },
-      "required_true_paths": ["safety.opt_in_required"],
+      "required_true_paths": [
+        "safety.opt_in_required"
+      ],
       "required_false_paths": [
         "safety.raw_memory_exported",
         "safety.raw_prompt_exported",
@@ -9307,9 +9714,27 @@
         "format_contract": "object"
       },
       "required_fields_by_path": {
-        "promotion_gate": ["passed", "independent_review_required", "reviews"],
-        "safety": ["keyless_private_development", "production_activation", "network_calls", "raw_memory_exported", "stable_installation_id_exported"],
-        "format_contract": ["registry_id", "registry_version", "schema_id", "contract_version", "required_output_mode", "validator", "validation"]
+        "promotion_gate": [
+          "passed",
+          "independent_review_required",
+          "reviews"
+        ],
+        "safety": [
+          "keyless_private_development",
+          "production_activation",
+          "network_calls",
+          "raw_memory_exported",
+          "stable_installation_id_exported"
+        ],
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ]
       },
       "required_true_paths": [
         "promotion_gate.independent_review_required",

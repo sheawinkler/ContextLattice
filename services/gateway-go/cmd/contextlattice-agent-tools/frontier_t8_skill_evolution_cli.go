@@ -25,6 +25,12 @@ type frontierT8CLIEvolutionSpec struct {
 }
 
 var frontierT8CLIEvolutionOperations = map[string]frontierT8CLIEvolutionSpec{
+	"usage-record": {
+		wireOperation: "record_usage_receipt", contractID: "skill_usage_receipt.v1",
+	},
+	"efficacy-review": {
+		wireOperation: "derive_efficacy_review", contractID: "skill_efficacy_review.v1",
+	},
 	"reusable-candidate": {
 		wireOperation: "derive_reusable_candidate", contractID: "reusable_skill_candidate.v1",
 	},
@@ -37,7 +43,7 @@ var frontierT8CLIEvolutionOperations = map[string]frontierT8CLIEvolutionSpec{
 }
 
 func frontierT8SkillEvolutionUsage() string {
-	return "contextlattice_agent_tools skill-evolution {reusable-candidate|foundry-handoff|retirement-candidate} --payload-file request.json [--pretty|--raw]"
+	return "contextlattice_agent_tools skill-evolution {usage-record|efficacy-review|reusable-candidate|foundry-handoff|retirement-candidate} --payload-file request.json [--pretty|--raw]"
 }
 
 func (c *cli) cmdSkillEvolution(args []string) error {

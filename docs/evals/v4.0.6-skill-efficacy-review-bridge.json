@@ -1,0 +1,133 @@
+{
+  "schema_id": "contextlattice_eval_ledger.v1",
+  "feature": "skill_efficacy_review_bridge",
+  "status": "pass_with_pre_existing_environment_exception",
+  "objective": "Connect Skills Index discovery and actual skill invocation to independently verified Utility Ledger outcomes, then persist bounded inactive review candidates without mutating active or third-party skills.",
+  "baseline": {
+    "skills_index": "Active and quarantined skills are searchable, but searches, selections, and invocations do not share one durable receipt chain.",
+    "utility": "The Utility Ledger records independently verified task utility and execution economics without a first-class skill-use identity.",
+    "skill_foundry": "Verified Skill Evolution accepts repeated workflow receipts and detects decay, but does not derive minimal review notes or revisions from actual indexed-skill use.",
+    "third_party": "Quarantine and promotion protect third-party skills, but outcome-derived improvements do not have a dedicated overlay or upstream-PR candidate artifact."
+  },
+  "intervention": {
+    "usage_receipts": [
+      "searched",
+      "selected",
+      "invoked",
+      "verified_outcome"
+    ],
+    "review_decisions": [
+      "retain",
+      "add_bounded_note",
+      "revision_candidate",
+      "retirement_candidate",
+      "abstain"
+    ],
+    "hard_boundaries": [
+      "Search-only evidence is discoverability-only and cannot satisfy efficacy gates.",
+      "Verified outcomes must resolve against the persisted Utility Ledger and the same agent session.",
+      "Training and holdout usage identities and sessions must be disjoint.",
+      "Notes and revisions require exact matched-control lift and no material retry, failure, latency, or cost regression.",
+      "Every decision binds the recorded skill digest to the current native Skills Index source.",
+      "Novelty and fixed line and estimated-token budgets fail closed.",
+      "Third-party improvements remain inactive local-overlay or upstream-PR candidates.",
+      "No review operation installs, activates, edits, exports, deactivates, retires, invokes a model, runs a subprocess, or performs a network call; its only filesystem mutation is the owner-only review ledger write."
+    ]
+  },
+  "metrics": {
+    "minimum_baseline_verified_uses": 3,
+    "minimum_holdout_verified_uses": 3,
+    "minimum_exact_matched_pairs": 3,
+    "required_mean_utility_lift": "strictly_positive",
+    "note_max_nonempty_lines": 8,
+    "note_max_estimated_tokens": 160,
+    "revision_max_nonempty_lines": 40,
+    "revision_max_estimated_tokens": 800,
+    "minimum_novel_line_ratio": 0.5,
+    "maximum_latency_or_cost_regression_ratio": 0.2,
+    "active_skill_mutations": 0,
+    "provider_calls": 0,
+    "external_network_calls": 0
+  },
+  "holdouts": [
+    "A searched-only chain must abstain and report discoverability evidence without efficacy credit.",
+    "A selected but non-invoked chain must remain efficacy-ineligible.",
+    "A skipped or stale receipt transition must fail closed.",
+    "An outcome from another project, session, agent, or unverified Utility Ledger row must fail closed.",
+    "Three exact disjoint matched controls and holdouts with positive lift may produce a bounded-note candidate.",
+    "A duplicate or oversized delta must abstain.",
+    "A holdout with positive utility but material failure, retry, latency, or cost regression must abstain.",
+    "A third-party improvement may produce only a local-overlay or upstream-PR candidate.",
+    "Retain and retirement recommendations remain inactive review records.",
+    "Replayed idempotency keys return the original receipt; conflicting material is rejected."
+  ],
+  "cost": {
+    "model_calls": 0,
+    "provider_cost_microusd": 0,
+    "network_calls_inside_review_kernel": 0,
+    "expected_storage": "bounded append-only owner-only Skill Foundry ledger rows"
+  },
+  "latency": {
+    "measurement": "local focused route tests plus the full gateway suite",
+    "target": "review derivation remains bounded by configured receipt caps and local ledger/index reads",
+    "focused_feature_suite_elapsed_seconds": 0.392,
+    "race_feature_suite_elapsed_seconds": 1.73,
+    "full_gateway_suite_elapsed_seconds": 73.354,
+    "full_cli_suite_elapsed_seconds": 20.333
+  },
+  "tool_calls": {
+    "usage_operation_external_tool_calls": 0,
+    "review_operation_external_tool_calls": 0,
+    "provider_calls": 0,
+    "network_calls": 0,
+    "subprocess_calls": 0,
+    "filesystem_mutations_per_successful_operation": 1,
+    "filesystem_mutation_scope": "owner_only_skill_foundry_ledger"
+  },
+  "failures": [
+    {
+      "gate": "python3 -m pytest",
+      "status": "resolved",
+      "detail": "The Homebrew python3.14 module environment did not include pytest. The installed canonical pytest 9.1.1 executable ran the same selected tests successfully."
+    },
+    {
+      "gate": "scripts/agent/audit-agent-context --scope active-user",
+      "status": "pre_existing_environment_exception",
+      "detail": "The composite gate reports 495 over-budget active-user context files, including unchanged global and repository AGENTS.md files. All other composite subchecks passed; this change does not edit those files."
+    }
+  ],
+  "reproduction": {
+    "focused": [
+      "cd services/gateway-go && go test ./... -run 'TestSkillUsageReceipt|TestSkillEfficacyReview' -count=1",
+      "cd services/gateway-go && go test -race ./... -run 'TestSkillUsageReceipt|TestSkillEfficacyReview' -count=1"
+    ],
+    "full": [
+      "cd services/gateway-go && go test ./... -count=1 -timeout 20m",
+      "cd services/gateway-go && go vet ./...",
+      "cargo fmt --manifest-path crates/Cargo.toml --all -- --check",
+      "cargo test --manifest-path crates/Cargo.toml -p context_codec --locked",
+      "scripts/agent/audit-agent-output-contracts",
+      "scripts/agent/audit-agent-context",
+      "scripts/agent/audit-public-product-truth",
+      "scripts/agent/audit-open-core-boundary",
+      "python3 scripts/build_public_docs.py --check",
+      "pytest -q scripts/tests/test_public_docs.py scripts/tests/test_public_product_truth.py"
+    ]
+  },
+  "result": {
+    "status": "passed",
+    "summary": "The native Skills Index, agent-session ledger, Utility Ledger, and Skill Foundry now share one fail-closed usage and efficacy-review chain. Search remains discoverability-only; only independently verified, exact-source, session-bound outcomes can support an inactive review decision.",
+    "verification": [
+      "Focused feature and concurrent idempotency tests passed.",
+      "Targeted Go race detection passed.",
+      "Full gateway and CLI suites passed.",
+      "Go vet passed.",
+      "Generated contract drift check and contract boundary audit passed.",
+      "Rust context_codec unit and doc tests passed.",
+      "Public documentation generation and 31 tests plus 154 subtests passed.",
+      "Public product truth passed 68 of 68 checks.",
+      "Open-core boundary audit passed with zero findings.",
+      "No operation performs provider, network, subprocess, active-skill, vendor-source, installation, activation, deactivation, or retirement mutation; each successful operation performs one explicit owner-only ledger write."
+    ]
+  }
+}

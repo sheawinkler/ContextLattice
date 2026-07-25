@@ -126,6 +126,10 @@ idempotent Foundry transaction.
 The CLI is the primary interface:
 
 ```bash
+contextlattice_agent_tools skill-evolution usage-record \
+  --payload-file usage-stage.json --pretty
+contextlattice_agent_tools skill-evolution efficacy-review \
+  --payload-file efficacy-review.json --pretty
 contextlattice_agent_tools skill-evolution reusable-candidate \
   --payload-file reusable-candidate.json --pretty
 contextlattice_agent_tools skill-evolution foundry-handoff \
@@ -133,6 +137,13 @@ contextlattice_agent_tools skill-evolution foundry-handoff \
 contextlattice_agent_tools skill-evolution retirement-candidate \
   --payload-file retirement-candidate.json --pretty
 ```
+
+Usage receipts connect Skills Index discovery to actual selection, invocation,
+the Utility Ledger, and the matching agent-session outcome. Search remains
+discoverability-only. Efficacy reviews emit only inactive retain, bounded-note,
+revision, retirement, or abstention records; they never edit an installed
+skill. Exact evidence gates, source policies, payload examples, and limits are
+documented in [`skill-efficacy-review.md`](skill-efficacy-review.md).
 
 Public core stops at inactive, explicit-review artifacts. Operator and
 Enterprise distributions add an entitlement-gated governance ledger for
@@ -187,6 +198,8 @@ Contracts:
 - `skill_evaluation.v1`
 - `skill_export.v1`
 - `skill_retirement.v1`
+- `skill_usage_receipt.v1`
+- `skill_efficacy_review.v1`
 - `reusable_skill_candidate.v1`
 - `skill_retirement_candidate.v1`
 - `frontier_t8_skill_evolution_governance.v1` (Operator/Enterprise)

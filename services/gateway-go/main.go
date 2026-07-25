@@ -1300,7 +1300,7 @@ func newServer() *server {
 	skillFoundryInstance, skillFoundryErr := newSkillFoundryStoreFromEnv()
 	if skillFoundryErr != nil {
 		log.Printf("gateway-go skill foundry store disabled: %v", skillFoundryErr)
-		skillFoundryInstance = &skillFoundryStore{enabled: false, drafts: map[string]map[string]any{}, evaluations: []map[string]any{}, exports: []map[string]any{}, retirements: []map[string]any{}, transactions: map[string]map[string]any{}, lastError: skillFoundryErr.Error()}
+		skillFoundryInstance = &skillFoundryStore{enabled: false, drafts: map[string]map[string]any{}, evaluations: []map[string]any{}, exports: []map[string]any{}, retirements: []map[string]any{}, transactions: map[string]map[string]any{}, usageReceipts: map[string]map[string]any{}, efficacyReviews: map[string]map[string]any{}, lastError: skillFoundryErr.Error()}
 	}
 	contextPassportInstance, contextPassportErr := newContextPassportStoreFromEnv()
 	if contextPassportErr != nil {
