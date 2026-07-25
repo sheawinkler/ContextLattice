@@ -466,7 +466,7 @@ Advanced/compatibility commands:
   continuity-zero               restore one unambiguous active objective with bounded proof and next move
   aggregate-signal              preview, opt in, queue, release, inspect, or revoke bounded aggregate statistics
   portable-continuation          portable grants, imports, manifests, and continuation status
-  skill-evolution                reusable-skill and retirement advisory candidates
+  skill-evolution                usage receipts, efficacy review, and skill lifecycle candidates
 
 The same binary is intended to be symlinked or wrapped as contextlattice_search,
 contextlattice_pack, contextlattice_packet_reconstruct, contextlattice_synthesis_pack,

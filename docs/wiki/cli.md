@@ -99,6 +99,26 @@ contextlattice_agent_adapter profiles
 
 The default refresh interval is 24 hours (`CONTEXTLATTICE_SKILLS_REFRESH_INTERVAL_HOURS`). Invoke `refresh --due` from an operator-owned scheduler when periodic checks are desired; ContextLattice does not create a background job implicitly.
 
+## Skill efficacy review
+
+```zsh
+contextlattice_agent_tools skill-evolution usage-record --payload-file usage-stage.json
+contextlattice_agent_tools skill-evolution efficacy-review --payload-file review.json
+```
+
+A usage receipt advances through `searched`, `selected`, `invoked`, and
+`verified_outcome`. Search affects discoverability only. Efficacy requires the
+same project, agent, and session in both the Utility Ledger and a matching
+session outcome event. Reviews can retain, abstain, or create an inactive
+bounded-note, revision, or retirement candidate. They never edit or activate
+an installed skill, and third-party improvements remain local-overlay or
+upstream-PR candidates.
+
+Notes and revisions require three verified baseline uses, three disjoint
+exact-matched holdouts, positive utility lift, no material regression, an exact
+current skill digest, novelty, and fixed size limits. See the
+[full receipt and review contract](https://github.com/sheawinkler/ContextLattice/blob/main/docs/skill-efficacy-review.md).
+
 ## Advanced packets and traces
 
 ```zsh

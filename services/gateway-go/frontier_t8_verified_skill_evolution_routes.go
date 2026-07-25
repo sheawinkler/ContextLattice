@@ -17,6 +17,8 @@ const (
 	frontierT8OperationDeriveReusable   = "derive_reusable_candidate"
 	frontierT8OperationHandoffReusable  = "handoff_reusable_candidate"
 	frontierT8OperationDeriveRetirement = "derive_retirement_candidate"
+	frontierT8OperationRecordUsage      = "record_usage_receipt"
+	frontierT8OperationReviewEfficacy   = "derive_efficacy_review"
 )
 
 type frontierT8EvolutionRouteRequest struct {
@@ -40,10 +42,44 @@ func (s *server) memorySkillFoundryEvolution(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	now := time.Now().UTC()
-	input = frontierT8BindServerClock(input, now)
+	if request.Operation == frontierT8OperationDeriveReusable ||
+		request.Operation == frontierT8OperationHandoffReusable ||
+		request.Operation == frontierT8OperationDeriveRetirement {
+		input = frontierT8BindServerClock(input, now)
+	}
 
 	var response map[string]any
 	switch request.Operation {
+	case frontierT8OperationRecordUsage:
+		if request.ExplicitHandoff != nil {
+			frontierT8WriteRouteError(w, http.StatusBadRequest, "invalid_evolution_request", errors.New("explicit_handoff is not valid for record_usage_receipt"))
+			return
+		}
+		usageResponse, usageErr := s.frontierT8RecordSkillUsage(input, now)
+		if usageErr != nil {
+			status := http.StatusUnprocessableEntity
+			if strings.Contains(usageErr.Error(), "store") || strings.Contains(usageErr.Error(), "persistence") {
+				status = http.StatusServiceUnavailable
+			}
+			frontierT8WriteRouteError(w, status, "skill_usage_receipt_rejected", usageErr)
+			return
+		}
+		response = usageResponse
+	case frontierT8OperationReviewEfficacy:
+		if request.ExplicitHandoff != nil {
+			frontierT8WriteRouteError(w, http.StatusBadRequest, "invalid_evolution_request", errors.New("explicit_handoff is not valid for derive_efficacy_review"))
+			return
+		}
+		reviewResponse, reviewErr := s.frontierT8RecordSkillEfficacyReview(input, now)
+		if reviewErr != nil {
+			status := http.StatusUnprocessableEntity
+			if strings.Contains(reviewErr.Error(), "store") || strings.Contains(reviewErr.Error(), "persistence") {
+				status = http.StatusServiceUnavailable
+			}
+			frontierT8WriteRouteError(w, status, "skill_efficacy_review_rejected", reviewErr)
+			return
+		}
+		response = reviewResponse
 	case frontierT8OperationDeriveReusable:
 		if request.ExplicitHandoff != nil {
 			frontierT8WriteRouteError(w, http.StatusBadRequest, "invalid_evolution_request", errors.New("explicit_handoff is only valid for handoff_reusable_candidate"))
@@ -127,6 +163,177 @@ func (s *server) memorySkillFoundryEvolution(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	writeJSON(w, http.StatusOK, response)
+}
+
+func skillEfficacyRequestDigest(input map[string]any) string {
+	raw, err := json.Marshal(input)
+	if err != nil {
+		return ""
+	}
+	return "sha256:" + sha256Hex(string(raw))
+}
+
+func skillEfficacyTransactionID(kind, scope, idempotencyKey string) string {
+	return "skilltxn_" + sha256Hex("skill-efficacy\x00" + kind + "\x00" + scope + "\x00" + idempotencyKey)[:24]
+}
+
+func skillEfficacyTransactionReplay(store *skillFoundryStore, transactionID, requestDigest string) (map[string]any, bool, error) {
+	transaction := store.transaction(transactionID)
+	if len(transaction) == 0 {
+		return nil, false, nil
+	}
+	metadata := anyMap(transaction["metadata"])
+	if anyToString(metadata["request_digest"]) != requestDigest {
+		return nil, true, errors.New("idempotency key conflicts with existing material")
+	}
+	rows := contextPackAnyList(transaction["rows"])
+	if len(rows) == 1 && len(anyMap(rows[0])) > 0 {
+		return cloneMap(anyMap(rows[0])), true, nil
+	}
+	// Older compacted ledgers may preserve the transaction identity and latest
+	// material as separate rows. Resolve that legacy shape only when it still
+	// represents the exact recorded stage.
+	if usageID := anyToString(metadata["usage_id"]); usageID != "" {
+		if receipt := store.usageReceipt(usageID); len(receipt) > 0 {
+			if stage := anyToString(metadata["stage"]); stage == "" || anyToString(receipt["stage"]) == stage {
+				return receipt, true, nil
+			}
+		}
+	}
+	if reviewID := anyToString(metadata["review_id"]); reviewID != "" {
+		if review := store.efficacyReview(reviewID); len(review) > 0 {
+			return review, true, nil
+		}
+	}
+	return nil, true, errors.New("persisted skill efficacy transaction is incomplete")
+}
+
+func (s *server) frontierT8RecordSkillUsage(input map[string]any, now time.Time) (map[string]any, error) {
+	if s == nil || s.skillFoundry == nil || !s.skillFoundry.enabled {
+		return nil, errors.New("skill Foundry store is unavailable")
+	}
+	idempotencyKey, err := skillEfficacyRequiredIdentifier(input["idempotency_key"], "idempotency_key")
+	if err != nil {
+		return nil, err
+	}
+	usageID, err := skillEfficacyRequiredIdentifier(input["usage_id"], "usage_id")
+	if err != nil {
+		return nil, err
+	}
+	requestDigest := skillEfficacyRequestDigest(input)
+	transactionID := skillEfficacyTransactionID("usage", usageID, idempotencyKey)
+	if replay, found, replayErr := skillEfficacyTransactionReplay(s.skillFoundry, transactionID, requestDigest); found {
+		if replayErr != nil {
+			return nil, replayErr
+		}
+		return skillUsageReceiptResponse(replay, true, transactionID), nil
+	}
+	s.skillLifecycleMu.Lock()
+	defer s.skillLifecycleMu.Unlock()
+	if replay, found, replayErr := skillEfficacyTransactionReplay(s.skillFoundry, transactionID, requestDigest); found {
+		if replayErr != nil {
+			return nil, replayErr
+		}
+		return skillUsageReceiptResponse(replay, true, transactionID), nil
+	}
+	existing := s.skillFoundry.usageReceipt(anyToString(input["usage_id"]))
+	receipt, _, err := s.buildSkillUsageReceipt(input, existing, now)
+	if err != nil {
+		return nil, err
+	}
+	transaction, replayed, err := s.skillFoundry.recordTransaction(transactionID, "skill_efficacy_usage", map[string]any{
+		"request_digest": requestDigest, "usage_id": receipt["usage_id"], "stage": receipt["stage"],
+	}, receipt)
+	if err != nil {
+		return nil, err
+	}
+	rows := contextPackAnyList(transaction["rows"])
+	if len(rows) == 1 {
+		receipt = cloneMap(anyMap(rows[0]))
+	}
+	return skillUsageReceiptResponse(receipt, replayed, transactionID), nil
+}
+
+func skillUsageReceiptResponse(receipt map[string]any, replayed bool, transactionID string) map[string]any {
+	return map[string]any{
+		"ok": true, "schema_id": skillUsageReceiptContractID,
+		"operation": frontierT8OperationRecordUsage, "receipt": receipt,
+		"recorded": true, "replayed": replayed,
+		"persistence": map[string]any{
+			"store": "skill_foundry", "transaction_id": transactionID,
+			"append_only": true, "active_skill_mutated": false,
+		},
+		"safety": map[string]any{
+			"provider_calls": 0, "network_calls": 0, "subprocess_calls": 0,
+			"filesystem_mutations": 1, "ledger_writes": 1, "activation_performed": false,
+		},
+	}
+}
+
+func (s *server) frontierT8RecordSkillEfficacyReview(input map[string]any, now time.Time) (map[string]any, error) {
+	if s == nil || s.skillFoundry == nil || !s.skillFoundry.enabled {
+		return nil, errors.New("skill Foundry store is unavailable")
+	}
+	idempotencyKey, err := skillEfficacyRequiredIdentifier(input["idempotency_key"], "idempotency_key")
+	if err != nil {
+		return nil, err
+	}
+	project, err := sanitizeMemoryProject(anyToString(input["project"]))
+	if err != nil {
+		return nil, err
+	}
+	skillID, err := skillEfficacyRequiredIdentifier(input["skill_id"], "skill_id")
+	if err != nil {
+		return nil, err
+	}
+	requestDigest := skillEfficacyRequestDigest(input)
+	transactionID := skillEfficacyTransactionID("review", strings.ToLower(project+"\x00"+skillID), idempotencyKey)
+	if replay, found, replayErr := skillEfficacyTransactionReplay(s.skillFoundry, transactionID, requestDigest); found {
+		if replayErr != nil {
+			return nil, replayErr
+		}
+		return skillEfficacyReviewResponse(replay, true, transactionID), nil
+	}
+	s.skillLifecycleMu.Lock()
+	defer s.skillLifecycleMu.Unlock()
+	if replay, found, replayErr := skillEfficacyTransactionReplay(s.skillFoundry, transactionID, requestDigest); found {
+		if replayErr != nil {
+			return nil, replayErr
+		}
+		return skillEfficacyReviewResponse(replay, true, transactionID), nil
+	}
+	review, _, err := s.buildSkillEfficacyReview(input, now)
+	if err != nil {
+		return nil, err
+	}
+	transaction, replayed, err := s.skillFoundry.recordTransaction(transactionID, "skill_efficacy_review", map[string]any{
+		"request_digest": requestDigest, "review_id": review["review_id"], "skill_id": review["skill_id"],
+	}, review)
+	if err != nil {
+		return nil, err
+	}
+	rows := contextPackAnyList(transaction["rows"])
+	if len(rows) == 1 {
+		review = cloneMap(anyMap(rows[0]))
+	}
+	return skillEfficacyReviewResponse(review, replayed, transactionID), nil
+}
+
+func skillEfficacyReviewResponse(review map[string]any, replayed bool, transactionID string) map[string]any {
+	return map[string]any{
+		"ok": true, "schema_id": skillEfficacyReviewContractID,
+		"operation": frontierT8OperationReviewEfficacy, "review": review,
+		"recorded": true, "replayed": replayed,
+		"persistence": map[string]any{
+			"store": "skill_foundry", "transaction_id": transactionID,
+			"append_only": true, "candidate_status": "inactive",
+		},
+		"safety": map[string]any{
+			"provider_calls": 0, "network_calls": 0, "subprocess_calls": 0,
+			"filesystem_mutations": 1, "ledger_writes": 1, "active_skill_mutations": 0,
+			"activation_performed": false, "retirement_performed": false,
+		},
+	}
 }
 
 func frontierT8DecodeEvolutionRequest(r *http.Request) (frontierT8EvolutionRouteRequest, map[string]any, error) {

@@ -206,7 +206,7 @@ contextlattice_agent_tools portable-continuation manifest-reconcile \
 contextlattice_agent_tools portable-continuation status --pretty
 ```
 
-The planner remains `shadow_only`: learned candidates are advice, not a hidden configuration rewrite. Skill exports remain inactive files until reviewed and installed through the normal Skills Index workflow. Passport replay never executes imported text, and Mesh never owns transport. See [`docs/continuity-identity.md`](docs/continuity-identity.md), [`docs/cognition-proof-core.md`](docs/cognition-proof-core.md), [`docs/outcome-policy-skill-foundry.md`](docs/outcome-policy-skill-foundry.md), and [`docs/context-passport-mesh.md`](docs/context-passport-mesh.md) for contracts, safety boundaries, and HTTP fallbacks.
+The planner remains `shadow_only`: learned candidates are advice, not a hidden configuration rewrite. Skill exports and efficacy-review artifacts remain inactive until reviewed and installed through the normal Skills Index workflow. Passport replay never executes imported text, and Mesh never owns transport. See [`docs/continuity-identity.md`](docs/continuity-identity.md), [`docs/cognition-proof-core.md`](docs/cognition-proof-core.md), [`docs/outcome-policy-skill-foundry.md`](docs/outcome-policy-skill-foundry.md), [`docs/skill-efficacy-review.md`](docs/skill-efficacy-review.md), and [`docs/context-passport-mesh.md`](docs/context-passport-mesh.md) for contracts, safety boundaries, and HTTP fallbacks.
 
 ## Quickstart
 
