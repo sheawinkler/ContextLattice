@@ -3,7 +3,7 @@
   "feature": "phase4a_runtime_hardening",
   "lane": "private_source_with_public_projections",
   "release_train": "v4.0.6",
-  "recorded_at": "2026-07-25T23:31:00Z",
+  "recorded_at": "2026-07-25T23:49:00Z",
   "baseline": {
     "private_source_commit": "f82172b39c49492e6d13608a55e91014bf12476a",
     "private_source_tree": "652867d61391e0a5025b0ba9586c16f77e245548",
@@ -55,7 +55,7 @@
     "expected_readyz_status_after_release": 200
   },
   "results": {
-    "status": "local_gates_passed_live_verification_pending",
+    "status": "final_tree_local_gates_passed_exact_merged_live_verification_pending",
     "dependency_security": {
       "quinn_proto_version": "0.11.15",
       "crossbeam_epoch_version": "0.9.20",
@@ -77,6 +77,10 @@
       "public_alert_closure": "pending_public_projection_merge"
     },
     "startup_holdout": {
+      "bootstrap_liveness_before_server_construction": true,
+      "bootstrap_readyz_status": 503,
+      "bootstrap_non_liveness_route_status": 503,
+      "atomic_runtime_handler_activation": true,
       "completed_receipt_constructor_returns_before_hydration": true,
       "incomplete_migration_transitions_to_hydrating": true,
       "protected_route_during_hydration": 503,
@@ -100,7 +104,43 @@
       "git_diff_check": "passed"
     },
     "live_runtime": {
-      "status": "pending_exact_source_rebuild_and_bounded_soak"
+      "status": "candidate_passed_exact_merged_rebuild_pending",
+      "candidate_source_commit": "cba550537156fe6c13e8e9377513cb0082c26ae1",
+      "candidate_source_tree": "54264ca4b16af6498278f1e7eab3da64def60223",
+      "candidate_image_id": "sha256:3e8c98365ac849c97d401c4d0c4999f14cb4e0a27a93e7e55827878d61be379c",
+      "listener_ready_after_container_start_secs": 32.616,
+      "listener_target_met": false,
+      "listener_target_resolution": "final tree adds a fail-closed early listener before synchronous server construction; live verification pending exact merged rebuild",
+      "memory_migration_duration_ms": 206,
+      "memory_hydration_duration_ms": 116987,
+      "memory_total_duration_ms": 117193,
+      "qdrant_points_count": 711902,
+      "qdrant_required_indexes_ready": true,
+      "representative_soak": {
+        "duration_secs": 300.067,
+        "sample_count": 60,
+        "failure_count": 0,
+        "queue_pending_max": 0,
+        "queue_oldest_age_max_secs": 0,
+        "native_required_routes": 137,
+        "native_violations": 0,
+        "python_fallbacks": 0,
+        "restart_count": 0,
+        "oom_killed": false,
+        "latency_p95_ms": {
+          "healthz": 47.158,
+          "readyz": 51.65,
+          "status": 48.03,
+          "native_ownership": 55.729
+        },
+        "latency_max_ms": {
+          "healthz": 174.926,
+          "readyz": 345.262,
+          "status": 163.734,
+          "native_ownership": 68.795
+        },
+        "artifact": "tmp/phase4a-runtime-soak-candidate.json"
+      }
     }
   },
   "cost": {
@@ -131,7 +171,7 @@
       "scope": "pre-change_live_runtime",
       "observed": "intermittent host-side 127.0.0.1:8075 latency while in-container health remained immediate",
       "container_restart_or_oom": false,
-      "interpretation": "unresolved until exact-source live soak; active write fanout pressure was present"
+      "interpretation": "resolved in the five-minute candidate soak; all 60 host-forward samples passed and the worst endpoint observation was 345.262 ms"
     }
   ],
   "reproduction": [

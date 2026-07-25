@@ -7408,6 +7408,104 @@ func newGatewayHTTPServer(handler http.Handler) *http.Server {
 	}
 }
 
+type gatewayHandlerState struct {
+	handler http.Handler
+}
+
+type gatewayStartupHandler struct {
+	active atomic.Pointer[gatewayHandlerState]
+}
+
+func newGatewayStartupHandler() *gatewayStartupHandler {
+	handler := &gatewayStartupHandler{}
+	handler.active.Store(&gatewayHandlerState{handler: http.HandlerFunc(gatewayInitializing)})
+	return handler
+}
+
+func (handler *gatewayStartupHandler) activate(next http.Handler) {
+	if handler == nil || next == nil {
+		return
+	}
+	handler.active.Store(&gatewayHandlerState{handler: next})
+}
+
+func (handler *gatewayStartupHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if handler == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+			"ok":    false,
+			"error": "gateway_initializing",
+		})
+		return
+	}
+	state := handler.active.Load()
+	if state == nil || state.handler == nil {
+		gatewayInitializing(w, r)
+		return
+	}
+	state.handler.ServeHTTP(w, r)
+}
+
+func gatewayInitializing(w http.ResponseWriter, r *http.Request) {
+	path := normalizeHTTPPath(r.URL.Path)
+	if path != "/healthz" && path != "/readyz" {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+			"ok":    false,
+			"error": "gateway_initializing",
+			"code":  "server_initializing",
+		})
+		return
+	}
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+		return
+	}
+	strictNoPythonRuntime := envBool("GO_RUNTIME_STRICT_NO_PYTHON", false)
+	backendRequired := !strictNoPythonRuntime
+	backendStatus := "initializing"
+	if strictNoPythonRuntime {
+		backendStatus = "not_required"
+	}
+	readiness := map[string]any{
+		"schema_id": "contextlattice_runtime_readiness.v1",
+		"ready":     false,
+		"reasons":   []string{"server_initializing"},
+		"checks": map[string]any{
+			"server": map[string]any{
+				"ready": false,
+				"phase": "initializing",
+			},
+		},
+	}
+	payload := map[string]any{
+		"ok":                    path == "/healthz",
+		"ready":                 false,
+		"service":               "gateway-go",
+		"build":                 contextLatticeBuildIdentity(),
+		"backendHealth":         strictNoPythonRuntime,
+		"backendRequired":       backendRequired,
+		"backendStatus":         backendStatus,
+		"backendProbeChecked":   false,
+		"strictNoPythonRuntime": strictNoPythonRuntime,
+		"memoryStore": map[string]any{
+			"configured": envBool("GO_MEMORY_STORE_ENABLED", false),
+			"ready":      false,
+			"phase":      "server_initializing",
+		},
+		"qdrantPayloadIndexes": map[string]any{
+			"enabled": envBool("ORCH_QDRANT_PAYLOAD_INDEX_HARDEN_ENABLED", false),
+			"ready":   false,
+			"status":  "server_initializing",
+		},
+		"readiness": readiness,
+	}
+	if path == "/healthz" {
+		payload["liveness"] = "healthy"
+		writeJSON(w, http.StatusOK, payload)
+		return
+	}
+	writeJSON(w, http.StatusServiceUnavailable, payload)
+}
+
 func main() {
 	if handled, exitCode := runOwnerOnlyMigrationCommand(os.Args, os.Stdout, os.Stderr); handled {
 		os.Exit(exitCode)
@@ -7425,9 +7523,6 @@ func main() {
 	if listenNetwork == "" {
 		listenNetwork = "tcp4"
 	}
-	srv := newServer()
-	srv.startQdrantPayloadIndexHardening()
-	mux := buildMux(srv)
 	listener, err := net.Listen(listenNetwork, listenAddr)
 	if err != nil && listenNetwork != "tcp" {
 		log.Printf("gateway-go listen fallback: network=%s addr=%s err=%v", listenNetwork, listenAddr, err)
@@ -7437,8 +7532,15 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Printf("gateway-go listening on %s (%s)", listenAddr, listenNetwork)
-	httpServer := newGatewayHTTPServer(mux)
+	log.Printf("gateway-go listening on %s (%s) phase=initializing", listenAddr, listenNetwork)
+	startupHandler := newGatewayStartupHandler()
+	go func() {
+		srv := newServer()
+		srv.startQdrantPayloadIndexHardening()
+		startupHandler.activate(buildMux(srv))
+		log.Printf("gateway-go runtime handler activated")
+	}()
+	httpServer := newGatewayHTTPServer(startupHandler)
 	if err := httpServer.Serve(listener); err != nil {
 		log.Fatal(err)
 	}
