@@ -1,0 +1,159 @@
+{
+  "schema_id": "contextlattice_eval_ledger.v1",
+  "feature": "phase4a_runtime_hardening",
+  "lane": "private_source_with_public_projections",
+  "release_train": "v4.0.6",
+  "recorded_at": "2026-07-25T23:31:00Z",
+  "baseline": {
+    "private_source_commit": "f82172b39c49492e6d13608a55e91014bf12476a",
+    "private_source_tree": "652867d61391e0a5025b0ba9586c16f77e245548",
+    "public_open_quinn_proto_alerts": 3,
+    "public_open_quinn_proto_alert_severity": "high",
+    "vulnerable_quinn_proto_version": "0.11.14",
+    "first_patched_quinn_proto_version": "0.11.15",
+    "active_dependency_graphs_containing_quinn_proto": 0,
+    "live_gateway_container_id": "964801220a75cb345d8d5cc4ec258d337de482f9c1d183826923efc7ab6e6cf7",
+    "live_gateway_image_id": "sha256:6c0fe5c5081c5933c95fff0eb164ed04861ec1e23cf450c203164921404f6bd1",
+    "live_gateway_restart_count": 0,
+    "live_gateway_oom_killed": false,
+    "listener_ready_after_container_start_secs": 128.719,
+    "memory_store_processed_entries": 2804233,
+    "memory_store_history_startup_rows": 20000,
+    "memory_store_access_startup_rows": 20344,
+    "memory_store_edge_startup_rows": 39495,
+    "memory_store_hydration_mode": "synchronous_before_listener",
+    "strict_no_python_runtime": true,
+    "healthz_backend_health": false,
+    "status_backend_source": "disabled_by_strict_runtime",
+    "native_required_routes": 136,
+    "native_ownership_violations": 0,
+    "queue_pending_total": 0,
+    "queue_oldest_age_secs": 0,
+    "interpretation": "a completed owner-only receipt avoided a full permission migration, but bounded memory indexes still hydrated synchronously before net.Listen; healthz also represented the intentionally disabled legacy backend as unhealthy"
+  },
+  "target": {
+    "quinn_proto_version": "0.11.15",
+    "public_open_quinn_proto_alerts": 0,
+    "listener_slo_secs": 30,
+    "memory_store_hydration_mode": "fail_closed_background",
+    "liveness_contract": "healthz remains HTTP 200 after the listener binds",
+    "readiness_contract": "readyz returns HTTP 503 while required local state warms and HTTP 200 only when required dependencies are ready",
+    "strict_runtime_backend_contract": "legacy Python backend is explicitly not_required and is not reported as a failed dependency",
+    "native_ownership_violations": 0,
+    "gateway_restart_count": 0,
+    "gateway_oom_killed": false,
+    "representative_soak_required": true,
+    "calendar_soak_target_hours": 24
+  },
+  "holdout": {
+    "kind": "completed_owner_only_store_with_blocked_hydration",
+    "expected_constructor_behavior": "returns without waiting for hydration",
+    "expected_memory_phase": "hydrating",
+    "expected_memory_ready_during_holdout": false,
+    "expected_protected_route_status": 503,
+    "expected_readyz_status_during_holdout": 503,
+    "expected_readyz_status_after_release": 200
+  },
+  "results": {
+    "status": "local_gates_passed_live_verification_pending",
+    "dependency_security": {
+      "quinn_proto_version": "0.11.15",
+      "crossbeam_epoch_version": "0.9.20",
+      "vulnerability_count": {
+        "crates": 0,
+        "fastembed_gate_rs": 0,
+        "fastembed_sidecar_rs": 0
+      },
+      "informational_unmaintained_warnings": {
+        "crates": [
+          "rustls-pemfile 2.2.0 / RUSTSEC-2025-0134 / no patched release"
+        ],
+        "fastembed_gate_rs": [],
+        "fastembed_sidecar_rs": [
+          "paste 1.0.15 / RUSTSEC-2024-0436 / no patched release"
+        ]
+      },
+      "locked_metadata_resolution": "passed_all_three_lockfiles",
+      "public_alert_closure": "pending_public_projection_merge"
+    },
+    "startup_holdout": {
+      "completed_receipt_constructor_returns_before_hydration": true,
+      "incomplete_migration_transitions_to_hydrating": true,
+      "protected_route_during_hydration": 503,
+      "readyz_during_hydration": 503,
+      "readyz_after_hydration": 200,
+      "race_check": "passed"
+    },
+    "local_verification": {
+      "go_test_all": "passed",
+      "go_vet_all": "passed",
+      "gateway_focused_race": "passed",
+      "python_unittest_count": 41,
+      "python_unittest_status": "passed",
+      "python_compile": "passed",
+      "compose_full_config": "passed",
+      "compose_lite_config": "passed",
+      "public_docs_generated_check": "passed",
+      "agent_output_contract_audit": "passed",
+      "open_core_boundary_audit": "passed",
+      "public_product_truth": "68_of_68_passed",
+      "git_diff_check": "passed"
+    },
+    "live_runtime": {
+      "status": "pending_exact_source_rebuild_and_bounded_soak"
+    }
+  },
+  "cost": {
+    "llm_calls": 0,
+    "external_runtime_services_added": 0,
+    "new_required_dependencies": 0
+  },
+  "tool_calls": {
+    "dependency_alert_api_queries": 1,
+    "live_runtime_baseline_probes": 7,
+    "cargo_audit_lockfiles": 3,
+    "locked_metadata_resolutions": 3
+  },
+  "latency": {
+    "baseline_listener_ready_secs": 128.719,
+    "target_listener_ready_max_secs": 30
+  },
+  "failures": [
+    {
+      "class": "ambient_context_budget",
+      "scope": "active_user_skill_and_instruction_inventory",
+      "observed": "495 pre-existing over-budget files",
+      "phase4a_regression": false,
+      "repo_relevant_subchecks": "passed"
+    },
+    {
+      "class": "host_forwarding_latency",
+      "scope": "pre-change_live_runtime",
+      "observed": "intermittent host-side 127.0.0.1:8075 latency while in-container health remained immediate",
+      "container_restart_or_oom": false,
+      "interpretation": "unresolved until exact-source live soak; active write fanout pressure was present"
+    }
+  ],
+  "reproduction": [
+    "cd services/gateway-go && go test ./... -count=1",
+    "cd services/gateway-go && go vet ./...",
+    "cd services/gateway-go && go test -race . -run 'Test(CompletedOwnerOnlyStoreHydratesFailClosedInBackground|BackgroundMigrationMarksHydratingBeforeInitialization)$' -count=1",
+    "python3 -m unittest scripts.tests.test_runtime_soak_gate scripts.tests.test_public_docs scripts.tests.test_public_product_truth scripts.tests.test_strict_runtime_native_ownership_audit",
+    "python3 scripts/build_public_docs.py --check",
+    "docker --context orbstack compose --env-file \"$DEPLOY_ENV_FILE\" -f docker-compose.yml config --quiet",
+    "docker --context orbstack compose --env-file \"$DEPLOY_ENV_FILE\" -f docker-compose.lite.yml config --quiet",
+    "cd crates && cargo audit --json",
+    "cd services/fastembed_gate_rs && cargo audit --json",
+    "cd services/fastembed_sidecar_rs && cargo audit --json",
+    "scripts/agent/runtime-soak-gate --help"
+  ],
+  "constraints": [
+    "A full Rust workspace compile was intentionally not used as lockfile proof because no Rust source changed and it would add heavy I/O to the external volume carrying the active live write lane.",
+    "The 24-hour calendar soak is an observation window and cannot be claimed before elapsed time."
+  ],
+  "rollback": {
+    "dependency": "revert only the three lockfile version and checksum updates",
+    "startup": "set GO_MEMORY_STORE_BACKGROUND_HYDRATION_ENABLED=false",
+    "health": "healthz remains the liveness endpoint; remove readyz from external readiness consumers before reverting its handler"
+  }
+}

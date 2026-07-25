@@ -7289,6 +7289,41 @@ func TestHealthzIncludesBackendStatus(t *testing.T) {
 	if healthy, ok := payload["backendHealth"].(bool); !ok || !healthy {
 		t.Fatalf("expected backendHealth=true, got %v", payload["backendHealth"])
 	}
+	if !anyToBool(payload["backendRequired"]) || anyToString(payload["backendStatus"]) != "healthy" {
+		t.Fatalf("expected required healthy backend contract, got %#v", payload)
+	}
+	if !anyToBool(payload["ready"]) {
+		t.Fatalf("expected ready gateway, got %#v", payload["readiness"])
+	}
+}
+
+func TestHealthzStrictRuntimeMarksLegacyBackendNotRequired(t *testing.T) {
+	s := newTestServer(t, "http://127.0.0.1:1")
+	s.strictNoPythonRuntime = true
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	resp, err := http.Get(gateway.URL + "/healthz")
+	if err != nil {
+		t.Fatalf("healthz request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode healthz: %v", err)
+	}
+	if !anyToBool(payload["backendHealth"]) ||
+		anyToBool(payload["backendRequired"]) ||
+		anyToBool(payload["backendProbeChecked"]) ||
+		anyToString(payload["backendStatus"]) != "not_required" {
+		t.Fatalf("strict runtime reported a false backend dependency failure: %#v", payload)
+	}
+	if !anyToBool(payload["ready"]) || anyToString(payload["liveness"]) != "healthy" {
+		t.Fatalf("strict runtime health/readiness contract failed: %#v", payload)
+	}
 }
 
 func TestContinuationEventsEndpointStreamsHistoryAndUpdates(t *testing.T) {

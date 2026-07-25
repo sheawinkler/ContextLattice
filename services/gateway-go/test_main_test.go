@@ -41,6 +41,13 @@ func TestMain(m *testing.M) {
 			os.Exit(1)
 		}
 	}
+	// Most unit tests require immediately writable fixture stores. Production
+	// keeps background hydration enabled by default; focused startup tests opt
+	// back into that contract explicitly.
+	if err := os.Setenv("GO_MEMORY_STORE_BACKGROUND_HYDRATION_ENABLED", "false"); err != nil {
+		fmt.Fprintf(os.Stderr, "set gateway test hydration mode: %v\n", err)
+		os.Exit(1)
+	}
 
 	code := m.Run()
 	if err := os.RemoveAll(testRoot); err != nil && code == 0 {

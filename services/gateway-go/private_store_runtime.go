@@ -28,7 +28,11 @@ type ownerOnlyMigrationRuntime struct {
 	updatedAt        string
 	completedAt      string
 	durationMillis   int64
+	hydrationMillis  int64
+	totalMillis      int64
 	lastErrorCode    string
+	started          time.Time
+	hydrationStarted time.Time
 }
 
 func newOwnerOnlyMigrationRuntime(root string, configured bool) *ownerOnlyMigrationRuntime {
@@ -68,9 +72,24 @@ func (runtime *ownerOnlyMigrationRuntime) markStarted(background bool) {
 	runtime.background = background
 	runtime.phase = "migrating"
 	if runtime.startedAt == "" {
-		runtime.startedAt = nowUTCISO()
+		runtime.started = time.Now()
+		runtime.startedAt = runtime.started.UTC().Format(time.RFC3339Nano)
 	}
 	runtime.updatedAt = nowUTCISO()
+	runtime.lastErrorCode = ""
+}
+
+func (runtime *ownerOnlyMigrationRuntime) markHydrating(report ownerOnlyMigrationReport, background bool) {
+	if runtime == nil {
+		return
+	}
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+	runtime.phase = "hydrating"
+	runtime.background = background
+	runtime.applyReportLocked(report)
+	runtime.hydrationStarted = time.Now()
+	runtime.updatedAt = runtime.hydrationStarted.UTC().Format(time.RFC3339Nano)
 	runtime.lastErrorCode = ""
 }
 
@@ -122,6 +141,13 @@ func (runtime *ownerOnlyMigrationRuntime) markReady(report ownerOnlyMigrationRep
 	runtime.applyReportLocked(report)
 	runtime.updatedAt = nowUTCISO()
 	runtime.completedAt = runtime.updatedAt
+	completed := time.Now()
+	if !runtime.hydrationStarted.IsZero() {
+		runtime.hydrationMillis = completed.Sub(runtime.hydrationStarted).Milliseconds()
+	}
+	if !runtime.started.IsZero() {
+		runtime.totalMillis = completed.Sub(runtime.started).Milliseconds()
+	}
 	runtime.lastErrorCode = ""
 }
 
@@ -145,20 +171,23 @@ func (runtime *ownerOnlyMigrationRuntime) snapshot(ready bool) map[string]any {
 	runtime.mu.RLock()
 	defer runtime.mu.RUnlock()
 	payload := map[string]any{
-		"schema_id":         ownerOnlyMigrationStatusSchemaID,
-		"configured":        runtime.configured,
-		"ready":             ready,
-		"phase":             runtime.phase,
-		"background":        runtime.background,
-		"store_ref":         runtime.storeRef,
-		"writer_policy":     ownerOnlyWriterPolicyVersion,
-		"attempts":          runtime.attempts,
-		"processed_entries": runtime.processedEntries,
-		"enforced_entries":  runtime.enforcedEntries,
-		"batch_count":       runtime.batchCount,
-		"max_batch_entries": runtime.maxBatchEntries,
-		"updated_at":        runtime.updatedAt,
-		"duration_ms":       runtime.durationMillis,
+		"schema_id":             ownerOnlyMigrationStatusSchemaID,
+		"configured":            runtime.configured,
+		"ready":                 ready,
+		"phase":                 runtime.phase,
+		"background":            runtime.background,
+		"store_ref":             runtime.storeRef,
+		"writer_policy":         ownerOnlyWriterPolicyVersion,
+		"attempts":              runtime.attempts,
+		"processed_entries":     runtime.processedEntries,
+		"enforced_entries":      runtime.enforcedEntries,
+		"batch_count":           runtime.batchCount,
+		"max_batch_entries":     runtime.maxBatchEntries,
+		"updated_at":            runtime.updatedAt,
+		"duration_ms":           runtime.durationMillis,
+		"migration_duration_ms": runtime.durationMillis,
+		"hydration_duration_ms": runtime.hydrationMillis,
+		"total_duration_ms":     runtime.totalMillis,
 	}
 	if runtime.startedAt != "" {
 		payload["started_at"] = runtime.startedAt
@@ -233,6 +262,8 @@ func (s *server) enforceMemoryStoreReadiness(w http.ResponseWriter, r *http.Requ
 	code := "owner_only_migration_in_progress"
 	if phase == "blocked" {
 		code = "owner_only_migration_blocked"
+	} else if phase == "hydrating" {
+		code = "memory_store_hydrating"
 	}
 	writeJSON(w, http.StatusServiceUnavailable, map[string]any{
 		"ok":          false,
@@ -248,6 +279,9 @@ func (m *memoryStore) initializeAfterOwnerOnlyMigration() error {
 		return nil
 	}
 	m.initializeOnce.Do(func() {
+		if m.beforeInitialize != nil {
+			m.beforeInitialize()
+		}
 		for _, path := range []string{
 			filepath.Dir(m.policy.historyPath),
 			m.currentStateRootPath(),
@@ -301,6 +335,20 @@ func (m *memoryStore) finishOwnerOnlyMigration(report ownerOnlyMigrationReport) 
 	return nil
 }
 
+func (m *memoryStore) startOwnerOnlyHydrationBackground(report ownerOnlyMigrationReport) {
+	if m == nil {
+		return
+	}
+	m.migrationOnce.Do(func() {
+		m.migration.markHydrating(report, true)
+		go func() {
+			if err := m.finishOwnerOnlyMigration(report); err != nil {
+				log.Printf("gateway-go memory store background hydration blocked")
+			}
+		}()
+	})
+}
+
 func (m *memoryStore) startOwnerOnlyMigrationBackground() {
 	if m == nil {
 		return
@@ -322,6 +370,7 @@ func (m *memoryStore) startOwnerOnlyMigrationBackground() {
 					log.Printf("gateway-go owner-only migration blocked: code=%s", ownerOnlyMigrationErrorCode(err))
 					return
 				}
+				m.migration.markHydrating(report, true)
 				if err := m.finishOwnerOnlyMigration(report); err != nil {
 					log.Printf("gateway-go memory store initialization blocked after migration")
 				}

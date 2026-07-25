@@ -1,0 +1,415 @@
+#!/usr/bin/env python3
+"""Deterministic ContextLattice runtime soak with bounded readiness evidence."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import os
+import statistics
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.error
+import urllib.request
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+
+SCHEMA_ID = "contextlattice_runtime_soak.v1"
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def as_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def as_int(value: Any, fallback: int = 0) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, (int, float)):
+        return int(value)
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return fallback
+
+
+def request_json(
+    base_url: str,
+    path: str,
+    timeout_secs: float,
+    api_key: str,
+) -> tuple[int, dict[str, Any], float, str]:
+    headers = {"Accept": "application/json"}
+    if api_key:
+        headers["X-API-Key"] = api_key
+    request = urllib.request.Request(base_url.rstrip("/") + path, headers=headers)
+    started = time.monotonic()
+    try:
+        with urllib.request.urlopen(request, timeout=timeout_secs) as response:
+            body = response.read()
+            status = response.status
+    except urllib.error.HTTPError as error:
+        body = error.read()
+        status = error.code
+    except (OSError, TimeoutError, urllib.error.URLError) as error:
+        return 0, {}, (time.monotonic() - started) * 1000, type(error).__name__
+    latency_ms = (time.monotonic() - started) * 1000
+    try:
+        payload = json.loads(body)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return status, {}, latency_ms, "invalid_json"
+    if not isinstance(payload, dict):
+        return status, {}, latency_ms, "invalid_payload"
+    return status, payload, latency_ms, ""
+
+
+def inspect_container(context: str, container: str) -> tuple[dict[str, Any], str]:
+    template = (
+        '{"id":"{{.Id}}","image_id":"{{.Image}}",'
+        '"restart_count":{{.RestartCount}},"oom_killed":{{.State.OOMKilled}},'
+        '"status":"{{.State.Status}}","started_at":"{{.State.StartedAt}}"}'
+    )
+    result = subprocess.run(
+        ["docker", "--context", context, "inspect", "--format", template, container],
+        capture_output=True,
+        check=False,
+        text=True,
+        timeout=10,
+    )
+    if result.returncode != 0:
+        return {}, "docker_inspect_failed"
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return {}, "docker_inspect_invalid_json"
+    if not isinstance(payload, dict):
+        return {}, "docker_inspect_invalid_payload"
+    return payload, ""
+
+
+def percentile(values: list[float], quantile: float) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    index = max(0, min(len(ordered) - 1, math.ceil(quantile * len(ordered)) - 1))
+    return ordered[index]
+
+
+def summarize_latencies(samples: list[dict[str, Any]], endpoint: str) -> dict[str, Any]:
+    values = [
+        float(as_dict(as_dict(sample.get("latency_ms")).get(endpoint)).get("value", 0.0))
+        for sample in samples
+    ]
+    values = [value for value in values if value >= 0]
+    if not values:
+        return {"count": 0}
+    return {
+        "count": len(values),
+        "min_ms": round(min(values), 3),
+        "p50_ms": round(statistics.median(values), 3),
+        "p95_ms": round(percentile(values, 0.95), 3),
+        "max_ms": round(max(values), 3),
+    }
+
+
+def add_failure(
+    failures: list[dict[str, Any]],
+    sample_index: int,
+    check: str,
+    observed: Any,
+) -> None:
+    failures.append(
+        {
+            "sample": sample_index,
+            "at": utc_now(),
+            "check": check,
+            "observed": observed,
+        }
+    )
+
+
+def evaluate_sample(
+    args: argparse.Namespace,
+    sample_index: int,
+    health_status: int,
+    health: dict[str, Any],
+    health_latency_ms: float,
+    health_error: str,
+    ready_status: int,
+    ready: dict[str, Any],
+    ready_latency_ms: float,
+    ready_error: str,
+    status_status: int,
+    status: dict[str, Any],
+    status_latency_ms: float,
+    status_error: str,
+    ownership_status: int,
+    ownership: dict[str, Any],
+    ownership_latency_ms: float,
+    ownership_error: str,
+    container: dict[str, Any],
+    container_error: str,
+    baseline_container: dict[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    failures: list[dict[str, Any]] = []
+    for name, http_status, payload, latency, error in (
+        ("healthz", health_status, health, health_latency_ms, health_error),
+        ("readyz", ready_status, ready, ready_latency_ms, ready_error),
+        ("status", status_status, status, status_latency_ms, status_error),
+        ("native_ownership", ownership_status, ownership, ownership_latency_ms, ownership_error),
+    ):
+        if error:
+            add_failure(failures, sample_index, f"{name}_request", error)
+        if http_status != 200:
+            add_failure(failures, sample_index, f"{name}_http_status", http_status)
+        if latency > args.max_endpoint_latency_ms:
+            add_failure(
+                failures,
+                sample_index,
+                f"{name}_latency_ms",
+                round(latency, 3),
+            )
+
+    if health.get("ok") is not True or health.get("liveness") != "healthy":
+        add_failure(failures, sample_index, "healthz_liveness", health.get("liveness"))
+    if health.get("ready") is not True or ready.get("ready") is not True:
+        add_failure(
+            failures,
+            sample_index,
+            "runtime_readiness",
+            {"healthz": health.get("ready"), "readyz": ready.get("ready")},
+        )
+    if not args.allow_nonstrict:
+        strict_contract = (
+            health.get("strictNoPythonRuntime") is True
+            and health.get("backendRequired") is False
+            and health.get("backendHealth") is True
+            and health.get("backendStatus") == "not_required"
+        )
+        if not strict_contract:
+            add_failure(
+                failures,
+                sample_index,
+                "strict_backend_contract",
+                {
+                    "strict": health.get("strictNoPythonRuntime"),
+                    "required": health.get("backendRequired"),
+                    "healthy": health.get("backendHealth"),
+                    "status": health.get("backendStatus"),
+                },
+            )
+
+    memory = as_dict(health.get("memoryStore"))
+    qdrant = as_dict(health.get("qdrantPayloadIndexes"))
+    if memory.get("configured") is True and memory.get("ready") is not True:
+        add_failure(failures, sample_index, "memory_store_ready", memory.get("phase"))
+    if qdrant.get("enabled") is True and qdrant.get("ready") is not True:
+        add_failure(failures, sample_index, "qdrant_payload_indexes_ready", qdrant.get("status"))
+
+    queue = as_dict(status.get("queue"))
+    pending = as_int(queue.get("pendingTotal"))
+    oldest_age = max(
+        float(queue.get("oldestAgeSecs") or 0),
+        float(queue.get("durableOldestAgeSecs") or 0),
+        float(as_dict(queue.get("syncLane")).get("oldest_age_secs") or 0),
+    )
+    if pending > args.max_queue_pending:
+        add_failure(failures, sample_index, "queue_pending_total", pending)
+    if oldest_age > args.max_queue_oldest_secs:
+        add_failure(failures, sample_index, "queue_oldest_age_secs", oldest_age)
+
+    required_routes = as_int(ownership.get("requiredRouteCount"))
+    violation_count = as_int(ownership.get("violationCount"))
+    fallback_count = as_int(as_dict(ownership.get("pythonHotPathOwnership")).get("fallbacks"))
+    if ownership.get("status") != "clean" or violation_count != 0 or fallback_count != 0:
+        add_failure(
+            failures,
+            sample_index,
+            "native_ownership",
+            {
+                "status": ownership.get("status"),
+                "violations": violation_count,
+                "fallbacks": fallback_count,
+            },
+        )
+    if required_routes < args.min_native_required:
+        add_failure(failures, sample_index, "native_required_route_count", required_routes)
+
+    build = as_dict(health.get("build"))
+    if args.expect_source_commit and build.get("source_commit") != args.expect_source_commit:
+        add_failure(failures, sample_index, "source_commit", build.get("source_commit"))
+    if args.expect_source_tree and build.get("source_tree") != args.expect_source_tree:
+        add_failure(failures, sample_index, "source_tree", build.get("source_tree"))
+
+    if args.container:
+        if container_error:
+            add_failure(failures, sample_index, "container_inspect", container_error)
+        elif baseline_container:
+            if container.get("id") != baseline_container.get("id"):
+                add_failure(failures, sample_index, "container_identity", container.get("id"))
+            if container.get("restart_count") != baseline_container.get("restart_count"):
+                add_failure(
+                    failures,
+                    sample_index,
+                    "container_restart_count",
+                    container.get("restart_count"),
+                )
+            if container.get("oom_killed") is True:
+                add_failure(failures, sample_index, "container_oom_killed", True)
+            if container.get("status") != "running":
+                add_failure(failures, sample_index, "container_status", container.get("status"))
+
+    sample = {
+        "index": sample_index,
+        "at": utc_now(),
+        "ok": not failures,
+        "latency_ms": {
+            "healthz": {"value": round(health_latency_ms, 3)},
+            "readyz": {"value": round(ready_latency_ms, 3)},
+            "status": {"value": round(status_latency_ms, 3)},
+            "native_ownership": {"value": round(ownership_latency_ms, 3)},
+        },
+        "queue": {
+            "pending_total": pending,
+            "oldest_age_secs": oldest_age,
+        },
+        "memory_phase": memory.get("phase"),
+        "qdrant_status": qdrant.get("status"),
+        "native_required_routes": required_routes,
+        "native_violations": violation_count,
+        "python_fallbacks": fallback_count,
+        "container_restart_count": container.get("restart_count") if container else None,
+    }
+    return sample, failures
+
+
+def write_atomic(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp_name = tempfile.mkstemp(prefix=path.name + ".", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temp_name, 0o600)
+        os.replace(temp_name, path)
+    finally:
+        if os.path.exists(temp_name):
+            os.unlink(temp_name)
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--base-url", default="http://127.0.0.1:8075")
+    parser.add_argument("--duration-secs", type=float, default=60.0)
+    parser.add_argument("--interval-secs", type=float, default=5.0)
+    parser.add_argument("--request-timeout-secs", type=float, default=5.0)
+    parser.add_argument("--max-endpoint-latency-ms", type=float, default=3000.0)
+    parser.add_argument("--max-queue-pending", type=int, default=6)
+    parser.add_argument("--max-queue-oldest-secs", type=float, default=30.0)
+    parser.add_argument("--min-native-required", type=int, default=137)
+    parser.add_argument("--allow-nonstrict", action="store_true")
+    parser.add_argument("--api-key-env", default="CONTEXTLATTICE_ORCHESTRATOR_API_KEY")
+    parser.add_argument("--container", default="")
+    parser.add_argument("--docker-context", default="orbstack")
+    parser.add_argument("--expect-source-commit", default="")
+    parser.add_argument("--expect-source-tree", default="")
+    parser.add_argument("--output", type=Path)
+    args = parser.parse_args()
+    if args.duration_secs < 0 or args.interval_secs <= 0 or args.request_timeout_secs <= 0:
+        parser.error("duration must be non-negative and intervals/timeouts must be positive")
+    return args
+
+
+def main() -> int:
+    args = parse_args()
+    api_key = os.environ.get(args.api_key_env, "") if args.api_key_env else ""
+    started_at = utc_now()
+    started = time.monotonic()
+    baseline_container: dict[str, Any] = {}
+    baseline_container_error = ""
+    if args.container:
+        baseline_container, baseline_container_error = inspect_container(
+            args.docker_context,
+            args.container,
+        )
+
+    samples: list[dict[str, Any]] = []
+    failures: list[dict[str, Any]] = []
+    sample_index = 0
+    deadline = started + args.duration_secs
+    while True:
+        sample_index += 1
+        endpoint_results = [
+            request_json(args.base_url, path, args.request_timeout_secs, api_key)
+            for path in ("/healthz", "/readyz", "/status", "/ops/native-ownership")
+        ]
+        container: dict[str, Any] = {}
+        container_error = ""
+        if args.container:
+            container, container_error = inspect_container(args.docker_context, args.container)
+        sample, sample_failures = evaluate_sample(
+            args,
+            sample_index,
+            *endpoint_results[0],
+            *endpoint_results[1],
+            *endpoint_results[2],
+            *endpoint_results[3],
+            container,
+            container_error,
+            baseline_container,
+        )
+        samples.append(sample)
+        failures.extend(sample_failures)
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(min(args.interval_secs, max(0.0, deadline - time.monotonic())))
+
+    completed_at = utc_now()
+    payload: dict[str, Any] = {
+        "schema_id": SCHEMA_ID,
+        "ok": not failures and not baseline_container_error,
+        "started_at": started_at,
+        "completed_at": completed_at,
+        "duration_secs": round(time.monotonic() - started, 3),
+        "base_url": args.base_url,
+        "sample_count": len(samples),
+        "baseline_container": baseline_container,
+        "baseline_container_error": baseline_container_error,
+        "bounds": {
+            "request_timeout_secs": args.request_timeout_secs,
+            "max_endpoint_latency_ms": args.max_endpoint_latency_ms,
+            "max_queue_pending": args.max_queue_pending,
+            "max_queue_oldest_secs": args.max_queue_oldest_secs,
+            "min_native_required": args.min_native_required,
+        },
+        "expected_source": {
+            "commit": args.expect_source_commit,
+            "tree": args.expect_source_tree,
+        },
+        "latency": {
+            endpoint: summarize_latencies(samples, endpoint)
+            for endpoint in ("healthz", "readyz", "status", "native_ownership")
+        },
+        "failure_count": len(failures) + (1 if baseline_container_error else 0),
+        "failures": failures,
+        "samples": samples,
+    }
+    if args.output:
+        write_atomic(args.output.resolve(), payload)
+    json.dump(payload, sys.stdout, indent=2, sort_keys=True)
+    sys.stdout.write("\n")
+    return 0 if payload["ok"] else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
