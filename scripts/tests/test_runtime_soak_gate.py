@@ -16,6 +16,10 @@ GATE = ROOT / "scripts/agent/runtime-soak-gate"
 
 class SoakHandler(BaseHTTPRequestHandler):
     ready = True
+    continuation_pending = 0
+    continuation_oldest_age_secs = 0.0
+    sync_pending = 0
+    sync_oldest_age_secs = 0.0
 
     def do_GET(self) -> None:
         if self.path == "/healthz":
@@ -56,10 +60,13 @@ class SoakHandler(BaseHTTPRequestHandler):
                 {
                     "ok": True,
                     "queue": {
-                        "pendingTotal": 0,
-                        "oldestAgeSecs": 0,
+                        "pendingTotal": self.continuation_pending,
+                        "oldestAgeSecs": self.continuation_oldest_age_secs,
                         "durableOldestAgeSecs": 0,
-                        "syncLane": {"oldest_age_secs": 0},
+                        "syncLane": {
+                            "pending_count": self.sync_pending,
+                            "oldest_age_secs": self.sync_oldest_age_secs,
+                        },
                     },
                 },
             )
@@ -93,6 +100,10 @@ class SoakHandler(BaseHTTPRequestHandler):
 class RuntimeSoakGateTests(unittest.TestCase):
     def setUp(self) -> None:
         SoakHandler.ready = True
+        SoakHandler.continuation_pending = 0
+        SoakHandler.continuation_oldest_age_secs = 0.0
+        SoakHandler.sync_pending = 0
+        SoakHandler.sync_oldest_age_secs = 0.0
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), SoakHandler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
@@ -154,6 +165,24 @@ class RuntimeSoakGateTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         checks = {failure["check"] for failure in payload["failures"]}
         self.assertIn("source_tree", checks)
+
+    def test_bounded_continuation_does_not_use_sync_queue_age_limit(self) -> None:
+        SoakHandler.continuation_pending = 1
+        SoakHandler.continuation_oldest_age_secs = 60.0
+        result, payload = self.run_gate()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(payload["ok"])
+        queue = payload["samples"][0]["queue"]
+        self.assertEqual(queue["continuation_oldest_age_secs"], 60.0)
+        self.assertEqual(queue["sync_oldest_age_secs"], 0.0)
+
+    def test_stale_sync_queue_still_fails_at_runtime_high_threshold(self) -> None:
+        SoakHandler.sync_pending = 1
+        SoakHandler.sync_oldest_age_secs = 6.0
+        result, payload = self.run_gate()
+        self.assertNotEqual(result.returncode, 0)
+        checks = {failure["check"] for failure in payload["failures"]}
+        self.assertIn("sync_queue_oldest_age_secs", checks)
 
 
 if __name__ == "__main__":

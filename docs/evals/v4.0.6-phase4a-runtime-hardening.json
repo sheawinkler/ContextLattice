@@ -43,7 +43,9 @@
     "gateway_restart_count": 0,
     "gateway_oom_killed": false,
     "representative_soak_required": true,
-    "calendar_soak_target_hours": 24
+    "calendar_soak_target_hours": 24,
+    "continuation_queue_oldest_age_max_secs": 90,
+    "sync_queue_oldest_age_max_secs": 5
   },
   "holdout": {
     "kind": "completed_owner_only_store_with_blocked_hydration",
@@ -101,6 +103,7 @@
       "agent_output_contract_audit": "passed",
       "open_core_boundary_audit": "passed",
       "public_product_truth": "68_of_68_passed",
+      "runtime_soak_queue_contract_tests": "5_of_5_passed",
       "git_diff_check": "passed"
     },
     "live_runtime": {
@@ -172,6 +175,13 @@
       "observed": "intermittent host-side 127.0.0.1:8075 latency while in-container health remained immediate",
       "container_restart_or_oom": false,
       "interpretation": "resolved in the five-minute candidate soak; all 60 host-forward samples passed and the worst endpoint observation was 345.262 ms"
+    },
+    {
+      "class": "eval_harness_contract_mismatch",
+      "scope": "exact_merged_runtime_soak",
+      "observed": "one bounded continuation reached 64.763 seconds before draining after its 60 second Letta timeout; the initial harness incorrectly compared continuation and synchronous queue ages to the same 30 second ceiling",
+      "runtime_availability_regression": false,
+      "resolution": "measure continuation age against its 90 second pressure contract and synchronous queue age against its 5 second high threshold"
     }
   ],
   "reproduction": [

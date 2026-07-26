@@ -216,15 +216,29 @@ def evaluate_sample(
 
     queue = as_dict(status.get("queue"))
     pending = as_int(queue.get("pendingTotal"))
-    oldest_age = max(
+    continuation_oldest_age = max(
         float(queue.get("oldestAgeSecs") or 0),
         float(queue.get("durableOldestAgeSecs") or 0),
-        float(as_dict(queue.get("syncLane")).get("oldest_age_secs") or 0),
     )
+    sync_lane = as_dict(queue.get("syncLane"))
+    sync_pending = as_int(sync_lane.get("pending_count"))
+    sync_oldest_age = float(sync_lane.get("oldest_age_secs") or 0)
     if pending > args.max_queue_pending:
         add_failure(failures, sample_index, "queue_pending_total", pending)
-    if oldest_age > args.max_queue_oldest_secs:
-        add_failure(failures, sample_index, "queue_oldest_age_secs", oldest_age)
+    if continuation_oldest_age > args.max_continuation_oldest_secs:
+        add_failure(
+            failures,
+            sample_index,
+            "continuation_queue_oldest_age_secs",
+            continuation_oldest_age,
+        )
+    if sync_oldest_age > args.max_sync_queue_oldest_secs:
+        add_failure(
+            failures,
+            sample_index,
+            "sync_queue_oldest_age_secs",
+            sync_oldest_age,
+        )
 
     required_routes = as_int(ownership.get("requiredRouteCount"))
     violation_count = as_int(ownership.get("violationCount"))
@@ -279,7 +293,10 @@ def evaluate_sample(
         },
         "queue": {
             "pending_total": pending,
-            "oldest_age_secs": oldest_age,
+            "oldest_age_secs": max(continuation_oldest_age, sync_oldest_age),
+            "continuation_oldest_age_secs": continuation_oldest_age,
+            "sync_pending_total": sync_pending,
+            "sync_oldest_age_secs": sync_oldest_age,
         },
         "memory_phase": memory.get("phase"),
         "qdrant_status": qdrant.get("status"),
@@ -315,7 +332,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--request-timeout-secs", type=float, default=5.0)
     parser.add_argument("--max-endpoint-latency-ms", type=float, default=3000.0)
     parser.add_argument("--max-queue-pending", type=int, default=6)
-    parser.add_argument("--max-queue-oldest-secs", type=float, default=30.0)
+    parser.add_argument("--max-continuation-oldest-secs", type=float, default=90.0)
+    parser.add_argument("--max-sync-queue-oldest-secs", type=float, default=5.0)
+    parser.add_argument(
+        "--max-queue-oldest-secs",
+        type=float,
+        default=None,
+        help="deprecated compatibility override applied to both queue age limits",
+    )
     parser.add_argument("--min-native-required", type=int, default=137)
     parser.add_argument("--allow-nonstrict", action="store_true")
     parser.add_argument("--api-key-env", default="CONTEXTLATTICE_ORCHESTRATOR_API_KEY")
@@ -325,8 +349,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--expect-source-tree", default="")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
+    if args.max_queue_oldest_secs is not None:
+        args.max_continuation_oldest_secs = args.max_queue_oldest_secs
+        args.max_sync_queue_oldest_secs = args.max_queue_oldest_secs
     if args.duration_secs < 0 or args.interval_secs <= 0 or args.request_timeout_secs <= 0:
         parser.error("duration must be non-negative and intervals/timeouts must be positive")
+    if args.max_continuation_oldest_secs < 0 or args.max_sync_queue_oldest_secs < 0:
+        parser.error("queue age limits must be non-negative")
     return args
 
 
@@ -389,7 +418,9 @@ def main() -> int:
             "request_timeout_secs": args.request_timeout_secs,
             "max_endpoint_latency_ms": args.max_endpoint_latency_ms,
             "max_queue_pending": args.max_queue_pending,
-            "max_queue_oldest_secs": args.max_queue_oldest_secs,
+            "max_continuation_oldest_secs": args.max_continuation_oldest_secs,
+            "max_sync_queue_oldest_secs": args.max_sync_queue_oldest_secs,
+            "legacy_max_queue_oldest_secs": args.max_queue_oldest_secs,
             "min_native_required": args.min_native_required,
         },
         "expected_source": {
