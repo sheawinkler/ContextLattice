@@ -78,8 +78,13 @@ skill usage-to-outcome receipts
   `ADD COLUMN IF NOT EXISTS` operations. Fresh-table provisioning still creates
   its normal indexes while legacy retrieval never performs a blocking index
   build.
-- No manual index creation, deletion, or table rewrite was used to repair the
-  live lane.
+- After the exact-source restart, database readback showed that the earlier
+  timed-out DDL had completed a redundant 47 MB non-unique
+  `memory_events_event_idx`: it had zero scans, no constraint dependency, and
+  duplicated the valid `memory_events_pkey`.
+- `DROP INDEX CONCURRENTLY` removed only that derived redundant index. Owner
+  rows and the primary key were untouched; post-drop verification found zero
+  null `event_id` values and zero active schema/index builds.
 
 ## Reproduction
 
