@@ -213,3 +213,67 @@ func TestVectorRowsRespectExplicitVectorOnlyMode(t *testing.T) {
 		t.Fatalf("unexpectedly missing lifecycle authority must fail closed: suppressed=%d rows=%#v", suppressed, filtered)
 	}
 }
+
+func TestVectorRowsPreferCurrentEventAndDeduplicateLegacyPath(t *testing.T) {
+	root := t.TempDir()
+	store := newMemoryReviewerStore(t, root, 16)
+	entry, _, err := store.put(normalizedWrite{
+		project:   "projection-identity",
+		fileName:  "notes/current.md",
+		content:   "authoritative current content",
+		topicPath: "projection/current",
+		lifecycle: "durable",
+	})
+	if err != nil {
+		t.Fatalf("write current entry: %v", err)
+	}
+	s := &server{memoryStore: store}
+	rows := []map[string]any{
+		{
+			"project": "projection-identity", "file": entry.FileName,
+			"event_id": entry.EventID, "content_hash": sha256Hex("legacy projection hash"),
+			"summary": "stale projected summary", "score": 0.91,
+		},
+		{
+			"project": "projection-identity", "file": entry.FileName,
+			"summary": "unidentified legacy duplicate", "score": 0.88,
+		},
+		{
+			"project": "projection-identity", "file": entry.FileName,
+			"event_id": "stale-event", "content_hash": entry.ContentHash,
+			"summary": "stale event with matching content", "score": 0.87,
+		},
+	}
+
+	filtered, stats := s.reconcileVectorRowsDetailed(map[string]any{}, rows)
+	if len(filtered) != 1 || stats.Suppressed != 2 || stats.CurrentEvent != 1 ||
+		stats.StaleEvent != 1 || stats.DuplicatePath != 1 {
+		t.Fatalf("unexpected identity reconciliation rows=%#v stats=%#v", filtered, stats)
+	}
+	current := filtered[0]
+	if anyToString(current["projection_authority"]) != "current_event" ||
+		anyToString(current["event_id"]) != entry.EventID ||
+		anyToString(current["content_hash"]) != entry.ContentHash ||
+		anyToString(current["summary"]) != entry.Summary {
+		t.Fatalf("projection did not resolve to owner authority: %#v", current)
+	}
+}
+
+func TestCanonicalMemoryContentHashMatchesOwnerWrite(t *testing.T) {
+	root := t.TempDir()
+	store := newMemoryReviewerStore(t, root, 16)
+	entry, _, err := store.put(normalizedWrite{
+		project:  "projection-hash",
+		fileName: "notes/hash.md",
+		content:  "same logical content",
+	})
+	if err != nil {
+		t.Fatalf("write owner entry: %v", err)
+	}
+	if entry.ContentHash != canonicalMemoryContentHash("same logical content") {
+		t.Fatalf("projection hash %q does not match owner hash %q", canonicalMemoryContentHash("same logical content"), entry.ContentHash)
+	}
+	if canonicalMemoryContentHash("same logical content\n") != entry.ContentHash {
+		t.Fatalf("canonical hash changed when content already ended in newline")
+	}
+}

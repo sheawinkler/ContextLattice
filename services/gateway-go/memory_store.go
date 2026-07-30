@@ -1277,6 +1277,17 @@ func (m *memoryStore) linkOrCopyBlob(blobPath string, filePath string) error {
 	return nil
 }
 
+func canonicalMemoryContent(content string) string {
+	if strings.HasSuffix(content, "\n") {
+		return content
+	}
+	return content + "\n"
+}
+
+func canonicalMemoryContentHash(content string) string {
+	return sha256Hex(canonicalMemoryContent(content))
+}
+
 func (m *memoryStore) putExactStateMirror(item normalizedWrite) (memoryStoreEntry, bool, error) {
 	project, err := sanitizeMemoryProject(item.project)
 	if err != nil {
@@ -1289,10 +1300,7 @@ func (m *memoryStore) putExactStateMirror(item normalizedWrite) (memoryStoreEntr
 	if err := m.registerExactStatePathLocked(project, fileName); err != nil {
 		return memoryStoreEntry{}, false, err
 	}
-	content := item.content
-	if !strings.HasSuffix(content, "\n") {
-		content += "\n"
-	}
+	content := canonicalMemoryContent(item.content)
 	filePath := filepath.Join(m.policy.rootPath, project, filepath.FromSlash(fileName))
 	if err := ensureOwnerOnlyDirectory(filepath.Dir(filePath), true); err != nil {
 		return memoryStoreEntry{}, false, fmt.Errorf("create exact state mirror directory: %w", err)
@@ -1380,10 +1388,7 @@ func (m *memoryStore) put(item normalizedWrite) (memoryStoreEntry, bool, error) 
 		item.dataClass = dataClassRuntimeStateMirror
 		return m.putExactStateMirror(item)
 	}
-	content := item.content
-	if !strings.HasSuffix(content, "\n") {
-		content += "\n"
-	}
+	content := canonicalMemoryContent(item.content)
 	topicPath := sanitizeTopicPath(item.topicPath, fileName)
 	contentHash := sha256Hex(content)
 	filePath := filepath.Join(m.policy.rootPath, project, filepath.FromSlash(fileName))

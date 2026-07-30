@@ -159,7 +159,13 @@ Find a capability without loading every skill body:
 contextlattice_skills_index search "browser automation" --pretty
 ```
 
-The active Skills Index scans configured approved roots. Quarantine discovery is separate, read-only by default, and never auto-promotes retrieved content.
+The active Skills Index scans configured Codex, Hermes, Hermes Ultra, and shared
+agent roots read-only. It reports each harness and root inventory separately,
+collapses byte-identical `SKILL.md` files by SHA-256 digest while retaining every
+source path as provenance, and requires discriminating query-term coverage
+instead of ranking generic words such as `skill`, `index`, or `agent`.
+Quarantine discovery remains separate, read-only by default, and never
+auto-promotes retrieved content.
 
 ## Architecture
 

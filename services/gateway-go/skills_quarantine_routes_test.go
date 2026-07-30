@@ -207,6 +207,112 @@ func TestSkillsIndexReindexReturnsNativeRootStatus(t *testing.T) {
 	}
 }
 
+func TestSkillsIndexFiltersGenericStopwords(t *testing.T) {
+	root := t.TempDir()
+	writeSkillIndexFixture(t, root, "wallet-token", "wallet-token", "Inspect token balances and wallet state.")
+	t.Setenv("ORCH_SKILLS_INDEX_ROOTS", root)
+
+	payload := nativeSkillsIndexSearch(skillsQuarantineSearchRequest{
+		Query: "skill index audit for agents", Limit: 20, JSON: true, ShowTerms: true,
+	})
+	if anyToInt(payload["total_matches"], -1) != 0 {
+		t.Fatalf("generic stopword query returned unrelated skills: %#v", payload["results"])
+	}
+	if len(contextPackAnyList(payload["discriminating_terms"])) != 0 {
+		t.Fatalf("generic terms survived stopword filtering: %#v", payload["discriminating_terms"])
+	}
+	if len(contextPackAnyList(payload["warnings"])) == 0 {
+		t.Fatalf("expected explicit no-discriminating-terms warning: %#v", payload)
+	}
+}
+
+func TestSkillsIndexRequiresMinimumConceptCoverage(t *testing.T) {
+	root := t.TempDir()
+	writeSkillIndexFixture(t, root, "objective-only", "objective-only", "Keep work focused on an objective.")
+	writeSkillIndexFixture(t, root, "objective-release", "objective-release", "Verify an objective before a release.")
+	t.Setenv("ORCH_SKILLS_INDEX_ROOTS", root)
+	t.Setenv("ORCH_SKILLS_INDEX_MIN_TERM_COVERAGE", "0.5")
+
+	payload := nativeSkillsIndexSearch(skillsQuarantineSearchRequest{
+		Query: "objective release deployment", Limit: 20, JSON: true,
+	})
+	results := contextPackAnyList(payload["results"])
+	if len(results) != 1 || anyToString(anyMap(results[0])["name"]) != "objective-release" {
+		t.Fatalf("coverage gate did not reject one-of-three concept match: %#v", results)
+	}
+	if got := anyToFloat(anyMap(results[0])["coverage"]); got < 0.66 || got > 0.67 {
+		t.Fatalf("unexpected concept coverage %v in %#v", got, results[0])
+	}
+}
+
+func TestSkillsIndexDeduplicatesDigestAndPreservesHarnessProvenance(t *testing.T) {
+	base := t.TempDir()
+	codexRoot := filepath.Join(base, "skills_active")
+	hermesRoot := filepath.Join(base, "skills_hermes")
+	ultraRoot := filepath.Join(base, "skills_hermes_ultra")
+	sharedRoot := filepath.Join(base, "skills_shared_agents")
+	writeSkillIndexFixture(t, codexRoot, "verified-release", "verified-release", "Verify release evidence deterministically.")
+	writeSkillIndexFixture(t, hermesRoot, "verified-release-copy", "verified-release", "Verify release evidence deterministically.")
+	writeSkillIndexFixture(t, ultraRoot, "runtime-proof", "runtime-proof", "Verify runtime release identity.")
+	writeSkillIndexFixture(t, sharedRoot, "release-checkpoint", "release-checkpoint", "Record verified release checkpoints.")
+	t.Setenv("ORCH_SKILLS_INDEX_ROOTS", strings.Join(
+		[]string{codexRoot, hermesRoot, ultraRoot, sharedRoot},
+		string(os.PathListSeparator),
+	))
+
+	payload := nativeSkillsIndexSearch(skillsQuarantineSearchRequest{
+		Query: "verified release", Limit: 20, JSON: true,
+	})
+	results := contextPackAnyList(payload["results"])
+	if len(results) != 3 || anyToInt(payload["total_candidates"], 0) != 4 {
+		t.Fatalf("digest dedupe mismatch: candidates=%v results=%#v", payload["total_candidates"], results)
+	}
+	var duplicate map[string]any
+	harnesses := map[string]bool{}
+	for _, raw := range results {
+		result := anyMap(raw)
+		harnesses[anyToString(result["harness"])] = true
+		if anyToInt(result["duplicate_count"], 0) == 1 {
+			duplicate = result
+		}
+	}
+	if duplicate == nil || anyToString(duplicate["root"]) != codexRoot ||
+		anyToString(duplicate["harness"]) != "codex" ||
+		!strings.HasPrefix(anyToString(duplicate["digest"]), "sha256:") {
+		t.Fatalf("canonical duplicate identity mismatch: %#v", duplicate)
+	}
+	provenance := contextPackAnyList(duplicate["provenance"])
+	if len(provenance) != 2 ||
+		anyToString(anyMap(provenance[0])["harness"]) != "codex" ||
+		anyToString(anyMap(provenance[1])["harness"]) != "hermes" {
+		t.Fatalf("cross-harness provenance was not preserved: %#v", provenance)
+	}
+	for _, harness := range []string{"codex", "hermes_agent_ultra", "shared_agents"} {
+		if !harnesses[harness] {
+			t.Fatalf("missing indexed harness %q in %#v", harness, results)
+		}
+	}
+}
+
+func TestSkillsIndexRootStatsCountAllSeenSkills(t *testing.T) {
+	root := t.TempDir()
+	writeSkillIndexFixture(t, root, "matching", "matching", "Verify a deployment release.")
+	writeSkillIndexFixture(t, root, "unrelated", "unrelated", "Analyze a wallet balance.")
+	t.Setenv("ORCH_SKILLS_INDEX_ROOTS", root)
+
+	payload := nativeSkillsIndexSearch(skillsQuarantineSearchRequest{
+		Query: "deployment release", Limit: 20, JSON: true,
+	})
+	roots := contextPackAnyList(payload["roots"])
+	if len(roots) != 1 {
+		t.Fatalf("unexpected root stats: %#v", roots)
+	}
+	stat := anyMap(roots[0])
+	if anyToInt(stat["skills_seen"], 0) != 2 || anyToInt(stat["matches"], 0) != 1 {
+		t.Fatalf("root inventory conflated scanned skills with matches: %#v", stat)
+	}
+}
+
 func TestSkillsQuarantineReindexDisabledByDefault(t *testing.T) {
 	t.Setenv("ORCH_SKILLS_QUARANTINE_ENABLED", "true")
 	t.Setenv("ORCH_SKILLS_QUARANTINE_REINDEX_ENABLED", "false")

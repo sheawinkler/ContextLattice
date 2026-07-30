@@ -316,54 +316,157 @@ func normalizeProjectedContentHash(raw string) string {
 	return strings.TrimPrefix(strings.ToLower(strings.TrimSpace(raw)), "sha256:")
 }
 
+type vectorReconcileStats struct {
+	Suppressed       int
+	CurrentEvent     int
+	CurrentHash      int
+	LegacyPathOnly   int
+	StaleEvent       int
+	HashMismatch     int
+	MissingAuthority int
+	LifecycleHidden  int
+	DuplicatePath    int
+}
+
+func (stats vectorReconcileStats) warning(source string) string {
+	return fmt.Sprintf(
+		"%s authoritative memory state suppressed %d fallback result(s) (stale_event=%d hash_mismatch=%d missing_authority=%d lifecycle_hidden=%d duplicate_path=%d); accepted current_event=%d current_hash=%d legacy_path_only=%d",
+		source,
+		stats.Suppressed,
+		stats.StaleEvent,
+		stats.HashMismatch,
+		stats.MissingAuthority,
+		stats.LifecycleHidden,
+		stats.DuplicatePath,
+		stats.CurrentEvent,
+		stats.CurrentHash,
+		stats.LegacyPathOnly,
+	)
+}
+
+type reconciledVectorCandidate struct {
+	row      map[string]any
+	priority int
+	class    string
+	order    int
+}
+
 // reconcileVectorRows performs one bounded in-memory authority pass over an
 // already-bounded vector result set. Vector projections never become authority.
 func (s *server) reconcileVectorRows(request map[string]any, rows []map[string]any) ([]map[string]any, int) {
+	filtered, stats := s.reconcileVectorRowsDetailed(request, rows)
+	return filtered, stats.Suppressed
+}
+
+func (s *server) reconcileVectorRowsDetailed(request map[string]any, rows []map[string]any) ([]map[string]any, vectorReconcileStats) {
+	stats := vectorReconcileStats{}
 	if len(rows) == 0 {
-		return rows, 0
+		return rows, stats
 	}
 	if s == nil || s.memoryStore == nil {
-		return []map[string]any{}, len(rows)
+		stats.Suppressed = len(rows)
+		stats.MissingAuthority = len(rows)
+		return []map[string]any{}, stats
 	}
 	// Explicit vector-only deployments have no local lifecycle authority to
 	// reconcile. Missing authority in an enabled deployment still fails closed.
 	if !s.memoryStore.isEnabled() {
-		return rows, 0
+		return rows, stats
 	}
 	includeCold := requestIncludesColdMemory(request)
 	includeEphemeral := requestIncludesEphemeralMemory(request)
-	filtered := make([]map[string]any, 0, len(rows))
-	suppressed := 0
+	chosen := map[string]reconciledVectorCandidate{}
 	s.memoryStore.mu.RLock()
 	defer s.memoryStore.mu.RUnlock()
-	for _, row := range rows {
+	for order, row := range rows {
 		if row == nil {
 			continue
 		}
 		key := memoryStoreKey(anyToString(row["project"]), anyToString(row["file"]))
 		state, ok := s.memoryStore.currentState[key]
 		if !ok || state.Tombstone {
-			suppressed++
+			stats.Suppressed++
+			stats.MissingAuthority++
 			continue
 		}
 		lifecycle := normalizeMemoryLifecycle(state.Entry.Lifecycle)
 		tier := normalizeMemoryStorageTier(state.Entry.StorageTier)
 		if !shouldSurfaceMemoryLifecycle(lifecycle, includeEphemeral) ||
 			(!includeCold && (tier == "deep" || tier == "retired")) {
-			suppressed++
+			stats.Suppressed++
+			stats.LifecycleHidden++
 			continue
 		}
+		projectedEventID := strings.TrimSpace(anyToString(row["event_id"]))
+		currentEventID := strings.TrimSpace(state.Entry.EventID)
 		projectedHash := normalizeProjectedContentHash(anyToString(row["content_hash"]))
 		currentHash := normalizeProjectedContentHash(state.Entry.ContentHash)
-		if projectedHash != "" && currentHash != "" && projectedHash != currentHash {
-			suppressed++
-			continue
+		authorityClass := "legacy_path_only"
+		priority := 1
+		switch {
+		case projectedEventID != "":
+			if currentEventID == "" || projectedEventID != currentEventID {
+				stats.Suppressed++
+				stats.StaleEvent++
+				continue
+			}
+			authorityClass = "current_event"
+			priority = 3
+		case projectedHash != "":
+			if currentHash == "" || projectedHash != currentHash {
+				stats.Suppressed++
+				stats.HashMismatch++
+				continue
+			}
+			authorityClass = "current_hash"
+			priority = 2
 		}
 		resolved := cloneAnyMap(row)
+		resolved["project"] = state.Entry.Project
+		resolved["file"] = state.Entry.FileName
+		resolved["summary"] = state.Entry.Summary
+		resolved["topic_path"] = state.Entry.TopicPath
+		resolved["event_id"] = state.Entry.EventID
+		resolved["content_hash"] = state.Entry.ContentHash
 		resolved["lifecycle"] = lifecycle
 		resolved["storage_tier"] = tier
 		resolved["legal_hold"] = state.LegalHold
-		filtered = append(filtered, resolved)
+		resolved["projection_authority"] = authorityClass
+		candidate := reconciledVectorCandidate{
+			row:      resolved,
+			priority: priority,
+			class:    authorityClass,
+			order:    order,
+		}
+		if existing, exists := chosen[key]; exists {
+			stats.Suppressed++
+			stats.DuplicatePath++
+			if candidate.priority > existing.priority {
+				candidate.order = existing.order
+				chosen[key] = candidate
+			}
+			continue
+		}
+		chosen[key] = candidate
 	}
-	return filtered, suppressed
+	candidates := make([]reconciledVectorCandidate, 0, len(chosen))
+	for _, candidate := range chosen {
+		candidates = append(candidates, candidate)
+		switch candidate.class {
+		case "current_event":
+			stats.CurrentEvent++
+		case "current_hash":
+			stats.CurrentHash++
+		default:
+			stats.LegacyPathOnly++
+		}
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		return candidates[i].order < candidates[j].order
+	})
+	filtered := make([]map[string]any, 0, len(candidates))
+	for _, candidate := range candidates {
+		filtered = append(filtered, candidate.row)
+	}
+	return filtered, stats
 }

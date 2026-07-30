@@ -514,7 +514,7 @@ func (s *server) upsertQdrantFromWrite(
 		"topic_tags":   nativeQdrantTopicTagsForPath(item.topicPath),
 		"ts":           createdAt.Unix(),
 		"created_at":   createdAt.Format(time.RFC3339Nano),
-		"content_hash": sha256Hex(item.content),
+		"content_hash": canonicalMemoryContentHash(item.content),
 		"lifecycle":    normalizeMemoryLifecycle(item.lifecycle),
 	}
 	if item.agentID != "" {
@@ -694,12 +694,13 @@ func (s *server) queryQdrantSource(
 			"source":       sourceQdrant,
 			"topic_path":   topicPath,
 			"created_at":   entry["created_at"],
+			"event_id":     entry["event_id"],
 			"content_hash": entry["content_hash"],
 		})
 	}
-	rows, suppressed := s.reconcileVectorRows(baseRequest, rows)
-	if suppressed > 0 {
-		warnings = append(warnings, fmt.Sprintf("qdrant authoritative memory state suppressed %d stale or non-ordinary result(s)", suppressed))
+	rows, reconcileStats := s.reconcileVectorRowsDetailed(baseRequest, rows)
+	if reconcileStats.Suppressed > 0 || reconcileStats.LegacyPathOnly > 0 {
+		warnings = append(warnings, reconcileStats.warning("qdrant"))
 	}
 	sort.SliceStable(rows, func(i, j int) bool {
 		return parseScore(rows[i]) > parseScore(rows[j])
@@ -973,15 +974,19 @@ func nativePgvectorEnsureStatements(tableName string, dim int, ivfLists int) []s
 	projectIdx := tableName + "_project_idx"
 	topicIdx := tableName + "_topic_idx"
 	createdIdx := tableName + "_created_idx"
+	eventIdx := tableName + "_event_idx"
+	contentHashIdx := tableName + "_content_hash_idx"
 	embedIdx := tableName + "_embedding_ivfflat_idx"
 	return []string{
 		"CREATE EXTENSION IF NOT EXISTS vector;",
 		fmt.Sprintf(
 			"CREATE TABLE IF NOT EXISTS %s ("+
 				"id BIGSERIAL PRIMARY KEY,"+
+				"event_id TEXT,"+
 				"project TEXT NOT NULL,"+
 				"file TEXT NOT NULL,"+
 				"summary TEXT NOT NULL,"+
+				"content_hash TEXT,"+
 				"topic_path TEXT NOT NULL DEFAULT '',"+
 				"created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),"+
 				"embedding vector(%d) NOT NULL);",
@@ -991,6 +996,8 @@ func nativePgvectorEnsureStatements(tableName string, dim int, ivfLists int) []s
 		fmt.Sprintf("CREATE INDEX IF NOT EXISTS %s ON %s (project);", projectIdx, tableName),
 		fmt.Sprintf("CREATE INDEX IF NOT EXISTS %s ON %s (topic_path);", topicIdx, tableName),
 		fmt.Sprintf("CREATE INDEX IF NOT EXISTS %s ON %s (created_at DESC);", createdIdx, tableName),
+		fmt.Sprintf("CREATE INDEX IF NOT EXISTS %s ON %s (event_id);", eventIdx, tableName),
+		fmt.Sprintf("CREATE INDEX IF NOT EXISTS %s ON %s (content_hash);", contentHashIdx, tableName),
 		fmt.Sprintf(
 			"CREATE INDEX IF NOT EXISTS %s ON %s USING ivfflat (embedding vector_cosine_ops) WITH (lists=%d);",
 			embedIdx,
@@ -998,6 +1005,21 @@ func nativePgvectorEnsureStatements(tableName string, dim int, ivfLists int) []s
 			ivfLists,
 		),
 	}
+}
+
+func nativePgvectorIdentityEnsureStatements(tableName string) []string {
+	return []string{
+		fmt.Sprintf("ALTER TABLE %s ADD COLUMN IF NOT EXISTS event_id TEXT;", tableName),
+		fmt.Sprintf("ALTER TABLE %s ADD COLUMN IF NOT EXISTS content_hash TEXT;", tableName),
+		fmt.Sprintf("CREATE INDEX IF NOT EXISTS %s_event_idx ON %s (event_id);", tableName, tableName),
+		fmt.Sprintf("CREATE INDEX IF NOT EXISTS %s_content_hash_idx ON %s (content_hash);", tableName, tableName),
+	}
+}
+
+func nativeInvalidatePgvectorColumnCache(dsn string, tableName string) {
+	nativePgvectorColsMu.Lock()
+	delete(nativePgvectorColsByKey, nativePgvectorColumnCacheKey(dsn, tableName))
+	nativePgvectorColsMu.Unlock()
 }
 
 func nativeEnsurePgvectorSchema(
@@ -1026,19 +1048,17 @@ func nativeEnsurePgvectorSchema(
 	if err := db.QueryRowContext(ensureCtx, "SELECT to_regclass($1);", qualified).Scan(&existing); err != nil {
 		return err
 	}
-	if existing.Valid && strings.TrimSpace(existing.String) != "" {
-		// Legacy table already exists; do not attempt shape mutations here.
-		nativePgvectorSchemaMu.Lock()
-		nativePgvectorSchemaSet[cacheKey] = struct{}{}
-		nativePgvectorSchemaMu.Unlock()
-		return nil
-	}
 	ivfLists := maxInt(1, envInt("ORCH_PGVECTOR_IVFFLAT_LISTS", 100))
-	for _, statement := range nativePgvectorEnsureStatements(tableName, dim, ivfLists) {
+	statements := nativePgvectorIdentityEnsureStatements(tableName)
+	if !existing.Valid || strings.TrimSpace(existing.String) == "" {
+		statements = nativePgvectorEnsureStatements(tableName, dim, ivfLists)
+	}
+	for _, statement := range statements {
 		if _, err := db.ExecContext(ensureCtx, statement); err != nil {
 			return err
 		}
 	}
+	nativeInvalidatePgvectorColumnCache(dsn, tableName)
 	nativePgvectorSchemaMu.Lock()
 	nativePgvectorSchemaSet[cacheKey] = struct{}{}
 	nativePgvectorSchemaMu.Unlock()
@@ -1201,6 +1221,9 @@ func (s *server) upsertPgvectorFromWrite(
 	appendValue("project", strings.TrimSpace(item.project), false)
 	appendValue("file", strings.TrimSpace(item.fileName), false)
 	appendValue("summary", summary, false)
+	if _, ok := columns["content_hash"]; ok {
+		appendValue("content_hash", canonicalMemoryContentHash(item.content), false)
+	}
 	if _, ok := columns["topic_path"]; ok {
 		appendValue("topic_path", strings.TrimSpace(item.topicPath), false)
 	}
@@ -1279,7 +1302,23 @@ func (s *server) queryPostgresPgvectorSource(
 	if ensureErr := nativeEnsurePgvectorSchema(ctx, db, dsn, tableName, len(vector)); ensureErr != nil {
 		return nil, warnings, ensureErr
 	}
-	sqlQuery := "SELECT project, file, summary, topic_path, created_at, (1 - (embedding <=> $1::vector)) AS similarity " +
+	columns, err := nativePgvectorTableColumns(ctx, db, dsn, tableName)
+	if err != nil {
+		return nil, warnings, err
+	}
+	lifecycleSelect := "'' AS lifecycle"
+	if _, ok := columns["lifecycle"]; ok {
+		lifecycleSelect = "lifecycle"
+	}
+	eventIDSelect := "'' AS event_id"
+	if _, ok := columns["event_id"]; ok {
+		eventIDSelect = "event_id"
+	}
+	contentHashSelect := "'' AS content_hash"
+	if _, ok := columns["content_hash"]; ok {
+		contentHashSelect = "content_hash"
+	}
+	sqlQuery := "SELECT project, file, summary, topic_path, created_at, " + lifecycleSelect + ", " + eventIDSelect + ", " + contentHashSelect + ", (1 - (embedding <=> $1::vector)) AS similarity " +
 		"FROM " + tableName + " " +
 		"WHERE ($2::text = '' OR project = $2) " +
 		"AND ($3::text = '' OR topic_path LIKE ($3 || '%')) " +
@@ -1309,14 +1348,17 @@ func (s *server) queryPostgresPgvectorSource(
 	rows := []map[string]any{}
 	for rowsResult.Next() {
 		var (
-			project    string
-			fileName   string
-			summary    string
-			topicPath  sql.NullString
-			createdAt  sql.NullTime
-			similarity sql.NullFloat64
+			project     string
+			fileName    string
+			summary     string
+			topicPath   sql.NullString
+			createdAt   sql.NullTime
+			lifecycle   sql.NullString
+			eventID     sql.NullString
+			contentHash sql.NullString
+			similarity  sql.NullFloat64
 		)
-		if scanErr := rowsResult.Scan(&project, &fileName, &summary, &topicPath, &createdAt, &similarity); scanErr != nil {
+		if scanErr := rowsResult.Scan(&project, &fileName, &summary, &topicPath, &createdAt, &lifecycle, &eventID, &contentHash, &similarity); scanErr != nil {
 			continue
 		}
 		project = strings.TrimSpace(project)
@@ -1346,12 +1388,15 @@ func (s *server) queryPostgresPgvectorSource(
 			continue
 		}
 		row := map[string]any{
-			"project":    project,
-			"file":       fileName,
-			"summary":    summary,
-			"score":      score,
-			"source":     sourcePgvector,
-			"topic_path": topic,
+			"project":      project,
+			"file":         fileName,
+			"summary":      summary,
+			"score":        score,
+			"source":       sourcePgvector,
+			"topic_path":   topic,
+			"lifecycle":    normalizeMemoryLifecycle(lifecycle.String),
+			"event_id":     strings.TrimSpace(eventID.String),
+			"content_hash": strings.TrimSpace(contentHash.String),
 		}
 		if createdAt.Valid {
 			row["created_at"] = createdAt.Time.UTC().Format(time.RFC3339Nano)
@@ -1361,9 +1406,9 @@ func (s *server) queryPostgresPgvectorSource(
 	if rowsErr := rowsResult.Err(); rowsErr != nil {
 		return nil, warnings, rowsErr
 	}
-	rows, suppressed := s.reconcileVectorRows(baseRequest, rows)
-	if suppressed > 0 {
-		warnings = append(warnings, fmt.Sprintf("postgres_pgvector authoritative memory state suppressed %d stale or non-ordinary result(s)", suppressed))
+	rows, reconcileStats := s.reconcileVectorRowsDetailed(baseRequest, rows)
+	if reconcileStats.Suppressed > 0 || reconcileStats.LegacyPathOnly > 0 {
+		warnings = append(warnings, reconcileStats.warning("postgres_pgvector"))
 	}
 	sort.SliceStable(rows, func(i, j int) bool {
 		return parseScore(rows[i]) > parseScore(rows[j])

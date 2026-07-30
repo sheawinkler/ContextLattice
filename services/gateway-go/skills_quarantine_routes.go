@@ -25,14 +25,33 @@ type skillsQuarantineSearchRequest struct {
 }
 
 type skillsIndexSearchResult struct {
-	Score        int      `json:"score"`
-	MatchedTerms []string `json:"matched_terms"`
-	Name         string   `json:"name"`
-	Description  string   `json:"description"`
-	Path         string   `json:"path"`
-	Root         string   `json:"root"`
-	Source       string   `json:"source"`
-	Tags         []string `json:"tags"`
+	Score        int                     `json:"score"`
+	Coverage     float64                 `json:"coverage"`
+	MatchedTerms []string                `json:"matched_terms"`
+	Name         string                  `json:"name"`
+	Description  string                  `json:"description"`
+	Path         string                  `json:"path"`
+	Root         string                  `json:"root"`
+	Source       string                  `json:"source"`
+	Harness      string                  `json:"harness"`
+	Tags         []string                `json:"tags"`
+	Digest       string                  `json:"digest"`
+	Provenance   []skillsIndexProvenance `json:"provenance"`
+	RootOrder    int                     `json:"-"`
+}
+
+type skillsIndexProvenance struct {
+	Path    string `json:"path"`
+	Root    string `json:"root"`
+	Source  string `json:"source"`
+	Harness string `json:"harness"`
+}
+
+type skillsIndexTermSet struct {
+	Base     []string
+	Expanded []string
+	Ignored  []string
+	Variants map[string][]string
 }
 
 func skillsQuarantineEnabled() bool {
@@ -82,7 +101,13 @@ func skillsIndexRoots() []string {
 		os.Getenv("CODEX_SKILLS_INDEX_ROOTS"),
 	)
 	if strings.TrimSpace(raw) == "" {
-		raw = "/opt/contextlattice/skills_active:/opt/contextlattice/skills_system"
+		raw = strings.Join([]string{
+			"/opt/contextlattice/skills_active",
+			"/opt/contextlattice/skills_system",
+			"/opt/contextlattice/skills_hermes",
+			"/opt/contextlattice/skills_hermes_ultra",
+			"/opt/contextlattice/skills_shared_agents",
+		}, string(os.PathListSeparator))
 	}
 	seen := map[string]struct{}{}
 	roots := []string{}
@@ -116,8 +141,38 @@ func skillsIndexRootSource(root string) string {
 		return "quarantine"
 	case strings.Contains(lower, "skills_system"), strings.Contains(lower, ".system"):
 		return "system"
-	case strings.Contains(lower, "skills_active"), strings.Contains(lower, "/.codex/skills"), strings.Contains(lower, "/.agents/skills"):
+	case strings.Contains(lower, "memory-bank") && strings.Contains(lower, "skills_active"):
+		return "foundry"
+	case strings.Contains(lower, "skills_active"),
+		strings.Contains(lower, "skills_hermes"),
+		strings.Contains(lower, "skills_shared_agents"),
+		strings.Contains(lower, "/.codex/skills"),
+		strings.Contains(lower, "/.hermes/skills"),
+		strings.Contains(lower, "/.hermes-agent-ultra/skills"),
+		strings.Contains(lower, "/.agents/skills"):
 		return "active"
+	default:
+		return "configured"
+	}
+}
+
+func skillsIndexRootHarness(root string) string {
+	lower := strings.ToLower(filepath.Clean(root))
+	switch {
+	case strings.Contains(lower, "skills_quarantine"):
+		return "quarantine"
+	case strings.Contains(lower, "skills_system"), strings.Contains(lower, ".system"):
+		return "codex_system"
+	case strings.Contains(lower, "skills_hermes_ultra"), strings.Contains(lower, "/.hermes-agent-ultra/skills"):
+		return "hermes_agent_ultra"
+	case strings.Contains(lower, "skills_hermes"), strings.Contains(lower, "/.hermes/skills"):
+		return "hermes"
+	case strings.Contains(lower, "skills_shared_agents"), strings.Contains(lower, "/.agents/skills"):
+		return "shared_agents"
+	case strings.Contains(lower, "memory-bank"):
+		return "contextlattice_foundry"
+	case strings.Contains(lower, "skills_active"), strings.Contains(lower, "/.codex/skills"):
+		return "codex"
 	default:
 		return "configured"
 	}
@@ -197,9 +252,44 @@ func parseSkillsQuarantineSearchRequest(r *http.Request) (skillsQuarantineSearch
 	return request, nil
 }
 
-func skillsIndexTerms(query string) []string {
-	seen := map[string]struct{}{}
-	terms := []string{}
+var skillsIndexStopwords = map[string]struct{}{
+	"a": {}, "an": {}, "and": {}, "audit": {}, "for": {}, "in": {}, "index": {},
+	"of": {}, "on": {}, "or": {}, "skill": {}, "skills": {}, "the": {}, "to": {},
+	"use": {}, "using": {}, "with": {}, "agent": {}, "agents": {},
+}
+
+func skillsIndexTermVariants(term string) []string {
+	variants := []string{term}
+	appendVariant := func(candidate string) {
+		candidate = strings.TrimSpace(candidate)
+		if len(candidate) < 2 {
+			return
+		}
+		for _, existing := range variants {
+			if existing == candidate {
+				return
+			}
+		}
+		variants = append(variants, candidate)
+	}
+	switch {
+	case strings.HasSuffix(term, "ies") && len(term) > 4:
+		appendVariant(strings.TrimSuffix(term, "ies") + "y")
+	case strings.HasSuffix(term, "s") && len(term) > 3 && !strings.HasSuffix(term, "ss"):
+		appendVariant(strings.TrimSuffix(term, "s"))
+	case strings.HasSuffix(term, "y") && len(term) > 3:
+		appendVariant(strings.TrimSuffix(term, "y") + "ies")
+	case len(term) > 3:
+		appendVariant(term + "s")
+	}
+	return variants
+}
+
+func analyzeSkillsIndexTerms(query string) skillsIndexTermSet {
+	result := skillsIndexTermSet{Variants: map[string][]string{}}
+	seenBase := map[string]struct{}{}
+	seenExpanded := map[string]struct{}{}
+	seenIgnored := map[string]struct{}{}
 	for _, raw := range strings.FieldsFunc(strings.ToLower(query), func(r rune) bool {
 		return !(unicode.IsLetter(r) || unicode.IsDigit(r) || r == '-' || r == '_')
 	}) {
@@ -207,26 +297,36 @@ func skillsIndexTerms(query string) []string {
 		if len(term) < 2 {
 			continue
 		}
-		if _, ok := seen[term]; ok {
+		if _, ignored := skillsIndexStopwords[term]; ignored {
+			if _, seen := seenIgnored[term]; !seen {
+				seenIgnored[term] = struct{}{}
+				result.Ignored = append(result.Ignored, term)
+			}
 			continue
 		}
-		seen[term] = struct{}{}
-		terms = append(terms, term)
-		if strings.HasSuffix(term, "s") && len(term) > 3 {
-			base := strings.TrimSuffix(term, "s")
-			if _, ok := seen[base]; !ok {
-				seen[base] = struct{}{}
-				terms = append(terms, base)
-			}
-		} else if len(term) > 3 {
-			plural := term + "s"
-			if _, ok := seen[plural]; !ok {
-				seen[plural] = struct{}{}
-				terms = append(terms, plural)
+		if _, ok := seenBase[term]; ok {
+			continue
+		}
+		seenBase[term] = struct{}{}
+		result.Base = append(result.Base, term)
+		variants := skillsIndexTermVariants(term)
+		result.Variants[term] = variants
+		for _, variant := range variants {
+			if _, seen := seenExpanded[variant]; !seen {
+				seenExpanded[variant] = struct{}{}
+				result.Expanded = append(result.Expanded, variant)
 			}
 		}
 	}
-	return terms
+	return result
+}
+
+func skillsIndexTerms(query string) []string {
+	return analyzeSkillsIndexTerms(query).Expanded
+}
+
+func skillsIndexMinTermCoverage() float64 {
+	return clampFloat(envFloat("ORCH_SKILLS_INDEX_MIN_TERM_COVERAGE", 0.5), 0, 1)
 }
 
 func parseSkillFrontmatterValue(text string, key string) string {
@@ -264,7 +364,15 @@ func parseSkillFrontmatterList(text string, key string) []string {
 	return out
 }
 
-func skillsIndexScore(name string, description string, tags []string, body string, relPath string, source string, terms []string) (int, []string) {
+func skillsIndexScore(
+	name string,
+	description string,
+	tags []string,
+	body string,
+	relPath string,
+	source string,
+	terms skillsIndexTermSet,
+) (int, []string, float64) {
 	score := 0
 	matched := []string{}
 	nameLower := strings.ToLower(name)
@@ -272,41 +380,56 @@ func skillsIndexScore(name string, description string, tags []string, body strin
 	bodyLower := strings.ToLower(body)
 	pathLower := strings.ToLower(relPath)
 	tagLower := strings.ToLower(strings.Join(tags, " "))
-	for _, term := range terms {
-		termScore := 0
-		if strings.Contains(nameLower, term) {
-			termScore += 30
+	for _, base := range terms.Base {
+		bestVariantScore := 0
+		for _, variant := range terms.Variants[base] {
+			variantScore := 0
+			if strings.Contains(nameLower, variant) {
+				variantScore += 30
+			}
+			if strings.Contains(tagLower, variant) {
+				variantScore += 18
+			}
+			if strings.Contains(descLower, variant) {
+				variantScore += 14
+			}
+			if strings.Contains(pathLower, variant) {
+				variantScore += 8
+			}
+			if strings.Contains(bodyLower, variant) {
+				variantScore += 3
+			}
+			if variantScore > bestVariantScore {
+				bestVariantScore = variantScore
+			}
 		}
-		if strings.Contains(tagLower, term) {
-			termScore += 18
-		}
-		if strings.Contains(descLower, term) {
-			termScore += 14
-		}
-		if strings.Contains(pathLower, term) {
-			termScore += 8
-		}
-		if strings.Contains(bodyLower, term) {
-			termScore += 3
-		}
-		if termScore > 0 {
-			score += termScore
-			matched = append(matched, term)
+		if bestVariantScore > 0 {
+			score += bestVariantScore
+			matched = append(matched, base)
 		}
 	}
 	if source == "active" && score > 0 {
 		score += 12
 	}
-	return score, matched
+	coverage := 0.0
+	if len(terms.Base) > 0 {
+		coverage = float64(len(matched)) / float64(len(terms.Base))
+	}
+	return score, matched, coverage
 }
 
 func nativeSkillsIndexSearch(request skillsQuarantineSearchRequest) map[string]any {
-	terms := skillsIndexTerms(request.Query)
-	results := []skillsIndexSearchResult{}
+	terms := analyzeSkillsIndexTerms(request.Query)
+	minCoverage := skillsIndexMinTermCoverage()
+	candidates := []skillsIndexSearchResult{}
 	rootStats := []map[string]any{}
-	for _, root := range skillsIndexRoots() {
+	for rootOrder, root := range skillsIndexRoots() {
 		source := skillsIndexRootSource(root)
-		stat := map[string]any{"path": root, "source": source, "exists": false, "skills": 0}
+		harness := skillsIndexRootHarness(root)
+		stat := map[string]any{
+			"path": root, "source": source, "harness": harness, "exists": false,
+			"skills": 0, "skills_seen": 0, "matches": 0, "unique_matches": 0,
+		}
 		info, statErr := os.Stat(root)
 		if statErr != nil || !info.IsDir() {
 			rootStats = append(rootStats, stat)
@@ -330,6 +453,8 @@ func nativeSkillsIndexSearch(request skillsQuarantineSearchRequest) map[string]a
 			if entry.Name() != "SKILL.md" {
 				return nil
 			}
+			stat["skills"] = anyToInt(stat["skills"], 0) + 1
+			stat["skills_seen"] = anyToInt(stat["skills_seen"], 0) + 1
 			raw, readErr := os.ReadFile(path)
 			if readErr != nil {
 				return nil
@@ -342,7 +467,10 @@ func nativeSkillsIndexSearch(request skillsQuarantineSearchRequest) map[string]a
 			description := parseSkillFrontmatterValue(text, "description")
 			tags := parseSkillFrontmatterList(text, "tags")
 			relPath, _ := filepath.Rel(root, path)
-			score, matched := skillsIndexScore(name, description, tags, text, relPath, source, terms)
+			score, matched, coverage := skillsIndexScore(name, description, tags, text, relPath, source, terms)
+			if coverage < minCoverage {
+				return nil
+			}
 			if request.MinScore != "" {
 				minScore, _ := strconv.ParseFloat(request.MinScore, 64)
 				if float64(score) < minScore {
@@ -351,27 +479,52 @@ func nativeSkillsIndexSearch(request skillsQuarantineSearchRequest) map[string]a
 			} else if score <= 0 {
 				return nil
 			}
-			stat["skills"] = anyToInt(stat["skills"], 0) + 1
-			results = append(results, skillsIndexSearchResult{
+			stat["matches"] = anyToInt(stat["matches"], 0) + 1
+			digest := "sha256:" + sha256Hex(text)
+			candidates = append(candidates, skillsIndexSearchResult{
 				Score:        score,
+				Coverage:     coverage,
 				MatchedTerms: matched,
 				Name:         name,
 				Description:  clipText(description, 700),
 				Path:         path,
 				Root:         root,
 				Source:       source,
+				Harness:      harness,
 				Tags:         tags,
+				Digest:       digest,
+				Provenance: []skillsIndexProvenance{{
+					Path: path, Root: root, Source: source, Harness: harness,
+				}},
+				RootOrder: rootOrder,
 			})
 			return nil
 		})
 		rootStats = append(rootStats, stat)
 	}
+	results := make([]skillsIndexSearchResult, 0, len(candidates))
+	resultByDigest := map[string]int{}
+	for _, candidate := range candidates {
+		if index, exists := resultByDigest[candidate.Digest]; exists {
+			results[index].Provenance = append(results[index].Provenance, candidate.Provenance...)
+			continue
+		}
+		resultByDigest[candidate.Digest] = len(results)
+		results = append(results, candidate)
+		rootStats[candidate.RootOrder]["unique_matches"] = anyToInt(rootStats[candidate.RootOrder]["unique_matches"], 0) + 1
+	}
 	sort.SliceStable(results, func(i, j int) bool {
 		if results[i].Score == results[j].Score {
-			if results[i].Source == results[j].Source {
+			if results[i].Coverage == results[j].Coverage {
+				if results[i].RootOrder != results[j].RootOrder {
+					return results[i].RootOrder < results[j].RootOrder
+				}
+				if results[i].Name == results[j].Name {
+					return results[i].Path < results[j].Path
+				}
 				return results[i].Name < results[j].Name
 			}
-			return results[i].Source == "active"
+			return results[i].Coverage > results[j].Coverage
 		}
 		return results[i].Score > results[j].Score
 	})
@@ -381,42 +534,67 @@ func nativeSkillsIndexSearch(request skillsQuarantineSearchRequest) map[string]a
 	}
 	resultItems := make([]any, 0, len(results))
 	for _, item := range results {
+		provenance := make([]any, 0, len(item.Provenance))
+		for _, source := range item.Provenance {
+			provenance = append(provenance, map[string]any{
+				"path": source.Path, "root": source.Root, "source": source.Source, "harness": source.Harness,
+			})
+		}
 		resultItems = append(resultItems, map[string]any{
-			"score":         item.Score,
-			"matched_terms": item.MatchedTerms,
-			"name":          item.Name,
-			"description":   item.Description,
-			"path":          item.Path,
-			"root":          item.Root,
-			"source":        item.Source,
-			"tags":          item.Tags,
+			"score":           item.Score,
+			"coverage":        roundFloat(item.Coverage, 6),
+			"matched_terms":   item.MatchedTerms,
+			"name":            item.Name,
+			"description":     item.Description,
+			"path":            item.Path,
+			"root":            item.Root,
+			"source":          item.Source,
+			"harness":         item.Harness,
+			"tags":            item.Tags,
+			"digest":          item.Digest,
+			"provenance":      provenance,
+			"duplicate_count": maxInt(0, len(item.Provenance)-1),
 		})
 	}
+	warnings := []string{}
+	if len(terms.Base) == 0 {
+		warnings = append(warnings, "query contains no discriminating terms after stopword filtering")
+	}
 	parsed := map[string]any{
-		"query":          request.Query,
-		"expanded_terms": terms,
-		"total_matches":  total,
-		"returned":       len(resultItems),
-		"results":        resultItems,
-		"roots":          rootStats,
-		"index":          "native_active_skills",
+		"query":                 request.Query,
+		"discriminating_terms":  stringSliceAny(terms.Base),
+		"expanded_terms":        stringSliceAny(terms.Expanded),
+		"ignored_terms":         stringSliceAny(terms.Ignored),
+		"minimum_term_coverage": minCoverage,
+		"total_matches":         total,
+		"total_candidates":      len(candidates),
+		"returned":              len(resultItems),
+		"results":               resultItems,
+		"roots":                 rootStats,
+		"warnings":              stringSliceAny(warnings),
+		"index":                 "native_active_skills",
 	}
 	payload := map[string]any{
-		"ok":            true,
-		"index":         "native_active_skills",
-		"query":         request.Query,
-		"limit":         request.Limit,
-		"show_terms":    request.ShowTerms,
-		"min_score":     request.MinScore,
-		"json":          request.JSON,
-		"roots":         rootStats,
-		"results":       resultItems,
-		"returned":      len(resultItems),
-		"total_matches": total,
-		"parsed":        parsed,
+		"ok":                    true,
+		"index":                 "native_active_skills",
+		"query":                 request.Query,
+		"limit":                 request.Limit,
+		"show_terms":            request.ShowTerms,
+		"min_score":             request.MinScore,
+		"minimum_term_coverage": minCoverage,
+		"json":                  request.JSON,
+		"roots":                 rootStats,
+		"results":               resultItems,
+		"returned":              len(resultItems),
+		"total_matches":         total,
+		"total_candidates":      len(candidates),
+		"ignored_terms":         stringSliceAny(terms.Ignored),
+		"discriminating_terms":  stringSliceAny(terms.Base),
+		"warnings":              stringSliceAny(warnings),
+		"parsed":                parsed,
 	}
 	if request.ShowTerms {
-		payload["expanded_terms"] = terms
+		payload["expanded_terms"] = stringSliceAny(terms.Expanded)
 	}
 	return payload
 }
