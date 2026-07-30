@@ -52,21 +52,23 @@ func TestNativePgvectorEnsureStatementsIncludesCoreDDL(t *testing.T) {
 	}
 }
 
-func TestNativePgvectorIdentityEnsureStatementsAreAdditive(t *testing.T) {
-	joined := strings.Join(nativePgvectorIdentityEnsureStatements("memory_events"), "\n")
+func TestNativePgvectorIdentityEnsureStatementsAreAdditiveAndNonBlocking(t *testing.T) {
+	statements := nativePgvectorIdentityEnsureStatements("memory_events")
+	if len(statements) != 2 {
+		t.Fatalf("legacy identity migration must only add missing columns, got %d statements: %v", len(statements), statements)
+	}
+	joined := strings.Join(statements, "\n")
 	for _, token := range []string{
 		"ADD COLUMN IF NOT EXISTS event_id TEXT",
 		"ADD COLUMN IF NOT EXISTS content_hash TEXT",
-		"memory_events_event_idx",
-		"memory_events_content_hash_idx",
 	} {
 		if !strings.Contains(joined, token) {
 			t.Fatalf("expected additive identity token %q in ddl: %s", token, joined)
 		}
 	}
-	for _, destructive := range []string{"DROP ", "DELETE ", "TRUNCATE "} {
-		if strings.Contains(strings.ToUpper(joined), destructive) {
-			t.Fatalf("identity migration must remain nondestructive: %s", joined)
+	for _, forbidden := range []string{"CREATE INDEX", "DROP ", "DELETE ", "TRUNCATE "} {
+		if strings.Contains(strings.ToUpper(joined), forbidden) {
+			t.Fatalf("legacy identity migration must remain non-blocking and nondestructive: %s", joined)
 		}
 	}
 }

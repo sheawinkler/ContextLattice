@@ -30,6 +30,7 @@ skill usage-to-outcome receipts
 | Minimum discriminating-term coverage | 0.5 | PASS |
 | Exact-content duplicate results | 1 canonical result with all provenance | PASS |
 | Cross-harness receipt chains | 3 of 3 reach verified outcome | PASS |
+| Blocking index builds during legacy identity migration | 0 | PASS |
 | Isolated retention schedule intervals | At least 2, exit 0 | PASS |
 | Gateway container identity/restart drift during retention smoke | 0 | PASS |
 
@@ -64,6 +65,21 @@ skill usage-to-outcome receipts
 - The unrelated OrbStack self-heal failure-injection suite was not run because
   it explicitly invokes Bash while this maintenance session is Zsh-only; no
   supervisor, recovery, or self-heal source changed.
+
+## Live follow-up
+
+- The first live rollout found a legacy pgvector table estimated at 836,434
+  rows and 9.6 GB where `event_id` was already the primary key.
+- `CREATE INDEX IF NOT EXISTS memory_events_event_idx` was not a no-op because
+  the equivalent primary-key index had a different name. It began a redundant
+  full-table index build, exceeded the bounded retrieval context, and prevented
+  schema readiness from being cached.
+- The existing-table migration now performs only the two nondestructive
+  `ADD COLUMN IF NOT EXISTS` operations. Fresh-table provisioning still creates
+  its normal indexes while legacy retrieval never performs a blocking index
+  build.
+- No manual index creation, deletion, or table rewrite was used to repair the
+  live lane.
 
 ## Reproduction
 
