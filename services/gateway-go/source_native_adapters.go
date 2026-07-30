@@ -1011,8 +1011,6 @@ func nativePgvectorIdentityEnsureStatements(tableName string) []string {
 	return []string{
 		fmt.Sprintf("ALTER TABLE %s ADD COLUMN IF NOT EXISTS event_id TEXT;", tableName),
 		fmt.Sprintf("ALTER TABLE %s ADD COLUMN IF NOT EXISTS content_hash TEXT;", tableName),
-		fmt.Sprintf("CREATE INDEX IF NOT EXISTS %s_event_idx ON %s (event_id);", tableName, tableName),
-		fmt.Sprintf("CREATE INDEX IF NOT EXISTS %s_content_hash_idx ON %s (content_hash);", tableName, tableName),
 	}
 }
 
