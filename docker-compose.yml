@@ -1185,7 +1185,8 @@ services:
       ORCH_SKILLS_QUARANTINE_DEFAULT_LIMIT: ${ORCH_SKILLS_QUARANTINE_DEFAULT_LIMIT:-20}
       ORCH_SKILLS_QUARANTINE_MAX_LIMIT: ${ORCH_SKILLS_QUARANTINE_MAX_LIMIT:-100}
       ORCH_SKILLS_QUARANTINE_REINDEX_ENABLED: ${ORCH_SKILLS_QUARANTINE_REINDEX_ENABLED:-false}
-      ORCH_SKILLS_INDEX_ROOTS: ${ORCH_SKILLS_INDEX_ROOTS:-/opt/contextlattice/skills_active:/opt/contextlattice/skills_system}
+      ORCH_SKILLS_INDEX_ROOTS: ${ORCH_SKILLS_INDEX_ROOTS:-/opt/contextlattice/skills_active:/opt/contextlattice/skills_system:/opt/contextlattice/skills_hermes:/opt/contextlattice/skills_hermes_ultra:/opt/contextlattice/skills_shared_agents}
+      ORCH_SKILLS_INDEX_MIN_TERM_COVERAGE: ${ORCH_SKILLS_INDEX_MIN_TERM_COVERAGE:-0.5}
       CONTEXTLATTICE_AGENT_CONTRACTS_PATH: ${CONTEXTLATTICE_AGENT_CONTRACTS_PATH:-/app/config/agent_contracts/agent_output_contracts.json}
       CONTEXTLATTICE_TEMPORAL_CLAIMS_ENABLED: ${CONTEXTLATTICE_TEMPORAL_CLAIMS_ENABLED:-true}
       CONTEXTLATTICE_TEMPORAL_CLAIMS_PATH: ${CONTEXTLATTICE_TEMPORAL_CLAIMS_PATH:-/data/memory-bank/_contextlattice/temporal_claims.ndjson}
@@ -1417,6 +1418,9 @@ services:
       - ${ORCH_SKILLS_QUARANTINE_HOST_BIN_DIR:-${HOME}/.local/bin}:/opt/contextlattice/skills/bin:ro
       - ${ORCH_SKILLS_INDEX_HOST_ACTIVE_ROOT_DIR:-${HOME}/.codex/skills}:/opt/contextlattice/skills_active:ro
       - ${ORCH_SKILLS_INDEX_HOST_SYSTEM_ROOT_DIR:-${HOME}/.codex/skills/.system}:/opt/contextlattice/skills_system:ro
+      - ${ORCH_SKILLS_INDEX_HOST_HERMES_ROOT_DIR:-${HOME}/.hermes/skills}:/opt/contextlattice/skills_hermes:ro
+      - ${ORCH_SKILLS_INDEX_HOST_HERMES_ULTRA_ROOT_DIR:-${HOME}/.hermes-agent-ultra/skills}:/opt/contextlattice/skills_hermes_ultra:ro
+      - ${ORCH_SKILLS_INDEX_HOST_SHARED_AGENTS_ROOT_DIR:-${HOME}/.agents/skills}:/opt/contextlattice/skills_shared_agents:ro
       - ${ORCH_SKILLS_QUARANTINE_HOST_ROOT_DIR:-${HOME}/.codex/skills_quarantine}:/opt/contextlattice/skills_quarantine
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:${GO_GATEWAY_PORT_INTERNAL:-8091}/healthz >/dev/null || exit 1"]

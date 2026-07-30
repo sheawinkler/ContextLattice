@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -55,11 +56,24 @@ func skillEfficacyTestSeedOutcome(
 	value float64,
 	pairing map[string]any,
 ) {
+	skillEfficacyTestSeedOutcomeForAgent(t, s, outcomeID, sessionID, "codex_test", value, pairing)
+}
+
+func skillEfficacyTestSeedOutcomeForAgent(
+	t *testing.T,
+	s *server,
+	outcomeID, sessionID, agentID string,
+	value float64,
+	pairing map[string]any,
+) {
 	t.Helper()
 	outcome, quality, impact, verificationEvents := utilityTestFixture(
 		outcomeID, "sample_"+outcomeID, sessionID, "skill-assisted-coding",
 		"contextlattice", value, 400, pairing,
 	)
+	outcome["agent_id"] = agentID
+	quality["agent_id"] = agentID
+	impact["agent_id"] = agentID
 	observation := buildUtilityObservation(outcome, quality, impact, verificationEvents)
 	if anyToString(observation["status"]) != "verified_exact" {
 		t.Fatalf("utility fixture is not independently verified: %#v", observation)
@@ -69,7 +83,7 @@ func skillEfficacyTestSeedOutcome(
 	}
 	outcomeEvent := map[string]any{
 		"id": "evt_session_" + outcomeID, "session_id": sessionID,
-		"type": "context_pack.outcome_reported", "agent_id": "codex_test",
+		"type": "context_pack.outcome_reported", "agent_id": agentID,
 		"project": "contextlattice", "created_at": nowUTCISO(),
 		"metadata": map[string]any{"outcome": map[string]any{
 			"outcome_id": outcomeID, "first_pass_success": true,
@@ -78,12 +92,49 @@ func skillEfficacyTestSeedOutcome(
 	}
 	s.agentSessions.mu.Lock()
 	s.agentSessions.sessions[sessionID] = map[string]any{
-		"id": sessionID, "project": "contextlattice", "agent_id": "codex_test",
+		"id": sessionID, "project": "contextlattice", "agent_id": agentID,
 		"status": "done", "created_at": nowUTCISO(), "updated_at": nowUTCISO(),
 	}
 	s.agentSessions.order = append(s.agentSessions.order, sessionID)
 	s.agentSessions.events[sessionID] = []map[string]any{outcomeEvent, verificationEvents[0]}
 	s.agentSessions.mu.Unlock()
+}
+
+func skillEfficacyTestFullUsageForAgent(
+	t *testing.T,
+	s *server,
+	handler http.Handler,
+	usageID, sessionID, outcomeID, agentID string,
+	skill map[string]any,
+	matchedTerms []string,
+	value float64,
+	pairing map[string]any,
+) map[string]any {
+	t.Helper()
+	search := skillEfficacyTestRecord(t, handler, map[string]any{
+		"project": "contextlattice", "usage_id": usageID, "idempotency_key": usageID + "-searched",
+		"stage": "searched", "session_id": sessionID, "agent_id": agentID, "skill": skill,
+		"search": map[string]any{
+			"query_digest": utilityTestDigest("query:" + usageID), "rank": 1,
+			"matched_terms": stringSliceAny(matchedTerms),
+		},
+	})
+	selected := skillEfficacyTestRecord(t, handler, map[string]any{
+		"usage_id": usageID, "idempotency_key": usageID + "-selected", "stage": "selected",
+		"expected_previous_receipt_digest": anyMap(search["receipt"])["receipt_digest"],
+		"selection":                        map[string]any{"reason_code": "top_match"},
+	})
+	invoked := skillEfficacyTestRecord(t, handler, map[string]any{
+		"usage_id": usageID, "idempotency_key": usageID + "-invoked", "stage": "invoked",
+		"expected_previous_receipt_digest": anyMap(selected["receipt"])["receipt_digest"],
+		"invocation":                       map[string]any{"mode": "workflow"},
+	})
+	skillEfficacyTestSeedOutcomeForAgent(t, s, outcomeID, sessionID, agentID, value, pairing)
+	return skillEfficacyTestRecord(t, handler, map[string]any{
+		"usage_id": usageID, "idempotency_key": usageID + "-outcome", "stage": "verified_outcome",
+		"expected_previous_receipt_digest": anyMap(invoked["receipt"])["receipt_digest"],
+		"outcome":                          map[string]any{"outcome_id": outcomeID},
+	})
 }
 
 func skillEfficacyTestFullUsage(
@@ -113,6 +164,92 @@ func skillEfficacyTestFullUsage(
 		"expected_previous_receipt_digest": anyMap(invoked["receipt"])["receipt_digest"],
 		"outcome":                          map[string]any{"outcome_id": outcomeID},
 	})
+}
+
+func TestSkillsIndexCrossHarnessUsageToVerifiedOutcomeCanary(t *testing.T) {
+	s, handler, root := frontierT8RouteTestServer(t)
+	roots := []string{
+		filepath.Join(root, "skills_active"),
+		filepath.Join(root, "skills_hermes"),
+		filepath.Join(root, "skills_shared_agents"),
+	}
+	fixtures := []struct {
+		root        string
+		name        string
+		description string
+		query       string
+		harness     string
+		agentID     string
+	}{
+		{
+			root: roots[0], name: "projection-integrity",
+			description: "Validate projection identity and deduplication.", query: "projection identity",
+			harness: "codex", agentID: "codex_canary",
+		},
+		{
+			root: roots[1], name: "covered-skill-discovery",
+			description: "Discover relevant capabilities with query coverage.", query: "capability discovery coverage",
+			harness: "hermes", agentID: "hermes_canary",
+		},
+		{
+			root: roots[2], name: "retention-safety",
+			description: "Verify retention scheduler lifecycle safety.", query: "retention scheduler safety",
+			harness: "shared_agents", agentID: "shared_canary",
+		},
+	}
+	for _, fixture := range fixtures {
+		writeSkillIndexFixture(t, fixture.root, fixture.name, fixture.name, fixture.description)
+	}
+	t.Setenv("ORCH_SKILLS_INDEX_ROOTS", strings.Join(roots, string(os.PathListSeparator)))
+	t.Setenv("ORCH_SKILLS_INDEX_MIN_TERM_COVERAGE", "0.5")
+
+	seenDigests := map[string]struct{}{}
+	for index, fixture := range fixtures {
+		search := nativeSkillsIndexSearch(skillsQuarantineSearchRequest{
+			Query: fixture.query, Limit: 10, JSON: true,
+		})
+		results := contextPackAnyList(search["results"])
+		if len(results) < 1 {
+			t.Fatalf("%s discovery returned no result: %#v", fixture.harness, search)
+		}
+		var discovered map[string]any
+		for _, raw := range results {
+			candidate := anyMap(raw)
+			if anyToString(candidate["name"]) == fixture.name {
+				discovered = candidate
+				break
+			}
+		}
+		if discovered == nil || anyToString(discovered["harness"]) != fixture.harness {
+			t.Fatalf("%s discovery provenance mismatch: %#v", fixture.harness, results)
+		}
+		digest := anyToString(discovered["digest"])
+		if _, duplicate := seenDigests[digest]; duplicate {
+			t.Fatalf("canary skills unexpectedly share digest %s", digest)
+		}
+		seenDigests[digest] = struct{}{}
+		skill := map[string]any{
+			"id": "skill_canary_" + strconv.Itoa(index+1), "name": fixture.name, "version": "canary.1",
+			"digest": digest, "source_kind": "local", "source_ref": fixture.harness + "/" + fixture.name,
+		}
+		final := skillEfficacyTestFullUsageForAgent(
+			t, s, handler,
+			"usage_canary_"+strconv.Itoa(index+1),
+			"session_canary_"+strconv.Itoa(index+1),
+			"outcome_canary_"+strconv.Itoa(index+1),
+			fixture.agentID,
+			skill,
+			anyToStringList(discovered["matched_terms"], 20),
+			float64(index+1),
+			map[string]any{"pair_id": "pair_canary_" + strconv.Itoa(index+1), "harness": fixture.harness},
+		)
+		receipt := anyMap(final["receipt"])
+		if !anyToBool(receipt["efficacy_eligible"]) ||
+			anyToString(receipt["stage"]) != skillUsageStageVerifiedOutcome ||
+			len(contextPackAnyList(receipt["stage_events"])) != 4 {
+			t.Fatalf("%s canary did not reach verified outcome: %#v", fixture.harness, receipt)
+		}
+	}
 }
 
 func TestSkillUsageReceiptChainFailsClosedAndReplaysAfterCompaction(t *testing.T) {

@@ -38,12 +38,35 @@ func TestNativePgvectorEnsureStatementsIncludesCoreDDL(t *testing.T) {
 	for _, token := range []string{
 		"CREATE EXTENSION IF NOT EXISTS vector",
 		"CREATE TABLE IF NOT EXISTS memory_events",
+		"event_id TEXT",
+		"content_hash TEXT",
 		"embedding vector(768)",
+		"memory_events_event_idx",
+		"memory_events_content_hash_idx",
 		"memory_events_embedding_ivfflat_idx",
 		"lists=120",
 	} {
 		if !strings.Contains(joined, token) {
 			t.Fatalf("expected token %q in ddl: %s", token, joined)
+		}
+	}
+}
+
+func TestNativePgvectorIdentityEnsureStatementsAreAdditive(t *testing.T) {
+	joined := strings.Join(nativePgvectorIdentityEnsureStatements("memory_events"), "\n")
+	for _, token := range []string{
+		"ADD COLUMN IF NOT EXISTS event_id TEXT",
+		"ADD COLUMN IF NOT EXISTS content_hash TEXT",
+		"memory_events_event_idx",
+		"memory_events_content_hash_idx",
+	} {
+		if !strings.Contains(joined, token) {
+			t.Fatalf("expected additive identity token %q in ddl: %s", token, joined)
+		}
+	}
+	for _, destructive := range []string{"DROP ", "DELETE ", "TRUNCATE "} {
+		if strings.Contains(strings.ToUpper(joined), destructive) {
+			t.Fatalf("identity migration must remain nondestructive: %s", joined)
 		}
 	}
 }

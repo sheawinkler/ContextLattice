@@ -5103,10 +5103,10 @@ func (s *server) callBackendSourceQuery(
 		}
 	}
 	if source == sourceQdrant || source == sourcePgvector {
-		filtered, suppressed := s.reconcileVectorRows(baseRequest, rows)
+		filtered, reconcileStats := s.reconcileVectorRowsDetailed(baseRequest, rows)
 		rows = filtered
-		if suppressed > 0 {
-			warnings = append(warnings, fmt.Sprintf("%s authoritative memory state suppressed %d stale or non-ordinary fallback result(s)", source, suppressed))
+		if reconcileStats.Suppressed > 0 || reconcileStats.LegacyPathOnly > 0 {
+			warnings = append(warnings, reconcileStats.warning(source))
 		}
 	}
 	warnings = append(warnings, fallbackWarnings...)
