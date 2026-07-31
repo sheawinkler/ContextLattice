@@ -54,7 +54,10 @@ class ReleaseLaneTreeTests(unittest.TestCase):
             generator.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
             config = repo / "config"
             config.mkdir()
-            (config / "public_sync_blocklist.txt").write_text("# fixture\n", encoding="utf-8")
+            shutil.copy2(
+                ROOT / "config/public_sync_blocklist.txt",
+                config / "public_sync_blocklist.txt",
+            )
             (config / "commercial_truth.v1.json").write_text("{}\n", encoding="utf-8")
             gateway = repo / "services/gateway-go"
             gateway.mkdir(parents=True)

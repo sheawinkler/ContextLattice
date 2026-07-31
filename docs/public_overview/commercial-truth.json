@@ -4,8 +4,8 @@
   "contract_version": 1,
   "product": {
     "name": "ContextLattice",
-    "version": "4.0.5",
-    "stable_tag": "v4.0.5",
+    "version": "4.0.6",
+    "stable_tag": "v4.0.6",
     "release_train": "4.0",
     "category": "local_first_agent_intelligence_layer",
     "canonical_description": "The local-first intelligence layer that gives AI agents durable continuity, explainable retrieval, portable context, and verified learning across harnesses.",
@@ -900,6 +900,6 @@
       ]
     }
   ],
-  "contract_sha256": "b004f8cbb3182b39b514870e26714335aa5302912cdcc12e96473cf588b0d470",
-  "commercial_truth_sha256": "633dcf084d36b430fc379cd327845c132e662f40291420515412f5e3ab90b26a"
+  "contract_sha256": "61b14b27f249580771e6733ae95c11499410c39fb46986e5bb5b57f99f93fd80",
+  "commercial_truth_sha256": "79d89cc5f2bdd92f7168238eed3f7844876f620d0439c9b94527e70f9f903de5"
 }
