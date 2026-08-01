@@ -54,33 +54,28 @@ print(json.dumps({"projectName": project, "fileName": file_name, "topicPath": to
 PY
 )"
 write_out="$(curl_json POST "${BASE}/memory/write" "$write_payload" "$TIMEOUT")"
-search_payload="$(python3 - "$PROJECT" "$TOPIC" "$QUERY" <<'PY'
-import json, sys
-project, topic, query = sys.argv[1:]
-print(json.dumps({
-  "project": project,
-  "projectName": project,
-  "topic_path": topic,
-  "topicPath": topic,
-  "query": query[:500],
-  "include_grounding": True,
-  "include_retrieval_debug": True,
-  "retrieval_mode": "balanced",
-  "limit": 5,
-}))
+readback_url="$(python3 - "$BASE" "$PROJECT" "$FILE" <<'PY'
+import sys
+from urllib.parse import quote
+base, project, file_name = sys.argv[1:]
+print(f"{base}/memory/files/{quote(project, safe='')}/{quote(file_name, safe='/')}")
 PY
 )"
-search_out="$(curl_json POST "${BASE}/memory/search" "$search_payload" "$TIMEOUT")"
-python3 - "$write_out" "$search_out" <<'PY'
+readback_text="$(curl_json GET "$readback_url" "" "$TIMEOUT")"
+python3 - "$write_out" "$FILE" "$CONTENT" "$readback_text" <<'PY'
 import json, sys
 write = json.loads(sys.argv[1])
-search = json.loads(sys.argv[2])
-results = search.get('results') or []
-ok = bool(write.get('ok', True)) and bool(results) and not bool(search.get('degraded'))
+requested_file, expected_content, actual_content = sys.argv[2:]
+exact = actual_content == expected_content
+ok = bool(write.get('ok', True)) and exact
 print(json.dumps({
     'ok': ok,
     'write': {'ok': write.get('ok', True), 'source': write.get('source'), 'content_ref': write.get('content_ref')},
-    'readback': {'degraded': bool(search.get('degraded')), 'count': len(results), 'first_file': (results[0].get('file') if results and isinstance(results[0], dict) else None)},
+    'readback': {
+        'degraded': False,
+        'count': 1 if exact else 0,
+        'first_file': requested_file if exact else None,
+    },
 }, separators=(',', ':')))
 raise SystemExit(0 if ok else 1)
 PY
