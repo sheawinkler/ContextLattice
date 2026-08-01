@@ -70,6 +70,7 @@ Installs Go-native ContextLattice agent helpers to ~/.contextlattice and creates
   contextlattice_agent_runtime_proof
   contextlattice_agent_adoption_proof
   contextlattice_agent_runtime_doctor
+  contextlattice_state
   contextlattice_strict_runtime_native_ownership
   contextlattice_context_boundary
   contextlattice_memory_topology
@@ -766,6 +767,7 @@ GO_NATIVE_COMMANDS=(
   contextlattice_agent_runtime_proof
   contextlattice_agent_adoption_proof
   contextlattice_agent_runtime_doctor
+  contextlattice_state
   contextlattice_strict_runtime_native_ownership
   contextlattice_context_boundary
   contextlattice_memory_topology
@@ -1014,6 +1016,7 @@ log "  - ${GLOBAL_BIN_DIR}/contextlattice_run_advisor"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_agent_runtime_proof"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_agent_adoption_proof"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_agent_runtime_doctor"
+log "  - ${GLOBAL_BIN_DIR}/contextlattice_state"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_strict_runtime_native_ownership"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_context_boundary"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_memory_topology"
@@ -1058,6 +1061,7 @@ log "  contextlattice_adopt status --pretty"
 log "  contextlattice_doctor --agents codex --skip-provider-smoke --pretty"
 log "  contextlattice_adopt proof --agents codex --skip-provider-smoke --pretty"
 log "  contextlattice_agent_runtime_proof --pretty"
+log "  contextlattice_state status --pretty"
 log "  contextlattice_agent_adoption_proof --skip-provider-smoke --progress --pretty"
 log "  contextlattice_strict_runtime_native_ownership --pretty"
 log "  contextlattice_context_boundary --pretty"

@@ -12,6 +12,7 @@ import (
 
 func TestRunnerQualityTelemetrySummarizesLedgerAdvisorOnly(t *testing.T) {
 	root := t.TempDir()
+	t.Setenv("CONTEXTLATTICE_GATEWAY_STATE_ROOT", "")
 	t.Setenv("GO_MEMORY_STORE_ROOT", root)
 	ledgerPath := filepath.Join(root, "_contextlattice", "runner_quality_ledger.ndjson")
 	if err := os.MkdirAll(filepath.Dir(ledgerPath), 0755); err != nil {

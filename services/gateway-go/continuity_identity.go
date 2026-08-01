@@ -211,15 +211,7 @@ type continuityStore struct {
 }
 
 func continuityLedgerPath() string {
-	path := strings.TrimSpace(os.Getenv("CONTEXTLATTICE_CONTINUITY_LEDGER_PATH"))
-	if path == "" {
-		if memoryRoot := strings.TrimSpace(os.Getenv("GO_MEMORY_STORE_ROOT")); memoryRoot != "" {
-			path = filepath.Join(memoryRoot, "_contextlattice", "continuity_ledger.ndjson")
-		} else {
-			path = defaultContinuityLedgerPathRel
-		}
-	}
-	return filepath.Clean(path)
+	return resolveStoragePath("CONTEXTLATTICE_CONTINUITY_LEDGER_PATH", defaultContinuityLedgerPathRel)
 }
 
 func continuityLedgerMaxBytes() int64 {

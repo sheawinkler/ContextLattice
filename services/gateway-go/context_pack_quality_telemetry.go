@@ -95,17 +95,7 @@ func newContextPackQualityLedgerFromEnv() *contextPackQualityLedger {
 }
 
 func contextPackQualityLedgerPath() string {
-	if explicit := strings.TrimSpace(os.Getenv("GO_CONTEXT_PACK_QUALITY_LEDGER_PATH")); explicit != "" {
-		return filepath.Clean(explicit)
-	}
-	root := strings.TrimSpace(os.Getenv("GO_MEMORY_STORE_ROOT"))
-	if root == "" {
-		root = strings.TrimSpace(os.Getenv("MEMORY_BANK_ROOT"))
-	}
-	if root != "" {
-		return filepath.Clean(filepath.Join(root, "_contextlattice", "context_pack_quality_ledger.ndjson"))
-	}
-	return filepath.Clean(filepath.Join(".data", "orchestrator", "context_pack_quality_ledger.ndjson"))
+	return resolveStoragePath("GO_CONTEXT_PACK_QUALITY_LEDGER_PATH", filepath.Join(".data", "orchestrator", "context_pack_quality_ledger.ndjson"))
 }
 
 func (s *server) recordContextPackQuality(sample map[string]any) {

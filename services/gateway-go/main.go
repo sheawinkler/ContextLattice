@@ -14,12 +14,14 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 	"unicode"
 )
@@ -1209,6 +1211,7 @@ func loadLettaConfig() lettaConfig {
 }
 
 func newServer() *server {
+	prepareGatewayStateRootForStartup()
 	backendURL := strings.TrimRight(strings.TrimSpace(os.Getenv("BACKEND_URL")), "/")
 	if backendURL == "" {
 		backendURL = "http://contextlattice-orchestrator:8075"
@@ -1236,7 +1239,7 @@ func newServer() *server {
 	trackedPaths := defaultTrackedPaths()
 	tradingHistoryPath := strings.TrimSpace(trackedPaths["trading_history"])
 	if tradingHistoryPath == "" {
-		tradingHistoryPath = "services/orchestrator/data/trading_metrics.ndjson"
+		tradingHistoryPath = resolveStoragePath("TRADING_HISTORY_PATH", "services/orchestrator/data/trading_metrics.ndjson")
 	}
 	tradingHistoryLimit := envInt("TRADING_HISTORY_LIMIT", 256)
 	if tradingHistoryLimit < 1 {
@@ -3174,6 +3177,7 @@ func (s *server) status(w http.ResponseWriter, r *http.Request) {
 			"sourceOwnershipMode":           s.retrieval.sourceOwnershipMode,
 			"services":                      services,
 			"memoryStore":                   s.memoryStore.migrationSnapshot(),
+			"gatewayState":                  gatewayStateInventoryPayload(),
 			"serviceHealth": map[string]any{
 				"healthy": healthyServiceCount,
 				"total":   len(services),
@@ -3239,6 +3243,7 @@ func (s *server) status(w http.ResponseWriter, r *http.Request) {
 			"backendUrl":             s.backendURL,
 			"statusSource":           "gateway-go",
 			"pythonHotPathOwnership": s.pythonHotPathOwnershipSnapshot(),
+			"gatewayState":           gatewayStateInventoryPayload(),
 		})
 		return
 	}
@@ -3255,6 +3260,7 @@ func (s *server) status(w http.ResponseWriter, r *http.Request) {
 	payload["statusSource"] = "gateway-go"
 	payload["backendStatusSource"] = "contextlattice-orchestrator"
 	payload["routeOwnerClass"] = sourceOwnerGoNative
+	payload["gatewayState"] = gatewayStateInventoryPayload()
 	payload["fallbackCounts"] = map[string]any{
 		"pythonHotPathTotal": anyToInt(gatewayOwnership["fallbacks"], 0),
 	}
@@ -7408,6 +7414,48 @@ func newGatewayHTTPServer(handler http.Handler) *http.Server {
 	}
 }
 
+func gatewayShutdownTimeout() time.Duration {
+	timeout := envDurationSeconds("GO_GATEWAY_SHUTDOWN_TIMEOUT_SECS", 20)
+	if timeout < time.Second {
+		return time.Second
+	}
+	if timeout > 25*time.Second {
+		return 25 * time.Second
+	}
+	return timeout
+}
+
+func serveGatewayUntilShutdown(shutdownContext context.Context, httpServer *http.Server, listener net.Listener, shutdownTimeout time.Duration) error {
+	serveErrors := make(chan error, 1)
+	go func() {
+		serveErrors <- httpServer.Serve(listener)
+	}()
+
+	select {
+	case err := <-serveErrors:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	case <-shutdownContext.Done():
+	}
+
+	drainContext, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+	shutdownErr := httpServer.Shutdown(drainContext)
+	if shutdownErr != nil {
+		_ = httpServer.Close()
+	}
+	serveErr := <-serveErrors
+	if shutdownErr != nil {
+		return fmt.Errorf("gateway graceful shutdown: %w", shutdownErr)
+	}
+	if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+		return serveErr
+	}
+	return nil
+}
+
 type gatewayHandlerState struct {
 	handler http.Handler
 }
@@ -7541,7 +7589,10 @@ func main() {
 		log.Printf("gateway-go runtime handler activated")
 	}()
 	httpServer := newGatewayHTTPServer(startupHandler)
-	if err := httpServer.Serve(listener); err != nil {
+	shutdownContext, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+	if err := serveGatewayUntilShutdown(shutdownContext, httpServer, listener, gatewayShutdownTimeout()); err != nil {
 		log.Fatal(err)
 	}
+	log.Printf("gateway-go shutdown complete")
 }

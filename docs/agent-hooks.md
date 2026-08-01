@@ -68,6 +68,7 @@ Installed commands:
 | `contextlattice_agent_runtime_proof` | One-command live proof that bootstrap, scoped recall, checkpoint, handoff, context-package, completion, status, and runtime telemetry work end to end. |
 | `contextlattice_agent_adoption_proof` | Matrix proof that configured agent profiles can use the same memory lifecycle and expose skills/context/session/graph/handoff evidence. |
 | `contextlattice_agent_runtime_doctor` | Local helper, hook, wrapper, and gateway drift audit. |
+| `contextlattice_state` | Canonical gateway durable-state inventory plus explicit dry-run migration and manifest-bound rollback. |
 | `contextlattice_memory_topology` | Memory topology audit for base/default lanes, full backend fabric, partition keys, clusters, and graph health. |
 | `contextlattice_memory_graph_repair` | Audit or apply identity-first hot-corpus edges with dry-run default, exact project confirmation, and a hard per-run write cap. |
 | `contextlattice_memory_graph_efficacy` | Generate explicit graph-neighbor holdouts and require healthy direct recall plus positive, hydrated graph contribution. |

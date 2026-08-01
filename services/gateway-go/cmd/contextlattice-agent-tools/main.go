@@ -77,6 +77,7 @@ var nativeToolNames = map[string]string{
 	"contextlattice_run_advisor":                     "run-advisor",
 	"contextlattice_agent_runtime_doctor":            "runtime-doctor",
 	"contextlattice_doctor":                          "runtime-doctor",
+	"contextlattice_state":                           "state",
 	"contextlattice_context_boundary":                "context-boundary",
 	"contextlattice_strict_runtime_native_ownership": "strict-runtime-native-ownership",
 	"contextlattice_agent_runtime_proof":             "runtime-proof",
@@ -350,6 +351,8 @@ func (c *cli) run(argv []string) error {
 		return c.cmdRunAdvisor(args)
 	case "runtime-doctor":
 		return c.cmdRuntimeDoctor(args)
+	case "state":
+		return c.cmdState(args)
 	case "context-boundary":
 		return c.cmdContextBoundary(args)
 	case "strict-runtime-native-ownership":
@@ -451,6 +454,7 @@ Advanced/compatibility commands:
   context-boundary               audit /ops/context-boundary
   strict-runtime-native-ownership audit /ops/native-ownership
   runtime-doctor                 audit local native helper install and gateway health
+  state                          inspect canonical gateway state or run explicit migration/rollback
   runtime-proof                  compact live runtime proof
   adoption-proof                 compact profile preflight proof matrix
   adapter                        profiles/bootstrap/status/context-pack/checkpoint/handoff/state/event/complete helpers
@@ -3994,7 +3998,7 @@ func (c *cli) cmdRuntimeDoctor(args []string) error {
 	c.applyBaseURL(parsed)
 	globalHome := parsed.string("global_home", envString("CONTEXTLATTICE_GLOBAL_HOME", filepath.Join(homeDir(), ".contextlattice")))
 	binDir := filepath.Join(globalHome, "bin")
-	core := []string{"contextlattice_search", "contextlattice_pack", "contextlattice_synthesis_pack", "contextlattice_synthesis_pack_v2", "contextlattice_retrieval_plan", "contextlattice_retrieval_governance", "contextlattice_claim_write", "contextlattice_claim_query", "contextlattice_continuity_reconcile", "contextlattice_objective_transition", "contextlattice_objective_graph", "contextlattice_decision_change", "contextlattice_write", "contextlattice_agent_session", "contextlattice_agent_discover", "contextlattice_async_inbox_drain", "contextlattice_runner_quality", "contextlattice_run_advisor", "contextlattice_agent_runtime_doctor", "contextlattice_strict_runtime_native_ownership", "contextlattice_context_boundary"}
+	core := []string{"contextlattice_search", "contextlattice_pack", "contextlattice_synthesis_pack", "contextlattice_synthesis_pack_v2", "contextlattice_retrieval_plan", "contextlattice_retrieval_governance", "contextlattice_claim_write", "contextlattice_claim_query", "contextlattice_continuity_reconcile", "contextlattice_objective_transition", "contextlattice_objective_graph", "contextlattice_decision_change", "contextlattice_write", "contextlattice_agent_session", "contextlattice_agent_discover", "contextlattice_async_inbox_drain", "contextlattice_runner_quality", "contextlattice_run_advisor", "contextlattice_agent_runtime_doctor", "contextlattice_strict_runtime_native_ownership", "contextlattice_context_boundary", "contextlattice_state"}
 	checks := []map[string]any{}
 	for _, name := range core {
 		path := filepath.Join(binDir, name)
@@ -4015,6 +4019,13 @@ func (c *cli) cmdRuntimeDoctor(args []string) error {
 	checks = append(checks, map[string]any{"name": "native_ownership", "ok": ownershipErr == nil && asBool(ownership["ok"]) && asInt(hotPath["fallbacks"]) == 0, "nativeRouteCount": ownership["nativeRouteCount"], "python_fallbacks": hotPath["fallbacks"], "explanation": "default live agent hot paths should be owned by native routes and wrappers"})
 	runnerQuality, _, runnerQualityErr := c.requestJSON(context.Background(), http.MethodGet, "/telemetry/runner-quality?limit=200", nil, parsed.float("timeout", 10))
 	checks = append(checks, map[string]any{"name": "runner_quality", "ok": runnerQualityErr == nil && !explicitFalse(runnerQuality["ok"]), "telemetry": runnerQuality, "explanation": "runner quality is advisory telemetry for operator selection; it must not dispatch work automatically"})
+	storageTelemetry, _, storageTelemetryErr := c.requestJSON(context.Background(), http.MethodGet, "/telemetry/storage", nil, parsed.float("timeout", 10))
+	gatewayState := asMap(storageTelemetry["gatewayState"])
+	checks = append(checks, map[string]any{
+		"name": "gateway_state", "ok": storageTelemetryErr == nil && asBool(gatewayState["ok"]),
+		"inventory": gatewayState, "request_error": errString(storageTelemetryErr),
+		"explanation": "canonical gateway state must resolve to absolute writable and traversable durable paths; only exact OS access errors are permission evidence",
+	})
 	if repo := parsed.string("repo", ""); repo != "" {
 		absRepo, err := filepath.Abs(repo)
 		repoAudit := map[string]any{"ok": false, "schema_id": "contextlattice_agent_repo_integration_audit.v1", "repo": repo, "findings": []map[string]any{{"reason": "repo_path_invalid", "detail": errString(err)}}}

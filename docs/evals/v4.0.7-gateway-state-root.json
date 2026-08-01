@@ -1,0 +1,173 @@
+{
+  "schema_id": "contextlattice_eval_ledger.v1",
+  "feature": "canonical_gateway_state_root",
+  "lane": "shared_public_safe",
+  "release_train": "v4.0.7",
+  "recorded_at": "2026-08-01T22:37:32Z",
+  "baseline": {
+    "issue": 663,
+    "commercial_state_owners_in_inventory": 47,
+    "public_state_owners_in_inventory": 33,
+    "root_contract": "independent relative defaults and per-surface overrides",
+    "working_directory_dependency": true,
+    "continuation_default_mismatch": "retrieval used services/orchestrator/data/continuation_outbox while storage inventory used .data/orchestrator/continuation_outbox",
+    "migration_command": false,
+    "doctor_inventory": false,
+    "compose_canonical_root": false
+  },
+  "target": {
+    "canonical_env": "CONTEXTLATTICE_GATEWAY_STATE_ROOT",
+    "canonical_env_must_be_absolute": true,
+    "per_surface_overrides_remain_higher_priority": true,
+    "working_directory_independent_defaults": true,
+    "compose_consumer_root": "/data/memory-bank/_contextlattice",
+    "migration_default": "dry_run",
+    "migration_apply_confirmation": "--apply --yes",
+    "rollback_confirmation": "--yes",
+    "permission_classification": "exact_os_access_denial_only"
+  },
+  "holdout": {
+    "kind": "filesystem_state_and_failure_injection",
+    "commercial_state_classes": [
+      "feedback",
+      "tasks",
+      "sessions",
+      "continuity_identity",
+      "continuation_jobs"
+    ],
+    "public_state_classes": [
+      "feedback",
+      "sessions",
+      "continuity_identity",
+      "continuation_jobs"
+    ],
+    "migration_cases": [
+      "dry_run_no_mutation",
+      "single_regular_file_upgrade",
+      "same_digest_deduplication",
+      "destination_conflict",
+      "insufficient_free_space",
+      "injected_copy_failure_cleanup",
+      "deduplicated_source_changed_before_commit",
+      "reserved_manifest_namespace",
+      "destination_symlink_escape",
+      "tampered_manifest_path",
+      "changed_destination_rollback_refusal",
+      "successful_manifest_bound_rollback"
+    ]
+  },
+  "results": {
+    "status": "candidate_live_acceptance_passed_exact_merged_release_pending",
+    "root_precedence_test": "passed",
+    "working_directory_independence_test": "passed",
+    "explicit_override_compatibility_test": "passed",
+    "commercial_restart_state_classes_passed": 5,
+    "public_restart_state_classes_passed": 4,
+    "migration_failure_injection": "passed",
+    "single_regular_file_apply_and_rollback": "passed",
+    "manifest_plan_binding": "passed",
+    "symlink_and_reserved_namespace_guards": "passed",
+    "permission_vs_path_classification": "passed",
+    "runtime_status_inventory": "passed",
+    "runtime_doctor_inventory": "passed",
+    "public_projection_boundary_test": "passed_33_public_owners_with_14_commercial_only_owners_excluded",
+    "compose_full_config": "passed",
+    "compose_lite_config": "passed",
+    "go_test_all": "passed_after_installed_single_file_upgrade_fix",
+    "precommit_go_test_all": "passed_on_amended_tree",
+    "go_vet_all": "passed_on_amended_tree",
+    "gatewaystate_race_test": "passed",
+    "windows_amd64_cross_build": "passed",
+    "linux_amd64_cross_build": "passed",
+    "installer_and_public_boundary_tests": "63_of_63_passed_on_amended_tree",
+    "precommit_installer_public_boundary_and_closeout_tests": "63_of_63_passed",
+    "candidate_image_build": "passed_with_exact_source_commit_and_tree",
+    "installed_single_file_dry_run": "passed_without_mutation_or_blockers",
+    "installed_single_file_apply_rollback_reapply": "passed_with_digest_bound_manifests",
+    "installed_overlay_only_state_preservation": "passed_with_digest_matched_backup",
+    "candidate_runtime_source_identity": "passed",
+    "candidate_restart_persistence": "passed_with_zero_oom_and_healthy_inventory",
+    "graceful_shutdown_unit_and_timeout_injection": "passed",
+    "isolated_sigterm_stop": "passed_with_exit_zero_and_shutdown_receipt",
+    "live_sigterm_restart": "passed_with_exit_receipt_state_persistence_and_healthy_readback",
+    "candidate_real_write_and_scoped_readback": "passed_without_degraded_mode",
+    "candidate_qdrant_payload_indexes": "ready_with_no_missing_required_fields",
+    "exact_merged_live_runtime": "pending"
+  },
+  "cost": {
+    "new_required_services": 0,
+    "new_external_dependencies": 0,
+    "new_environment_contracts": 1,
+    "new_native_commands": 1,
+    "intentional_duplicate_copies": "one timestamped rollback backup per explicitly applied legacy root until operator retirement"
+  },
+  "latency": {
+    "full_gateway_package_test_secs_after_single_file_upgrade_fix": 68.57,
+    "agent_tools_package_test_secs_after_single_file_upgrade_fix": 3.72,
+    "internal_gatewaystate_package_test_secs_after_single_file_upgrade_fix": 0.137,
+    "focused_gatewaystate_and_cli_test_secs_after_single_file_upgrade_fix": 3.763,
+    "installer_public_boundary_and_closeout_test_secs_after_single_file_upgrade_fix": 96.772,
+    "precommit_gateway_package_test_secs": 68.858,
+    "precommit_agent_tools_package_test_secs": 3.662,
+    "precommit_gatewaystate_package_test_secs": 0.137,
+    "precommit_installer_public_boundary_and_closeout_test_secs": 93.732,
+    "candidate_live_inventory_p95_ms_20_samples": 22.506,
+    "exact_merged_live_inventory_p95_ms": "pending"
+  },
+  "tool_calls": {
+    "migration_external_api_calls": 0,
+    "migration_network_calls": 0,
+    "migration_process_stops": 1,
+    "candidate_gateway_restarts": 4,
+    "unrelated_process_stops": 0,
+    "migration_credential_calls": 0
+  },
+  "failures": [
+    {
+      "stage": "cross_platform_build",
+      "failure": "the first Windows access probe used the Win32 FILE_ADD_FILE alias that x/sys/windows does not export",
+      "resolution": "use FILE_WRITE_DATA, whose directory-object meaning is FILE_ADD_FILE, and require Windows plus Linux cross-builds"
+    },
+    {
+      "stage": "full_gateway_regression",
+      "failure": "three compatibility tests inherited the test-wide canonical root and therefore no longer exercised GO_MEMORY_STORE_ROOT fallback",
+      "resolution": "clear the canonical root only in those explicit compatibility fixtures"
+    },
+    {
+      "stage": "code_review",
+      "failure": "rollback trusted editable manifest paths and deduplicated sources were not revalidated immediately before commit",
+      "resolution": "bind manifest, backup, source, and destination paths to the plan digest and canonical roots; reject symlink and reserved namespace paths; revalidate every source and destination digest before rename"
+    },
+    {
+      "stage": "installed_upgrade_preflight",
+      "failure": "v4.0.6 Compose stored agent_sessions.json directly beneath /data while the v4.0.7 canonical root is nested beneath /data, so selecting the parent directory was correctly rejected as an overlapping migration root",
+      "resolution": "extend the same manifest-bound migration contract to one explicit regular-file root and require apply-plus-rollback tests for /data/agent_sessions.json-shaped upgrades before any runtime restart"
+    },
+    {
+      "stage": "candidate_image_build",
+      "failure": "Dockerfile.gateway-go copied only top-level gateway Go files, so the new internal/gatewaystate package was absent from the image build context",
+      "resolution": "copy services/gateway-go/internal into the build stage and enforce that package boundary in the closeout regression suite"
+    },
+    {
+      "stage": "candidate_stop_probe",
+      "failure": "the current gateway process reproduced a nonzero exit code on SIGTERM despite no OOM or container error because the HTTP server had no signal-aware drain path",
+      "resolution": "handle SIGTERM and SIGINT with a bounded HTTP shutdown, test both successful drain and timeout-close paths, give Compose a 30-second grace period, and require isolated exit-zero plus live shutdown-receipt evidence"
+    }
+  ],
+  "reproduction": [
+    "cd services/gateway-go && go test ./... -count=1",
+    "cd services/gateway-go && go vet ./...",
+    "cd services/gateway-go && GOOS=windows GOARCH=amd64 go build ./...",
+    "cd services/gateway-go && GOOS=linux GOARCH=amd64 go build ./...",
+    "cd services/gateway-go && go test . -run 'TestGatewayHTTPServer(GracefullyDrainsOnShutdown|ShutdownTimeoutClosesListener)$' -count=1",
+    "python3 -m unittest scripts.tests.test_public_boundary_guards scripts.tests.test_nonmarketing_research_closeout",
+    "docker --context orbstack compose --env-file .env.example -f docker-compose.yml config --quiet",
+    "docker --context orbstack compose --env-file .env.example -f docker-compose.lite.yml config --quiet"
+  ],
+  "rollback": {
+    "configuration": "remove CONTEXTLATTICE_GATEWAY_STATE_ROOT to restore GO_MEMORY_STORE_ROOT, MEMORY_BANK_ROOT, global-home, or user-home precedence",
+    "surface_override": "set an existing per-surface path variable; it remains higher priority",
+    "migration": "run contextlattice state rollback with the exact root-bound manifest and --yes before retiring the timestamped backup",
+    "release": "revert the gateway-state-root commit and restore the prior gateway image only after proving the old state locations remain intact"
+  }
+}

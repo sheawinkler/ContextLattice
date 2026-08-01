@@ -60,7 +60,7 @@ ContextLattice does not replace your agent harness, choose goals from retrieved 
 
 ## Quickstart
 
-Requirements: macOS, Linux, or Windows through WSL2; a Compose v2-compatible container runtime; and `gmake`, `jq`, `rg`, `python3`, and `curl`.
+Requirements: macOS, Linux, or Windows through WSL2; a Compose v2-compatible container runtime; and `gmake`, `jq`, `rg`, `python3`, and `curl`. The tested macOS baseline uses OrbStack through its explicit Docker context; see the [container runtime decision](docs/runtime/container-runtime-decision.md).
 
 ### 1. Install
 
@@ -78,12 +78,13 @@ gmake quickstart
 ```zsh
 curl -fsS http://127.0.0.1:8075/health | jq
 contextlattice doctor --pretty
+contextlattice state status --pretty
 contextlattice context "verify this ContextLattice installation" \
   --project contextlattice \
   --pretty
 ```
 
-Healthy containers are only the first check. The final command exercises the actual context path and reports source coverage, degradation, evidence, and next actions.
+Healthy containers are only the first check. The state command verifies the canonical gateway-owned storage inventory; the final command exercises the actual context path and reports source coverage, degradation, evidence, and next actions. Existing installs can use the explicit, reversible procedure in [gateway state migration](docs/runtime/gateway-state-root.md).
 
 For a fuller lifecycle proof from the repository:
 
@@ -115,6 +116,8 @@ contextlattice_adopt integrate \
 ```
 
 The integration command writes bounded managed blocks while preserving existing instruction text. It does **not** install Codex, Claude Code, OpenCode, Hermes, OMP, Mercury, Pi, Droid, or another third-party agent harness.
+
+External provider discovery is network-free. Provider execution remains explicit and caller-authorized; see the [external-provider boundary](docs/runtime/external-provider-auth-boundary.md).
 
 If an agent is performing the installation, it should follow the quickstart directly, avoid cloning a second checkout when already inside one, report the exact failing command and path, and rerun the deterministic check after any repair.
 
@@ -202,7 +205,7 @@ Gateway :8075
 
 Writes are validated and durably persisted before fanout. Retrieval merges the available sources, ranks bounded evidence, and reports missing or degraded coverage instead of hiding it.
 
-The active application path is Go and Rust. Python remains in build, development, migration, and audit tooling rather than the live request path.
+The active application path is Go and Rust. Python remains in build, development, migration, and audit tooling rather than the live request path. The exact runtime and toolset choices are recorded in the [v4 runtime decision](docs/runtime/v4-runtime-toolset-decision.md) and [container decision](docs/runtime/container-runtime-decision.md).
 
 ## Public and paid boundaries
 
@@ -213,6 +216,8 @@ Paid artifacts add governed collaboration, protected activation, workspace opera
 See [plans and distribution boundaries](docs/public_overview/premium.html) for the current contract.
 
 ## Install options
+
+macOS technical preview: unsigned DMG bootstrap launcher; expect Gatekeeper warnings until Developer ID notarization is configured, and prefer the source/CLI path.
 
 | Path | Best for | Status |
 | --- | --- | --- |

@@ -79,17 +79,7 @@ func newTokenImpactLedgerFromEnv() *tokenImpactLedger {
 }
 
 func tokenImpactLedgerPath() string {
-	if explicit := strings.TrimSpace(os.Getenv("GO_TOKEN_IMPACT_LEDGER_PATH")); explicit != "" {
-		return filepath.Clean(explicit)
-	}
-	root := strings.TrimSpace(os.Getenv("GO_MEMORY_STORE_ROOT"))
-	if root == "" {
-		root = strings.TrimSpace(os.Getenv("MEMORY_BANK_ROOT"))
-	}
-	if root != "" {
-		return filepath.Clean(filepath.Join(root, "_contextlattice", "token_impact_ledger.ndjson"))
-	}
-	return filepath.Clean(filepath.Join(".data", "orchestrator", "token_impact_ledger.ndjson"))
+	return resolveStoragePath("GO_TOKEN_IMPACT_LEDGER_PATH", filepath.Join(".data", "orchestrator", "token_impact_ledger.ndjson"))
 }
 
 func (s *server) recordTokenImpact(sample map[string]any) {

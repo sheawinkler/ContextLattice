@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -59,6 +60,89 @@ func newTestServer(t *testing.T, backendURL string) *server {
 		}
 	})
 	return s
+}
+
+func TestGatewayHTTPServerGracefullyDrainsOnShutdown(t *testing.T) {
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	requestStarted := make(chan struct{})
+	releaseRequest := make(chan struct{})
+	httpServer := newGatewayHTTPServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		close(requestStarted)
+		<-releaseRequest
+		_, _ = w.Write([]byte("drained"))
+	}))
+	shutdownContext, cancelShutdown := context.WithCancel(context.Background())
+	serveErrors := make(chan error, 1)
+	go func() {
+		serveErrors <- serveGatewayUntilShutdown(shutdownContext, httpServer, listener, time.Second)
+	}()
+
+	client := &http.Client{Timeout: 2 * time.Second}
+	requestErrors := make(chan error, 1)
+	go func() {
+		response, requestErr := client.Get("http://" + listener.Addr().String())
+		if requestErr == nil {
+			_ = response.Body.Close()
+		}
+		requestErrors <- requestErr
+	}()
+	select {
+	case <-requestStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("request did not reach gateway")
+	}
+	cancelShutdown()
+	close(releaseRequest)
+	if requestErr := <-requestErrors; requestErr != nil {
+		t.Fatalf("draining request failed: %v", requestErr)
+	}
+	select {
+	case serveErr := <-serveErrors:
+		if serveErr != nil {
+			t.Fatalf("graceful shutdown failed: %v", serveErr)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("graceful shutdown did not complete")
+	}
+}
+
+func TestGatewayHTTPServerShutdownTimeoutClosesListener(t *testing.T) {
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	requestStarted := make(chan struct{})
+	releaseRequest := make(chan struct{})
+	httpServer := newGatewayHTTPServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		close(requestStarted)
+		<-releaseRequest
+	}))
+	shutdownContext, cancelShutdown := context.WithCancel(context.Background())
+	serveErrors := make(chan error, 1)
+	go func() {
+		serveErrors <- serveGatewayUntilShutdown(shutdownContext, httpServer, listener, 25*time.Millisecond)
+	}()
+	go func() {
+		_, _ = (&http.Client{Timeout: time.Second}).Get("http://" + listener.Addr().String())
+	}()
+	select {
+	case <-requestStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("request did not reach gateway")
+	}
+	cancelShutdown()
+	select {
+	case serveErr := <-serveErrors:
+		if serveErr == nil || !strings.Contains(serveErr.Error(), "gateway graceful shutdown") {
+			t.Fatalf("expected bounded shutdown failure, got %v", serveErr)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("shutdown timeout did not close listener")
+	}
+	close(releaseRequest)
 }
 
 func TestProxyForwardsRetrievalRequest(t *testing.T) {
@@ -181,6 +265,10 @@ func TestStatusOverlaysGatewayHotPathOwnership(t *testing.T) {
 	}
 	if strings.TrimSpace(anyToString(payload["routeOwnerClass"])) != sourceOwnerGoNative {
 		t.Fatalf("expected routeOwnerClass=%s got %v", sourceOwnerGoNative, payload["routeOwnerClass"])
+	}
+	gatewayState, _ := payload["gatewayState"].(map[string]any)
+	if anyToString(gatewayState["schema_id"]) != "contextlattice_gateway_state_inventory.v1" {
+		t.Fatalf("status omitted canonical gateway state inventory: %#v", gatewayState)
 	}
 	fallbackCounts, ok := payload["fallbackCounts"].(map[string]any)
 	if !ok {
@@ -2545,6 +2633,7 @@ func TestContextPackTokenizerExactAccounting(t *testing.T) {
 
 func TestGatewayContextPackUsesImpactTokenBudgetAllocator(t *testing.T) {
 	root := t.TempDir()
+	t.Setenv("CONTEXTLATTICE_GATEWAY_STATE_ROOT", "")
 	t.Setenv("GO_MEMORY_STORE_ROOT", root)
 	t.Setenv("GO_TOKEN_IMPACT_LEDGER_ENABLED", "true")
 	t.Setenv("GO_TOKEN_IMPACT_LEDGER_MAX_BYTES", "65536")

@@ -64,17 +64,6 @@ func loadStorageGovernancePolicy() storageGovernancePolicy {
 	return policy
 }
 
-func resolveStoragePath(envName string, fallback string) string {
-	raw := strings.TrimSpace(os.Getenv(envName))
-	if raw == "" {
-		raw = fallback
-	}
-	if raw == "" {
-		return ""
-	}
-	return filepath.Clean(raw)
-}
-
 func defaultTrackedPaths() map[string]string {
 	dataDir := filepath.Join(".data", "orchestrator")
 	return map[string]string{
@@ -476,15 +465,7 @@ func humanizeBytes(value int64) string {
 }
 
 func defaultStorageLedgerPath() string {
-	explicit := strings.TrimSpace(os.Getenv("ORCH_STORAGE_LEDGER_PATH"))
-	if explicit != "" {
-		return filepath.Clean(explicit)
-	}
-	goRoot := strings.TrimSpace(os.Getenv("GO_MEMORY_STORE_ROOT"))
-	if goRoot != "" {
-		return filepath.Clean(filepath.Join(goRoot, "_contextlattice", "storage_ledger.ndjson"))
-	}
-	return filepath.Clean(filepath.Join(".data", "orchestrator", "storage_ledger.ndjson"))
+	return resolveStoragePath("ORCH_STORAGE_LEDGER_PATH", filepath.Join(".data", "orchestrator", "storage_ledger.ndjson"))
 }
 
 func parseStorageLedgerTime(raw string) (time.Time, bool) {
@@ -621,6 +602,7 @@ func (s *server) storageTelemetry(w http.ResponseWriter, r *http.Request) {
 			},
 		},
 		"memoryTopology":   memoryTopologyPolicyPayload(s, memoryPolicy),
+		"gatewayState":     gatewayStateInventoryPayload(),
 		"disk":             disk,
 		"diskStatus":       diskStatus,
 		"trackedArtifacts": tracked,

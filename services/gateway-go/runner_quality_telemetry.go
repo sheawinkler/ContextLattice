@@ -18,23 +18,10 @@ const (
 )
 
 func runnerQualityLedgerPath() string {
-	if explicit := strings.TrimSpace(os.Getenv("GO_RUNNER_QUALITY_LEDGER_PATH")); explicit != "" {
-		return filepath.Clean(explicit)
-	}
-	if explicit := strings.TrimSpace(os.Getenv("CONTEXTLATTICE_RUNNER_QUALITY_LEDGER_PATH")); explicit != "" {
-		return filepath.Clean(explicit)
-	}
-	if explicit := strings.TrimSpace(os.Getenv("CONTEXTLATTICE_RUNNER_QUALITY_LEDGER")); explicit != "" {
-		return filepath.Clean(explicit)
-	}
-	root := strings.TrimSpace(os.Getenv("GO_MEMORY_STORE_ROOT"))
-	if root == "" {
-		root = strings.TrimSpace(os.Getenv("MEMORY_BANK_ROOT"))
-	}
-	if root != "" {
-		return filepath.Clean(filepath.Join(root, "_contextlattice", "runner_quality_ledger.ndjson"))
-	}
-	return filepath.Clean(filepath.Join(".data", "orchestrator", "runner_quality_ledger.ndjson"))
+	return resolveStoragePathAliases(
+		[]string{"GO_RUNNER_QUALITY_LEDGER_PATH", "CONTEXTLATTICE_RUNNER_QUALITY_LEDGER_PATH", "CONTEXTLATTICE_RUNNER_QUALITY_LEDGER"},
+		filepath.Join(".data", "orchestrator", "runner_quality_ledger.ndjson"),
+	)
 }
 
 func (s *server) telemetryRunnerQualityRoute(w http.ResponseWriter, r *http.Request) {

@@ -459,13 +459,7 @@ func emptyFrontierT6AgentFitState() frontierT6AgentFitState {
 }
 
 func frontierT6StatePath() string {
-	if configured := strings.TrimSpace(os.Getenv(frontierT6StatePathEnv)); configured != "" {
-		return filepath.Clean(configured)
-	}
-	if root := strings.TrimSpace(os.Getenv("GO_MEMORY_STORE_ROOT")); root != "" {
-		return filepath.Join(root, "_contextlattice", "frontier_t6_agent_fit.json")
-	}
-	return frontierT6DefaultStatePath
+	return resolveStoragePath(frontierT6StatePathEnv, frontierT6DefaultStatePath)
 }
 
 func newFrontierT6AgentFitStore(path string, limits frontierT6StoreLimits) (*frontierT6AgentFitStore, error) {

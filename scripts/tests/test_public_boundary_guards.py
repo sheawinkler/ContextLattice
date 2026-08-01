@@ -839,6 +839,33 @@ class PublicBoundaryGuardTests(unittest.TestCase):
                 for marker in markers:
                     self.assertIn(marker + "=", env)
 
+    def test_canonical_gateway_state_root_reaches_gateway_consumer_only(self) -> None:
+        marker = "CONTEXTLATTICE_GATEWAY_STATE_ROOT"
+        canonical = "/data/memory-bank/_contextlattice"
+        for path in ("docker-compose.yml", "docker-compose.lite.yml"):
+            with self.subTest(path=path):
+                compose = (ROOT / path).read_text(encoding="utf-8")
+                legacy, gateway = compose.split("\n  gateway-go:\n", 1)
+                self.assertNotIn(marker, legacy)
+                self.assertIn(
+                    f"{marker}: ${{{marker}:-{canonical}}}", gateway
+                )
+                self.assertEqual(compose.count(f"\n      {marker}:"), 1)
+                self.assertIn("${MEMORY_BANK_DATA:-memory_bank_data}:/data", gateway)
+                self.assertIn(
+                    "GO_AGENT_SESSIONS_PATH: ${GO_AGENT_SESSIONS_PATH:-"
+                    + canonical
+                    + "/agent_sessions.json}",
+                    gateway,
+                )
+        env = (ROOT / ".env.example").read_text(encoding="utf-8")
+        self.assertIn(f"{marker}={canonical}", env)
+        docs = (ROOT / "docs/runtime/gateway-state-root.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(marker, docs)
+        self.assertIn("dry-run by default", docs)
+
     def test_qdrant_payload_index_hardening_controls_reach_gateway_only(self) -> None:
         markers = (
             "ORCH_QDRANT_PAYLOAD_INDEX_HARDEN_ENABLED",

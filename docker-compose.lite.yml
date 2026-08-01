@@ -548,6 +548,7 @@ services:
       - ${HOST_BIND_ADDRESS:-127.0.0.1}:${GO_GATEWAY_HOST_PORT:-8091}:${GO_GATEWAY_PORT_INTERNAL:-8091}
     environment:
       PORT: ${GO_GATEWAY_PORT_INTERNAL:-8091}
+      GO_GATEWAY_SHUTDOWN_TIMEOUT_SECS: ${GO_GATEWAY_SHUTDOWN_TIMEOUT_SECS:-20}
       ORCH_HOST_HARDWARE_PROFILE: ${ORCH_HOST_HARDWARE_PROFILE:-}
       ORCH_HOST_OS: ${ORCH_HOST_OS:-}
       ORCH_HOST_ARCH: ${ORCH_HOST_ARCH:-}
@@ -671,6 +672,7 @@ services:
       GO_RETRIEVAL_ADAPTIVE_TIMEOUT_BACKLOG_CAP: ${GO_RETRIEVAL_ADAPTIVE_TIMEOUT_BACKLOG_CAP:-6}
       GO_MEMORY_STORE_ENABLED: ${GO_MEMORY_STORE_ENABLED:-true}
       GO_MEMORY_STORE_ROOT: ${GO_MEMORY_STORE_ROOT:-/data/memory-bank}
+      CONTEXTLATTICE_GATEWAY_STATE_ROOT: ${CONTEXTLATTICE_GATEWAY_STATE_ROOT:-/data/memory-bank/_contextlattice}
       GO_UTILITY_LEDGER_ENABLED: ${GO_UTILITY_LEDGER_ENABLED:-true}
       GO_UTILITY_LEDGER_PATH: ${GO_UTILITY_LEDGER_PATH:-/data/memory-bank/_contextlattice/utility_ledger.ndjson}
       GO_UTILITY_LEDGER_MAX_BYTES: ${GO_UTILITY_LEDGER_MAX_BYTES:-4194304}
@@ -706,7 +708,7 @@ services:
       GO_MEMORY_STORE_MAX_SUMMARY_CHARS: ${GO_MEMORY_STORE_MAX_SUMMARY_CHARS:-400}
       GO_MEMORY_STORE_ROLLUP_SNIPPETS: ${GO_MEMORY_STORE_ROLLUP_SNIPPETS:-3}
       GO_MEMORY_STORE_ROLLUP_USE_HISTORY_INDEX: ${GO_MEMORY_STORE_ROLLUP_USE_HISTORY_INDEX:-true}
-      GO_AGENT_SESSIONS_PATH: ${GO_AGENT_SESSIONS_PATH:-/data/agent_sessions.json}
+      GO_AGENT_SESSIONS_PATH: ${GO_AGENT_SESSIONS_PATH:-/data/memory-bank/_contextlattice/agent_sessions.json}
     volumes:
       - ${MEMORY_BANK_DATA:-memory_bank_data}:/data
       - ${ORCH_SKILLS_QUARANTINE_HOST_BIN_DIR:-${HOME}/.local/bin}:/opt/contextlattice/skills/bin:ro
@@ -717,6 +719,7 @@ services:
       timeout: 5s
       retries: 10
     restart: unless-stopped
+    stop_grace_period: 30s
 
 volumes:
   qdrant_storage: {}

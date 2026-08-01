@@ -80,6 +80,17 @@ func TestStorageTelemetryReturnsSnapshot(t *testing.T) {
 	if !anyToBool(payload["ok"]) {
 		t.Fatalf("expected ok=true payload=%v", payload)
 	}
+	gatewayState, ok := payload["gatewayState"].(map[string]any)
+	if !ok || anyToString(gatewayState["schema_id"]) != "contextlattice_gateway_state_inventory.v1" {
+		t.Fatalf("missing canonical gateway state inventory payload=%v", payload)
+	}
+	if !anyToBool(gatewayState["ok"]) || anyToInt(gatewayState["unhealthy_entries"], -1) != 0 {
+		t.Fatalf("expected healthy canonical gateway state inventory=%v", gatewayState)
+	}
+	root, _ := gatewayState["root"].(map[string]any)
+	if anyToString(root["source_env"]) != "CONTEXTLATTICE_GATEWAY_STATE_ROOT" || !filepath.IsAbs(anyToString(root["path"])) {
+		t.Fatalf("expected absolute canonical state root payload=%v", root)
+	}
 	storageGov, ok := payload["storageGovernance"].(map[string]any)
 	if !ok {
 		t.Fatalf("missing storageGovernance payload=%v", payload)
