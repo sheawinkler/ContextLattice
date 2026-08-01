@@ -39,6 +39,16 @@
 
     <section class="section timeline">
       <article class="update-card">
+        <span class="update-meta">2026-08-01 · v4.0.7 · State Without Guesswork.</span>
+        <h2>Gateway state now has one durable root, one inspectable inventory, and a verified rollback path.</h2>
+        <ul>
+          <li><strong>Canonical persistence:</strong> 33 public-core state surfaces resolve beneath one working-directory-independent root; the commercial lane adds 14 owner-only surfaces for 47 total, while explicit compatibility overrides retain priority.</li>
+          <li><strong>Safe upgrades:</strong> dry-run-first file or directory migration binds paths and digests to a manifest, retains a rollback backup, and refuses changed destinations.</li>
+          <li><strong>Clean lifecycle:</strong> SIGTERM and SIGINT stop new accepts, drain active requests within a bounded window, and emit an explicit successful-shutdown receipt.</li>
+        </ul>
+      </article>
+
+      <article class="update-card">
         <span class="update-meta">2026-07-31 · v4.0.6 · Identity With Receipts.</span>
         <h2>One memory event stays one event, and useful skills can prove their impact.</h2>
         <ul>

@@ -16,7 +16,7 @@
 
 <p align="center">
   <a href="#quickstart"><img src="https://img.shields.io/badge/Interface-CLI%20First-111111?style=for-the-badge" alt="CLI first"></a>
-  <a href="https://github.com/sheawinkler/ContextLattice/releases/tag/v4.0.6"><img src="https://img.shields.io/badge/Release-v4.0.6-292929?style=for-the-badge" alt="ContextLattice v4.0.6"></a>
+  <a href="https://github.com/sheawinkler/ContextLattice/releases/tag/v4.0.7"><img src="https://img.shields.io/badge/Release-v4.0.7-292929?style=for-the-badge" alt="ContextLattice v4.0.7"></a>
   <a href="#quickstart"><img src="https://img.shields.io/badge/Runtime-Local%20First-404040?style=for-the-badge" alt="Local-first runtime"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-575757?style=for-the-badge" alt="Apache License 2.0"></a>
 </p>
@@ -260,7 +260,7 @@ Security reports follow [SECURITY.md](SECURITY.md).
 | Harness and app integration | [Integration guide](https://contextlattice.io/integration.html) |
 | Architecture and scaling | [Architecture](https://contextlattice.io/architecture.html) · [Scaling memory](https://contextlattice.io/scaling-memory.html) |
 | Troubleshooting | [Troubleshooting guide](https://contextlattice.io/troubleshooting.html) |
-| Current behavior and release evidence | [Updates](https://contextlattice.io/updates.html) · [v4.0.6 release notes](docs/releases/v4.0.6.md) |
+| Current behavior and release evidence | [Updates](https://contextlattice.io/updates.html) · [v4.0.7 release notes](docs/releases/v4.0.7.md) |
 | Roadmap | [Public roadmap](https://contextlattice.io/roadmap.html) |
 | Agent hooks | [Agent hook contract](docs/agent-hooks.md) |
 | Retrieval trust | [Retrieval receipts](docs/retrieval-receipts.md) |
@@ -269,7 +269,7 @@ Security reports follow [SECURITY.md](SECURITY.md).
 | Local inference | [Local model options](docs/runtime/local-model-options.md) |
 | Full repository-backed manual | [Public field manual](docs/wiki/README.md) |
 
-The current release baseline is [`v4.0.6`](https://github.com/sheawinkler/ContextLattice/releases/tag/v4.0.6).
+The current release baseline is [`v4.0.7`](https://github.com/sheawinkler/ContextLattice/releases/tag/v4.0.7).
 
 ## License
 

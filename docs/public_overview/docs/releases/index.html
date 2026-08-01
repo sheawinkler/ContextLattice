@@ -31,7 +31,7 @@
 
   <div class="docs-tape" aria-label="Documentation status">
     <span><strong>Manual</strong> Repository-backed</span>
-    <span><strong>Release</strong> v4.0.6</span>
+    <span><strong>Release</strong> v4.0.7</span>
     <span><strong>Interface</strong> CLI first</span>
     <span><strong>Source</strong> Public/main</span>
   </div>
@@ -69,13 +69,13 @@
       </div>
       <div class="docs-prose">
         <h1 id="releases">Releases<a class="heading-anchor" href="#releases" aria-label="Link to Releases">#</a></h1>
-<p>The current public release baseline is <code>v4.0.6</code>. Release identity comes from the canonical commercial truth contract, signed or attributable artifacts, exact source SHAs, and deterministic verification—not from a page label alone.</p>
+<p>The current public release baseline is <code>v4.0.7</code>. Release identity comes from the canonical commercial truth contract, signed or attributable artifacts, exact source SHAs, and deterministic verification—not from a page label alone.</p>
 <h2 id="before-upgrading">Before upgrading<a class="heading-anchor" href="#before-upgrading" aria-label="Link to Before upgrading">#</a></h2>
 <ul class="doc-list"><li>Read the <a href="https://github.com/sheawinkler/ContextLattice/releases/latest" target="_blank" rel="noreferrer">release notes</a>.</li><li>Record the current source SHA, runtime profile, and storage locations.</li><li>Preserve a bounded backup or snapshot appropriate to the active backends.</li><li>Run a representative context query and save its evidence.</li><li>Confirm enough free space for images, indexes, and any migration.</li></ul>
 <h2 id="install-or-upgrade">Install or upgrade<a class="heading-anchor" href="#install-or-upgrade" aria-label="Link to Install or upgrade">#</a></h2>
 <p>Source operators should use the repository instructions and <code>gmake quickstart</code>. Homebrew and installer users should use the matching artifact from the same release.</p>
 <div class="code-frame"><div class="code-frame-label"><span>zsh</span></div><pre><code class="language-zsh">git fetch --tags origin
-git checkout v4.0.6
+git checkout v4.0.7
 gmake quickstart</code></pre></div>
 <p>Do not move a production checkout across releases while its owned runtime is writing. Follow the repository release notes when a version includes migration or rollback guidance.</p>
 <h2 id="verify-after-upgrade">Verify after upgrade<a class="heading-anchor" href="#verify-after-upgrade" aria-label="Link to Verify after upgrade">#</a></h2>
@@ -118,7 +118,7 @@ contextlattice_agent_runtime_proof --pretty</code></pre></div>
   </main>
 
   <footer class="site-footer">
-    <span>ContextLattice / docs / v4.0.6</span>
+    <span>ContextLattice / docs / v4.0.7</span>
     <nav aria-label="Footer">
       <a href="/installation.html">Install</a>
       <a href="/troubleshooting.html">Troubleshoot</a>
