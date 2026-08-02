@@ -42,6 +42,7 @@ func TestContinuityLedgerDefaultsToPersistentMemoryRoot(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("CONTEXTLATTICE_CONTINUITY_ENABLED", "true")
 	t.Setenv("CONTEXTLATTICE_CONTINUITY_LEDGER_PATH", "")
+	t.Setenv("CONTEXTLATTICE_GATEWAY_STATE_ROOT", "")
 	t.Setenv("GO_MEMORY_STORE_ROOT", root)
 	want := filepath.Join(root, "_contextlattice", "continuity_ledger.ndjson")
 	if got := continuityLedgerPath(); got != want {

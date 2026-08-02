@@ -137,17 +137,7 @@ func newUtilityLedgerStoreFromEnv() *utilityLedgerStore {
 }
 
 func utilityLedgerPath() string {
-	if explicit := strings.TrimSpace(os.Getenv("GO_UTILITY_LEDGER_PATH")); explicit != "" {
-		return filepath.Clean(explicit)
-	}
-	root := strings.TrimSpace(os.Getenv("GO_MEMORY_STORE_ROOT"))
-	if root == "" {
-		root = strings.TrimSpace(os.Getenv("MEMORY_BANK_ROOT"))
-	}
-	if root != "" {
-		return filepath.Clean(filepath.Join(root, "_contextlattice", "utility_ledger.ndjson"))
-	}
-	return filepath.Clean(filepath.Join(".data", "orchestrator", "utility_ledger.ndjson"))
+	return resolveStoragePath("GO_UTILITY_LEDGER_PATH", filepath.Join(".data", "orchestrator", "utility_ledger.ndjson"))
 }
 
 func (t *utilityTelemetry) loadPersistedRows() {

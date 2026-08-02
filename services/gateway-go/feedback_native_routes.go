@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -40,11 +39,7 @@ type feedbackStore struct {
 }
 
 func feedbackHistoryPath() string {
-	path := strings.TrimSpace(os.Getenv("FEEDBACK_HISTORY_PATH"))
-	if path == "" {
-		path = defaultFeedbackHistoryRelPath
-	}
-	return filepath.Clean(path)
+	return resolveStoragePath("FEEDBACK_HISTORY_PATH", defaultFeedbackHistoryRelPath)
 }
 
 func newFeedbackStoreFromEnv() (*feedbackStore, error) {

@@ -195,13 +195,7 @@ func frontierT7StateHash(value frontierT7PortableState) string {
 }
 
 func frontierT7PortableStatePath() string {
-	if configured := strings.TrimSpace(os.Getenv(frontierT7StatePathEnv)); configured != "" {
-		return filepath.Clean(configured)
-	}
-	if root := strings.TrimSpace(os.Getenv("GO_MEMORY_STORE_ROOT")); root != "" {
-		return filepath.Join(root, "_contextlattice", "frontier_t7_portable_continuation.json")
-	}
-	return frontierT7DefaultStatePath
+	return resolveStoragePath(frontierT7StatePathEnv, frontierT7DefaultStatePath)
 }
 
 func newFrontierT7PortableStore(path string, limits frontierT7StoreLimits, identity *contextIdentityKeys) (*frontierT7PortableStore, error) {

@@ -779,22 +779,7 @@ func recallEvalCaseSetAgentInstructions() []string {
 }
 
 func resolveRecallEvalCasesPath() string {
-	envPath := strings.TrimSpace(os.Getenv("ORCH_RECALL_EVAL_CASES_PATH"))
-	if envPath != "" {
-		return envPath
-	}
-	candidates := []string{
-		filepath.Clean(defaultRecallEvalCasesRelativePath),
-		filepath.Clean(fallbackRecallEvalCasesRelativePath),
-		filepath.Clean("../orchestrator/data/recall_eval_cases.json"),
-		filepath.Clean(filepath.Join("data", "recall_eval_cases.json")),
-	}
-	for _, candidate := range candidates {
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate
-		}
-	}
-	return candidates[0]
+	return resolveStoragePath("ORCH_RECALL_EVAL_CASES_PATH", defaultRecallEvalCasesRelativePath)
 }
 
 func (s *server) appendRecallMonitorSample(sample map[string]any) error {

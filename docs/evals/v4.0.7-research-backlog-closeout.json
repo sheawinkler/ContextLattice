@@ -1,0 +1,149 @@
+{
+  "schema_id": "contextlattice_eval_ledger.v1",
+  "feature": "research_backlog_closeout",
+  "lane": "shared_public_safe",
+  "release_train": "v4.0.7",
+  "recorded_at": "2026-08-01T21:46:05Z",
+  "baseline": {
+    "open_tracker_count": 7,
+    "tracker_ids": [71, 72, 88, 210, 299, 362, 503],
+    "container_report_profiles_tested": ["colima_docker"],
+    "container_report_had_comparative_winner": false,
+    "provider_issue_versions": {
+      "pi": "older_help_snapshot",
+      "opencode": "0.0.55"
+    },
+    "macos_valid_codesigning_identities": 0,
+    "macos_required_credential_groups_configured": 0
+  },
+  "decisions": [
+    {
+      "tracker_id": 71,
+      "disposition": "completed_with_architecture_revision",
+      "evidence": "versioned runner contracts, lifecycle telemetry, native capability map, bounded browser-text ingest, and local role allowlists are shipped",
+      "revision": "remote MCP metadata remains non-authoritative data; no periodic grant sync or outbound relay is added"
+    },
+    {
+      "tracker_id": 72,
+      "disposition": "superseded_by_focused_evaluations",
+      "evidence": "candidate work produced focused performance artifacts and keep/drop/defer decisions",
+      "revision": "future candidates require one scoped issue and a baseline/holdout ledger"
+    },
+    {
+      "tracker_id": 88,
+      "disposition": "completed_operating_decision",
+      "evidence": "OrbStack is the installed macOS runtime and release-proof context",
+      "revision": "no universal performance-win claim; isolation research reopens only for a named threat model or measured bottleneck"
+    },
+    {
+      "tracker_id": 210,
+      "disposition": "completed",
+      "evidence": "Letta, MindsDB, async continuation, MLX/Ollama, task model, and embedding roles have implemented defaults and a final decision record"
+    },
+    {
+      "tracker_id": 299,
+      "disposition": "completed",
+      "evidence": "objective_runtime_state.v1 and policy_context_package.v1 carry hierarchy, lineage, coherence, provenance, evidence, risk, and next action across agent flows"
+    },
+    {
+      "tracker_id": 362,
+      "disposition": "completed_with_execution_boundary",
+      "evidence": "installed Pi and OpenCode discovery contracts pass without network or provider execution",
+      "revision": "paid model access remains unproven and requires explicit execution authorization"
+    },
+    {
+      "tracker_id": 503,
+      "disposition": "external_prerequisite_not_planned",
+      "evidence": "signing/notarization pipeline exists, while local and repository credential audits report no usable identity or credential group",
+      "revision": "keep the DMG labeled unsigned technical preview until a human authorizes and supplies Apple credentials"
+    }
+  ],
+  "holdout": {
+    "provider_discovery_execute": false,
+    "provider_discovery_findings": 0,
+    "provider_discovery_passed": 2,
+    "macos_auth_mutations": 0,
+    "paid_provider_calls": 0,
+    "documentation_contract_test": "PASS_6_OF_6",
+    "combined_python_contract_tests": "PASS_42",
+    "installer_public_boundary_and_closeout_tests": "PASS_62",
+    "targeted_go_contract_tests": "PASS",
+    "agent_output_contract_audit": "PASS",
+    "universal_agent_adapter_profiles": "PASS_13_OF_13",
+    "public_product_truth": "PASS_68_OF_68",
+    "commercial_truth": "PASS"
+  },
+  "results": {
+    "orbstack_server_version": "29.4.0",
+    "orbstack_containers_observed": 21,
+    "orbstack_containers_running": 21,
+    "pi_version": "0.82.1",
+    "opencode_version": "1.18.5",
+    "provider_discovery_status": "PASS",
+    "macos_signing_posture": "UNSIGNED_TECHNICAL_PREVIEW",
+    "documentation_contract_test": "PASS_6_OF_6"
+  },
+  "cost": {
+    "llm_calls": 0,
+    "external_provider_calls": 0,
+    "credential_mutations": 0,
+    "account_mutations": 0,
+    "new_runtime_services": 0
+  },
+  "tool_calls": {
+    "provider_version_help_probes": 4,
+    "provider_execution_attempts": 0,
+    "signing_credential_doctor_runs": 1,
+    "container_runtime_read_only_inspections": 4
+  },
+  "latency": {
+    "pi_version_probe_ms": 756,
+    "pi_help_probe_ms": 1142,
+    "opencode_version_probe_ms": 722,
+    "opencode_help_probe_ms": 344,
+    "targeted_go_contract_tests_secs": 0.294,
+    "combined_python_contract_tests_secs": 6.174,
+    "installer_public_boundary_and_closeout_tests_secs": 89.752,
+    "agent_output_contract_audit_secs": 1.267,
+    "universal_agent_adapter_audit_secs": 0.59
+  },
+  "failures": [
+    {
+      "stage": "container_research",
+      "failure": "the historical report listed a pending recommendation after testing only Colima",
+      "resolution": "preserve it as historical evidence and add a separate OrbStack operating decision without claiming comparative performance"
+    },
+    {
+      "stage": "provider_auth_research",
+      "failure": "the parked issue described obsolete installed CLI surfaces",
+      "resolution": "rerun network-free discovery against installed Pi 0.82.1 and OpenCode 1.18.5 and document the execution boundary"
+    },
+    {
+      "stage": "macos_distribution",
+      "failure": "no valid Developer ID identity or notarization credential group is configured",
+      "resolution": "retain the unsigned-preview label and close automatic credential provisioning as an external human prerequisite"
+    },
+    {
+      "stage": "documentation_contract_test",
+      "failure": "the initial report assertion expected a line wrap that did not match the actual historical banner",
+      "resolution": "assert the stable Colima-only semantic marker and rerun all six documentation contracts successfully"
+    }
+  ],
+  "reproduction": [
+    "docker context show",
+    "docker --context orbstack info",
+    "scripts/agent/audit-external-provider-cli-smoke --providers pi,opencode --pretty",
+    "scripts/macos_signing_credentials_doctor.sh",
+    "python3 -m unittest scripts.tests.test_nonmarketing_research_closeout",
+    "python3 -m unittest scripts.tests.test_nonmarketing_research_closeout scripts.tests.test_pi_droid_runner_support scripts.tests.test_public_product_truth",
+    "cd services/gateway-go && go test . -run 'Test(ToolsCapabilityMap|MemoryBrowserContext|Continuation|StagedRetrieval.*Letta|Inference|PolicyContextPackage|ObjectiveRuntimeState|ObjectiveGraph|RunAdvisorObjective)' -count=1",
+    "scripts/agent/audit-agent-output-contracts --pretty",
+    "scripts/agent/audit-universal-agent-adapter --pretty"
+  ],
+  "rollback": {
+    "documentation": "revert the decision record only with contradictory current source or runtime evidence",
+    "runtime_change": "runtime switching remains an explicit operator action followed by installed write/read and restart proof",
+    "provider_execution": "omit --execute; discovery remains network-free",
+    "macos_signing": "without credentials, emit only an unsigned technical preview"
+  }
+}

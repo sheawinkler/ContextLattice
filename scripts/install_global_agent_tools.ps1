@@ -580,6 +580,7 @@ $goNativeCommands = @(
     "contextlattice_agent_runtime_proof",
     "contextlattice_agent_adoption_proof",
     "contextlattice_agent_runtime_doctor",
+    "contextlattice_state",
     "contextlattice_strict_runtime_native_ownership",
     "contextlattice_context_boundary",
     "contextlattice_memory_topology",
@@ -649,6 +650,7 @@ Write-Host "  contextlattice_agent_adapter profiles"
 Write-Host "  contextlattice_agent_session runtime --pretty"
 Write-Host "  contextlattice_aggregate_signal preview --metric repair_rate --value 0.1 --pretty"
 Write-Host "  contextlattice_agent_runtime_proof --pretty"
+Write-Host "  contextlattice_state status --pretty"
 Write-Host "  contextlattice_agent_adoption_proof --skip-provider-smoke --progress --pretty"
 Write-Host "  contextlattice_context_boundary --pretty"
 Write-Host "  contextlattice_async_inbox_drain --session-id <session-id>"

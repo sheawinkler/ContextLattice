@@ -7,7 +7,7 @@ slug: releases
 ---
 # Releases
 
-The current public release baseline is `v4.0.6`. Release identity comes from the canonical commercial truth contract, signed or attributable artifacts, exact source SHAs, and deterministic verification—not from a page label alone.
+The current public release baseline is `v4.0.7`. Release identity comes from the canonical commercial truth contract, signed or attributable artifacts, exact source SHAs, and deterministic verification—not from a page label alone.
 
 ## Before upgrading
 
@@ -23,7 +23,7 @@ Source operators should use the repository instructions and `gmake quickstart`. 
 
 ```zsh
 git fetch --tags origin
-git checkout v4.0.6
+git checkout v4.0.7
 gmake quickstart
 ```
 

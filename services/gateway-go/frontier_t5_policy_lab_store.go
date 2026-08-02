@@ -39,12 +39,6 @@ type frontierT5Ledger struct {
 }
 
 func frontierT5LedgerPath() string {
-	if configured := strings.TrimSpace(os.Getenv(frontierT5LedgerPathEnv)); configured != "" {
-		return filepath.Clean(configured)
-	}
-	if root := strings.TrimSpace(os.Getenv("GO_MEMORY_STORE_ROOT")); root != "" {
-		return filepath.Join(filepath.Clean(root), "_contextlattice", "frontier_t5_policy_lab.ndjson")
-	}
 	return resolveStoragePath(frontierT5LedgerPathEnv, filepath.Join(".data", "orchestrator", "frontier_t5_policy_lab.ndjson"))
 }
 

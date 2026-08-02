@@ -5,6 +5,24 @@ Developer ID credentials are configured, the same release lane signs the app
 bundles before DMG creation, signs the final DMG, submits the DMG for
 notarization, staples the ticket, and runs a Gatekeeper assessment.
 
+## Distribution Posture
+
+Without a valid Developer ID Application identity and notarization credentials,
+the DMG is an **unsigned technical preview**. Release notes, download pages, and
+automation must not call that artifact signed, notarized, stapled, or
+Gatekeeper-approved.
+
+Credential provisioning is an external Apple account and Keychain operation.
+ContextLattice automation does not create certificates, enroll an Apple
+Developer team, log in or out, alter Keychain identities, or populate repository
+secrets without an explicit operator action. A missing-credential audit is a
+valid release posture, not permission to mutate authentication state.
+
+Reopen credential provisioning only when an authorized operator supplies the
+Apple Developer Program team and chooses a notarization credential mode. Until
+then, the source/CLI installation path is the recommended macOS path and the
+unsigned preview remains honestly labeled.
+
 Developer ID certificates require an Apple Developer Program team. If the team
 does not already have a Developer ID Application certificate, the Account Holder
 must create one in Xcode or Certificates, Identifiers & Profiles, export it as a

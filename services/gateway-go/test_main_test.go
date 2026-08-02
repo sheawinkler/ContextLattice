@@ -14,6 +14,7 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	runtimePaths := map[string]string{
+		"CONTEXTLATTICE_GATEWAY_STATE_ROOT":              filepath.Join(testRoot, "gateway_state"),
 		"GO_MEMORY_STORE_ROOT":                           filepath.Join(testRoot, "memory_store"),
 		"GO_AGENT_SESSIONS_PATH":                         filepath.Join(testRoot, "agent_sessions.json"),
 		"GO_AGENT_TASKS_PATH":                            filepath.Join(testRoot, "agent_tasks.json"),

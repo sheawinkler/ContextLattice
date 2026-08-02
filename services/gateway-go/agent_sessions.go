@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -65,14 +64,10 @@ type agentSessionStore struct {
 }
 
 func agentSessionsPath() string {
-	path := strings.TrimSpace(os.Getenv("GO_AGENT_SESSIONS_PATH"))
-	if path == "" {
-		path = strings.TrimSpace(os.Getenv("GO_AGENT_SESSION_LEDGER_PATH"))
-	}
-	if path == "" {
-		path = defaultAgentSessionsPathRel
-	}
-	return filepath.Clean(path)
+	return resolveStoragePathAliases(
+		[]string{"GO_AGENT_SESSIONS_PATH", "GO_AGENT_SESSION_LEDGER_PATH"},
+		defaultAgentSessionsPathRel,
+	)
 }
 
 func validateAgentSessionID(sessionID string) error {

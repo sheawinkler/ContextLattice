@@ -8,6 +8,7 @@ WORKDIR /src
 COPY services/gateway-go/go.mod services/gateway-go/go.sum ./
 RUN go mod download
 COPY services/gateway-go/*.go ./
+COPY services/gateway-go/internal ./internal
 ARG CONTEXTLATTICE_BUILD_VERSION
 ARG CONTEXTLATTICE_BUILD_CHANNEL
 ARG CONTEXTLATTICE_SOURCE_COMMIT
