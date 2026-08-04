@@ -113,6 +113,26 @@
     "git_diff_cached_check_seconds": 0.06,
     "eval_ledger_json_parse_seconds": 0.0,
     "measurement_basis": "authoritative sequential local-CI wall time on the development host",
+    "projection_release_gates": {
+      "public_canonical_race_gateway_seconds": 218.912,
+      "paid_canonical_race_gateway_seconds": 262.808,
+      "public_strict_projection_p95_ms": 7.02475,
+      "public_strict_proof_timeline_p95_ms": 2.249666,
+      "paid_strict_shared_retention_p95_ms": 145.56525,
+      "paid_strict_shared_retention_batch_p95_ms": [
+        169.345334,
+        145.56525,
+        141.699834
+      ],
+      "internal_full_volume_candidate_p95_ms": [
+        299.1625,
+        295.070333
+      ],
+      "internal_full_volume_baseline_p95_ms": 298.124584,
+      "strict_storage_tier": "verified canonical ContextLattice cache volume",
+      "internal_volume_free_gib": 1.5,
+      "canonical_volume_free_gb": 874.4
+    },
     "runtime_endpoint_latency": {
       "memory_search_seconds": 0.413545,
       "search_impact_missing_scope_seconds": 0.002339,
@@ -220,6 +240,30 @@
       "status": "resolved",
       "failure": "The canonical current release was v4.0.7 while the shared public-site truth tape still identified v4.0.6, causing the deterministic product-truth audit to fail on every lane baseline.",
       "resolution": "Correct the single shared truth-tape claim to v4.0.7 and require the commercial and public lane product-truth audits to pass on their exact projected trees before merge."
+    },
+    {
+      "stage": "public_projection_inventory_fixture",
+      "status": "resolved",
+      "failure": "The public projection correctly added one public-safe durable sidecar owner, but its public-only inventory-count assertion still expected 33 owners instead of 34.",
+      "resolution": "Update only the public test expectation to 34, retain every commercial-only exclusion, and require the exact test, full suite, race suite, product-truth audit, and independent projection review to pass."
+    },
+    {
+      "stage": "authoritative_race_gate_selection",
+      "status": "resolved",
+      "failure": "A bare full-race invocation failed only the proof-timeline latency holdout that the canonical release matrix explicitly isolates from race instrumentation.",
+      "resolution": "Classify the bare invocation as non-authoritative, retain its exact failure, and pass the matrix-defined all-package race gate with the five documented isolated latency and holdout tests excluded on both projected lanes."
+    },
+    {
+      "stage": "zsh_only_exact_tree_audit",
+      "status": "resolved",
+      "failure": "The repository-native exact-tree wrapper is Bash-based and therefore cannot be authoritative under the active Zsh-only execution contract.",
+      "resolution": "Stop and discard the wrapper sessions, materialize each immutable candidate with a temporary Git index under Zsh, and run the same full Go, orchestrator, generated-truth, Compose, product-truth, strict holdout, and candidate-bound open-core checks directly."
+    },
+    {
+      "stage": "strict_durability_storage_tier",
+      "status": "resolved",
+      "failure": "The paid shared-proof fsync holdout measured 295 to 299 milliseconds against a 250 millisecond cap on an internal volume at full capacity; the exact paid baseline reproduced at 298 milliseconds.",
+      "resolution": "Verify mount, ownership, free space, protocol, and write activity before rerunning on the canonical ContextLattice cache tier; the unchanged candidate then passed strict mode at 145.56525 milliseconds with all three batches below 250 milliseconds."
     }
   ],
   "result": {
@@ -242,13 +286,18 @@
     "The live source-bound gateway returned HTTP 200 for memory search with search_intelligence.v1 in shadow mode, preserved native score-desc ordering, emitted a bounded 12-candidate frontier, and reported learned and calibrated activation false.",
     "The live search-impact route returned HTTP 422 when exact project and task_class scope was absent and HTTP 200 for exact scope with search_impact_intelligence.v1, advisory abstention, insufficient_evidence, canary false, entitlement false, and global token telemetry explicitly non-gating.",
     "The one-way live privacy migration preserved every one of the 1702 pre-migration durable rows, removed every raw topic_path, materialized 1099 opaque topic_ref values and six opaque legacy reporter references, and admitted no legacy credit; the then-current operational ledger is checksum-identical before and after the final gateway startup prior to endpoint calls.",
-    "The owner-only regression-fixture sidecar materialized as a mode-0600 empty durable file and reported configured, enabled, and healthy; gateway restart count remained zero and unrelated containers retained their identities and restart counts."
+    "The owner-only regression-fixture sidecar materialized as a mode-0600 empty durable file and reported configured, enabled, and healthy; gateway restart count remained zero and unrelated containers retained their identities and restart counts.",
+    "Public and paid projected commits passed their authoritative matrix-defined all-package race gates in 218.912 and 262.808 seconds, plus full normal suites, vet, Linux and Windows cross-builds, Compose, and exact lane product-truth checks.",
+    "Zsh-only temporary Git-index materialization proved the public and paid committed trees, and the candidate-bound open-core audit returned zero errors or warnings across private, public, and public-paid lanes.",
+    "Strict isolated holdouts passed on the verified canonical storage tier: public projection p95 7.02475 milliseconds, public proof-timeline p95 2.249666 milliseconds, and paid shared-proof retention median p95 145.56525 milliseconds with three passing batches."
   ],
   "reproduction": [
     "cd services/gateway-go && go test . -run '^(TestMergeNeighborRows|TestMergeRowsKeepsDistinct|TestStagedRetrieval|TestNormalizeSourceRows|TestSearchIntelligence|TestContextPack|TestEvidenceReputation|TestTokenImpactTelemetry|TestSearchImpact|TestReconcileCandidateUtilityVerification|TestTelemetrySearchImpact|TestLatestSearchImpactShadowEvaluation|TestReadRecallMonitorHistory|TestSavedRecallImpact|TestRecallComparatorPersistence|TestUtilityOutcomeDuplicate|TestUtilityDurableClaimBinding)' -count=1 -timeout 20m",
     "cd services/gateway-go && go test -race . -run '^(TestMergeNeighborRows|TestMergeRowsKeepsDistinct|TestStagedRetrieval|TestNormalizeSourceRows|TestSearchIntelligence|TestContextPack|TestEvidenceReputation|TestTokenImpactTelemetry|TestSearchImpact|TestReconcileCandidateUtilityVerification|TestTelemetrySearchImpact|TestLatestSearchImpactShadowEvaluation|TestReadRecallMonitorHistory|TestSavedRecallImpact|TestRecallComparatorPersistence|TestUtilityOutcomeDuplicate|TestUtilityDurableClaimBinding)' -count=1 -timeout 20m",
     "cd services/gateway-go && go vet ./...",
     "cd services/gateway-go && go test ./... -count=1 -timeout 20m",
+    "cd services/gateway-go && go test -race ./... -skip '^(TestFrontierT1ReleaseEvalEvidence|TestFrontierT2AgentPacketProjectionLatencyGate|TestFrontierT2DeltaPacketHoldout|TestFrontierT2ProofTimelineHoldout|TestFrontierT2SharedProofRetentionLatencyHoldout)$' -count=1",
+    "cd services/gateway-go && TMPDIR=\"${CONTEXTLATTICE_CANONICAL_TMPDIR:?}\" CONTEXTLATTICE_FRONTIER_T2_SHARED_PROOF_PERFORMANCE_GATE=1 CONTEXTLATTICE_FRONTIER_STRICT_LATENCY_GATE=1 FRONTIER_T2_TESTED_COMMIT=\"$(git rev-parse HEAD)\" FRONTIER_T2_SHARED_PROOF_EVIDENCE_PATH=\"${CONTEXTLATTICE_CANONICAL_TMPDIR}/shared-proof-eval.json\" go test -run '^(TestFrontierT2SharedProofConcurrentRetainRead|TestFrontierT2SharedProofRetentionLatencyHoldout)$' -count=1 .",
     "cd services/gateway-go && GOOS=linux GOARCH=amd64 go build ./...",
     "cd services/gateway-go && GOOS=windows GOARCH=amd64 go build ./...",
     "python3 scripts/tests/test_context_pack_regression_fixture_config.py",
