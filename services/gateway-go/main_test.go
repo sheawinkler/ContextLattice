@@ -888,7 +888,7 @@ func TestMemorySearchUsesGoStagedRetrieval(t *testing.T) {
 	gateway := httptest.NewServer(buildMux(s))
 	defer gateway.Close()
 
-	reqBody := `{"query":"alpha","limit":5,"include_grounding":true,"agent_id":"codex_gpt5","objective":"ship premium launch","goal":"increase subscriber conversion","mission":"compound knowledge over time"}`
+	reqBody := `{"query":"alpha","limit":5,"include_grounding":true,"retrieval_intent":"release","as_of":"2026-08-04T12:00:00Z","agent_id":"codex_gpt5","objective":"ship premium launch","goal":"increase subscriber conversion","mission":"compound knowledge over time"}`
 	resp, err := http.Post(gateway.URL+"/memory/search", "application/json", strings.NewReader(reqBody))
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
@@ -911,6 +911,24 @@ func TestMemorySearchUsesGoStagedRetrieval(t *testing.T) {
 	}
 	if !anyToBool(payload["learning_enabled"]) {
 		t.Fatalf("expected learning_enabled=true")
+	}
+	searchIntelligence := anyMap(payload["search_intelligence"])
+	if anyToString(searchIntelligence["schema_id"]) != searchIntelligenceContractID || anyToString(searchIntelligence["mode"]) != "shadow" {
+		t.Fatalf("expected bounded shadow search intelligence, got %#v", searchIntelligence)
+	}
+	if anyToString(anyMap(searchIntelligence["literal_results"])["ordering"]) != "native_score_desc_preserved" {
+		t.Fatalf("search intelligence does not prove literal-order preservation: %#v", searchIntelligence)
+	}
+	decisionContext := anyMap(searchIntelligence["decision_context"])
+	if anyToString(decisionContext["as_of"]) != "2026-08-04T12:00:00Z" || anyToString(decisionContext["retrieval_intent"]) != "release" {
+		t.Fatalf("search intelligence did not receive explicit as-of or retrieval intent: %#v", decisionContext)
+	}
+	intelligenceJSON, err := json.Marshal(searchIntelligence)
+	if err != nil {
+		t.Fatalf("marshal search intelligence: %v", err)
+	}
+	if strings.Contains(string(intelligenceJSON), "alpha summary") || strings.Contains(string(intelligenceJSON), "notes/a.md") {
+		t.Fatalf("search intelligence leaked raw result content or path: %s", intelligenceJSON)
 	}
 	objectiveContext, ok := payload["objective_context"].(map[string]any)
 	if !ok {
@@ -1192,6 +1210,7 @@ func TestHotPathRoutesRemainGoOwned(t *testing.T) {
 		`mux.HandleFunc("/agents/tasks/", s.agentsTasksRoute)`,
 		`mux.HandleFunc("/telemetry/metrics", s.telemetryMetricsRoute)`,
 		`mux.HandleFunc("/telemetry/token-impact", s.telemetryTokenImpactRoute)`,
+		`mux.HandleFunc(searchImpactIntelligencePath, s.telemetrySearchImpactRoute)`,
 		`mux.HandleFunc("/telemetry/context-pack-quality", s.telemetryContextPackQualityRoute)`,
 		`mux.HandleFunc("/telemetry/context-pack-quality/outcome", s.telemetryContextPackQualityOutcomeRoute)`,
 		`mux.HandleFunc("/telemetry/claim-graph", s.telemetryClaimGraph)`,
@@ -1283,6 +1302,7 @@ func TestHotPathRoutesRemainGoOwned(t *testing.T) {
 		`mux.HandleFunc("/agents/tasks/", s.proxy)`,
 		`mux.HandleFunc("/telemetry/metrics", s.proxy)`,
 		`mux.HandleFunc("/telemetry/token-impact", s.proxy)`,
+		`mux.HandleFunc(searchImpactIntelligencePath, s.proxy)`,
 		`mux.HandleFunc("/telemetry/context-pack-quality", s.proxy)`,
 		`mux.HandleFunc("/telemetry/context-pack-quality/outcome", s.proxy)`,
 		`mux.HandleFunc("/telemetry/claim-graph", s.proxy)`,
@@ -5558,7 +5578,7 @@ func TestAgentsPreflightUsesNamedProfileDefaults(t *testing.T) {
 	}
 }
 
-func TestStagedRetrievalMergesSourcesAndGrounding(t *testing.T) {
+func TestStagedRetrievalPreservesSameFilePassagesAndGrounding(t *testing.T) {
 	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
 	t.Setenv("ORCH_RETRIEVAL_SOURCES", "topic_rollups,qdrant")
 	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "topic_rollups,qdrant")
@@ -5626,21 +5646,24 @@ func TestStagedRetrievalMergesSourcesAndGrounding(t *testing.T) {
 		t.Fatalf("expected at least two merged results, got %#v", payload["results"])
 	}
 
-	var mergedA map[string]any
+	sameFilePassages := map[string][]string{}
 	for _, row := range resultsRaw {
 		typed, _ := row.(map[string]any)
 		if strings.TrimSpace(anyToString(typed["file"])) == "a.md" {
-			mergedA = typed
-			break
+			sameFilePassages[anyToString(typed["summary"])] = anyToStringSlice(typed["sources"])
 		}
 	}
-	if mergedA == nil {
-		t.Fatalf("expected merged row for a.md, got %#v", resultsRaw)
+	if len(sameFilePassages) != 2 {
+		t.Fatalf("expected distinct passages from a.md, got %#v", resultsRaw)
 	}
-	sourcesList := anyToStringSlice(mergedA["sources"])
-	sort.Strings(sourcesList)
-	if strings.Join(sourcesList, ",") != "qdrant,topic_rollups" {
-		t.Fatalf("expected merged sources qdrant,topic_rollups got %v", sourcesList)
+	for summary, expectedSource := range map[string]string{
+		"rollup a": "topic_rollups",
+		"vector a": "qdrant",
+	} {
+		sourcesList := sameFilePassages[summary]
+		if strings.Join(sourcesList, ",") != expectedSource {
+			t.Fatalf("expected %q to retain %q identity, got %v", summary, expectedSource, sourcesList)
+		}
 	}
 
 	grounding, ok := payload["grounding"].(map[string]any)

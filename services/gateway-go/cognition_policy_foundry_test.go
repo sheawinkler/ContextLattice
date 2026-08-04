@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -12,26 +13,51 @@ import (
 	"testing"
 )
 
-func seedContextPolicyOutcomes(t testing.TB, s *server, count int) {
+func recordAuthoritativeContextPackOutcomeForTest(t testing.TB, s *server, qualitySample, outcome map[string]any) {
+	t.Helper()
+	if s == nil || s.contextPackQuality == nil {
+		t.Fatal("context-pack quality telemetry is unavailable")
+	}
+	s.contextPackQuality.recordQuality(qualitySample)
+	if !contextPackQualityLedgerAvailable(s.contextPackQuality.ledger) {
+		t.Fatal("test fixture requires an acknowledged context-pack quality ledger")
+	}
+	body, err := json.Marshal(outcome)
+	if err != nil {
+		t.Fatalf("marshal authoritative context-pack outcome: %v", err)
+	}
+	response := httptest.NewRecorder()
+	s.telemetryContextPackQualityOutcomeRoute(response, httptest.NewRequest(http.MethodPost, "/telemetry/context-pack-quality/outcome", bytes.NewReader(body)))
+	if response.Code != http.StatusOK {
+		t.Fatalf("record authoritative context-pack outcome: status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func seedContextPolicyOutcomesForProject(t testing.TB, s *server, project string, count int) {
 	t.Helper()
 	for index := 0; index < count; index++ {
-		sampleID := "cpq_policy_" + anyToString(index)
-		s.contextPackQuality.recordQuality(map[string]any{
-			"sample_id": sampleID, "project": "contextlattice", "quality_score": 88,
+		sampleID := "cpq_policy_" + project + "_" + anyToString(index)
+		recordAuthoritativeContextPackOutcomeForTest(t, s, map[string]any{
+			"sample_id": sampleID, "project": project, "quality_score": 88,
 			"model_call_token_basis": 3600 + index, "returned_source_count": 3,
 			"graph_context_used": index%2 == 0, "tokenizer_exact": true,
-		})
-		s.contextPackQuality.recordOutcome(map[string]any{
-			"outcome_id": "outcome_policy_" + anyToString(index), "sample_id": sampleID,
+		}, map[string]any{
+			"outcome_id": "outcome_policy_" + project + "_" + anyToString(index), "sample_id": sampleID,
+			"project":            project,
 			"first_pass_success": true, "repair_required": false, "retry_count": 0,
 			"followup_tokens": 80, "provider_total_tokens": 900,
-			"calibration_eligible": true, "outcome_source": "contract_test",
+			"outcome_source": "contract_test",
 		})
 	}
 }
 
+func seedContextPolicyOutcomes(t testing.TB, s *server, count int) {
+	seedContextPolicyOutcomesForProject(t, s, "contextlattice", count)
+}
+
 func BenchmarkContextPolicyCandidate100Outcomes(b *testing.B) {
-	b.Setenv("GO_CONTEXT_PACK_QUALITY_LEDGER_ENABLED", "false")
+	b.Setenv("GO_CONTEXT_PACK_QUALITY_LEDGER_ENABLED", "true")
+	b.Setenv("GO_CONTEXT_PACK_QUALITY_LEDGER_PATH", filepath.Join(b.TempDir(), "context-pack-quality.ndjson"))
 	s := &server{contextPackQuality: newContextPackQualityTelemetry(200)}
 	seedContextPolicyOutcomes(b, s, 100)
 	b.ResetTimer()
@@ -64,6 +90,8 @@ func TestContextPolicyLifecycleIsOneStepAndAdvisory(t *testing.T) {
 	t.Setenv("CONTEXTLATTICE_CONTEXT_POLICY_PATH", filepath.Join(t.TempDir(), "policy.ndjson"))
 	t.Setenv("CONTEXTLATTICE_CONTEXT_POLICY_FSYNC", "false")
 	t.Setenv("CONTEXTLATTICE_SKILL_FOUNDRY_ENABLED", "false")
+	t.Setenv("GO_CONTEXT_PACK_QUALITY_LEDGER_ENABLED", "true")
+	t.Setenv("GO_CONTEXT_PACK_QUALITY_LEDGER_PATH", filepath.Join(t.TempDir(), "context-pack-quality.ndjson"))
 	s := newTestServer(t, "http://127.0.0.1:1")
 	seedContextPolicyOutcomes(t, s, 24)
 	gateway := httptest.NewServer(buildMux(s))
@@ -130,14 +158,11 @@ func TestContextPolicyTerminalPhasesRejectFurtherEvaluation(t *testing.T) {
 }
 
 func TestContextPolicyTrainingIsProjectScoped(t *testing.T) {
-	t.Setenv("GO_CONTEXT_PACK_QUALITY_LEDGER_ENABLED", "false")
+	t.Setenv("GO_CONTEXT_PACK_QUALITY_LEDGER_ENABLED", "true")
+	t.Setenv("GO_CONTEXT_PACK_QUALITY_LEDGER_PATH", filepath.Join(t.TempDir(), "context-pack-quality.ndjson"))
 	s := &server{contextPackQuality: newContextPackQualityTelemetry(100), contextPolicy: &contextPolicyStore{candidates: map[string]map[string]any{}}}
 	for _, project := range []string{"alpha", "beta"} {
-		for index := 0; index < 12; index++ {
-			sampleID := project + "-sample-" + anyToString(index)
-			s.contextPackQuality.recordQuality(map[string]any{"sample_id": sampleID, "project": project, "quality_score": 90, "returned_source_count": 2})
-			s.contextPackQuality.recordOutcome(map[string]any{"outcome_id": project + "-outcome-" + anyToString(index), "sample_id": sampleID, "project": project, "first_pass_success": true, "calibration_eligible": true})
-		}
+		seedContextPolicyOutcomesForProject(t, s, project, 12)
 	}
 	s.contextPackQuality.recordOutcome(map[string]any{"outcome_id": "legacy-unlinked", "sample_id": "missing", "first_pass_success": true, "calibration_eligible": true})
 	candidate, recorded, err := s.buildContextPolicyCandidate(map[string]any{"project": "alpha", "minimum_outcomes": 10})
@@ -150,7 +175,8 @@ func TestContextPolicyTrainingIsProjectScoped(t *testing.T) {
 }
 
 func TestContextPolicyPersistedEvidenceIsPhaseScopedAndCannotBeMixed(t *testing.T) {
-	t.Setenv("GO_CONTEXT_PACK_QUALITY_LEDGER_ENABLED", "false")
+	t.Setenv("GO_CONTEXT_PACK_QUALITY_LEDGER_ENABLED", "true")
+	t.Setenv("GO_CONTEXT_PACK_QUALITY_LEDGER_PATH", filepath.Join(t.TempDir(), "context-pack-quality.ndjson"))
 	id := "ctxpol_phase_scope"
 	s := &server{
 		contextPackQuality: newContextPackQualityTelemetry(200),
@@ -165,10 +191,13 @@ func TestContextPolicyPersistedEvidenceIsPhaseScopedAndCannotBeMixed(t *testing.
 		if index%2 == 1 {
 			arm = "shadow"
 		}
-		s.contextPackQuality.recordOutcome(map[string]any{
+		sampleID := "phase-sample-" + anyToString(index)
+		recordAuthoritativeContextPackOutcomeForTest(t, s, map[string]any{
+			"sample_id": sampleID, "project": "contextlattice", "quality_score": 90,
+		}, map[string]any{
 			"outcome_id": "phase-" + anyToString(index), "sample_id": "phase-sample-" + anyToString(index),
 			"project": "contextlattice", "policy_id": id, "policy_arm": arm, "policy_phase": "shadow",
-			"first_pass_success": true, "repair_required": false, "calibration_eligible": true,
+			"first_pass_success": true, "repair_required": false,
 		})
 	}
 	evaluation, _, err := s.contextPolicyEvaluation(map[string]any{"candidate_id": id, "minimum_arm_samples": 10})
@@ -205,7 +234,8 @@ func TestContextPolicyLifecycleCannotRegressOrApplyAStaleTransition(t *testing.T
 	t.Setenv("CONTEXTLATTICE_CONTEXT_POLICY_ENABLED", "true")
 	t.Setenv("CONTEXTLATTICE_CONTEXT_POLICY_PATH", filepath.Join(t.TempDir(), "policy.ndjson"))
 	t.Setenv("CONTEXTLATTICE_CONTEXT_POLICY_FSYNC", "false")
-	t.Setenv("GO_CONTEXT_PACK_QUALITY_LEDGER_ENABLED", "false")
+	t.Setenv("GO_CONTEXT_PACK_QUALITY_LEDGER_ENABLED", "true")
+	t.Setenv("GO_CONTEXT_PACK_QUALITY_LEDGER_PATH", filepath.Join(t.TempDir(), "context-pack-quality.ndjson"))
 	s := &server{contextPackQuality: newContextPackQualityTelemetry(100)}
 	store, err := newContextPolicyStoreFromEnv()
 	if err != nil {

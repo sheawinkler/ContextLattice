@@ -449,7 +449,10 @@ func utilityObservationDigest(row map[string]any) string {
 
 func utilitySourceClaimDigest(outcome map[string]any) string {
 	claim := cloneAnyMap(outcome)
-	for _, field := range []string{"capturedAt", "captured_at", "updated_at", "revision", "observation_digest", "source_claim_digest"} {
+	// The gateway receipt timestamp is authoritative chronology metadata, not
+	// part of the reporter's logical claim. A retried claim therefore keeps the
+	// same source identity even though each HTTP attempt has a new receipt time.
+	for _, field := range []string{"capturedAt", "captured_at", "gateway_received_at", "updated_at", "revision", "observation_digest", "source_claim_digest"} {
 		delete(claim, field)
 	}
 	raw, err := json.Marshal(claim)
@@ -505,18 +508,46 @@ func utilityVerificationEvent(events []map[string]any, eventID string) map[strin
 	return nil
 }
 
+// utilityVerificationEventForProject accepts both legacy private-only claims
+// and the quality telemetry's project-bound opaque event ref. The raw event
+// stays in Agent Session storage; public Utility/quality rows retain only the
+// opaque value.
+func utilityVerificationEventForProject(events []map[string]any, eventID, project string) map[string]any {
+	eventID = strings.TrimSpace(eventID)
+	if eventID == "" {
+		return nil
+	}
+	for _, event := range events {
+		rawID := strings.TrimSpace(anyToString(event["id"]))
+		if rawID == eventID || contextPackQualityOpaqueReporterRef(project, "verification_event_id", rawID, 128) == eventID {
+			return cloneAnyMap(event)
+		}
+	}
+	return nil
+}
+
+func utilityReporterRefMatches(project, field, stored string, raw any, limit int) bool {
+	stored = strings.TrimSpace(stored)
+	rawValue := strings.TrimSpace(anyToString(raw))
+	if stored == "" || rawValue == "" {
+		return false
+	}
+	return stored == rawValue || stored == contextPackQualityOpaqueReporterRef(project, field, rawValue, limit)
+}
+
 func utilityVerifyClaim(row map[string]any, event map[string]any) (map[string]any, string) {
 	claim := cloneAnyMap(anyMap(row["utility"]))
 	claim["independently_verified"] = false
 	claim["verification_status"] = "unverified"
 	eventID := strings.TrimSpace(anyToString(claim["verification_event_id"]))
+	project := strings.TrimSpace(anyToString(row["project"]))
 	if eventID == "" {
 		return claim, "verification_event_not_declared"
 	}
 	if len(event) == 0 {
 		return claim, "verification_event_not_found"
 	}
-	if anyToString(event["id"]) != eventID || proofTimelineStageForEvent(anyToString(event["type"])) != "verification" {
+	if !utilityReporterRefMatches(project, "verification_event_id", eventID, event["id"], 128) || proofTimelineStageForEvent(anyToString(event["type"])) != "verification" {
 		return claim, "verification_event_stage_mismatch"
 	}
 	metadata := anyMap(event["metadata"])
@@ -539,7 +570,7 @@ func utilityVerifyClaim(row map[string]any, event map[string]any) (map[string]an
 		return claim, "verification_utility_mismatch"
 	}
 	unit := strings.TrimSpace(anyToString(firstPresentAny(proof["utility_unit"], proof["unit"])))
-	if unit == "" || unit != anyToString(claim["unit"]) {
+	if !utilityReporterRefMatches(project, "utility_unit", anyToString(claim["unit"]), unit, 80) {
 		return claim, "verification_unit_mismatch"
 	}
 	digest := strings.TrimSpace(anyToString(firstPresentAny(proof["evidence_digest"], proof["verification_evidence_digest"])))
@@ -551,7 +582,7 @@ func utilityVerifyClaim(row map[string]any, event map[string]any) (map[string]an
 		return claim, "verification_verifier_invalid"
 	}
 	verifierID := strings.TrimSpace(anyToString(proof["verifier_id"]))
-	if verifierID == "" || verifierID != anyToString(claim["verifier_id"]) {
+	if !utilityReporterRefMatches(project, "verifier_id", anyToString(claim["verifier_id"]), verifierID, 160) {
 		return claim, "verification_verifier_mismatch"
 	}
 	eventVerifierID := strings.TrimSpace(anyToString(event["agent_id"]))
@@ -574,8 +605,16 @@ func utilityVerifyClaim(row map[string]any, event map[string]any) (map[string]an
 	claim["verified_at"] = firstNonEmptyStrings(anyToString(event["created_at"]), nowUTCISO())
 	claim["evidence_digest"] = digest
 	claim["verifier_kind"] = verifierKind
-	claim["verifier_id"] = verifierID
-	claim["verification_actor_id"] = eventVerifierID
+	if opaqueVerifierID := contextPackQualityOpaqueReporterRef(project, "verifier_id", verifierID, 160); opaqueVerifierID != "" && utilitySHA256DigestValid(anyToString(claim["verifier_id"])) {
+		claim["verifier_id"] = opaqueVerifierID
+	} else {
+		claim["verifier_id"] = verifierID
+	}
+	if opaqueActorID := contextPackQualityOpaqueReporterRef(project, "verifier_id", eventVerifierID, 160); opaqueActorID != "" && utilitySHA256DigestValid(anyToString(claim["verifier_id"])) {
+		claim["verification_actor_id"] = opaqueActorID
+	} else {
+		claim["verification_actor_id"] = eventVerifierID
+	}
 	return claim, ""
 }
 
@@ -675,10 +714,10 @@ func buildUtilityObservation(outcome, quality, impact map[string]any, events []m
 		"tokenizer_encoding":                  anyToString(impact["tokenizer_encoding"]),
 	}
 	claim := normalizeUtilityOutcomeClaim(outcome)
-	event := utilityVerificationEvent(events, anyToString(claim["verification_event_id"]))
+	event := utilityVerificationEventForProject(events, anyToString(claim["verification_event_id"]), anyToString(outcome["project"]))
 	verifiedClaim, verificationReason := utilityVerifyClaim(map[string]any{
 		"outcome_id": outcomeID, "sample_id": sampleID, "session_id": anyToString(identity["session_id"]),
-		"agent_id": anyToString(identity["agent_id"]), "utility": claim,
+		"agent_id": anyToString(identity["agent_id"]), "project": anyToString(outcome["project"]), "utility": claim,
 	}, event)
 	if verificationReason != "" {
 		exclusions = append(exclusions, verificationReason)
@@ -751,7 +790,7 @@ func (s *server) recordUtilitySessionEvent(session, event map[string]any) map[st
 		}
 		return map[string]any{"ok": true, "status": "pending_or_not_applicable", "outcome_id": outcomeID}
 	}
-	if anyToString(row["session_id"]) != anyToString(session["id"]) || anyToString(anyMap(row["utility"])["verification_event_id"]) != anyToString(event["id"]) {
+	if anyToString(row["session_id"]) != anyToString(session["id"]) || !utilityReporterRefMatches(anyToString(row["project"]), "verification_event_id", anyToString(anyMap(row["utility"])["verification_event_id"]), event["id"], 128) {
 		return map[string]any{"ok": true, "status": "pending_or_not_applicable", "outcome_id": outcomeID}
 	}
 	claim, reason := utilityVerifyClaim(row, event)
@@ -798,8 +837,11 @@ func (t *utilityTelemetry) rows(query utilityQuery) []map[string]any {
 		if query.TaskClass != "" && !strings.EqualFold(anyToString(row["task_class"]), query.TaskClass) {
 			continue
 		}
-		if query.UtilityUnit != "" && !strings.EqualFold(anyToString(anyMap(row["utility"])["unit"]), query.UtilityUnit) {
-			continue
+		if query.UtilityUnit != "" {
+			storedUnit := anyToString(anyMap(row["utility"])["unit"])
+			if !strings.EqualFold(storedUnit, query.UtilityUnit) && storedUnit != contextPackQualityOpaqueReporterRef(anyToString(row["project"]), "utility_unit", query.UtilityUnit, 80) {
+				continue
+			}
 		}
 		captured, err := time.Parse(time.RFC3339Nano, anyToString(row["captured_at"]))
 		if err == nil {
@@ -820,7 +862,11 @@ func utilityPairProjection(rows []map[string]any) ([]map[string]any, []utilityPa
 	byOutcome := map[string]map[string]any{}
 	for index, row := range rows {
 		projected[index] = cloneAnyMap(row)
-		byOutcome[anyToString(row["outcome_id"])] = projected[index]
+		outcomeID := anyToString(row["outcome_id"])
+		byOutcome[outcomeID] = projected[index]
+		if opaqueControlRef := contextPackQualityOpaqueReporterRef(anyToString(row["project"]), "matched_control_outcome_id", outcomeID, 200); opaqueControlRef != "" {
+			byOutcome[opaqueControlRef] = projected[index]
+		}
 	}
 	sort.SliceStable(projected, func(i, j int) bool {
 		left, right := anyToString(projected[i]["captured_at"]), anyToString(projected[j]["captured_at"])

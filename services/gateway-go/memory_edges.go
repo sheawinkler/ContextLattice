@@ -893,11 +893,16 @@ func mergeNeighborRows(memoryID string, edgeRows []map[string]any, retrievalRows
 	_, _, canonicalSelf, _, _ := canonicalMemoryID(memoryID)
 	out := make([]any, 0, limit)
 	seen := map[string]struct{}{}
-	add := func(row map[string]any, fallbackSource string) {
+	add := func(row map[string]any) {
 		if len(out) >= limit || row == nil {
 			return
 		}
-		identity := rowIdentity(row, fallbackSource)
+		if rowMemoryID := contextPackGraphMemoryID(row); rowMemoryID != "" {
+			if _, _, canonicalRow, _, err := canonicalMemoryID(rowMemoryID); err == nil && strings.EqualFold(canonicalRow, canonicalSelf) {
+				return
+			}
+		}
+		identity := rowIdentity(row)
 		if strings.EqualFold(identity, canonicalSelf) {
 			return
 		}
@@ -912,14 +917,14 @@ func mergeNeighborRows(memoryID string, edgeRows []map[string]any, retrievalRows
 		out = append(out, row)
 	}
 	for _, row := range edgeRows {
-		add(row, memoryEdgeSource)
+		add(row)
 	}
 	for _, raw := range retrievalRows {
 		row, ok := raw.(map[string]any)
 		if !ok {
 			continue
 		}
-		add(row, strings.TrimSpace(anyToString(row["source"])))
+		add(row)
 	}
 	return out
 }

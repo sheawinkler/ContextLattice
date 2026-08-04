@@ -332,6 +332,8 @@ type server struct {
 	utility                         *utilityTelemetry
 	telemetryMetricsMu              sync.Mutex
 	telemetryMetricsState           map[string]any
+	impactComparatorMu              sync.Mutex
+	impactComparatorUnavailable     bool
 	memoryTelemetryMu               sync.Mutex
 	memoryTelemetryLastWriteAt      string
 	memoryTelemetryLastWriteLatency float64
@@ -3827,31 +3829,11 @@ func parseScore(row map[string]any) float64 {
 	return 0
 }
 
-func rowIdentity(row map[string]any, fallbackSource string) string {
-	project := strings.TrimSpace(anyToString(row["project"]))
-	file := strings.TrimSpace(anyToString(row["file"]))
-	if project != "" && file != "" {
-		return project + "::" + file
-	}
-	memoryID := strings.TrimSpace(anyToString(row["memory_id"]))
-	if memoryID != "" {
-		return memoryID
-	}
-	id := strings.TrimSpace(anyToString(row["id"]))
-	if id != "" {
-		return id
-	}
-	if file != "" {
-		return fallbackSource + "::" + file
-	}
-	summary := strings.TrimSpace(anyToString(row["summary"]))
-	if summary != "" {
-		sum := sha1.Sum([]byte(summary))
-		return fallbackSource + "::summary::" + strconv.FormatUint(uint64(sum[0])<<8|uint64(sum[1]), 16)
-	}
-	encoded, _ := json.Marshal(row)
-	sum := sha1.Sum(encoded)
-	return fallbackSource + "::hash::" + strconv.FormatUint(uint64(sum[0])<<8|uint64(sum[1]), 16)
+func rowIdentity(row map[string]any) string {
+	// Identity must not collapse every passage from one file into a single
+	// result. The candidate digest retains passage identity while allowing a
+	// byte-identical passage retrieved from separate stores to merge.
+	return searchIntelligenceCandidateIdentity(row).CandidateRef
 }
 
 type mergeEntry struct {
@@ -3862,16 +3844,17 @@ type mergeEntry struct {
 }
 
 func mergeRows(rowsBySource map[string][]map[string]any, limit int) []map[string]any {
-	if limit < 1 {
-		limit = 1
-	}
+	return truncateMergedRows(mergeRowsAll(rowsBySource), limit)
+}
+
+func mergeRowsAll(rowsBySource map[string][]map[string]any) []map[string]any {
 	entries := make(map[string]*mergeEntry)
 	for source, rows := range rowsBySource {
 		for _, row := range rows {
 			if row == nil {
 				continue
 			}
-			key := rowIdentity(row, source)
+			key := rowIdentity(row)
 			score := parseScore(row)
 			actualSource := strings.TrimSpace(strings.ToLower(anyToString(row["source"])))
 			if actualSource == "" {
@@ -3913,9 +3896,6 @@ func mergeRows(rowsBySource map[string][]map[string]any, limit int) []map[string
 		}
 		return rows[i].score > rows[j].score
 	})
-	if len(rows) > limit {
-		rows = rows[:limit]
-	}
 	out := make([]map[string]any, 0, len(rows))
 	for _, entry := range rows {
 		merged := cloneMap(entry.row)
@@ -3931,6 +3911,16 @@ func mergeRows(rowsBySource map[string][]map[string]any, limit int) []map[string
 		out = append(out, merged)
 	}
 	return out
+}
+
+func truncateMergedRows(rows []map[string]any, limit int) []map[string]any {
+	if limit < 1 {
+		limit = 1
+	}
+	if len(rows) > limit {
+		rows = rows[:limit]
+	}
+	return append([]map[string]any{}, rows...)
 }
 
 func clipText(value string, maxChars int) string {
@@ -5682,7 +5672,11 @@ func (s *server) runSourceBatch(
 			)
 		}
 		if len(result.rows) > 0 {
-			result.rows = s.normalizeSourceRows(result.source, result.rows)
+			result.rows = s.normalizeSourceRowsWithOwner(result.source, result.sourceOwner, result.rows)
+			// Backend rows are data. Bind their canonical trust assessment to a
+			// gateway-only envelope before any advisory analysis, and discard raw
+			// trust claims that could otherwise affect the shadow frontier.
+			result.rows = searchIntelligenceNormalizeGatewayTrustRows(result.rows)
 		}
 		if len(result.rows) > 0 {
 			filteredRows, suppressed := s.filterExactStateRows(result.rows)
@@ -5992,6 +5986,7 @@ func (s *server) executeRetrieval(
 	if retrievalIntent == "" {
 		retrievalIntent = "decision"
 	}
+	searchIntelligenceAsOf, searchIntelligenceAsOfSource := searchIntelligenceResolveAsOf(requestPayload, time.Now().UTC())
 	trafficClass := strings.TrimSpace(strings.ToLower(anyToString(requestPayload["traffic_class"])))
 	if trafficClass == "" {
 		trafficClass = "user"
@@ -6474,7 +6469,8 @@ func (s *server) executeRetrieval(
 		warnings = append(warnings, "Adaptive timeout policy skipped timed-out sources for remaining recall hops: "+strings.Join(skipped, ", ")+".")
 	}
 
-	merged = mergeRows(sourceRows, limit)
+	allMerged := mergeRowsAll(sourceRows)
+	merged = truncateMergedRows(allMerged, limit)
 	returnedSources := make([]string, 0, len(sourceRows))
 	for source, rows := range sourceRows {
 		if len(rows) == 0 {
@@ -6863,6 +6859,18 @@ func (s *server) executeRetrieval(
 		},
 	}
 
+	searchIntelligence := buildSearchIntelligence(searchIntelligenceInput{
+		RowsBySource:    sourceRows,
+		AllMerged:       allMerged,
+		Literal:         merged,
+		ResultState:     resultState,
+		Query:           query,
+		RetrievalIntent: retrievalIntent,
+		AsOf:            searchIntelligenceAsOf,
+		AsOfSource:      searchIntelligenceAsOfSource,
+	})
+	searchIntelligenceStripGatewayTrustRows(merged)
+
 	response := map[string]any{
 		"results":             merged,
 		"retrieval_debug":     debug,
@@ -6898,6 +6906,7 @@ func (s *server) executeRetrieval(
 			"source_owners":                    sourceOwnerBySource,
 		},
 		"objective_context_capture": objectiveCapture,
+		"search_intelligence":       searchIntelligence,
 	}
 	if !objectiveCtx.empty() {
 		response["objective_context"] = objectiveCtx.toMap()
@@ -7326,6 +7335,7 @@ func buildNativeMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/telemetry/storage/ledger", s.storageTelemetryLedger)
 	mux.HandleFunc("/telemetry/metrics", s.telemetryMetricsRoute)
 	mux.HandleFunc("/telemetry/token-impact", s.telemetryTokenImpactRoute)
+	mux.HandleFunc(searchImpactIntelligencePath, s.telemetrySearchImpactRoute)
 	mux.HandleFunc("/telemetry/context-pack-quality", s.telemetryContextPackQualityRoute)
 	mux.HandleFunc("/telemetry/context-pack-quality/outcome", s.telemetryContextPackQualityOutcomeRoute)
 	mux.HandleFunc(evidenceReputationPath, s.telemetryEvidenceReputationRoute)

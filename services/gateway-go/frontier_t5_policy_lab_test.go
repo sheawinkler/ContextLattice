@@ -18,6 +18,8 @@ import (
 func newFrontierT5PolicyLabTestServer(t *testing.T) *server {
 	t.Helper()
 	root := t.TempDir()
+	t.Setenv("GO_CONTEXT_PACK_QUALITY_LEDGER_ENABLED", "true")
+	t.Setenv("GO_CONTEXT_PACK_QUALITY_LEDGER_PATH", filepath.Join(root, "context-pack-quality.ndjson"))
 	memoryRoot := filepath.Join(root, "memory")
 	if err := os.MkdirAll(memoryRoot, 0o700); err != nil {
 		t.Fatal(err)
@@ -78,17 +80,16 @@ func seedFrontierT5PolicyOutcomes(t testing.TB, s *server, project string, count
 	t.Helper()
 	for i := 0; i < count; i++ {
 		sampleID := project + "-sample-" + anyToString(i)
-		s.contextPackQuality.recordQuality(map[string]any{
+		recordAuthoritativeContextPackOutcomeForTest(t, s, map[string]any{
 			"sample_id": sampleID, "project": project, "quality_score": 90,
 			"task_class": "general", "retrieval_intent": "balanced",
 			"model_call_token_basis": tokenBase + i, "returned_source_count": 3,
 			"graph_context_used": i%2 == 0, "tokenizer_exact": true,
-		})
-		s.contextPackQuality.recordOutcome(map[string]any{
+		}, map[string]any{
 			"outcome_id": project + "-outcome-" + anyToString(i), "sample_id": sampleID,
 			"project": project, "first_pass_success": true, "repair_required": false,
 			"retry_count": 0, "observed_followup_tokens": 100, "provider_total_tokens": 900,
-			"calibration_eligible": true, "task_class": "general", "retrieval_intent": "balanced",
+			"task_class": "general", "retrieval_intent": "balanced",
 		})
 	}
 }

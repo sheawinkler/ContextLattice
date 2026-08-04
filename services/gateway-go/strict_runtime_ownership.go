@@ -109,6 +109,7 @@ func strictRuntimeOwnedRoutes() []nativeOwnedRoute {
 		{Path: "/telemetry/agents/runtime", Surface: "telemetry", Owner: sourceOwnerGoNative, Status: "native", Detail: "agent runtime telemetry", Required: true},
 		{Path: "/telemetry/metrics", Surface: "telemetry", Owner: sourceOwnerGoNative, Status: "native", Detail: "native metrics and embedding cache telemetry", Required: true},
 		{Path: "/telemetry/token-impact", Surface: "telemetry", Owner: sourceOwnerGoNative, Status: "native", Detail: "context-pack token impact samples and aggregate prompt economics", Required: true},
+		{Path: searchImpactIntelligencePath, Surface: "telemetry", Owner: sourceOwnerGoNative, Status: "native", Detail: "advisory result, outcome, and impact intelligence with fail-closed canary gates", Required: true},
 		{Path: "/telemetry/context-pack-quality", Surface: "telemetry", Owner: sourceOwnerGoNative, Status: "native", Detail: "context-pack quality, counterfactual inference avoidance, and outcome calibration", Required: true},
 		{Path: evidenceReputationPath, Surface: "telemetry", Owner: sourceOwnerGoNative, Status: "native", Detail: "bounded local evidence reputation from independently verified attribution", Required: true},
 		{Path: utilityTelemetryPath, Surface: "telemetry", Owner: sourceOwnerGoNative, Status: "native", Detail: "bounded verified utility ledger and exact token economics", Required: true},

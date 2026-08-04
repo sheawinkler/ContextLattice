@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -1114,6 +1115,9 @@ func (s *server) telemetryRecallRoute(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) readRecallMonitorHistory(limit int) []map[string]any {
+	if limit < 1 {
+		return []map[string]any{}
+	}
 	path := resolveStoragePath(
 		"RECALL_MONITOR_PATH",
 		filepath.Join("services", "orchestrator", "data", "recall_monitor.ndjson"),
@@ -1126,25 +1130,101 @@ func (s *server) readRecallMonitorHistory(limit int) []map[string]any {
 		return []map[string]any{}
 	}
 	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || info.Size() < 1 {
+		return []map[string]any{}
+	}
 
+	end, complete := recallMonitorLastCompleteLineEnd(file, info.Size())
+	if !complete {
+		return []map[string]any{}
+	}
+	// Lines are collected from EOF backwards, then restored to the original
+	// oldest-to-newest history order expected by existing telemetry consumers.
 	rows := make([]map[string]any, 0, limit)
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
+	scanned := 0
+	for end >= 0 && scanned < limit {
+		line, start, oversized, ok := recallMonitorTailLine(file, end)
+		if !ok || oversized {
+			break
 		}
-		row := map[string]any{}
-		if err := json.Unmarshal([]byte(line), &row); err != nil {
-			continue
+		scanned++
+		line = bytes.TrimSpace(line)
+		if len(line) > 0 {
+			row := map[string]any{}
+			if err := json.Unmarshal(line, &row); err == nil {
+				rows = append(rows, row)
+			}
 		}
-		rows = append(rows, row)
-		if len(rows) > limit {
-			rows = append([]map[string]any(nil), rows[len(rows)-limit:]...)
+		if start == 0 {
+			break
 		}
+		end = start - 1 // the preceding newline terminates the next older line
+	}
+	for left, right := 0, len(rows)-1; left < right; left, right = left+1, right-1 {
+		rows[left], rows[right] = rows[right], rows[left]
 	}
 	return rows
+}
+
+const recallMonitorHistoryMaxLineBytes = 1024 * 1024
+
+// recallMonitorLastCompleteLineEnd returns the byte offset of the newline
+// terminating the newest complete row. An unterminated final fragment is never
+// parsed as a monitor record.
+func recallMonitorLastCompleteLineEnd(file *os.File, size int64) (int64, bool) {
+	if size < 1 {
+		return 0, false
+	}
+	last := []byte{0}
+	if _, err := file.ReadAt(last, size-1); err != nil {
+		return 0, false
+	}
+	if last[0] == '\n' {
+		return size - 1, true
+	}
+	start := maxInt64(0, size-int64(recallMonitorHistoryMaxLineBytes+1))
+	buffer := make([]byte, size-start)
+	if _, err := file.ReadAt(buffer, start); err != nil {
+		return 0, false
+	}
+	index := bytes.LastIndexByte(buffer, '\n')
+	if index < 0 {
+		return 0, false
+	}
+	return start + int64(index), true
+}
+
+// recallMonitorTailLine reads at most one bounded complete line ending at end.
+// If the preceding newline is farther than the 1 MiB line bound, callers stop
+// rather than scanning or decoding arbitrary historical data.
+func recallMonitorTailLine(file *os.File, end int64) ([]byte, int64, bool, bool) {
+	if end < 0 {
+		return nil, 0, false, false
+	}
+	start := maxInt64(0, end-int64(recallMonitorHistoryMaxLineBytes+1))
+	buffer := make([]byte, end-start)
+	if len(buffer) > 0 {
+		if _, err := file.ReadAt(buffer, start); err != nil {
+			return nil, 0, false, false
+		}
+	}
+	separator := bytes.LastIndexByte(buffer, '\n')
+	if separator < 0 {
+		if start != 0 {
+			return nil, 0, true, true
+		}
+		return buffer, 0, false, true
+	}
+	lineStart := start + int64(separator) + 1
+	return buffer[separator+1:], lineStart, false, true
+}
+
+func maxInt64(left, right int64) int64 {
+	if left > right {
+		return left
+	}
+	return right
 }
 
 func (s *server) syntheticRecallMonitorSample() map[string]any {

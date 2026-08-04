@@ -7,30 +7,37 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 )
 
 type tokenImpactTelemetry struct {
-	mu                        sync.Mutex
-	limit                     int
-	ledger                    *tokenImpactLedger
-	samples                   []map[string]any
-	proofSamples              proofTimelineMapRing
-	sampleCount               int64
-	exactSamples              int64
-	modelVisibleExactSamples  int64
-	totalBaseline             int64
-	totalPacked               int64
-	totalCompiled             int64
-	totalTransport            int64
-	totalModelVisible         int64
-	totalNetDelta             int64
-	transportInclusiveSamples int64
-	totalSaved                int64
-	totalPenalty              int64
-	bestRatio                 float64
-	lastSampleAt              string
+	mu                         sync.Mutex
+	limit                      int
+	ledger                     *tokenImpactLedger
+	samples                    []map[string]any
+	proofSamples               proofTimelineMapRing
+	exactArtifactKeys          map[string]string
+	exactArtifactOrder         []string
+	exactArtifactLimit         int
+	sampleCount                int64
+	legacySampleCount          int64
+	exactArtifactReplayCount   int64
+	exactArtifactConflictCount int64
+	exactSamples               int64
+	modelVisibleExactSamples   int64
+	totalBaseline              int64
+	totalPacked                int64
+	totalCompiled              int64
+	totalTransport             int64
+	totalModelVisible          int64
+	totalNetDelta              int64
+	transportInclusiveSamples  int64
+	totalSaved                 int64
+	totalPenalty               int64
+	bestRatio                  float64
+	lastSampleAt               string
 }
 
 type tokenImpactLedger struct {
@@ -50,10 +57,18 @@ func newTokenImpactTelemetry(limit int) *tokenImpactTelemetry {
 	if limit <= 0 {
 		limit = 100
 	}
+	ledger := newTokenImpactLedgerFromEnv()
+	artifactLimit := limit
+	if ledger != nil {
+		artifactLimit = maxInt(artifactLimit, ledger.maxSamples)
+	}
 	t := &tokenImpactTelemetry{
-		limit:   limit,
-		ledger:  newTokenImpactLedgerFromEnv(),
-		samples: make([]map[string]any, 0, limit),
+		limit:              limit,
+		ledger:             ledger,
+		samples:            make([]map[string]any, 0, limit),
+		exactArtifactKeys:  make(map[string]string, artifactLimit),
+		exactArtifactOrder: make([]string, 0, artifactLimit),
+		exactArtifactLimit: artifactLimit,
 	}
 	t.loadPersistedSamples()
 	return t
@@ -102,6 +117,10 @@ func defaultTokenImpactTelemetrySnapshot(ledger *tokenImpactLedger) map[string]a
 		"version":                            3,
 		"updatedAt":                          nowUTCISO(),
 		"sample_count":                       0,
+		"legacy_sample_count":                0,
+		"exact_artifact_replay_count":        0,
+		"exact_artifact_conflict_count":      0,
+		"exact_artifact_identity_limit":      tokenImpactArtifactIdentityDefaultLimit(ledger),
 		"exact_sample_count":                 0,
 		"calibration_grade":                  "heuristic",
 		"confidence":                         "low",
@@ -125,6 +144,12 @@ func defaultTokenImpactTelemetrySnapshot(ledger *tokenImpactLedger) map[string]a
 		"source":                             "/telemetry/token-impact",
 		"measurement_limit":                  "No context-pack token_impact samples have been recorded since gateway start.",
 		"storage":                            tokenImpactLedgerPublicStatus(ledger),
+		"cohort_window_sample_count":         0,
+		"cohort_total_count":                 0,
+		"cohort_returned_count":              0,
+		"cohort_omitted_count":               0,
+		"cohort_limit":                       tokenImpactCohortLimit,
+		"cohorts":                            []any{},
 		"samples":                            []any{},
 	}
 }
@@ -157,8 +182,11 @@ func (t *tokenImpactTelemetry) record(sample map[string]any) {
 	}
 
 	t.mu.Lock()
-	t.applyEntryLocked(entry)
+	accepted := t.applyEntryLocked(entry)
 	t.mu.Unlock()
+	if !accepted {
+		return
+	}
 
 	if t.ledger != nil && t.ledger.enabled {
 		if err := t.ledger.append(entry); err != nil {
@@ -201,6 +229,12 @@ func tokenImpactEntryFromSample(sample map[string]any) map[string]any {
 		"token_budget_target":      anyToInt(sample["token_budget_target"], 0),
 		"selection_strategy":       anyToString(sample["selection_strategy"]),
 	}
+	if scope := normalizeTokenImpactDimension(anyToString(sample["scope"])); scope != "" {
+		entry["scope"] = scope
+	}
+	if packedKind := normalizeTokenImpactDimension(anyToString(sample["packed_kind"])); packedKind != "" {
+		entry["packed_kind"] = packedKind
+	}
 	copyProofTimelineIdentity(entry, sample)
 	if anyToBool(sample["tokenizer_exact"]) {
 		if modelVisible := anyToInt(sample["model_visible_context_tokens_exact"], 0); modelVisible > 0 {
@@ -210,10 +244,14 @@ func tokenImpactEntryFromSample(sample map[string]any) map[string]any {
 	if anyToBool(sample["transport_inclusive"]) {
 		transport := anyToInt(sample["transport_tokens_exact"], 0)
 		if transport > 0 {
+			wire := anyToInt(sample["wire_tokens_exact"], transport)
+			if wire <= 0 {
+				wire = transport
+			}
 			entry["transport_inclusive"] = true
 			entry["transport_tokens_exact"] = transport
-			entry["wire_tokens_exact"] = anyToInt(sample["wire_tokens_exact"], transport)
-			entry["compiled_prompt_tokens_estimate"] = anyToInt(sample["compiled_prompt_tokens_estimate"], 0)
+			entry["wire_tokens_exact"] = wire
+			entry["compiled_prompt_tokens_estimate"] = maxInt(0, anyToInt(sample["compiled_prompt_tokens_estimate"], 0))
 			entry["net_token_delta"] = anyToInt(sample["net_token_delta"], baseline-transport)
 		}
 	}
@@ -223,11 +261,25 @@ func tokenImpactEntryFromSample(sample map[string]any) map[string]any {
 	return entry
 }
 
-func (t *tokenImpactTelemetry) applyEntryLocked(entry map[string]any) {
+func (t *tokenImpactTelemetry) applyEntryLocked(entry map[string]any) bool {
 	baseline := anyToInt(entry["baseline_tokens_estimate"], 0)
 	packed := anyToInt(entry["packed_tokens_estimate"], 0)
 	if baseline <= 0 || packed <= 0 {
-		return
+		return false
+	}
+	if artifactKey := tokenImpactExactArtifactKey(entry); artifactKey != "" {
+		fingerprint := tokenImpactArtifactFingerprint(entry)
+		if previous, found := t.exactArtifactKeys[artifactKey]; found {
+			if previous == fingerprint {
+				t.exactArtifactReplayCount++
+			} else {
+				t.exactArtifactConflictCount++
+			}
+			return false
+		}
+		t.rememberExactArtifactLocked(artifactKey, fingerprint)
+	} else {
+		t.legacySampleCount++
 	}
 	saved := anyToInt(entry["saved_tokens_estimate"], 0)
 	if saved < 0 {
@@ -270,6 +322,160 @@ func (t *tokenImpactTelemetry) applyEntryLocked(entry map[string]any) {
 	if len(t.samples) > t.limit {
 		t.samples = append([]map[string]any{}, t.samples[len(t.samples)-t.limit:]...)
 	}
+	return true
+}
+
+func tokenImpactArtifactIdentityDefaultLimit(ledger *tokenImpactLedger) int {
+	if ledger != nil && ledger.maxSamples > 0 {
+		return ledger.maxSamples
+	}
+	return 100
+}
+
+func (t *tokenImpactTelemetry) rememberExactArtifactLocked(key, fingerprint string) {
+	if t.exactArtifactKeys == nil {
+		t.exactArtifactKeys = make(map[string]string)
+	}
+	if t.exactArtifactLimit <= 0 {
+		t.exactArtifactLimit = maxInt(t.limit, 1)
+	}
+	t.exactArtifactKeys[key] = fingerprint
+	t.exactArtifactOrder = append(t.exactArtifactOrder, key)
+	for len(t.exactArtifactOrder) > t.exactArtifactLimit {
+		oldest := t.exactArtifactOrder[0]
+		t.exactArtifactOrder = t.exactArtifactOrder[1:]
+		delete(t.exactArtifactKeys, oldest)
+	}
+}
+
+const tokenImpactCohortLimit = 24
+
+func normalizeTokenImpactDimension(value string) string {
+	value = strings.TrimSpace(strings.ToLower(value))
+	if value == "" || len(value) > 96 || strings.ContainsAny(value, "/\\") {
+		return ""
+	}
+	var builder strings.Builder
+	previousSeparator := false
+	for _, character := range value {
+		if (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9') {
+			builder.WriteRune(character)
+			previousSeparator = false
+			continue
+		}
+		if character == '_' || character == '-' || character == '.' {
+			if !previousSeparator && builder.Len() > 0 {
+				builder.WriteByte('_')
+				previousSeparator = true
+			}
+			continue
+		}
+		return ""
+	}
+	return strings.Trim(builder.String(), "_")
+}
+
+func tokenImpactExactArtifactKey(entry map[string]any) string {
+	sampleID := strings.TrimSpace(anyToString(entry["sample_id"]))
+	scope := normalizeTokenImpactDimension(anyToString(entry["scope"]))
+	packedKind := normalizeTokenImpactDimension(anyToString(entry["packed_kind"]))
+	if sampleID == "" || scope == "" || packedKind == "" {
+		return ""
+	}
+	return sampleID + "\x00" + scope + "\x00" + packedKind
+}
+
+func tokenImpactArtifactFingerprint(entry map[string]any) string {
+	boolFlag := func(value bool) string {
+		if value {
+			return "1"
+		}
+		return "0"
+	}
+	parts := []string{
+		anyToString(entry["baseline_tokens_estimate"]),
+		anyToString(entry["packed_tokens_estimate"]),
+		anyToString(entry["saved_tokens_estimate"]),
+		anyToString(entry["risk_penalty_tokens"]),
+		boolFlag(anyToBool(entry["tokenizer_exact"])),
+		anyToString(entry["model_visible_context_tokens_exact"]),
+		boolFlag(anyToBool(entry["transport_inclusive"])),
+		anyToString(entry["transport_tokens_exact"]),
+		anyToString(entry["wire_tokens_exact"]),
+		anyToString(entry["compiled_prompt_tokens_estimate"]),
+		anyToString(entry["net_token_delta"]),
+	}
+	return sha256Hex(strings.Join(parts, "\x00"))
+}
+
+type tokenImpactCohort struct {
+	scope                     string
+	packedKind                string
+	sampleCount               int64
+	wireExactSampleCount      int64
+	wireTokensExact           int64
+	modelVisibleExactCount    int64
+	modelVisibleContextTokens int64
+	signedNetDeltaSampleCount int64
+	signedNetTokenDelta       int64
+}
+
+func tokenImpactCohortRows(samples []map[string]any) ([]map[string]any, int) {
+	cohorts := make(map[string]*tokenImpactCohort)
+	for _, sample := range samples {
+		scope := normalizeTokenImpactDimension(anyToString(sample["scope"]))
+		packedKind := normalizeTokenImpactDimension(anyToString(sample["packed_kind"]))
+		if scope == "" || packedKind == "" {
+			continue
+		}
+		key := scope + "\x00" + packedKind
+		cohort := cohorts[key]
+		if cohort == nil {
+			cohort = &tokenImpactCohort{scope: scope, packedKind: packedKind}
+			cohorts[key] = cohort
+		}
+		cohort.sampleCount++
+		if anyToBool(sample["transport_inclusive"]) {
+			if wireTokens, present := sample["wire_tokens_exact"]; present {
+				cohort.wireExactSampleCount++
+				cohort.wireTokensExact += int64(anyToInt(wireTokens, 0))
+			}
+			if signedDelta, present := sample["net_token_delta"]; present {
+				cohort.signedNetDeltaSampleCount++
+				cohort.signedNetTokenDelta += int64(anyToInt(signedDelta, 0))
+			}
+		}
+		if anyToBool(sample["tokenizer_exact"]) {
+			if modelVisible, present := sample["model_visible_context_tokens_exact"]; present {
+				cohort.modelVisibleExactCount++
+				cohort.modelVisibleContextTokens += int64(anyToInt(modelVisible, 0))
+			}
+		}
+	}
+	keys := make([]string, 0, len(cohorts))
+	for key := range cohorts {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	rows := make([]map[string]any, 0, minInt(len(keys), tokenImpactCohortLimit))
+	for _, key := range keys {
+		if len(rows) >= tokenImpactCohortLimit {
+			break
+		}
+		cohort := cohorts[key]
+		rows = append(rows, map[string]any{
+			"scope":                              cohort.scope,
+			"packed_kind":                        cohort.packedKind,
+			"sample_count":                       cohort.sampleCount,
+			"wire_exact_sample_count":            cohort.wireExactSampleCount,
+			"wire_tokens_exact":                  cohort.wireTokensExact,
+			"model_visible_exact_sample_count":   cohort.modelVisibleExactCount,
+			"model_visible_context_tokens_exact": cohort.modelVisibleContextTokens,
+			"signed_net_delta_sample_count":      cohort.signedNetDeltaSampleCount,
+			"signed_net_token_delta":             cohort.signedNetTokenDelta,
+		})
+	}
+	return rows, len(keys)
 }
 
 func (t *tokenImpactTelemetry) snapshot() map[string]any {
@@ -286,6 +492,7 @@ func (t *tokenImpactTelemetry) snapshot() map[string]any {
 	for _, sample := range t.samples[start:] {
 		samples = append(samples, cloneMap(sample))
 	}
+	cohorts, cohortTotal := tokenImpactCohortRows(t.samples)
 	ratio := 0.0
 	if t.totalPacked > 0 {
 		ratio = roundFloat(float64(t.totalBaseline)/float64(t.totalPacked), 2)
@@ -316,6 +523,10 @@ func (t *tokenImpactTelemetry) snapshot() map[string]any {
 		"version":                            3,
 		"updatedAt":                          nowUTCISO(),
 		"sample_count":                       t.sampleCount,
+		"legacy_sample_count":                t.legacySampleCount,
+		"exact_artifact_replay_count":        t.exactArtifactReplayCount,
+		"exact_artifact_conflict_count":      t.exactArtifactConflictCount,
+		"exact_artifact_identity_limit":      t.exactArtifactLimit,
 		"exact_sample_count":                 t.exactSamples,
 		"calibration_grade":                  calibrationGrade,
 		"confidence":                         confidence,
@@ -340,6 +551,12 @@ func (t *tokenImpactTelemetry) snapshot() map[string]any {
 		"source":                             "/telemetry/token-impact",
 		"measurement_limit":                  measurementLimit,
 		"storage":                            tokenImpactLedgerPublicStatus(t.ledger),
+		"cohort_window_sample_count":         len(t.samples),
+		"cohort_total_count":                 cohortTotal,
+		"cohort_returned_count":              len(cohorts),
+		"cohort_omitted_count":               maxInt(0, cohortTotal-len(cohorts)),
+		"cohort_limit":                       tokenImpactCohortLimit,
+		"cohorts":                            cohorts,
 		"basis": []any{
 			"context_pack_response.token_impact",
 			"raw candidate evidence JSON token count",
