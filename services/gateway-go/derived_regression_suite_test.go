@@ -144,15 +144,17 @@ func TestDerivedRegressionLedgerFieldsRedactsExplicitFixture(t *testing.T) {
 	delete(row, "regression_partition")
 	anyMap(row["regression_case"])["partition"] = "train"
 	entry := contextPackQualityOutcomeFromSample(row)
-	fixture := anyMap(entry["regression_case"])
-	if len(fixture) == 0 || !strings.Contains(anyToString(fixture["query"]), "[bearer-redacted]") {
-		t.Fatalf("expected bounded redacted fixture in outcome row: %#v", entry)
+	if _, present := entry["regression_case"]; present {
+		t.Fatalf("quality outcome must not retain an evaluable regression fixture: %#v", entry)
+	}
+	if !utilitySHA256DigestValid(anyToString(entry["regression_case_ref"])) {
+		t.Fatalf("expected opaque regression fixture ref in outcome row: %#v", entry)
 	}
 	if anyToString(entry["regression_partition"]) != "train" {
 		t.Fatalf("nested fixture partition did not survive ledger normalization: %#v", entry)
 	}
 	raw, _ := json.Marshal(entry)
-	if strings.Contains(string(raw), "abcdefghijklmnopqrstuvwxyz") || strings.Contains(string(raw), "/Users/alice") {
-		t.Fatalf("ledger derivation fields leaked raw fixture: %s", raw)
+	if strings.Contains(string(raw), "abcdefghijklmnopqrstuvwxyz") || strings.Contains(string(raw), "/Users/alice") || strings.Contains(string(raw), "topic_path") {
+		t.Fatalf("quality outcome leaked raw regression fixture: %s", raw)
 	}
 }

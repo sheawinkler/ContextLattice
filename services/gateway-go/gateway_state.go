@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -28,6 +29,48 @@ func gatewayStateEntry(id, kind, persistenceClass string, envNames []string, fal
 	}
 }
 
+const contextPackRegressionFixtureLedgerFilename = "context_pack_regression_fixture_ledger.ndjson"
+
+// contextPackRegressionFixtureLedgerPath is shared by the owner-only sidecar
+// and its state inventory. An explicit fixture path wins; otherwise the
+// sidecar stays beside the resolved quality ledger so both state roots and
+// quality-ledger overrides retain a single storage boundary.
+func contextPackRegressionFixtureLedgerPath(qualityLedgerPath string) string {
+	if explicit := strings.TrimSpace(os.Getenv("GO_CONTEXT_PACK_REGRESSION_FIXTURE_LEDGER_PATH")); explicit != "" {
+		return filepath.Clean(explicit)
+	}
+	if qualityLedgerPath = strings.TrimSpace(qualityLedgerPath); qualityLedgerPath == "" {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(qualityLedgerPath), contextPackRegressionFixtureLedgerFilename)
+}
+
+func gatewayContextPackRegressionFixtureEntry() gatewaystate.EntryInput {
+	quality := gatewaystate.ResolvePath(
+		[]string{"GO_CONTEXT_PACK_QUALITY_LEDGER_PATH"},
+		filepath.Join(".data", "orchestrator", "context_pack_quality_ledger.ndjson"),
+	)
+	if explicit := strings.TrimSpace(os.Getenv("GO_CONTEXT_PACK_REGRESSION_FIXTURE_LEDGER_PATH")); explicit != "" {
+		return gatewaystate.EntryInput{
+			ID:               "context_pack_regression_fixtures",
+			Path:             filepath.Clean(explicit),
+			Source:           "surface_override",
+			SourceEnv:        "GO_CONTEXT_PACK_REGRESSION_FIXTURE_LEDGER_PATH",
+			StorageTier:      "explicit_override",
+			Kind:             "file",
+			PersistenceClass: "owner_only_bounded_durable_file",
+		}
+	}
+	return gatewaystate.EntryInput{
+		ID:               "context_pack_regression_fixtures",
+		Path:             contextPackRegressionFixtureLedgerPath(quality.Path),
+		Source:           "derived_quality_ledger",
+		SourceEnv:        quality.SourceEnv,
+		StorageTier:      quality.StorageTier,
+		Kind:             "file",
+		PersistenceClass: "owner_only_bounded_durable_file",
+	}
+}
 func gatewayStateInventoryEntries() []gatewaystate.EntryInput {
 	entries := []gatewaystate.EntryInput{
 		gatewayStateEntry("feedback_history", "file", "append_only_durable_file", []string{"FEEDBACK_HISTORY_PATH"}, defaultFeedbackHistoryRelPath),
@@ -48,6 +91,7 @@ func gatewayStateInventoryEntries() []gatewaystate.EntryInput {
 		gatewayStateEntry("runner_quality", "file", "append_only_durable_file", []string{"GO_RUNNER_QUALITY_LEDGER_PATH", "CONTEXTLATTICE_RUNNER_QUALITY_LEDGER_PATH", "CONTEXTLATTICE_RUNNER_QUALITY_LEDGER"}, filepath.Join(".data", "orchestrator", "runner_quality_ledger.ndjson")),
 		gatewayStateEntry("token_impact", "file", "append_only_durable_file", []string{"GO_TOKEN_IMPACT_LEDGER_PATH"}, filepath.Join(".data", "orchestrator", "token_impact_ledger.ndjson")),
 		gatewayStateEntry("context_pack_quality", "file", "append_only_durable_file", []string{"GO_CONTEXT_PACK_QUALITY_LEDGER_PATH"}, filepath.Join(".data", "orchestrator", "context_pack_quality_ledger.ndjson")),
+		gatewayContextPackRegressionFixtureEntry(),
 		gatewayStateEntry("utility_ledger", "file", "append_only_durable_file", []string{"GO_UTILITY_LEDGER_PATH"}, filepath.Join(".data", "orchestrator", "utility_ledger.ndjson")),
 		gatewayStateEntry("storage_ledger", "file", "append_only_durable_file", []string{"ORCH_STORAGE_LEDGER_PATH"}, filepath.Join(".data", "orchestrator", "storage_ledger.ndjson")),
 		gatewayStateEntry("policy_laboratory", "file", "append_only_durable_file", []string{"CONTEXTLATTICE_FRONTIER_T5_LEDGER_PATH"}, filepath.Join(".data", "orchestrator", "frontier_t5_policy_lab.ndjson")),

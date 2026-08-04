@@ -156,6 +156,44 @@ func prepareOwnerOnlyFile(path string, dedicatedParent bool) error {
 	return ensureOwnerOnlyFile(clean)
 }
 
+// createOwnerOnlyDurableEmptyFileIfMissing materializes an empty durable store
+// without replacing an existing file. O_EXCL closes the startup race between
+// the missing-file check and creation; a concurrently created path is verified
+// through the same owner-only boundary and preserved byte-for-byte.
+func createOwnerOnlyDurableEmptyFileIfMissing(path string, dedicatedParent bool) error {
+	clean := filepath.Clean(strings.TrimSpace(path))
+	if err := prepareOwnerOnlyFile(clean, dedicatedParent); err != nil {
+		return err
+	}
+	file, err := os.OpenFile(clean, os.O_CREATE|os.O_EXCL|os.O_WRONLY, ownerOnlyFileMode)
+	if errors.Is(err, os.ErrExist) {
+		return prepareOwnerOnlyFile(clean, dedicatedParent)
+	}
+	if err != nil {
+		return err
+	}
+	committedError := func(operation string, cause error) error {
+		_ = file.Close()
+		return &ownerOnlyAtomicWriteError{Operation: operation, Committed: true, Err: cause}
+	}
+	if err := enforceOwnerOnlyPermissions(clean, ownerOnlyFileMode); err != nil {
+		return committedError("enforce owner-only empty file permissions", err)
+	}
+	if err := file.Sync(); err != nil {
+		return committedError("sync owner-only empty file", err)
+	}
+	if err := file.Close(); err != nil {
+		return &ownerOnlyAtomicWriteError{Operation: "close owner-only empty file", Committed: true, Err: err}
+	}
+	if err := syncOwnerOnlyDirectory(filepath.Dir(clean)); err != nil {
+		return &ownerOnlyAtomicWriteError{Operation: "sync owner-only empty file directory", Committed: true, Err: err}
+	}
+	if err := ensureOwnerOnlyFile(clean); err != nil {
+		return &ownerOnlyAtomicWriteError{Operation: "verify owner-only empty file", Committed: true, Err: err}
+	}
+	return nil
+}
+
 func openOwnerOnlyAppend(path string, dedicatedParent bool) (*os.File, error) {
 	if err := prepareOwnerOnlyFile(path, dedicatedParent); err != nil {
 		return nil, err

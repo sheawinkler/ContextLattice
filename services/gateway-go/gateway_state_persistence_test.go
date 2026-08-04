@@ -9,8 +9,8 @@ import (
 
 func TestPublicGatewayStateInventoryExcludesCommercialOnlyOwners(t *testing.T) {
 	entries := gatewayStateInventoryEntries()
-	if len(entries) != 33 {
-		t.Fatalf("public gateway state inventory count=%d, want 33", len(entries))
+	if len(entries) != 34 {
+		t.Fatalf("public gateway state inventory count=%d, want 34", len(entries))
 	}
 	commercialOnly := map[string]bool{
 		"agent_tasks": true, "cognition_activation": true, "continuity_snapshots": true,

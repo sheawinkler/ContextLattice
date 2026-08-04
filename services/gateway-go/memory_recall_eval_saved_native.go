@@ -3,15 +3,19 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
+	"unicode"
 )
 
 const (
@@ -103,6 +107,7 @@ func (s *server) memoryRecallEvaluateSavedNative(w http.ResponseWriter, r *http.
 		s.writeRecallEvalCaseSetInvalid(w, cfg, caseSetHealth)
 		return
 	}
+	impactComparison := newSavedRecallImpactComparison(cfg)
 
 	k := clampInt(cfg.K, 1, 20)
 	if raw, exists := payload["k"]; exists {
@@ -217,6 +222,7 @@ func (s *server) memoryRecallEvaluateSavedNative(w http.ResponseWriter, r *http.
 		latencyMs := float64(time.Since(caseStartedAt).Microseconds()) / 1000.0
 		latencyValues = append(latencyValues, latencyMs)
 		if execErr != nil {
+			impactComparison.invalidateCase(rawCase, "retrieval_failed")
 			caseReports = append(caseReports, map[string]any{
 				"id":                  caseID,
 				"query":               query,
@@ -368,6 +374,7 @@ func (s *server) memoryRecallEvaluateSavedNative(w http.ResponseWriter, r *http.
 			report["ablation"] = ablation
 			ablationReports = append(ablationReports, ablation)
 		}
+		impactComparison.addCase(idx, rawCase, results, anyMap(searchResp["search_intelligence"]), expectedNumeric, latencyMs)
 		caseReports = append(caseReports, report)
 	}
 
@@ -461,7 +468,7 @@ func (s *server) memoryRecallEvaluateSavedNative(w http.ResponseWriter, r *http.
 		},
 	}
 	recommendations := recallEvalRecommendations(metrics, gate, passed)
-	_ = s.appendRecallMonitorSample(map[string]any{
+	monitorSample := map[string]any{
 		"timestamp":             nowUTCISO(),
 		"source":                "saved_recall_eval",
 		"passed":                passed,
@@ -485,14 +492,23 @@ func (s *server) memoryRecallEvaluateSavedNative(w http.ResponseWriter, r *http.
 		"avgLatencyMs":          roundFloat(avgLatencyMs, 3),
 		"evalP95Ms":             roundFloat(p95LatencyMs, 3),
 		"retrievalAlertCount":   0,
-	})
+	}
+	impactArtifact := impactComparison.monitorFields(len(cfg.Cases))
+	for key, value := range impactArtifact {
+		monitorSample[key] = value
+	}
+	if err := s.appendRecallMonitorSample(monitorSample); err != nil {
+		s.writeRecallEvalPersistenceUnavailable(w)
+		return
+	}
 
 	response := map[string]any{
-		"ok":              true,
-		"passed":          passed,
-		"quality_status":  qualityStatus,
-		"metrics":         metrics,
-		"recommendations": recommendations,
+		"ok":                              true,
+		"passed":                          passed,
+		"quality_status":                  qualityStatus,
+		"metrics":                         metrics,
+		"recommendations":                 recommendations,
+		"search_impact_shadow_evaluation": cloneJSONMap(impactArtifact),
 		"gate": map[string]any{
 			"minRecallAtK":        gate.MinRecallAtK,
 			"minMrr":              gate.MinMRR,
@@ -559,7 +575,9 @@ func (s *server) writeRecallEvalCaseSetInvalid(w http.ResponseWriter, cfg recall
 			"memoryGraphStoreActive": s.memoryGraphBackend() != nil,
 		},
 	}
-	_ = s.appendRecallMonitorSample(map[string]any{
+	impactComparison := newSavedRecallImpactComparison(cfg)
+	impactComparison.invalidate("case_set_invalid")
+	monitorSample := map[string]any{
 		"timestamp":           nowUTCISO(),
 		"source":              "saved_recall_eval",
 		"passed":              false,
@@ -581,17 +599,26 @@ func (s *server) writeRecallEvalCaseSetInvalid(w http.ResponseWriter, cfg recall
 		"avgLatencyMs":        0.0,
 		"evalP95Ms":           0.0,
 		"retrievalAlertCount": anyToInt(health["issue_count"], 0),
-	})
-	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":                 false,
-		"passed":             false,
-		"failed_fast":        true,
-		"quality_status":     qualityStatus,
-		"error":              "saved recall eval case set failed input health validation",
-		"case_set_health":    health,
-		"agent_instructions": instructions,
-		"recommendations":    instructions,
-		"metrics":            metrics,
+	}
+	impactArtifact := impactComparison.monitorFields(len(cfg.Cases))
+	for key, value := range impactArtifact {
+		monitorSample[key] = value
+	}
+	if err := s.appendRecallMonitorSample(monitorSample); err != nil {
+		s.writeRecallEvalPersistenceUnavailable(w)
+		return
+	}
+	response := map[string]any{
+		"ok":                              false,
+		"passed":                          false,
+		"failed_fast":                     true,
+		"quality_status":                  qualityStatus,
+		"error":                           "saved recall eval case set failed input health validation",
+		"case_set_health":                 health,
+		"agent_instructions":              instructions,
+		"recommendations":                 instructions,
+		"search_impact_shadow_evaluation": cloneJSONMap(impactArtifact),
+		"metrics":                         metrics,
 		"gate": map[string]any{
 			"minRecallAtK":        cfg.Gate.MinRecallAtK,
 			"minMrr":              cfg.Gate.MinMRR,
@@ -604,7 +631,8 @@ func (s *server) writeRecallEvalCaseSetInvalid(w http.ResponseWriter, cfg recall
 			"updatedAt":   cfg.UpdatedAt,
 			"count":       len(cfg.Cases),
 		},
-	})
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func loadSavedRecallEvalConfig() (recallEvalSavedConfig, error) {
@@ -782,27 +810,166 @@ func resolveRecallEvalCasesPath() string {
 	return resolveStoragePath("ORCH_RECALL_EVAL_CASES_PATH", defaultRecallEvalCasesRelativePath)
 }
 
+type recallMonitorPersistenceHooks struct {
+	syncFile      func(*os.File) error
+	syncDirectory func(string) error
+}
+
+var recallMonitorPersistenceHookRegistry = struct {
+	sync.RWMutex
+	byServer map[*server]recallMonitorPersistenceHooks
+}{byServer: map[*server]recallMonitorPersistenceHooks{}}
+
+func (s *server) recallMonitorPersistenceHooks() recallMonitorPersistenceHooks {
+	hooks := recallMonitorPersistenceHooks{
+		syncFile:      func(file *os.File) error { return file.Sync() },
+		syncDirectory: syncOwnerOnlyDirectory,
+	}
+	if s == nil {
+		return hooks
+	}
+	recallMonitorPersistenceHookRegistry.RLock()
+	override, found := recallMonitorPersistenceHookRegistry.byServer[s]
+	recallMonitorPersistenceHookRegistry.RUnlock()
+	if !found {
+		return hooks
+	}
+	if override.syncFile != nil {
+		hooks.syncFile = override.syncFile
+	}
+	if override.syncDirectory != nil {
+		hooks.syncDirectory = override.syncDirectory
+	}
+	return hooks
+}
+
+func setRecallMonitorPersistenceHooksForTest(s *server, hooks recallMonitorPersistenceHooks) func() {
+	recallMonitorPersistenceHookRegistry.Lock()
+	previous, hadPrevious := recallMonitorPersistenceHookRegistry.byServer[s]
+	recallMonitorPersistenceHookRegistry.byServer[s] = hooks
+	recallMonitorPersistenceHookRegistry.Unlock()
+	return func() {
+		recallMonitorPersistenceHookRegistry.Lock()
+		defer recallMonitorPersistenceHookRegistry.Unlock()
+		if hadPrevious {
+			recallMonitorPersistenceHookRegistry.byServer[s] = previous
+			return
+		}
+		delete(recallMonitorPersistenceHookRegistry.byServer, s)
+	}
+}
+
+// recallMonitorAppendDurabilityPlan records whether this append creates a
+// file and the directory chain whose entries must be synchronized afterward.
+// The sync order is deepest to shallowest so newly created parents survive a
+// crash as well as the monitor file itself.
+func recallMonitorAppendDurabilityPlan(path string) (bool, []string, error) {
+	clean := filepath.Clean(strings.TrimSpace(path))
+	if clean == "" || clean == "." {
+		return false, nil, errors.New("recall monitor path is empty")
+	}
+	if _, err := os.Lstat(clean); err == nil {
+		return false, nil, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return false, nil, err
+	}
+	directories := []string{filepath.Dir(clean)}
+	for current := directories[0]; ; {
+		if _, err := os.Lstat(current); err == nil {
+			break
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return false, nil, err
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return false, nil, errors.New("recall monitor parent has no existing ancestor")
+		}
+		directories = append(directories, parent)
+		current = parent
+	}
+	return true, directories, nil
+}
+
 func (s *server) appendRecallMonitorSample(sample map[string]any) error {
 	path := resolveStoragePath(
 		"RECALL_MONITOR_PATH",
 		filepath.Join("services", "orchestrator", "data", "recall_monitor.ndjson"),
 	)
 	if strings.TrimSpace(path) == "" {
+		s.recordSearchImpactComparatorPersistence(true)
 		return nil
+	}
+	created, directories, err := recallMonitorAppendDurabilityPlan(path)
+	if err != nil {
+		s.recordSearchImpactComparatorPersistence(false)
+		return err
 	}
 	raw, err := json.Marshal(sample)
 	if err != nil {
+		s.recordSearchImpactComparatorPersistence(false)
 		return err
 	}
 	file, err := openOwnerOnlyAppend(path, false)
 	if err != nil {
+		s.recordSearchImpactComparatorPersistence(false)
 		return err
 	}
-	defer file.Close()
+	hooks := s.recallMonitorPersistenceHooks()
 	if _, err := file.Write(append(raw, '\n')); err != nil {
+		_ = file.Close()
+		s.recordSearchImpactComparatorPersistence(false)
 		return err
 	}
+	if err := hooks.syncFile(file); err != nil {
+		_ = file.Close()
+		s.recordSearchImpactComparatorPersistence(false)
+		return err
+	}
+	if err := file.Close(); err != nil {
+		s.recordSearchImpactComparatorPersistence(false)
+		return err
+	}
+	if created {
+		for _, directory := range directories {
+			if err := hooks.syncDirectory(directory); err != nil {
+				s.recordSearchImpactComparatorPersistence(false)
+				return err
+			}
+		}
+	}
+	s.recordSearchImpactComparatorPersistence(true)
 	return nil
+}
+
+// searchImpactComparatorPersistenceUnavailable reports only whether the most
+// recent comparator-artifact persistence attempt failed. It intentionally
+// withholds the underlying storage error from downstream decision logic.
+func (s *server) searchImpactComparatorPersistenceUnavailable() bool {
+	if s == nil {
+		return true
+	}
+	s.impactComparatorMu.Lock()
+	defer s.impactComparatorMu.Unlock()
+	return s.impactComparatorUnavailable
+}
+
+func (s *server) recordSearchImpactComparatorPersistence(persisted bool) {
+	if s == nil {
+		return
+	}
+	s.impactComparatorMu.Lock()
+	s.impactComparatorUnavailable = !persisted
+	s.impactComparatorMu.Unlock()
+}
+
+func (s *server) writeRecallEvalPersistenceUnavailable(w http.ResponseWriter) {
+	writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+		"ok":      false,
+		"passed":  false,
+		"durable": false,
+		"error":   "saved recall evaluation was not durably persisted",
+		"code":    "recall_monitor_persistence_unavailable",
+	})
 }
 
 func normalizeExpectedFileTokens(raw any) map[string]struct{} {
@@ -1283,6 +1450,650 @@ func clampFloat(value float64, minValue float64, maxValue float64) float64 {
 		return maxValue
 	}
 	return value
+}
+
+const (
+	savedRecallImpactShadowEvalSchemaID = "search_impact_shadow_eval.v1"
+	savedRecallImpactComparisonScope    = "saved_recall_reorder_only_returned_candidate_pool"
+	savedRecallImpactK                  = 5
+)
+
+type savedRecallImpactPlan struct {
+	grades          map[int]int
+	projectRef      string
+	taskClassRef    string
+	caseCount       int
+	numericExpected int
+	safetyCases     int
+}
+
+type savedRecallImpactScope struct {
+	project   string
+	taskClass string
+}
+
+type savedRecallImpactCandidate struct {
+	ref  string
+	rows []map[string]any
+}
+
+type savedRecallImpactMetrics struct {
+	caseCount            int
+	effectiveKMin        int
+	effectiveKMax        int
+	sparseCandidateCases int
+	decisionWeightTotal  float64
+	decisionWeightHit    float64
+	dcg                  float64
+	idcg                 float64
+	reciprocalRankSum    float64
+	numericExpected      int
+	numericMatched       int
+	citationExpected     int
+	citationMatched      int
+	citationCandidates   int
+	citationExact        int
+	safetyCaseCount      int
+	safetyFailureCount   int
+	latencyValues        []float64
+}
+
+type savedRecallImpactComparison struct {
+	caseSetRef string
+	cohorts    map[savedRecallImpactScope]*savedRecallImpactCohort
+	overflow   bool
+}
+
+type savedRecallImpactCohort struct {
+	plan     savedRecallImpactPlan
+	valid    bool
+	reason   string
+	baseline savedRecallImpactMetrics
+	shadow   savedRecallImpactMetrics
+}
+
+const savedRecallImpactMaxCohorts = 64
+
+func newSavedRecallImpactComparison(cfg recallEvalSavedConfig) *savedRecallImpactComparison {
+	comparison := &savedRecallImpactComparison{
+		caseSetRef: savedRecallImpactCaseSetRef(cfg),
+		cohorts:    map[savedRecallImpactScope]*savedRecallImpactCohort{},
+	}
+	for idx, rawCase := range cfg.Cases {
+		scope := savedRecallImpactScopeForCase(rawCase)
+		cohort := comparison.cohorts[scope]
+		if cohort == nil {
+			cohort = &savedRecallImpactCohort{
+				plan: savedRecallImpactPlan{
+					grades:       map[int]int{},
+					projectRef:   savedRecallImpactOpaqueScopeRef("project", scope.project),
+					taskClassRef: savedRecallImpactOpaqueScopeRef("task_class", scope.taskClass),
+				},
+				valid: true,
+				baseline: savedRecallImpactMetrics{
+					latencyValues: make([]float64, 0, len(cfg.Cases)),
+				},
+				shadow: savedRecallImpactMetrics{
+					latencyValues: make([]float64, 0, len(cfg.Cases)),
+				},
+			}
+			comparison.cohorts[scope] = cohort
+		}
+		cohort.plan.caseCount++
+		if grade, ok := savedRecallImpactDecisionGrade(rawCase["decision_impact_grade"]); ok {
+			cohort.plan.grades[idx] = grade
+		} else {
+			cohort.invalidate("decision_impact_grade_missing_or_invalid")
+		}
+		cohort.plan.numericExpected += len(normalizeExpectedNumeric(rawCase["expected_numeric"]))
+		if len(normalizeExpectedFileTokens(rawCase["forbidden_files"])) > 0 {
+			cohort.plan.safetyCases++
+		}
+	}
+	for _, cohort := range comparison.cohorts {
+		if cohort.plan.numericExpected == 0 {
+			cohort.invalidate("numeric_expectations_missing")
+		}
+		if cohort.plan.safetyCases == 0 {
+			cohort.invalidate("safety_cases_missing")
+		}
+	}
+	comparison.overflow = len(comparison.cohorts) > savedRecallImpactMaxCohorts
+	return comparison
+}
+
+// savedRecallImpactCaseSetRef binds a comparator artifact to the versioned
+// saved-case content without exposing any case text, paths, or scope values.
+// json.Marshal orders map keys deterministically, while case order remains an
+// intentional part of the evaluated case-set content.
+func savedRecallImpactCaseSetRef(cfg recallEvalSavedConfig) string {
+	raw, err := json.Marshal(map[string]any{
+		"schema_id": "saved_recall_eval_case_set_ref.v1",
+		"version":   cfg.Version,
+		"cases":     cfg.Cases,
+	})
+	if err != nil {
+		return ""
+	}
+	return searchIntelligenceSHA256Ref(string(raw))
+}
+
+func savedRecallImpactScopeForCase(rawCase map[string]any) savedRecallImpactScope {
+	project := strings.TrimSpace(strings.ToLower(anyToString(rawCase["project"])))
+	if project == "" {
+		project = "unscoped"
+	}
+	taskClass := strings.TrimSpace(strings.ToLower(anyToString(rawCase["task_class"])))
+	if taskClass == "" {
+		taskClass = "unclassified"
+	}
+	return savedRecallImpactScope{project: project, taskClass: taskClass}
+}
+
+func savedRecallImpactDecisionGrade(raw any) (int, bool) {
+	grade := 0
+	switch value := raw.(type) {
+	case float64:
+		if math.IsNaN(value) || math.IsInf(value, 0) || math.Trunc(value) != value {
+			return 0, false
+		}
+		grade = int(value)
+	case int:
+		grade = value
+	case int64:
+		grade = int(value)
+	case int32:
+		grade = int(value)
+	case json.Number:
+		parsed, err := value.Int64()
+		if err != nil {
+			return 0, false
+		}
+		grade = int(parsed)
+	default:
+		return 0, false
+	}
+	return grade, grade >= 1 && grade <= 3
+}
+
+func savedRecallImpactOpaqueScopeRef(kind string, value string) string {
+	return "sha256:" + sha256Hex("saved_recall_impact_scope.v1\x00"+kind+"\x00"+value)
+}
+
+func (c *savedRecallImpactComparison) invalidate(reason string) {
+	if c == nil {
+		return
+	}
+	for _, cohort := range c.cohorts {
+		cohort.invalidate(reason)
+	}
+}
+
+func (c *savedRecallImpactComparison) invalidateCase(rawCase map[string]any, reason string) {
+	if c == nil {
+		return
+	}
+	cohort := c.cohorts[savedRecallImpactScopeForCase(rawCase)]
+	if cohort == nil {
+		c.invalidate(reason)
+		return
+	}
+	cohort.invalidate(reason)
+}
+
+func (c *savedRecallImpactCohort) invalidate(reason string) {
+	if c == nil {
+		return
+	}
+	c.valid = false
+	if reason == "case_set_invalid" || c.reason == "" {
+		c.reason = reason
+	}
+}
+
+func (c *savedRecallImpactComparison) addCase(
+	caseIndex int,
+	rawCase map[string]any,
+	results []map[string]any,
+	searchIntelligence map[string]any,
+	expectedNumeric []string,
+	latencyMs float64,
+) {
+	if c == nil {
+		return
+	}
+	cohort := c.cohorts[savedRecallImpactScopeForCase(rawCase)]
+	if cohort == nil {
+		c.invalidate("cohort_missing")
+		return
+	}
+	cohort.addCase(caseIndex, rawCase, results, searchIntelligence, expectedNumeric, latencyMs)
+}
+
+func (c *savedRecallImpactCohort) addCase(
+	caseIndex int,
+	rawCase map[string]any,
+	results []map[string]any,
+	searchIntelligence map[string]any,
+	expectedNumeric []string,
+	latencyMs float64,
+) {
+	if c == nil || !c.valid {
+		return
+	}
+	grade, exists := c.plan.grades[caseIndex]
+	if !exists {
+		c.invalidate("decision_impact_grade_missing_or_invalid")
+		return
+	}
+	native, nativeByRef, reason := savedRecallImpactNativeCandidates(results)
+	if reason != "" {
+		c.invalidate(reason)
+		return
+	}
+	if len(native) == 0 {
+		c.invalidate("native_candidate_pool_empty")
+		return
+	}
+	effectiveK := minInt(savedRecallImpactK, len(native))
+	shadow, reason := savedRecallImpactShadowCandidates(searchIntelligence, nativeByRef, effectiveK)
+	if reason != "" {
+		c.invalidate(reason)
+		return
+	}
+	expectedFiles := normalizeExpectedFileTokens(rawCase["expected_files"])
+	forbiddenFiles := normalizeExpectedFileTokens(rawCase["forbidden_files"])
+	baselineNumeric, baselineMapped := savedRecallImpactMatchedNumericFacts(native[:effectiveK], expectedNumeric)
+	shadowNumeric, shadowMapped := savedRecallImpactMatchedNumericFacts(shadow, expectedNumeric)
+	if !baselineMapped || !shadowMapped {
+		c.invalidate("candidate_bound_numeric_evidence_missing")
+		return
+	}
+	c.baseline.addCase(native[:effectiveK], expectedFiles, forbiddenFiles, expectedNumeric, baselineNumeric, grade, latencyMs)
+	c.shadow.addCase(shadow, expectedFiles, forbiddenFiles, expectedNumeric, shadowNumeric, grade, latencyMs)
+}
+
+func savedRecallImpactNativeCandidates(results []map[string]any) ([]savedRecallImpactCandidate, map[string]savedRecallImpactCandidate, string) {
+	ordered := make([]savedRecallImpactCandidate, 0, len(results))
+	byRef := map[string]savedRecallImpactCandidate{}
+	orderedIndex := map[string]int{}
+	for _, row := range results {
+		identity := searchIntelligenceCandidateIdentity(row)
+		if !isSearchIntelligenceFullSHA256Ref(identity.CandidateRef) {
+			return nil, nil, "native_candidate_ref_invalid"
+		}
+		candidate, exists := byRef[identity.CandidateRef]
+		if !exists {
+			candidate = savedRecallImpactCandidate{ref: identity.CandidateRef, rows: make([]map[string]any, 0, 1)}
+		}
+		candidate.rows = append(candidate.rows, row)
+		byRef[identity.CandidateRef] = candidate
+		if !exists {
+			orderedIndex[identity.CandidateRef] = len(ordered)
+			ordered = append(ordered, candidate)
+		} else {
+			ordered[orderedIndex[identity.CandidateRef]] = candidate
+		}
+	}
+	return ordered, byRef, ""
+}
+
+func savedRecallImpactShadowCandidates(searchIntelligence map[string]any, nativeByRef map[string]savedRecallImpactCandidate, effectiveK int) ([]savedRecallImpactCandidate, string) {
+	frontier := anyMap(searchIntelligence["decision_frontier"])
+	if anyToString(frontier["status"]) != "shadow_only" {
+		return nil, "shadow_frontier_missing"
+	}
+	rawCandidates := contextPackAnyList(frontier["candidates"])
+	if effectiveK < 1 {
+		return nil, "native_candidate_pool_empty"
+	}
+	shadow := make([]savedRecallImpactCandidate, 0, effectiveK)
+	seen := map[string]struct{}{}
+	for _, rawCandidate := range rawCandidates {
+		refs := anyMap(anyMap(rawCandidate)["refs"])
+		candidateRef := strings.TrimSpace(anyToString(refs["candidate_ref"]))
+		if !isSearchIntelligenceFullSHA256Ref(candidateRef) {
+			return nil, "shadow_candidate_ref_invalid"
+		}
+		if _, duplicate := seen[candidateRef]; duplicate {
+			return nil, "shadow_top_k_duplicate"
+		}
+		candidate, exists := nativeByRef[candidateRef]
+		if !exists {
+			continue
+		}
+		seen[candidateRef] = struct{}{}
+		shadow = append(shadow, candidate)
+		if len(shadow) == effectiveK {
+			break
+		}
+	}
+	if len(shadow) != effectiveK {
+		return nil, "shadow_returned_pool_incomplete"
+	}
+	return shadow, ""
+}
+
+func (m *savedRecallImpactMetrics) addCase(
+	candidates []savedRecallImpactCandidate,
+	expectedFiles map[string]struct{},
+	forbiddenFiles map[string]struct{},
+	expectedNumeric []string,
+	matchedNumeric []string,
+	grade int,
+	latencyMs float64,
+) {
+	if m == nil {
+		return
+	}
+	if m.caseCount == 0 || len(candidates) < m.effectiveKMin {
+		m.effectiveKMin = len(candidates)
+	}
+	if len(candidates) > m.effectiveKMax {
+		m.effectiveKMax = len(candidates)
+	}
+	if len(candidates) < savedRecallImpactK {
+		m.sparseCandidateCases++
+	}
+	m.caseCount++
+	m.decisionWeightTotal += float64(grade)
+	m.idcg += math.Pow(2, float64(grade)) - 1
+	m.numericExpected += len(expectedNumeric)
+	m.citationExpected += len(expectedFiles)
+	m.citationCandidates += len(candidates)
+	if len(forbiddenFiles) > 0 {
+		m.safetyCaseCount++
+	}
+	selectedRows := make([]map[string]any, 0, len(candidates))
+	hit := false
+	for index, candidate := range candidates {
+		selectedRows = append(selectedRows, candidate.rows...)
+		if savedRecallImpactCandidateMatches(candidate, expectedFiles) {
+			m.citationExact++
+			if !hit {
+				hit = true
+				m.decisionWeightHit += float64(grade)
+				m.dcg += (math.Pow(2, float64(grade)) - 1) / math.Log2(float64(index)+2)
+				m.reciprocalRankSum += 1.0 / float64(index+1)
+			}
+		}
+	}
+	m.citationMatched += len(matchedExpectedFilesWithinK(selectedRows, expectedFiles, len(selectedRows)))
+	if len(forbiddenFiles) > 0 && savedRecallImpactCandidatesMatch(candidates, forbiddenFiles) {
+		m.safetyFailureCount++
+	}
+	m.numericMatched += len(matchedNumeric)
+	if latencyMs >= 0 {
+		m.latencyValues = append(m.latencyValues, latencyMs)
+	}
+}
+
+func savedRecallImpactCandidateMatches(candidate savedRecallImpactCandidate, expectedFiles map[string]struct{}) bool {
+	for _, row := range candidate.rows {
+		if resultHitsExpectations(row, expectedFiles, nil) {
+			return true
+		}
+	}
+	return false
+}
+
+func savedRecallImpactCandidatesMatch(candidates []savedRecallImpactCandidate, expectedFiles map[string]struct{}) bool {
+	for _, candidate := range candidates {
+		if savedRecallImpactCandidateMatches(candidate, expectedFiles) {
+			return true
+		}
+	}
+	return false
+}
+
+func savedRecallImpactMatchedNumericFacts(candidates []savedRecallImpactCandidate, expected []string) ([]string, bool) {
+	if len(expected) == 0 {
+		return []string{}, true
+	}
+	evidence := make([]string, 0, len(candidates))
+	mapped := false
+	for _, candidate := range candidates {
+		for _, row := range candidate.rows {
+			rowEvidence, rowMapped := savedRecallImpactCandidateNumericEvidence(row)
+			if rowMapped {
+				mapped = true
+			}
+			evidence = append(evidence, rowEvidence...)
+		}
+	}
+	if !mapped {
+		return []string{}, false
+	}
+	matches := make([]string, 0, len(expected))
+	for _, value := range expected {
+		for _, candidateEvidence := range evidence {
+			if savedRecallImpactHasExactNumericToken(candidateEvidence, value) {
+				matches = append(matches, value)
+				break
+			}
+		}
+	}
+	return matches, true
+}
+
+func savedRecallImpactCandidateNumericEvidence(row map[string]any) ([]string, bool) {
+	evidence := make([]string, 0, 3)
+	mapped := false
+	for _, key := range []string{"summary", "content", "text"} {
+		value := strings.TrimSpace(anyToString(row[key]))
+		if value == "" {
+			continue
+		}
+		mapped = true
+		evidence = append(evidence, value)
+	}
+	for _, rawFact := range contextPackAnyList(row["numeric_facts"]) {
+		fact := anyMap(rawFact)
+		if strings.EqualFold(strings.TrimSpace(anyToString(fact["field"])), "score") {
+			continue
+		}
+		for _, key := range []string{"value", "text"} {
+			value := strings.TrimSpace(anyToString(fact[key]))
+			if value == "" {
+				continue
+			}
+			mapped = true
+			evidence = append(evidence, value)
+		}
+	}
+	return evidence, mapped
+}
+
+func savedRecallImpactHasExactNumericToken(text, expected string) bool {
+	token := []rune(strings.TrimSpace(expected))
+	haystack := []rune(text)
+	if len(token) == 0 || len(token) > len(haystack) {
+		return false
+	}
+	for start := 0; start+len(token) <= len(haystack); start++ {
+		matched := true
+		for offset, value := range token {
+			if haystack[start+offset] != value {
+				matched = false
+				break
+			}
+		}
+		if !matched {
+			continue
+		}
+		if start > 0 && savedRecallImpactNumericTokenRune(haystack[start-1]) {
+			continue
+		}
+		end := start + len(token)
+		if end < len(haystack) && savedRecallImpactNumericTokenRune(haystack[end]) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+func savedRecallImpactNumericTokenRune(value rune) bool {
+	return unicode.IsLetter(value) || unicode.IsDigit(value) || strings.ContainsRune(".+,-_%", value)
+}
+
+func (m savedRecallImpactMetrics) monitorMetrics() map[string]any {
+	if m.caseCount == 0 || m.decisionWeightTotal <= 0 || m.idcg <= 0 || m.numericExpected <= 0 || m.citationExpected <= 0 || m.safetyCaseCount <= 0 {
+		return savedRecallImpactUnavailableMetrics()
+	}
+	_, p95LatencyMs := recallLatencyStats(m.latencyValues)
+	return map[string]any{
+		"decision_impact_recall_at_5": roundFloat(m.decisionWeightHit/m.decisionWeightTotal, 6),
+		"decision_impact_ndcg_at_5":   roundFloat(m.dcg/m.idcg, 6),
+		"mrr":                         roundFloat(m.reciprocalRankSum/float64(m.caseCount), 6),
+		"numeric_exactness":           roundFloat(float64(m.numericMatched)/float64(m.numericExpected), 6),
+		"citation_coverage":           roundFloat(float64(m.citationMatched)/float64(m.citationExpected), 6),
+		"citation_exactness":          roundFloat(float64(m.citationExact)/float64(m.citationCandidates), 6),
+		"safety_case_count":           m.safetyCaseCount,
+		"safety_failure_count":        m.safetyFailureCount,
+		"safety_failure_rate":         roundFloat(float64(m.safetyFailureCount)/float64(m.safetyCaseCount), 6),
+		"p95_latency_ms":              roundFloat(p95LatencyMs, 3),
+		"effective_k_min":             m.effectiveKMin,
+		"effective_k_max":             m.effectiveKMax,
+		"sparse_candidate_case_count": m.sparseCandidateCases,
+	}
+}
+
+func savedRecallImpactUnavailableMetrics() map[string]any {
+	return map[string]any{
+		"decision_impact_recall_at_5": nil,
+		"decision_impact_ndcg_at_5":   nil,
+		"mrr":                         nil,
+		"numeric_exactness":           nil,
+		"citation_coverage":           nil,
+		"citation_exactness":          nil,
+		"safety_case_count":           0,
+		"safety_failure_count":        0,
+		"safety_failure_rate":         nil,
+		"p95_latency_ms":              nil,
+		"effective_k_min":             0,
+		"effective_k_max":             0,
+		"sparse_candidate_case_count": 0,
+	}
+}
+
+func (c *savedRecallImpactCohort) monitorFields(caseSetRef string) map[string]any {
+	if c == nil {
+		return map[string]any{}
+	}
+	comparisonValid := c.valid
+	reason := c.reason
+	baseline := savedRecallImpactUnavailableMetrics()
+	shadow := savedRecallImpactUnavailableMetrics()
+	if comparisonValid {
+		baseline = c.baseline.monitorMetrics()
+		shadow = c.shadow.monitorMetrics()
+		if !savedRecallImpactMetricsAvailable(baseline) || !savedRecallImpactMetricsAvailable(shadow) {
+			comparisonValid = false
+			reason = "comparison_metrics_unavailable"
+			baseline = savedRecallImpactUnavailableMetrics()
+			shadow = savedRecallImpactUnavailableMetrics()
+		}
+	}
+	if comparisonValid {
+		reason = "valid"
+	}
+	return map[string]any{
+		"schema_id":             savedRecallImpactShadowEvalSchemaID,
+		"version":               1,
+		"comparison_scope":      savedRecallImpactComparisonScope,
+		"comparison_fixed_k":    savedRecallImpactK,
+		"comparison_valid":      comparisonValid,
+		"comparison_reason":     reason,
+		"case_count":            c.plan.caseCount,
+		"case_set_ref":          caseSetRef,
+		"project_scope_refs":    []string{c.plan.projectRef},
+		"task_class_scope_refs": []string{c.plan.taskClassRef},
+		"latency_basis":         "shared_synthetic_retrieval_replay_ms",
+		"baseline":              baseline,
+		"shadow":                shadow,
+		"privacy": map[string]any{
+			"raw_content_or_path_persisted": false,
+			"opaque_scope_refs_only":        true,
+			"candidate_refs_persisted":      false,
+		},
+	}
+}
+
+func (c *savedRecallImpactComparison) monitorFields(caseCount int) map[string]any {
+	if c == nil {
+		return map[string]any{}
+	}
+	cohorts := c.sortedCohorts()
+	if len(cohorts) > savedRecallImpactMaxCohorts {
+		cohorts = cohorts[:savedRecallImpactMaxCohorts]
+	}
+	artifacts := make([]any, 0, len(cohorts))
+	for _, cohort := range cohorts {
+		artifacts = append(artifacts, cohort.monitorFields(c.caseSetRef))
+	}
+	if len(cohorts) == 1 && !c.overflow {
+		topLevel := cloneJSONMap(anyMap(artifacts[0]))
+		topLevel["search_impact_shadow_evaluations"] = artifacts
+		return topLevel
+	}
+	reason := "mixed_scope_requires_exact_cohort"
+	if c.overflow {
+		reason = "cohort_limit_exceeded"
+	}
+	if len(cohorts) == 0 {
+		reason = "comparison_metrics_unavailable"
+	}
+	return map[string]any{
+		"schema_id":                        savedRecallImpactShadowEvalSchemaID,
+		"version":                          1,
+		"comparison_scope":                 savedRecallImpactComparisonScope,
+		"comparison_fixed_k":               savedRecallImpactK,
+		"comparison_valid":                 false,
+		"comparison_reason":                reason,
+		"case_count":                       caseCount,
+		"case_set_ref":                     c.caseSetRef,
+		"project_scope_refs":               []string{},
+		"task_class_scope_refs":            []string{},
+		"latency_basis":                    "shared_synthetic_retrieval_replay_ms",
+		"baseline":                         savedRecallImpactUnavailableMetrics(),
+		"shadow":                           savedRecallImpactUnavailableMetrics(),
+		"search_impact_shadow_evaluations": artifacts,
+		"privacy": map[string]any{
+			"raw_content_or_path_persisted": false,
+			"opaque_scope_refs_only":        true,
+			"candidate_refs_persisted":      false,
+		},
+	}
+}
+
+func (c *savedRecallImpactComparison) sortedCohorts() []*savedRecallImpactCohort {
+	if c == nil {
+		return []*savedRecallImpactCohort{}
+	}
+	cohorts := make([]*savedRecallImpactCohort, 0, len(c.cohorts))
+	for _, cohort := range c.cohorts {
+		cohorts = append(cohorts, cohort)
+	}
+	sort.Slice(cohorts, func(left, right int) bool {
+		if cohorts[left].plan.projectRef == cohorts[right].plan.projectRef {
+			return cohorts[left].plan.taskClassRef < cohorts[right].plan.taskClassRef
+		}
+		return cohorts[left].plan.projectRef < cohorts[right].plan.projectRef
+	})
+	return cohorts
+}
+
+func savedRecallImpactMetricsAvailable(metrics map[string]any) bool {
+	for _, key := range []string{
+		"decision_impact_recall_at_5", "decision_impact_ndcg_at_5", "mrr", "numeric_exactness",
+		"citation_coverage", "citation_exactness", "safety_failure_rate", "p95_latency_ms",
+	} {
+		if _, ok := metrics[key].(float64); !ok {
+			return false
+		}
+	}
+	return anyToInt(metrics["safety_case_count"], 0) > 0
 }
 
 func sortStrings(values []string) {

@@ -56,10 +56,13 @@ func normalizeEvidenceAttributions(sample map[string]any) []any {
 			return clipText(strings.TrimSpace(portableString(anyToString(value), stats)), limit)
 		}
 		entityType := strings.ToLower(portable(row["entity_type"], 32))
-		if !containsString([]string{"source", "file", "agent", "memory"}, entityType) {
+		if !containsString([]string{"candidate", "source", "file", "agent", "memory"}, entityType) {
 			continue
 		}
 		entityID := portable(row["entity_id"], 360)
+		if entityType == "candidate" {
+			entityID = contextPackOpaqueCandidateRef(firstPresentAny(row["candidate_ref"], row["entity_id"]))
+		}
 		if entityID == "" {
 			switch entityType {
 			case "source":
@@ -87,7 +90,7 @@ func normalizeEvidenceAttributions(sample map[string]any) []any {
 		verifierID := portable(firstPresentAny(row["verifier_id"], sample["verifier_id"]), 160)
 		producerID := portable(firstPresentAny(row["producer_agent_id"], row["agent_id"], sample["agent_id"]), 160)
 		issuer := portable(firstPresentAny(row["issuer"], sample["outcome_source"]), 160)
-		out = append(out, map[string]any{
+		normalized := map[string]any{
 			"entity_type":                  entityType,
 			"entity_id":                    entityID,
 			"entity_ref":                   evidenceReputationOpaqueRef(entityType, entityID),
@@ -97,7 +100,11 @@ func normalizeEvidenceAttributions(sample map[string]any) []any {
 			"producer_agent_id":            producerID,
 			"verifier_id":                  verifierID,
 			"verification_evidence_digest": verificationDigest,
-		})
+		}
+		if entityType == "candidate" {
+			normalized["candidate_ref"] = entityID
+		}
+		out = append(out, normalized)
 	}
 	return out
 }
@@ -139,14 +146,16 @@ func buildEvidenceReputation(rows []map[string]any, options evidenceReputationOp
 			excluded["calibration_ineligible"]++
 			continue
 		}
+		utility := anyMap(firstPresentAny(row["verified_utility"], row["utility"]))
 		verificationDigest := strings.TrimSpace(firstNonEmptyStrings(
 			anyToString(row["verification_evidence_digest"]),
 			anyToString(row["evidence_digest"]),
-			anyToString(anyMap(firstPresentAny(row["verified_utility"], row["utility"]))["verification_evidence_digest"]),
+			anyToString(utility["verification_evidence_digest"]),
+			anyToString(utility["evidence_digest"]),
 		))
 		verificationPassed := anyToBool(row["verification_passed"])
 		if !verificationPassed {
-			verificationPassed = anyToBool(anyMap(firstPresentAny(row["verified_utility"], row["utility"]))["verification_passed"])
+			verificationPassed = anyToBool(utility["verification_passed"])
 		}
 		if !verificationPassed || !utilitySHA256DigestValid(verificationDigest) {
 			excluded["verification_missing"]++
@@ -169,10 +178,25 @@ func buildEvidenceReputation(rows []map[string]any, options evidenceReputationOp
 			entityType := strings.ToLower(strings.TrimSpace(anyToString(attribution["entity_type"])))
 			entityID := strings.TrimSpace(anyToString(attribution["entity_id"]))
 			method := strings.ToLower(strings.TrimSpace(anyToString(attribution["attribution_method"])))
-			if entityID == "" || !containsString([]string{"source", "file", "agent", "memory"}, entityType) ||
+			if entityID == "" || !containsString([]string{"candidate", "source", "file", "agent", "memory"}, entityType) ||
 				!containsString([]string{"explicit_verified", "counterfactual", "leave_one_out", "citation_loss"}, method) {
 				excluded["attribution_invalid"]++
 				continue
+			}
+			if entityType == "candidate" {
+				if contextPackOpaqueCandidateRef(firstPresentAny(attribution["candidate_ref"], entityID)) == "" ||
+					anyToString(attribution["result_level_credit"]) != "selection_receipt_bound" {
+					excluded["candidate_unbound_to_selection_receipt"]++
+					continue
+				}
+				if anyToString(attribution["selection_state"]) != "selected" {
+					excluded["candidate_not_selected"]++
+					continue
+				}
+				if !evidenceReputationCandidateUtilityVerified(row, attribution) {
+					excluded["candidate_utility_verification_missing"]++
+					continue
+				}
 			}
 			attributionDigest := strings.TrimSpace(firstNonEmptyStrings(anyToString(attribution["verification_evidence_digest"]), verificationDigest))
 			if attributionDigest != verificationDigest {
@@ -181,11 +205,16 @@ func buildEvidenceReputation(rows []map[string]any, options evidenceReputationOp
 			}
 			verifierID := strings.TrimSpace(anyToString(attribution["verifier_id"]))
 			producerID := strings.TrimSpace(anyToString(attribution["producer_agent_id"]))
-			if verifierID != "" && producerID != "" && strings.EqualFold(verifierID, producerID) {
+			verifierSubject := strings.TrimSpace(anyToString(attribution["verifier_id_subject_ref"]))
+			producerSubject := strings.TrimSpace(anyToString(attribution["producer_agent_id_subject_ref"]))
+			if (verifierSubject != "" && producerSubject != "" && verifierSubject == producerSubject) ||
+				(verifierSubject == "" && producerSubject == "" && verifierID != "" && producerID != "" && strings.EqualFold(verifierID, producerID)) {
 				excluded["self_attribution"]++
 				continue
 			}
-			if entityType == "agent" && verifierID != "" && strings.EqualFold(verifierID, entityID) {
+			entitySubject := strings.TrimSpace(anyToString(attribution["entity_subject_ref"]))
+			if entityType == "agent" && ((verifierSubject != "" && entitySubject != "" && verifierSubject == entitySubject) ||
+				(verifierSubject == "" && entitySubject == "" && verifierID != "" && strings.EqualFold(verifierID, entityID))) {
 				excluded["self_attribution"]++
 				continue
 			}
@@ -248,6 +277,10 @@ func buildEvidenceReputation(rows []map[string]any, options evidenceReputationOp
 				label = "contested"
 			}
 		}
+		resultLevelCredit := "unbound_legacy"
+		if acc.EntityType == "candidate" {
+			resultLevelCredit = "selection_receipt_bound"
+		}
 		entries = append(entries, map[string]any{
 			"reputation_id":            "rep_" + sha256Hex(acc.EntityType + "\x00" + acc.EntityRef)[:24],
 			"entity_type":              acc.EntityType,
@@ -264,6 +297,7 @@ func buildEvidenceReputation(rows []map[string]any, options evidenceReputationOp
 			"opposition_count":         acc.OppositionCount,
 			"last_observed_at":         acc.LastObservedAt.Format(time.RFC3339Nano),
 			"calibrated":               calibrated,
+			"result_level_credit":      resultLevelCredit,
 			"bounded_influence": map[string]any{
 				"proposed_multiplier": roundFloat(proposedMultiplier, 6),
 				"minimum":             0.85, "maximum": 1.15, "applied": false, "advisory_only": true,
@@ -314,6 +348,26 @@ func buildEvidenceReputation(rows []map[string]any, options evidenceReputationOp
 	}
 }
 
+// Candidate result credit is admitted only after the existing Utility Ledger
+// has reconciled a verifier event. Reporter-provided verification fields on an
+// outcome are never sufficient for candidate reputation.
+func evidenceReputationCandidateUtilityVerified(row, attribution map[string]any) bool {
+	verification := anyMap(row["candidate_utility_verification"])
+	if !anyToBool(verification["independently_verified"]) || anyToString(verification["verification_status"]) != "verified" {
+		return false
+	}
+	if anyToString(verification["outcome_id"]) != anyToString(row["outcome_id"]) ||
+		anyToString(verification["sample_id"]) != anyToString(row["sample_id"]) {
+		return false
+	}
+	digest := strings.TrimSpace(anyToString(verification["evidence_digest"]))
+	if !utilitySHA256DigestValid(digest) || digest != anyToString(attribution["verification_evidence_digest"]) {
+		return false
+	}
+	verifierID := strings.TrimSpace(anyToString(verification["verifier_id"]))
+	return verifierID != "" && verifierID == anyToString(attribution["verifier_id"])
+}
+
 func evidenceReputationOutcomePolarity(row map[string]any) (bool, bool) {
 	if anyToBool(row["first_pass_success"]) && !anyToBool(row["repair_required"]) {
 		return true, false
@@ -334,12 +388,72 @@ func evidenceReputationOutcomePolarity(row map[string]any) (bool, bool) {
 func (s *server) evidenceReputationSnapshot(project, taskClass string, minimumSamples, limit int) map[string]any {
 	rows := []map[string]any{}
 	if s != nil && s.contextPackQuality != nil {
-		rows = s.contextPackQuality.outcomeSourceRows(evidenceReputationMaxRows)
+		rows, _ = s.contextPackQuality.receiptDurableOutcomeRows(evidenceReputationMaxRows)
 	}
+	rows = reconcileCandidateUtilityVerification(rows, utilityFromServer(s))
 	return buildEvidenceReputation(rows, evidenceReputationOptions{
 		Project: project, TaskClass: taskClass, AsOf: time.Now().UTC(),
 		MinimumSamples: minimumSamples, MaxEntries: limit,
 	})
+}
+
+func utilityFromServer(s *server) *utilityTelemetry {
+	if s == nil {
+		return nil
+	}
+	return s.utility
+}
+
+// reconcileCandidateUtilityVerification is the sole join between candidate
+// outcome attribution and the independent Utility Ledger verifier receipt.
+// Callers may only treat a candidate as verified after the later predicate
+// evidenceReputationCandidateUtilityVerified confirms this exact join.
+func reconcileCandidateUtilityVerification(rows []map[string]any, utility *utilityTelemetry) []map[string]any {
+	if utility == nil {
+		return rows
+	}
+	for _, row := range rows {
+		if !evidenceReputationHasCandidateAttribution(row) {
+			continue
+		}
+		observation, found := utility.observation(anyToString(row["outcome_id"]))
+		if !found {
+			continue
+		}
+		claim := anyMap(observation["utility"])
+		eligibility := anyMap(observation["eligibility"])
+		denominator := anyMap(observation["denominator"])
+		wireTokensExact := 0
+		if anyToBool(denominator["wire_tokens_exact"]) {
+			wireTokensExact = anyToInt(denominator["wire_tokens"], 0)
+		}
+		modelVisibleTokensExact := 0
+		if anyToBool(denominator["model_visible_context_tokens_exact"]) {
+			modelVisibleTokensExact = anyToInt(denominator["model_visible_context_tokens"], 0)
+		}
+		row["candidate_utility_verification"] = map[string]any{
+			"outcome_id":                         anyToString(observation["outcome_id"]),
+			"sample_id":                          anyToString(observation["sample_id"]),
+			"independently_verified":             anyToBool(claim["independently_verified"]),
+			"verification_status":                anyToString(claim["verification_status"]),
+			"evidence_digest":                    anyToString(claim["evidence_digest"]),
+			"verifier_id":                        anyToString(claim["verifier_id"]),
+			"observed_yield_eligible":            anyToBool(eligibility["observed_yield_eligible"]),
+			"wire_tokens_exact":                  maxInt(0, wireTokensExact),
+			"model_visible_context_tokens_exact": maxInt(0, modelVisibleTokensExact),
+		}
+	}
+	return rows
+}
+
+func evidenceReputationHasCandidateAttribution(row map[string]any) bool {
+	for _, attribution := range contextPackAnyList(row["evidence_attribution"]) {
+		candidate := anyMap(attribution)
+		if anyToString(candidate["entity_type"]) == "candidate" && anyToString(candidate["selection_state"]) == "selected" {
+			return true
+		}
+	}
+	return false
 }
 
 func evidenceReputationQueryInt(r *http.Request, key string, fallback, minimum, maximum int) (int, bool) {

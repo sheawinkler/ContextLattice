@@ -300,6 +300,7 @@ func TestMergeNeighborRowsPrefersExplicitEdgesAndDedupesRetrieval(t *testing.T) 
 		{"memory_id": "alpha::notes/b.md", "project": "alpha", "file": "notes/b.md", "source": memoryEdgeSource, "score": 0.9},
 	}
 	retrievalRows := []any{
+		map[string]any{"project": "alpha", "file": "notes/a.md", "source": "qdrant", "score": 0.95},
 		map[string]any{"project": "alpha", "file": "notes/b.md", "source": "qdrant", "score": 0.8},
 		map[string]any{"project": "alpha", "file": "notes/c.md", "source": "topic_rollups", "score": 0.7},
 	}

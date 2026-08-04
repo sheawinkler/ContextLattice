@@ -47,7 +47,7 @@ func utilityTestFixture(outcomeID, sampleID, sessionID, taskClass, project strin
 	digest := utilityTestDigest("evidence:" + outcomeID)
 	quality := map[string]any{
 		"sample_id": sampleID, "session_id": sessionID, "project": project,
-		"agent_id": "codex_test", "quality_score": 92, "confidence": "high",
+		"agent_id": "codex_test", "task_class": taskClass, "quality_score": 92, "confidence": "high",
 	}
 	impact := map[string]any{
 		"sample_id": sampleID, "session_id": sessionID, "project": project,
@@ -121,6 +121,30 @@ func TestUtilityObservationRequiresCompleteExactSourceJoin(t *testing.T) {
 	reasons := anyToStringList(anyMap(row["eligibility"])["exclusion_reasons"], 32)
 	if anyToBool(anyMap(row["eligibility"])["observed_yield_eligible"]) || !containsString(reasons, "source_join_key_missing_agent_id") {
 		t.Fatalf("incomplete exact source join must be excluded: %#v", row)
+	}
+}
+
+func TestUtilityOpaquePairingPreservesExactMatchedControlJoin(t *testing.T) {
+	digest := utilityTestDigest("opaque-pair-task")
+	controlPairing := map[string]any{
+		"pair_id": "pair_private_customer_omega", "arm": "control", "matching_method": "exact_holdout",
+		"task_match_digest": digest, "leakage_free": true,
+	}
+	treatmentPairing := cloneAnyMap(controlPairing)
+	treatmentPairing["arm"] = "treatment"
+	treatmentPairing["matched_control_outcome_id"] = "outcome_opaque_pair_control"
+	control, controlQuality, controlImpact, controlEvents := utilityTestFixture("outcome_opaque_pair_control", "sample_opaque_pair_control", "session_opaque_pair_control", "coding", "contextlattice", 2, 300, controlPairing)
+	treatment, treatmentQuality, treatmentImpact, treatmentEvents := utilityTestFixture("outcome_opaque_pair_treatment", "sample_opaque_pair_treatment", "session_opaque_pair_treatment", "coding", "contextlattice", 4, 300, treatmentPairing)
+	controlEntry := contextPackQualityOutcomeFromSample(control)
+	treatmentEntry := contextPackQualityOutcomeFromSample(treatment)
+	controlObservation := buildUtilityObservation(controlEntry, controlQuality, controlImpact, controlEvents)
+	treatmentObservation := buildUtilityObservation(treatmentEntry, treatmentQuality, treatmentImpact, treatmentEvents)
+	if anyToString(controlObservation["status"]) != "verified_exact" || anyToString(treatmentObservation["status"]) != "verified_exact" {
+		t.Fatalf("opaque utility claims did not join raw verification events: control=%#v treatment=%#v", controlObservation, treatmentObservation)
+	}
+	_, pairs, exclusions := utilityPairProjection([]map[string]any{controlObservation, treatmentObservation})
+	if len(pairs) != 1 || len(exclusions) != 0 || !utilitySHA256DigestValid(pairs[0].PairID) || strings.Contains(pairs[0].PairID, "private_customer") {
+		t.Fatalf("opaque pairing did not retain an exact matched-control join: pairs=%#v exclusions=%#v", pairs, exclusions)
 	}
 }
 
@@ -317,7 +341,17 @@ func TestUtilityLedgerOutOfOrderRevisionWriteCannotReplaceLatest(t *testing.T) {
 func TestUtilityOutcomeDuplicateIsIdempotentButConflictingClaimReturns409(t *testing.T) {
 	t.Setenv("GO_UTILITY_LEDGER_ENABLED", "true")
 	t.Setenv("GO_UTILITY_LEDGER_PATH", filepath.Join(t.TempDir(), "utility.ndjson"))
-	s := &server{utility: newUtilityTestTelemetry(t, 20)}
+	t.Setenv("GO_CONTEXT_PACK_QUALITY_LEDGER_ENABLED", "true")
+	t.Setenv("GO_CONTEXT_PACK_QUALITY_LEDGER_PATH", filepath.Join(t.TempDir(), "context-pack-quality.ndjson"))
+	qualityTelemetry := newContextPackQualityTelemetry(20)
+	qualityTelemetry.recordQuality(map[string]any{
+		"sample_id": "sample_duplicate", "session_id": "session_duplicate", "project": "contextlattice", "agent_id": "codex_test", "task_class": "coding",
+	})
+	impactTelemetry := newTokenImpactTelemetry(20)
+	impactTelemetry.record(map[string]any{
+		"sample_id": "sample_duplicate", "session_id": "session_duplicate", "project": "contextlattice", "agent_id": "codex_test",
+	})
+	s := &server{contextPackQuality: qualityTelemetry, tokenImpact: impactTelemetry, utility: newUtilityTestTelemetry(t, 20)}
 	payload := map[string]any{
 		"outcome_id": "outcome_duplicate", "sample_id": "sample_duplicate", "session_id": "session_duplicate",
 		"project": "contextlattice", "agent_id": "codex_test", "task_class": "coding",
@@ -353,6 +387,54 @@ func TestUtilityOutcomeDuplicateIsIdempotentButConflictingClaimReturns409(t *tes
 	stored, ok := s.utility.observation("outcome_duplicate")
 	if !ok || anyToFloat(anyMap(stored["utility"])["value"]) != 4 {
 		t.Fatalf("conflicting utility claim mutated the ledger: %#v", stored)
+	}
+}
+
+func TestUtilityOutcomeDuplicateWithContextQualityUsesLogicalClaimIdentity(t *testing.T) {
+	t.Setenv("GO_UTILITY_LEDGER_ENABLED", "true")
+	t.Setenv("GO_UTILITY_LEDGER_PATH", filepath.Join(t.TempDir(), "utility.ndjson"))
+	t.Setenv("GO_CONTEXT_PACK_QUALITY_LEDGER_ENABLED", "true")
+	t.Setenv("GO_CONTEXT_PACK_QUALITY_LEDGER_PATH", filepath.Join(t.TempDir(), "context-pack-quality.ndjson"))
+	s := &server{
+		contextPackQuality: newContextPackQualityTelemetry(20),
+		utility:            newUtilityTestTelemetry(t, 20),
+		tokenImpact:        newTokenImpactTelemetry(20),
+	}
+	payload := map[string]any{
+		"outcome_id": "outcome_duplicate_context_quality", "sample_id": "sample_duplicate_context_quality", "session_id": "session_duplicate_context_quality",
+		"project": "contextlattice", "agent_id": "codex_test", "task_class": "coding",
+		"utility": map[string]any{
+			"value": 4, "unit": "acceptance_points", "verification_event_id": "event_duplicate_context_quality",
+			"evidence_digest": utilityTestDigest("duplicate-context-quality"), "verification_passed": true,
+			"verifier_kind": "deterministic_test", "verifier_id": "go_holdout",
+		},
+	}
+	s.contextPackQuality.recordQuality(map[string]any{
+		"sample_id": "sample_duplicate_context_quality", "session_id": "session_duplicate_context_quality", "project": "contextlattice", "agent_id": "codex_test", "task_class": "coding",
+	})
+	s.tokenImpact.record(map[string]any{
+		"sample_id": "sample_duplicate_context_quality", "session_id": "session_duplicate_context_quality", "project": "contextlattice", "agent_id": "codex_test",
+	})
+	post := func(body map[string]any) *httptest.ResponseRecorder {
+		t.Helper()
+		raw, err := json.Marshal(body)
+		if err != nil {
+			t.Fatalf("marshal context-quality duplicate payload: %v", err)
+		}
+		recorder := httptest.NewRecorder()
+		s.telemetryContextPackQualityOutcomeRoute(recorder, httptest.NewRequest(http.MethodPost, "/telemetry/context-pack-quality/outcome", bytes.NewReader(raw)))
+		return recorder
+	}
+	if first := post(payload); first.Code != http.StatusOK {
+		t.Fatalf("first context-quality utility claim status=%d body=%s", first.Code, first.Body.String())
+	}
+	if replay := post(cloneAnyMap(payload)); replay.Code != http.StatusOK {
+		t.Fatalf("idempotent context-quality utility replay status=%d body=%s", replay.Code, replay.Body.String())
+	}
+	conflict := cloneAnyMap(payload)
+	anyMap(conflict["utility"])["value"] = 9
+	if response := post(conflict); response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "utility_outcome_conflict") {
+		t.Fatalf("context-quality canonicalization accepted changed utility claim: status=%d body=%s", response.Code, response.Body.String())
 	}
 }
 
@@ -486,6 +568,8 @@ func TestUtilityPersistenceFailureDoesNotAcknowledgeOrMutateClaim(t *testing.T) 
 	ledgerPath := filepath.Join(t.TempDir(), "utility.ndjson")
 	t.Setenv("GO_UTILITY_LEDGER_ENABLED", "true")
 	t.Setenv("GO_UTILITY_LEDGER_PATH", ledgerPath)
+	t.Setenv("GO_CONTEXT_PACK_QUALITY_LEDGER_ENABLED", "true")
+	t.Setenv("GO_CONTEXT_PACK_QUALITY_LEDGER_PATH", filepath.Join(t.TempDir(), "context-pack-quality.ndjson"))
 	telemetry := newUtilityTestTelemetry(t, 20)
 	if err := os.Remove(ledgerPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("remove utility file before failure injection: %v", err)
@@ -501,7 +585,11 @@ func TestUtilityPersistenceFailureDoesNotAcknowledgeOrMutateClaim(t *testing.T) 
 	if _, exists := telemetry.observation("outcome_persistence_failure"); exists {
 		t.Fatal("persistence failure mutated the in-memory Utility Ledger")
 	}
-	s := &server{utility: telemetry}
+	qualityTelemetry := newContextPackQualityTelemetry(20)
+	qualityTelemetry.recordQuality(quality)
+	impactTelemetry := newTokenImpactTelemetry(20)
+	impactTelemetry.record(impact)
+	s := &server{contextPackQuality: qualityTelemetry, tokenImpact: impactTelemetry, utility: telemetry}
 	raw, _ := json.Marshal(outcome)
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPost, "/telemetry/context-pack-quality/outcome", bytes.NewReader(raw))

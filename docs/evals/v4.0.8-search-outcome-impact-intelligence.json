@@ -1,0 +1,317 @@
+{
+  "schema_id": "contextlattice_eval_ledger.v1",
+  "feature": "search_outcome_impact_intelligence",
+  "lane": "shared_public_safe",
+  "release_train": "v4.0.8",
+  "recorded_at": "2026-08-04T14:52:55Z",
+  "objective": "Add three fail-closed intelligence layers: decision-aware shadow result ranking, receipt-bound candidate outcome attribution, and advisory impact gates backed by comparative saved-case evaluation and independently reconciled utility evidence.",
+  "baseline": {
+    "context_pack_quality_samples": 1002,
+    "context_pack_outcome_rows": 6,
+    "token_impact_exact_samples": 1008,
+    "model_visible_context_tokens_exact": 786773,
+    "utility_observations": 16,
+    "independently_verified_utility_observations": 0,
+    "observed_yield_eligible_observations": 0,
+    "causal_pairs": 0,
+    "saved_recall_cases": 3,
+    "saved_recall_evaluated_cases": 0,
+    "saved_recall_status": "case_set_invalid",
+    "candidate_selection_receipts": 0,
+    "candidate_outcome_credit": "unavailable",
+    "search_result_identity": "project_file_first_identity_collapsed_distinct_passages_from_one_file",
+    "comparative_shadow_impact_evaluation": "unavailable"
+  },
+  "intervention": {
+    "result_intelligence": [
+      "Full SHA-256 candidate, content, passage, and locator references replace truncated or file-only identity.",
+      "Exact cross-store passages merge while distinct passages from the same file remain distinct; sparse rows fall back to canonical locator identity.",
+      "Literal production ordering remains unchanged while a bounded shadow frontier reports query alignment, currentness, provenance, trust, contradiction, diversity, acquisition risk, and heuristic expected-regret reduction.",
+      "Retrieved verification fields remain claims and cannot become independent proof without a separate server-side Utility Ledger join."
+    ],
+    "outcome_intelligence": [
+      "Each context-pack quality sample persists one opaque bounded selection receipt with selected and omitted candidate state.",
+      "Outcome attribution must bind the exact sample, project, receipt, candidate reference, verifier, and evidence digest.",
+      "Only selected candidates are eligible for reputation or downstream causal outcome credit; omitted candidates remain recorded counterfactual context.",
+      "Candidate reputation requires independent Utility Ledger reconciliation and remains advisory with ranking influence disabled.",
+      "Receipt-bound outcomes are admitted only after fsync acknowledgement; exact retries remain idempotent across memory-window eviction and restart, while changed claims return conflict.",
+      "Public quality-ledger rows, snapshots, and receipts retain opaque project-bound topic and fixture references rather than raw query, content, path, topic path, or source body.",
+      "Canonical raw reporter labels on scoped observable-only legacy outcomes migrate through the same project-and-field-bound one-way digest used by current ingress; admitted, credit-bearing, unscoped, malformed, or unknown-schema rows remain fail-closed.",
+      "One bounded owner-only regression-fixture sidecar persists one normalized explicit fixture per opaque full-SHA reference and rejoins it only after authoritative quality admission."
+    ],
+    "impact_intelligence": [
+      "Exact token artifacts deduplicate by sample, scope, and packed kind while legacy rows remain observable and signed net deltas remain separate from clipped savings estimates.",
+      "The advisory search-impact endpoint requires an exact project and task-class cohort for canary evidence.",
+      "A chronological 80/20 split, negative-outcome retention, two independent verifiers, exact denominators, a positive causal lower bound, and no recent outcome regression are mandatory gates.",
+      "Saved-case comparison reorders only the returned candidate pool and requires human-authored decision-impact grades, numeric expectations, safety cases, citation fidelity, and no latency regression.",
+      "Comparator artifacts require content-and-version-bound case-set digests, native finite numeric types, strict integer counters, bounded rates, and an exact scoped envelope.",
+      "Global token-impact telemetry remains contextual and explicitly non-gating; only exact receipt-bound candidate outcomes, causal proof, and exact-scope comparative artifacts can satisfy impact gates."
+    ],
+    "hard_boundaries": [
+      "No learned or calibrated ranking is applied to live search results.",
+      "No canary, activation, entitlement, deployment, provider call, or external network call is performed by the intelligence kernels.",
+      "Public quality-ledger rows, snapshots, and receipts persist no raw query, result content, private path, topic path, raw candidate payload, or source body; they retain only bounded opaque references, normalized scalar evidence, and selection state.",
+      "The one-way privacy migration creates no raw backup or reverse mapping and refuses any whole-file rewrite that would omit a malformed or unknown-schema row.",
+      "A normalized explicit regression fixture is deliberately persisted exactly once in one owner-only sidecar bounded to 2 MiB and 1000 fixtures and keyed and joined by an opaque full-SHA reference.",
+      "Ordinary recall rows and global token-impact summaries cannot satisfy comparative-shadow gates, and a newer invalid artifact supersedes an older valid artifact in the same exact scope."
+    ]
+  },
+  "holdout": {
+    "kind": "saved_recall_reorder_only_returned_candidate_pool",
+    "fixed_k_ceiling": 5,
+    "split": "chronological_80_20",
+    "minimum_train_outcomes": 8,
+    "minimum_holdout_outcomes": 2,
+    "minimum_negative_outcomes": 1,
+    "minimum_independent_verifiers": 2,
+    "required_case_fields": [
+      "decision_impact_grade",
+      "expected_numeric",
+      "forbidden_files"
+    ],
+    "required_improvements": [
+      "decision_impact_recall_at_5",
+      "decision_impact_ndcg_at_5"
+    ],
+    "non_regression_metrics": [
+      "mrr",
+      "numeric_exactness",
+      "citation_coverage",
+      "citation_exactness",
+      "safety_failure_rate",
+      "p95_latency_ms"
+    ],
+    "current_live_status": "invalid_and_ineligible",
+    "current_live_reason": "No valid graded saved-case artifact, independently verified candidate outcomes, exact eligible denominators, or positive causal interval exists yet."
+  },
+  "cost": {
+    "provider_calls": 0,
+    "external_network_calls_inside_intelligence_kernels": 0,
+    "new_dependencies": 0,
+    "new_routes": 1,
+    "new_persistent_ledgers": 1,
+    "regression_fixture_sidecar_visibility": "owner_only",
+    "regression_fixture_sidecar_max_bytes": 2097152,
+    "regression_fixture_sidecar_max_fixtures": 1000,
+    "selection_receipt_candidate_limit": 24,
+    "search_frontier_candidate_limit": 12,
+    "token_impact_cohort_limit": 24,
+    "outcome_source_row_limit": 1000
+  },
+  "latency": {
+    "focused_feature_suite_seconds": 2.4,
+    "race_feature_suite_seconds": 11.16,
+    "post_live_fix_focused_suite_seconds": 2.68,
+    "post_live_fix_race_suite_seconds": 3.86,
+    "go_vet_all_packages_seconds": 1.21,
+    "module_all_packages_test_seconds": 71.21,
+    "linux_amd64_cross_build_seconds": 5.71,
+    "windows_amd64_cross_build_seconds": 6.14,
+    "python_sidecar_config_tests_seconds": 0.08,
+    "orbstack_compose_config_seconds": 0.33,
+    "git_diff_head_check_seconds": 0.05,
+    "git_diff_cached_check_seconds": 0.06,
+    "eval_ledger_json_parse_seconds": 0.0,
+    "measurement_basis": "authoritative sequential local-CI wall time on the development host",
+    "projection_release_gates": {
+      "public_canonical_race_gateway_seconds": 218.912,
+      "paid_canonical_race_gateway_seconds": 262.808,
+      "public_strict_projection_p95_ms": 7.02475,
+      "public_strict_proof_timeline_p95_ms": 2.249666,
+      "paid_strict_shared_retention_p95_ms": 145.56525,
+      "paid_strict_shared_retention_batch_p95_ms": [
+        169.345334,
+        145.56525,
+        141.699834
+      ],
+      "internal_full_volume_candidate_p95_ms": [
+        299.1625,
+        295.070333
+      ],
+      "internal_full_volume_baseline_p95_ms": 298.124584,
+      "strict_storage_tier": "verified canonical ContextLattice cache volume",
+      "internal_volume_free_gib": 1.5,
+      "canonical_volume_free_gb": 874.4
+    },
+    "runtime_endpoint_latency": {
+      "memory_search_seconds": 0.413545,
+      "search_impact_missing_scope_seconds": 0.002339,
+      "search_impact_exact_scope_seconds": 0.012059,
+      "measurement_basis": "curl total time against the source-bound local gateway candidate"
+    }
+  },
+  "tool_calls": {
+    "result_intelligence_provider_calls_per_search": 0,
+    "result_intelligence_additional_network_calls_per_search": 0,
+    "outcome_binding_provider_calls_per_outcome": 0,
+    "impact_advisory_provider_calls_per_request": 0,
+    "runtime_process_restarts_so_far": 5,
+    "runtime_container_restarts_so_far": 0,
+    "runtime_gateway_recreates_so_far": 5,
+    "unrelated_container_restarts_so_far": 0
+  },
+  "failures": [
+    {
+      "stage": "identity_merge_and_shadow_isolation_review",
+      "status": "resolved",
+      "failure": "File-first or empty-content identity could collapse distinct passages or unrelated sparse neighbors, while fusion could accidentally change the production result order.",
+      "resolution": "Use observed content and full candidate/content/passage/locator digests, preserve explicit chunk and range locators, merge only true duplicates, and emit intelligence as a bounded shadow frontier without changing native ordering."
+    },
+    {
+      "stage": "provenance_and_trust_spoofing_review",
+      "status": "resolved",
+      "failure": "Retrieved rows could self-assert native ownership, trust, or independent verification and inflate advisory ranking.",
+      "resolution": "Overwrite ownership from scheduler evidence, carry observed provenance in a typed gateway-only envelope, and treat reporter verification fields as claims until exact Utility reconciliation."
+    },
+    {
+      "stage": "exact_receipt_binding_review",
+      "status": "resolved",
+      "failure": "Forged, omitted, cross-project, or incompletely bound candidates could enter reputation or causal cohorts.",
+      "resolution": "Require exact sample, project, receipt, candidate, verifier, and evidence binding; retain omitted candidates only as counterfactual state and exclude them from reputation and causal credit."
+    },
+    {
+      "stage": "receipt_durability_prune_replay_and_chronology_review",
+      "status": "resolved",
+      "failure": "Candidate outcomes could reach proof state before receipt fsync, prune failures could encourage duplicate retries, replay could diverge after eviction or restart, and reporter time could manipulate the chronological split.",
+      "resolution": "Fsync receipt-bearing samples and candidate outcomes before admission, report post-append prune degradation separately, serialize and canonicalize exact replay, stamp gateway receipt time at ingress, and abstain on conflicting chronology."
+    },
+    {
+      "stage": "utility_opaque_reconciliation_review",
+      "status": "resolved",
+      "failure": "Aggregate or self-asserted Utility evidence could lend eligibility to unrelated rows or require raw retrieval material to reconcile a candidate outcome.",
+      "resolution": "Join each eligible outcome through exact opaque sample, receipt, candidate, verifier, and evidence digests; derive denominators from that same set and keep raw fixture material out of the Utility path."
+    },
+    {
+      "stage": "strict_numeric_admission_and_overflow_review",
+      "status": "resolved",
+      "failure": "Strings, booleans, fractions, non-finite values, inconsistent provider totals, oversized counters, unknown samples, reused samples, or aggregate overflow could corrupt calibration and impact evidence.",
+      "resolution": "Require native finite bounded numeric types and consistent totals before telemetry or Utility admission, bind one authoritative outcome to one valid quality sample, and use saturating aggregate arithmetic."
+    },
+    {
+      "stage": "topic_privacy_migration_review",
+      "status": "resolved",
+      "failure": "Legacy quality and outcome rows could expose raw topic paths, while partial or permissive migration could silently drop rows or admit unsafe legacy payloads.",
+      "resolution": "Atomically migrate every safe row from project-bound topic_path to opaque topic_ref, drop empty topics without a sentinel, preserve order and payload, and fail closed without rewriting malformed or unsafe legacy rows."
+    },
+    {
+      "stage": "owner_only_regression_fixture_sidecar_review",
+      "status": "resolved",
+      "failure": "Keeping an evaluable regression fixture in public quality telemetry would leak raw material, while a sidecar write before quality admission could create orphan fixtures or unbounded private storage.",
+      "resolution": "Persist exactly one normalized fixture only after authoritative quality admission in one owner-only atomic sidecar bounded to 2 MiB and 1000 fixtures, join by full-SHA ref, inventory the exact path, and expose metadata-only operational status."
+    },
+    {
+      "stage": "token_scope_review",
+      "status": "resolved",
+      "failure": "Global token-impact telemetry could be mistaken for exact project and task-class evidence and satisfy a canary gate.",
+      "resolution": "Label token impact as global contextual non-gating evidence and restrict canary gates to exact receipt-bound candidate outcomes, causal proof, and exact-scope comparative artifacts."
+    },
+    {
+      "stage": "comparator_exactness_scope_and_persistence_review",
+      "status": "resolved",
+      "failure": "Score-derived numerics, malformed metric types or ranges, mixed scopes, an older valid artifact, unbounded history reads, or a failed append or fsync could yield a false comparative pass.",
+      "resolution": "Ground exact numerics in candidate evidence, validate native finite metrics and exact denominators, require exact project and task scope, select the newest artifact even when invalid, bound history reads, and keep comparator eligibility fail-closed after append or fsync failure."
+    },
+    {
+      "stage": "stale_test_fixture_canonical_admission_review",
+      "status": "resolved",
+      "failure": "Legacy tests directly inserted calibration-eligible outcomes and could pass without the production quality-sample admission contract.",
+      "resolution": "Seed quality samples in isolated owner-temporary ledgers and admit outcomes through the canonical HTTP binding and durability path; direct legacy rows remain observable but calibration-ineligible."
+    },
+    {
+      "stage": "live_legacy_outcome_reporter_migration",
+      "status": "resolved",
+      "failure": "The first source-bound gateway candidate correctly refused to rewrite six historical observable-only outcome rows whose canonical raw outcome_source labels predated opaque reporter references.",
+      "resolution": "Migrate only canonical raw reporter labels on scoped, observable-only legacy outcomes through the current one-way project-and-field-bound digest; reject admitted, credit-bearing, unscoped, malformed, noncanonical, or unknown-schema rows before any rewrite. A byte-identical ledger-copy rehearsal preserved all 1702 rows and produced zero calibration or provider credit before the live one-way migration."
+    },
+    {
+      "stage": "owner_only_sidecar_startup_materialization",
+      "status": "resolved",
+      "failure": "After the privacy migration succeeded, the configured owner-only regression-fixture sidecar remained absent, so its metadata-only operational status was unhealthy even though an absent file loaded as an empty store.",
+      "resolution": "Create the missing empty sidecar once with exclusive no-clobber semantics, mode 0600, file fsync, parent-directory sync, and final type and symlink revalidation; preserve existing valid fixture bytes and keep the generic private-store missing-file behavior unchanged."
+    },
+    {
+      "stage": "local_exact_image_build",
+      "status": "resolved",
+      "failure": "The Dockerfile frontend resolver stalled during the local candidate build and could not provide a bounded source-identity proof.",
+      "resolution": "Reuse the already verified local runtime base, compile the gateway from the exact worktree source, inject its exact commit and tree identity, and recreate only gateway-go while retaining the prior image for rollback."
+    },
+    {
+      "stage": "pre_pr_product_truth_gate",
+      "status": "resolved",
+      "failure": "The canonical current release was v4.0.7 while the shared public-site truth tape still identified v4.0.6, causing the deterministic product-truth audit to fail on every lane baseline.",
+      "resolution": "Correct the single shared truth-tape claim to v4.0.7 and require the commercial and public lane product-truth audits to pass on their exact projected trees before merge."
+    },
+    {
+      "stage": "public_projection_inventory_fixture",
+      "status": "resolved",
+      "failure": "The public projection correctly added one public-safe durable sidecar owner, but its public-only inventory-count assertion still expected 33 owners instead of 34.",
+      "resolution": "Update only the public test expectation to 34, retain every commercial-only exclusion, and require the exact test, full suite, race suite, product-truth audit, and independent projection review to pass."
+    },
+    {
+      "stage": "authoritative_race_gate_selection",
+      "status": "resolved",
+      "failure": "A bare full-race invocation failed only the proof-timeline latency holdout that the canonical release matrix explicitly isolates from race instrumentation.",
+      "resolution": "Classify the bare invocation as non-authoritative, retain its exact failure, and pass the matrix-defined all-package race gate with the five documented isolated latency and holdout tests excluded on both projected lanes."
+    },
+    {
+      "stage": "zsh_only_exact_tree_audit",
+      "status": "resolved",
+      "failure": "The repository-native exact-tree wrapper is Bash-based and therefore cannot be authoritative under the active Zsh-only execution contract.",
+      "resolution": "Stop and discard the wrapper sessions, materialize each immutable candidate with a temporary Git index under Zsh, and run the same full Go, orchestrator, generated-truth, Compose, product-truth, strict holdout, and candidate-bound open-core checks directly."
+    },
+    {
+      "stage": "strict_durability_storage_tier",
+      "status": "resolved",
+      "failure": "The paid shared-proof fsync holdout measured 295 to 299 milliseconds against a 250 millisecond cap on an internal volume at full capacity; the exact paid baseline reproduced at 298 milliseconds.",
+      "resolution": "Verify mount, ownership, free space, protocol, and write activity before rerunning on the canonical ContextLattice cache tier; the unchanged candidate then passed strict mode at 145.56525 milliseconds with all three batches below 250 milliseconds."
+    }
+  ],
+  "result": {
+    "status": "local_and_live_contract_passed_advisory_abstaining",
+    "implementation_verified": true,
+    "live_runtime_verified": true,
+    "learned_ranking_applied": false,
+    "canary_eligible": false,
+    "entitlement_changed": false,
+    "summary": "The three intelligence layers passed authoritative sequential local CI and source-bound live gateway proof. Search emits a bounded shadow frontier without changing native ordering; outcome credit remains unavailable without exact receipt-bound independently reconciled evidence; impact returns advisory abstention with canary activation false because the required comparative, causal, verifier, and denominator evidence does not yet exist."
+  },
+  "verification": [
+    "The final expanded focused result, outcome, durability, privacy, sidecar, numeric, replay, token, impact, route, and comparator suite passed in 2.68 seconds.",
+    "The identical final expanded focused suite passed Go race detection in 3.86 seconds.",
+    "go vet ./... passed in 1.21 seconds.",
+    "The module all-packages gate, go test ./... -count=1 -timeout 20m, passed in 71.21 seconds.",
+    "Linux amd64 and Windows amd64 all-package cross-builds passed in 5.71 and 6.14 seconds.",
+    "Two Python sidecar configuration tests passed in 0.08 seconds, and OrbStack Compose configuration validation passed in 0.33 seconds.",
+    "HEAD and cached diff checks passed in 0.05 and 0.06 seconds; the eval-ledger JSON parse passed in less than 0.01 seconds.",
+    "The live source-bound gateway returned HTTP 200 for memory search with search_intelligence.v1 in shadow mode, preserved native score-desc ordering, emitted a bounded 12-candidate frontier, and reported learned and calibrated activation false.",
+    "The live search-impact route returned HTTP 422 when exact project and task_class scope was absent and HTTP 200 for exact scope with search_impact_intelligence.v1, advisory abstention, insufficient_evidence, canary false, entitlement false, and global token telemetry explicitly non-gating.",
+    "The one-way live privacy migration preserved every one of the 1702 pre-migration durable rows, removed every raw topic_path, materialized 1099 opaque topic_ref values and six opaque legacy reporter references, and admitted no legacy credit; the then-current operational ledger is checksum-identical before and after the final gateway startup prior to endpoint calls.",
+    "The owner-only regression-fixture sidecar materialized as a mode-0600 empty durable file and reported configured, enabled, and healthy; gateway restart count remained zero and unrelated containers retained their identities and restart counts.",
+    "Public and paid projected commits passed their authoritative matrix-defined all-package race gates in 218.912 and 262.808 seconds, plus full normal suites, vet, Linux and Windows cross-builds, Compose, and exact lane product-truth checks.",
+    "Zsh-only temporary Git-index materialization proved the public and paid committed trees, and the candidate-bound open-core audit returned zero errors or warnings across private, public, and public-paid lanes.",
+    "Strict isolated holdouts passed on the verified canonical storage tier: public projection p95 7.02475 milliseconds, public proof-timeline p95 2.249666 milliseconds, and paid shared-proof retention median p95 145.56525 milliseconds with three passing batches."
+  ],
+  "reproduction": [
+    "cd services/gateway-go && go test . -run '^(TestMergeNeighborRows|TestMergeRowsKeepsDistinct|TestStagedRetrieval|TestNormalizeSourceRows|TestSearchIntelligence|TestContextPack|TestEvidenceReputation|TestTokenImpactTelemetry|TestSearchImpact|TestReconcileCandidateUtilityVerification|TestTelemetrySearchImpact|TestLatestSearchImpactShadowEvaluation|TestReadRecallMonitorHistory|TestSavedRecallImpact|TestRecallComparatorPersistence|TestUtilityOutcomeDuplicate|TestUtilityDurableClaimBinding)' -count=1 -timeout 20m",
+    "cd services/gateway-go && go test -race . -run '^(TestMergeNeighborRows|TestMergeRowsKeepsDistinct|TestStagedRetrieval|TestNormalizeSourceRows|TestSearchIntelligence|TestContextPack|TestEvidenceReputation|TestTokenImpactTelemetry|TestSearchImpact|TestReconcileCandidateUtilityVerification|TestTelemetrySearchImpact|TestLatestSearchImpactShadowEvaluation|TestReadRecallMonitorHistory|TestSavedRecallImpact|TestRecallComparatorPersistence|TestUtilityOutcomeDuplicate|TestUtilityDurableClaimBinding)' -count=1 -timeout 20m",
+    "cd services/gateway-go && go vet ./...",
+    "cd services/gateway-go && go test ./... -count=1 -timeout 20m",
+    "cd services/gateway-go && go test -race ./... -skip '^(TestFrontierT1ReleaseEvalEvidence|TestFrontierT2AgentPacketProjectionLatencyGate|TestFrontierT2DeltaPacketHoldout|TestFrontierT2ProofTimelineHoldout|TestFrontierT2SharedProofRetentionLatencyHoldout)$' -count=1",
+    "cd services/gateway-go && TMPDIR=\"${CONTEXTLATTICE_CANONICAL_TMPDIR:?}\" CONTEXTLATTICE_FRONTIER_T2_SHARED_PROOF_PERFORMANCE_GATE=1 CONTEXTLATTICE_FRONTIER_STRICT_LATENCY_GATE=1 FRONTIER_T2_TESTED_COMMIT=\"$(git rev-parse HEAD)\" FRONTIER_T2_SHARED_PROOF_EVIDENCE_PATH=\"${CONTEXTLATTICE_CANONICAL_TMPDIR}/shared-proof-eval.json\" go test -run '^(TestFrontierT2SharedProofConcurrentRetainRead|TestFrontierT2SharedProofRetentionLatencyHoldout)$' -count=1 .",
+    "cd services/gateway-go && GOOS=linux GOARCH=amd64 go build ./...",
+    "cd services/gateway-go && GOOS=windows GOARCH=amd64 go build ./...",
+    "python3 scripts/tests/test_context_pack_regression_fixture_config.py",
+    "docker --context orbstack compose --env-file .env.example -f docker-compose.yml config -q",
+    "git diff --check HEAD",
+    "git diff --cached --check",
+    "python3 -m json.tool docs/evals/v4.0.8-search-outcome-impact-intelligence.json",
+    "curl --fail-with-body --silent --show-error http://127.0.0.1:8075/health | jq -e '.ok == true and .build.source_bound == true and .build.source_commit != null and .build.source_tree != null'",
+    "curl --fail-with-body --silent --show-error -X POST -H 'Content-Type: application/json' -d '{\"project\":\"contextlattice\",\"query\":\"search outcome impact intelligence\",\"limit\":5}' http://127.0.0.1:8075/memory/search | jq -e '.search_intelligence.schema_id == \"search_intelligence.v1\" and .search_intelligence.mode == \"shadow\" and .search_intelligence.activation.learned_ranking_applied == false'",
+    "curl --fail-with-body --silent --show-error 'http://127.0.0.1:8075/telemetry/search-impact?project=contextlattice&task_class=agent_workflow' | jq -e '.schema_id == \"search_impact_intelligence.v1\" and .status == \"abstain\" and .canary_eligible == false and .activation.performed == false'"
+  ],
+  "rollback": {
+    "source": "Revert the search, outcome, and impact intelligence commit.",
+    "runtime": "Rebuild and restart only gateway-go using the prior exact source revision; this does not reverse the one-way privacy migration or change entitlement state.",
+    "data": "Topic privacy migration is one-way: non-empty topic_path values become project-bound opaque topic_ref values, empty topics are dropped, and no raw backup or reverse mapping is retained. Source or runtime rollback cannot restore those topic labels. The materialized empty bounded owner-only regression-fixture sidecar may be preserved and ignored by prior readers; selection receipts and fixture refs remain bounded additions to the public quality ledger."
+  }
+}

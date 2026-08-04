@@ -507,9 +507,17 @@ func (s *server) driftSnapshot() map[string]any {
 }
 
 func (s *server) normalizeSourceRows(source string, rows []map[string]any) []map[string]any {
+	return s.normalizeSourceRowsWithOwner(source, sourceOwnerForSource(source), rows)
+}
+
+func (s *server) normalizeSourceRowsWithOwner(source, sourceOwner string, rows []map[string]any) []map[string]any {
 	normalizedSource := strings.TrimSpace(strings.ToLower(source))
 	if normalizedSource == "" {
 		normalizedSource = "unknown"
+	}
+	normalizedOwner := strings.TrimSpace(sourceOwner)
+	if normalizedOwner == "" {
+		normalizedOwner = sourceOwnerForSource(normalizedSource)
 	}
 	out := make([]map[string]any, 0, len(rows))
 	for _, row := range rows {
@@ -546,9 +554,10 @@ func (s *server) normalizeSourceRows(source string, rows []map[string]any) []map
 		cloned["topic_path"] = topicPath
 		cloned["score"] = score
 		cloned["source"] = normalizedSource
-		if strings.TrimSpace(anyToString(cloned["source_owner"])) == "" {
-			cloned["source_owner"] = sourceOwnerForSource(normalizedSource)
-		}
+		// Owner and trust provenance are bound by the scheduler/backend call, not
+		// by the row reporter. This also replaces any supplied assessment below.
+		cloned["source_owner"] = normalizedOwner
+		cloned["gateway_provenance"] = searchIntelligenceGatewayObservedProvenance(normalizedSource, normalizedOwner)
 		cloned["schema_version"] = sourceRowSchemaVersion
 		dataClass := strings.TrimSpace(strings.ToLower(anyToString(cloned["data_class"])))
 		if dataClass != dataClassRuntimeStateMirror {

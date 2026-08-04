@@ -247,6 +247,7 @@ func (s *server) buildContextPackResponseForSurface(
 		GraphQuality:         graphQuality,
 		RankedEvidence:       compiled["ranked_evidence"],
 		OmittedHighValueRefs: compiled["omitted_high_value_refs"],
+		OmittedSelectionRefs: compiled["selection_receipt_omitted_refs"],
 		Warnings:             warnings,
 	})
 	proofIdentity := map[string]any{
@@ -261,8 +262,13 @@ func (s *server) buildContextPackResponseForSurface(
 	copyProofTimelineIdentity(contextPackQuality, proofIdentity)
 	copyProofTimelineIdentity(tokenImpact, proofIdentity)
 	s.recordContextPackQuality(contextPackQuality)
-	contextPack["contextPackQuality"] = contextPackQuality
-	contextPack["context_pack_quality"] = contextPackQuality
+	// Selection receipts are durable quality-ledger data, not context-pack
+	// payload data. Keeping them off the response preserves the public packet's
+	// established token boundary while avoiding a second source-content copy.
+	contextPackQualityResponse := cloneJSONMap(contextPackQuality)
+	delete(contextPackQualityResponse, "selection_receipt")
+	contextPack["contextPackQuality"] = contextPackQualityResponse
+	contextPack["context_pack_quality"] = contextPackQualityResponse
 	response := map[string]any{
 		"ok":                       true,
 		"query":                    query,
@@ -271,7 +277,7 @@ func (s *server) buildContextPackResponseForSurface(
 		"agent_guidance":           agentGuidance,
 		"reference_prompt":         referencePrompt,
 		"token_impact":             tokenImpact,
-		"context_pack_quality":     contextPackQuality,
+		"context_pack_quality":     contextPackQualityResponse,
 		"run_advisor":              runAdvisor,
 		"memory_trust_assessment":  trustAssessment,
 		"retrieval_decision_trace": decisionTrace,
@@ -663,6 +669,7 @@ type contextPackTokenBudget struct {
 type contextPackEvidenceAllocation struct {
 	RankedEvidence       []any
 	OmittedHighValueRefs []any
+	OmittedSelectionRefs []any
 	TokenBudget          map[string]any
 	UsedTokensEstimate   int
 	CompressionLevel     string
@@ -795,15 +802,16 @@ func compileContextPackForAgent(query string, contextPack map[string]any, source
 		},
 	}
 	return map[string]any{
-		"context_compiler":         compiler,
-		"ranked_evidence":          rankedEvidence,
-		"token_budget":             allocation.TokenBudget,
-		"omitted_high_value_refs":  allocation.OmittedHighValueRefs,
-		"agent_guidance":           agentGuidance,
-		"prompt_sections":          promptSections,
-		"reference_prompt":         contextPackReferencePrompt(promptSections),
-		"memory_trust_assessment":  allocation.TrustAssessment,
-		"retrieval_decision_trace": allocation.DecisionTrace,
+		"context_compiler":               compiler,
+		"ranked_evidence":                rankedEvidence,
+		"token_budget":                   allocation.TokenBudget,
+		"omitted_high_value_refs":        allocation.OmittedHighValueRefs,
+		"selection_receipt_omitted_refs": allocation.OmittedSelectionRefs,
+		"agent_guidance":                 agentGuidance,
+		"prompt_sections":                promptSections,
+		"reference_prompt":               contextPackReferencePrompt(promptSections),
+		"memory_trust_assessment":        allocation.TrustAssessment,
+		"retrieval_decision_trace":       allocation.DecisionTrace,
 	}
 }
 
@@ -1024,11 +1032,14 @@ func contextPackRankedEvidence(query string, contextPack map[string]any, tokenBu
 		}
 		rendered = append(rendered, renderedItem)
 	}
-	omittedRefs := renderOmittedHighValueRefs(omitted, 8)
+	omittedItems := contextPackBoundedOmittedHighValueItems(omitted, 8)
+	omittedRefs := renderOmittedHighValueRefs(omittedItems)
+	omittedSelectionRefs := renderOmittedSelectionReceiptRefs(omittedItems)
 	tokenReport := contextPackTokenBudgetReport(tokenBudget, usedTokens, len(rendered), len(omittedRefs), compressionLevel)
 	return contextPackEvidenceAllocation{
 		RankedEvidence:       rendered,
 		OmittedHighValueRefs: omittedRefs,
+		OmittedSelectionRefs: omittedSelectionRefs,
 		TokenBudget:          tokenReport,
 		UsedTokensEstimate:   usedTokens,
 		CompressionLevel:     compressionLevel,
@@ -1169,8 +1180,8 @@ func allocateContextPackEvidence(items []contextPackEvidenceItem, tokenBudget co
 	return selected, omitted, used, compressionLevel
 }
 
-func renderOmittedHighValueRefs(items []contextPackEvidenceItem, limit int) []any {
-	out := []any{}
+func contextPackBoundedOmittedHighValueItems(items []contextPackEvidenceItem, limit int) []contextPackEvidenceItem {
+	out := make([]contextPackEvidenceItem, 0, limit)
 	for _, item := range items {
 		if len(out) >= limit {
 			break
@@ -1178,6 +1189,14 @@ func renderOmittedHighValueRefs(items []contextPackEvidenceItem, limit int) []an
 		if item.Score < 70 && len(out) > 0 {
 			continue
 		}
+		out = append(out, item)
+	}
+	return out
+}
+
+func renderOmittedHighValueRefs(items []contextPackEvidenceItem) []any {
+	out := make([]any, 0, len(items))
+	for _, item := range items {
 		row := map[string]any{
 			"kind":             item.Kind,
 			"score":            roundFloat(item.Score, 3),
@@ -1200,6 +1219,20 @@ func renderOmittedHighValueRefs(items []contextPackEvidenceItem, limit int) []an
 			row["topic_path"] = item.TopicPath
 		}
 		out = append(out, row)
+	}
+	return out
+}
+
+// renderOmittedSelectionReceiptRefs is compiler-internal. It carries only
+// opaque candidate identity and receipt metadata into quality telemetry; it is
+// never added to the public context-pack or reference prompt payload.
+func renderOmittedSelectionReceiptRefs(items []contextPackEvidenceItem) []any {
+	out := make([]any, 0, len(items))
+	for _, item := range items {
+		out = append(out, map[string]any{
+			"candidate_id": item.CandidateID,
+			"kind":         item.Kind,
+		})
 	}
 	return out
 }
