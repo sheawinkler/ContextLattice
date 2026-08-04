@@ -53,19 +53,66 @@ print(json.dumps({
 }))
 PY
 )"
-search_out="$(curl_json POST "${BASE}/memory/search" "$payload" "$TIMEOUT" || true)"
-python3 - "$AGENT" "$PROJECT" "$TOPIC" "$MODE" "$BASE" "$search_out" <<'PY'
-import json, sys
-agent, project, topic, mode, base, raw = sys.argv[1:]
-try:
-    search = json.loads(raw) if raw else {}
-except Exception as exc:
-    search = {'degraded': True, 'error': str(exc)}
-results = search.get('results') if isinstance(search, dict) else []
+search_transport_ok=true
+if ! search_out="$(curl_json POST "${BASE}/memory/search" "$payload" "$TIMEOUT")"; then
+  search_transport_ok=false
+fi
+python3 - "$AGENT" "$PROJECT" "$TOPIC" "$MODE" "$BASE" "$search_transport_ok" 3<<<"$search_out" <<'PY'
+import json, os, sys
+agent, project, topic, mode, base, transport_ok_raw = sys.argv[1:]
+raw = os.fdopen(3).read()
+transport_ok = transport_ok_raw == 'true'
+
+def degraded_search(message):
+    return {
+        'degraded': True,
+        'warnings': [f'{message}; continue in degraded-memory mode.'],
+    }
+
+def invalid_response_shape(search):
+    typed_fields = (
+        ('ok', bool),
+        ('degraded', bool),
+        ('result_state', str),
+    )
+    for key, expected_type in typed_fields:
+        if key in search and not isinstance(search[key], expected_type):
+            return True
+    if 'warnings' in search:
+        warnings = search['warnings']
+        if not isinstance(warnings, list) or any(not isinstance(item, str) for item in warnings):
+            return True
+    results = search.get('results')
+    if isinstance(results, list) and any(not isinstance(item, dict) for item in results):
+        return True
+    return False
+
+if not transport_ok:
+    search = degraded_search('ContextLattice retrieval request failed')
+elif not raw.strip():
+    search = degraded_search('ContextLattice retrieval returned an empty response')
+else:
+    try:
+        search = json.loads(raw)
+    except Exception:
+        search = degraded_search('ContextLattice retrieval returned invalid JSON')
+if not isinstance(search, dict):
+    search = degraded_search('ContextLattice retrieval returned an invalid response shape')
+elif invalid_response_shape(search):
+    search = degraded_search('ContextLattice retrieval returned an invalid response shape')
+result_state = search.get('result_state', '').strip().lower()
+degraded = search.get('degraded') is True or search.get('ok') is False or result_state == 'degraded'
+results = search.get('results')
 if not isinstance(results, list):
+    if not degraded:
+        search = degraded_search('ContextLattice retrieval returned an invalid response shape')
+        degraded = True
     results = []
+warnings = list(search.get('warnings') or [])
+if degraded and not any('degraded-memory mode' in warning for warning in warnings):
+    warnings.append('ContextLattice retrieval is degraded; continue in degraded-memory mode.')
 pack = {
-    'ok': not bool(search.get('degraded')),
+    'ok': not degraded,
     'agent_id': agent,
     'project': project,
     'topic_path': topic,
@@ -81,8 +128,8 @@ pack = {
         'checkpoint': 'contextlattice_checkpoint --project <project> --topic-path <topic_path> --file notes/<agent>/checkpoint.md --stdin',
     },
     'retrieval': {
-        'degraded': bool(search.get('degraded')),
-        'warnings': search.get('warnings') or [],
+        'degraded': degraded,
+        'warnings': warnings,
         'result_count': len(results),
         'top_results': [
             {k: item.get(k) for k in ('file','topic_path','source','score','summary') if isinstance(item, dict) and k in item}

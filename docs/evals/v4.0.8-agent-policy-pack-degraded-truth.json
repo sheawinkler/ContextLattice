@@ -1,0 +1,105 @@
+{
+  "schema_id": "contextlattice_eval_ledger.v1",
+  "feature": "agent_policy_pack_degraded_truth",
+  "lane": "shared_public_safe",
+  "release_train": "v4.0.8",
+  "recorded_at": "2026-08-04T08:10:55Z",
+  "baseline": {
+    "case_count": 1,
+    "transport_failure": "mock curl exit 7 with no response body",
+    "helper_exit_code": 0,
+    "pack_parseable": true,
+    "reported_ok": true,
+    "reported_retrieval_degraded": false,
+    "false_healthy_rate": 1.0
+  },
+  "target": {
+    "pack_remains_available_during_retrieval_failure": true,
+    "transport_failure_reports_ok": false,
+    "transport_failure_reports_retrieval_degraded": true,
+    "degraded_memory_warning_required": true,
+    "false_healthy_rate": 0.0
+  },
+  "holdout": {
+    "kind": "isolated_response_contract_matrix",
+    "network_dependency": false,
+    "mock_curl_exit_code": 7,
+    "mock_curl_stdout_bytes": 0,
+    "case_count": 15,
+    "cases": [
+      "transport failure",
+      "empty response",
+      "invalid JSON",
+      "non-object JSON",
+      "empty object",
+      "explicit error response with upstream warning",
+      "native degraded response with upstream warning",
+      "inconsistent degraded lifecycle state",
+      "malformed degraded flag",
+      "malformed ok flag",
+      "malformed result_state",
+      "malformed warnings",
+      "malformed result row",
+      "response larger than host ARG_MAX",
+      "healthy ready response"
+    ],
+    "assertions": [
+      "helper exits zero with a parseable static policy pack",
+      "top-level ok is false",
+      "retrieval degraded is true",
+      "warning explicitly selects degraded-memory mode"
+    ]
+  },
+  "results": {
+    "status": "pass",
+    "baseline_regression_test": "failed_for_expected_false_healthy_assertion",
+    "fixed_regression_test": "passed_7_tests_15_cases",
+    "shellcheck": "passed",
+    "python_compile": "passed",
+    "live_success_path": "passed_ok_true_degraded_false_8_results",
+    "agent_context_audit": "change_relevant_checks_passed_overall_exit_1_from_preexisting_context_size_budget",
+    "installed_payload_identity": "passed_sha256_34e79a11a712b0a07823fdd2c0b7bc53f0448db668255647e84d9b485eec0156",
+    "installed_failure_path": "passed_ok_false_degraded_true",
+    "installed_success_path": "passed_ok_true_degraded_false_8_results",
+    "structured_review": "three_distinct_p1_findings_applied_and_independently_validated_plus_one_preexisting_p2_closed"
+  },
+  "cost": {
+    "llm_calls": 0,
+    "provider_tokens": 0,
+    "new_services": 0,
+    "new_routes": 0,
+    "new_dependencies": 0,
+    "additional_network_calls": 0
+  },
+  "latency": {
+    "baseline_regression_secs": 0.119,
+    "fixed_regression_secs": 1.302
+  },
+  "tool_calls": {
+    "mock_curl_calls_per_case": 1,
+    "mock_curl_calls_full_suite": 15,
+    "runtime_process_restarts": 0,
+    "runtime_container_restarts": 0
+  },
+  "failures": [
+    {
+      "stage": "baseline",
+      "failure": "curl_json failure was discarded with an unconditional true fallback, and an empty response was interpreted as a healthy empty search",
+      "resolution": "carry transport success into typed response normalization; recognize degraded lifecycle state; reject malformed result rows; and require a canonical degraded-memory directive on every degraded response"
+    },
+    {
+      "stage": "structured_review",
+      "failure": "the response body was passed to Python through argv, so a body above the host argument limit could prevent static-pack emission",
+      "resolution": "stream the body on file descriptor 3 and cover a generated response larger than SC_ARG_MAX"
+    }
+  ],
+  "reproduction": [
+    "python3 -m unittest scripts.tests.test_agent_policy_pack",
+    "shellcheck -x -P scripts/agent_hooks scripts/agent_hooks/agent_policy_pack.sh",
+    "python3 -m json.tool docs/evals/v4.0.8-agent-policy-pack-degraded-truth.json"
+  ],
+  "rollback": {
+    "source": "revert the agent_policy_pack degraded-truth commit",
+    "installed_payload": "rerun the prior version's global agent-tools installer; no service restart is required"
+  }
+}
