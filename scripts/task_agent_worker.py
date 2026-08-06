@@ -731,6 +731,16 @@ def _post(
         client.close()
 
 
+def _claim_next_task(orchestrator_url: str, worker: str) -> dict[str, Any]:
+    worker_identity = str(worker or "").strip() or "local-worker"
+    return _post(
+        orchestrator_url,
+        "/agents/tasks/next",
+        {"worker": worker_identity},
+        params={"worker": worker_identity},
+    )
+
+
 def _get(
     orchestrator_url: str,
     path: str,
@@ -1253,12 +1263,7 @@ def main() -> None:
 
     while True:
         try:
-            data = _post(
-                args.orchestrator_url,
-                "/agents/tasks/next",
-                {},
-                params={"worker": worker},
-            )
+            data = _claim_next_task(args.orchestrator_url, worker)
             task = data.get("task")
             if task:
                 _handle_task(
