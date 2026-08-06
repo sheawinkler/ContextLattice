@@ -727,6 +727,9 @@ func TestContextPackRegressionFixtureStoreMaterializesEmptyAndPreservesExisting(
 			if err := os.WriteFile(targetPath, original, 0o644); err != nil {
 				t.Fatal(err)
 			}
+			if err := os.Chmod(targetPath, 0o644); err != nil {
+				t.Fatal(err)
+			}
 			if err := os.Symlink(targetPath, fixturePath); err != nil {
 				t.Skipf("symlink unavailable: %v", err)
 			}
