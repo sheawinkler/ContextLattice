@@ -1,0 +1,126 @@
+{
+  "schema_id": "contextlattice_eval_ledger.v1",
+  "feature": "external_task_worker_identity_retention",
+  "lane": "shared_client_paid_private_runtime",
+  "release_train": "v4.0.8",
+  "recorded_at": "2026-08-06T01:23:58Z",
+  "issue": "https://github.com/sheawinkler/http-context-and-memory-orchestrator/issues/828",
+  "objective": "Retain the exact resolved worker identity and prevent named external workers from claiming tasks assigned to another runner.",
+  "baseline": {
+    "documented_query_worker_consumed_by_go_handler": false,
+    "empty_json_body_resolved_worker": "gateway-worker",
+    "assignment_filter_applied_before_priority": false,
+    "higher_priority_foreign_task_claimable": true,
+    "claim_event_worker_matches_query_identity": false,
+    "client_body_carries_worker_identity": false
+  },
+  "target": {
+    "query_or_body_worker_supported": true,
+    "conflicting_query_and_body_rejected": true,
+    "assignment_filter_applied_before_priority": true,
+    "named_worker_claim_scope": "matching_agent_plus_empty_or_any",
+    "default_internal_worker_claim_scope": "gateway-worker_or_internal_plus_empty_or_any",
+    "resolved_identity_persisted_in_task_lease_and_claim_event": true,
+    "client_query_and_body_identity_match": true
+  },
+  "holdout": {
+    "kind": "isolated_worker_claim_contract_matrix",
+    "network_dependency": false,
+    "case_count": 11,
+    "cases": [
+      "query-string worker identity",
+      "JSON-body worker identity",
+      "matching query and body identity",
+      "conflicting query and body identity",
+      "matching assigned task",
+      "non-matching assigned task remains queued",
+      "empty task remains claimable",
+      "any task remains claimable",
+      "priority ordering among eligible tasks only",
+      "default internal worker semantics",
+      "persisted task lease and claim event identity"
+    ]
+  },
+  "results": {
+    "status": "pass",
+    "focused_go_contract_suite": "passed",
+    "focused_go_race_suite": "passed",
+    "python_worker_identity_suite": "passed",
+    "surrounding_python_worker_suite": "passed_17_tests",
+    "archived_client_compatibility_suite": "passed_4_tests",
+    "python_compile": "passed",
+    "go_vet_all_packages": "passed",
+    "diff_check": "passed",
+    "full_gateway_suite": "passed_all_packages",
+    "agent_profile_parity": "passed_worktree_origin_public_public_paid",
+    "open_core_boundary": "passed_zero_findings",
+    "agent_context_audit": "change_relevant_checks_passed_overall_exit_1_from_preexisting_context_size_budget",
+    "cross_lane_projection": "pending",
+    "live_runtime": "pending",
+    "release": "pending"
+  },
+  "cost": {
+    "provider_calls": 0,
+    "provider_tokens": 0,
+    "new_services": 0,
+    "new_routes": 0,
+    "new_dependencies": 0,
+    "additional_http_requests_per_poll": 0,
+    "additional_persistent_stores": 0
+  },
+  "latency": {
+    "focused_go_contract_suite_seconds": 0.052,
+    "focused_go_race_wall_seconds": 21.98,
+    "python_worker_identity_suite_seconds": 0.139,
+    "surrounding_python_worker_suite_seconds": 1.45,
+    "archived_client_compatibility_suite_seconds": 1.25,
+    "go_vet_all_packages_seconds": 1.13,
+    "full_gateway_suite_seconds": 59.88,
+    "measurement_basis": "tool-reported local test duration on the development host"
+  },
+  "tool_calls": {
+    "claim_http_requests_per_poll": 1,
+    "runtime_process_restarts": 0,
+    "runtime_container_restarts": 0,
+    "unrelated_process_or_container_restarts": 0
+  },
+  "failures": [
+    {
+      "stage": "baseline_query_identity",
+      "status": "resolved",
+      "failure": "The worker client sent worker identity in the documented query parameter while the Go handler read only the JSON body, so an empty body recorded gateway-worker.",
+      "resolution": "Resolve a trimmed worker from query or body, reject conflicting non-empty identities, and send the same identity in both client locations for mixed-version compatibility."
+    },
+    {
+      "stage": "baseline_assignment_routing",
+      "status": "resolved",
+      "failure": "The Go task store selected the highest-priority queued task without checking its assigned agent.",
+      "resolution": "Filter each queued task by the resolved worker before comparing priority, while retaining explicit empty, any, and internal-worker eligibility."
+    },
+    {
+      "stage": "archived_client_compatibility_test",
+      "status": "resolved",
+      "failure": "The host Python did not have pytest installed.",
+      "resolution": "Run the existing four-test compatibility file through an isolated uv environment on the configured cache tier; no global package state changed."
+    },
+    {
+      "stage": "agent_context_audit",
+      "status": "preexisting_out_of_scope",
+      "failure": "The active-user audit exits one because existing global skills and always-loaded instruction files exceed the configured size budgets.",
+      "resolution": "No out-of-scope user configuration was changed; all change-relevant contract, hook, profile, installer, provider, and schema checks passed."
+    }
+  ],
+  "reproduction": [
+    "GOCACHE=<external-cache>/go-build GOMODCACHE=<external-cache>/go-mod GOPATH=<external-cache>/go go -C services/gateway-go test . -run '^TestAgentTask' -count=1 -timeout 120s",
+    "python3 -m unittest scripts.tests.test_task_agent_worker_claim_identity",
+    "python3 -m unittest scripts.tests.test_pi_droid_runner_support scripts.tests.test_task_agent_worker_claim_identity",
+    "uv run --with pytest python -m pytest -q archive/services/orchestrator_legacy_python/tests/test_task_agent_worker_script.py",
+    "python3 -m py_compile scripts/task_agent_worker.py scripts/tests/test_task_agent_worker_claim_identity.py",
+    "python3 -m json.tool docs/evals/v4.0.8-worker-identity-retention.json",
+    "git diff --check"
+  ],
+  "rollback": {
+    "source": "revert the worker identity retention commit",
+    "state": "existing queued task files remain schema-compatible; no migration is required"
+  }
+}
