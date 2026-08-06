@@ -4,7 +4,7 @@
   "lane": "shared_client_paid_private_runtime",
   "release_train": "v4.0.8",
   "recorded_at": "2026-08-06T01:46:13Z",
-  "issue": "https://github.com/sheawinkler/http-context-and-memory-orchestrator/issues/828",
+  "issue": "worker-identity-retention",
   "objective": "Retain the exact resolved worker identity and prevent named external workers from claiming tasks assigned to another runner.",
   "baseline": {
     "documented_query_worker_consumed_by_go_handler": false,
