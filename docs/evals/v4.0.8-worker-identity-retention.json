@@ -3,7 +3,7 @@
   "feature": "external_task_worker_identity_retention",
   "lane": "shared_client_paid_private_runtime",
   "release_train": "v4.0.8",
-  "recorded_at": "2026-08-06T01:23:58Z",
+  "recorded_at": "2026-08-06T01:46:13Z",
   "issue": "https://github.com/sheawinkler/http-context-and-memory-orchestrator/issues/828",
   "objective": "Retain the exact resolved worker identity and prevent named external workers from claiming tasks assigned to another runner.",
   "baseline": {
@@ -55,9 +55,10 @@
     "agent_profile_parity": "passed_worktree_origin_public_public_paid",
     "open_core_boundary": "passed_zero_findings",
     "agent_context_audit": "change_relevant_checks_passed_overall_exit_1_from_preexisting_context_size_budget",
-    "cross_lane_projection": "pending",
-    "live_runtime": "pending",
-    "release": "pending"
+    "cross_lane_projection": "passed_source_42627dfd_public_62002d9e_public_paid_a2a48b58",
+    "live_runtime": "passed_isolated_source_bound_gateway_query_body_conflict_foreign_priority_and_persisted_receipt",
+    "release_readiness": "passed_local_candidate_gates",
+    "release_publication": "pending_until_immutable_tags_and_release_assets_exist"
   },
   "cost": {
     "provider_calls": 0,
@@ -80,7 +81,7 @@
   },
   "tool_calls": {
     "claim_http_requests_per_poll": 1,
-    "runtime_process_restarts": 0,
+    "runtime_process_restarts": 2,
     "runtime_container_restarts": 0,
     "unrelated_process_or_container_restarts": 0
   },
@@ -108,6 +109,12 @@
       "status": "preexisting_out_of_scope",
       "failure": "The active-user audit exits one because existing global skills and always-loaded instruction files exceed the configured size budgets.",
       "resolution": "No out-of-scope user configuration was changed; all change-relevant contract, hook, profile, installer, provider, and schema checks passed."
+    },
+    {
+      "stage": "isolated_runtime_build_identity",
+      "status": "resolved",
+      "failure": "The first isolated binary was built without release identity linker values, so its health payload correctly reported source_bound=false.",
+      "resolution": "Stop only that exact isolated PID after dependent inspection, rebuild from source commit 42627dfdf30b668a58928188d7246602cc1dde4e and tree 0e8c921135428e98602b20acd6f6e5f7b76972d9 with source-bound linker values, restart on the isolated state root, and require the exact identity in health before exercising task claims."
     }
   ],
   "reproduction": [
@@ -117,6 +124,8 @@
     "uv run --with pytest python -m pytest -q archive/services/orchestrator_legacy_python/tests/test_task_agent_worker_script.py",
     "python3 -m py_compile scripts/task_agent_worker.py scripts/tests/test_task_agent_worker_claim_identity.py",
     "python3 -m json.tool docs/evals/v4.0.8-worker-identity-retention.json",
+    "source-bound isolated gateway: enqueue a priority-100 codex task and priority-10 hermes-agent task, require a conflicting dual identity to return 400 without mutation, then require hermes-agent to claim only its matching task",
+    "source-bound isolated gateway: read the claimed task and owner-only task ledger, require worker=hermes-agent in the row, active lease, and latest claim-event metadata while the foreign higher-priority task remains queued",
     "git diff --check"
   ],
   "rollback": {
