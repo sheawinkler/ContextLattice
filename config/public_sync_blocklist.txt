@@ -1,14 +1,34 @@
 # Blocklist for private/paid -> OSS public sync.
 # Any changed path matching these globs causes scripts/public_sync_guard.sh to fail.
+# Entries annotated with `public-paid-private-only` are also forbidden from the
+# public-paid lane and are the canonical paid source-omission contract.
 
-# Non-public documentation and paid implementation never go to public/main.
-docs/private/*
-private/*
-*.private.md
-.ops/*
+# Non-public paths never go to public/main.
+.agents/** # public-paid-private-only
+.scratch/** # public-paid-private-only
+docs/private/* # public-paid-private-only
+private_docs/* # public-paid-private-only
+private/* # public-paid-private-only
+*.private.md # public-paid-private-only
+launch_service/generate_launch_docs.py # public-paid-private-only
 
 # Cross-private CI fetches private branch refs and must remain private-only.
-.github/workflows/capability-parity.yml
+.github/workflows/capability-parity.yml # public-paid-private-only
+
+# Tracked private scratch, backup, and local-environment artifacts.
+.backup/* # public-paid-private-only
+dev/backups/* # public-paid-private-only
+development/* # public-paid-private-only
+logs/* # public-paid-private-only
+*.pid # public-paid-private-only
+*.bak # public-paid-private-only
+*.bak.* # public-paid-private-only
+*.tmp # public-paid-private-only
+.env # public-paid-private-only
+*/.env # public-paid-private-only
+.env_* # public-paid-private-only
+*/.env_* # public-paid-private-only
+.ops/snapshots/* # public-paid-private-only
 
 # Paid-only dashboard lanes.
 contextlattice-dashboard/app/api/billing/*
@@ -16,12 +36,11 @@ contextlattice-dashboard/app/billing/*
 contextlattice-dashboard/app/api/telemetry/pro-analytics/*
 contextlattice-dashboard/app/api/support/diagnostics/*
 contextlattice-dashboard/lib/billing/downloads.ts
-contextlattice-dashboard/lib/billing/entitlements.ts
 contextlattice-dashboard/lib/billing/events.ts
 contextlattice-dashboard/lib/billing/paypal.ts
-contextlattice-dashboard/lib/billing/providers.ts
 contextlattice-dashboard/lib/billing/reconcile.ts
 contextlattice-dashboard/lib/billing/reconcileJobs.ts
+contextlattice-dashboard/lib/billing/solanaPay.ts
 contextlattice-dashboard/lib/billing/runtimeLicense.ts
 contextlattice-dashboard/lib/billing/paidAccess.ts
 contextlattice-dashboard/lib/billing/stripe.ts
@@ -31,14 +50,12 @@ contextlattice-dashboard/scripts/reconcile_paypal.ts
 contextlattice-dashboard/scripts/reconcile_stripe.ts
 contextlattice-dashboard/tests/billing-downloads.test.ts
 contextlattice-dashboard/tests/billing-summary-credentials.test.ts
+contextlattice-dashboard/tests/billing-provider-truth.test.ts
 contextlattice-dashboard/tests/paid-parity.test.ts
 contextlattice-dashboard/tests/runtime-license-issue-route.test.ts
 contextlattice-dashboard/tests/runtime-license.test.ts
 contextlattice-dashboard/tests/support-diagnostics-route.test.ts
 contextlattice-dashboard/components/EntrancingDashboard.tsx
-contextlattice-dashboard/app/api/scim/*
-contextlattice-dashboard/app/api/workspace/scim-tokens/*
-contextlattice-dashboard/lib/auth/scim.ts
 
 # Paid workspace collaboration and independent-reviewer onboarding.
 contextlattice-dashboard/app/api/workspace/invitations/*
@@ -76,20 +93,22 @@ services/gateway-go/frontier_t3_utility_entitled.go
 services/gateway-go/frontier_t3_utility_entitled_test.go
 services/gateway-go/frontier_t4_retrieval_entitled.go
 services/gateway-go/frontier_t4_retrieval_entitled_test.go
+services/gateway-go/memory_recall_response_canary_entitled.go
+services/gateway-go/memory_recall_response_canary_entitled_test.go
 services/gateway-go/frontier_t5_policy_lab_entitled.go
 services/gateway-go/frontier_t5_policy_lab_entitled_test.go
 services/gateway-go/frontier_t6_agent_fit_entitled.go
 services/gateway-go/frontier_t6_agent_fit_entitled_test.go
-services/gateway-go/frontier_t10_aggregate_signal_entitled.go
-services/gateway-go/frontier_t10_aggregate_signal_entitled_test.go
-services/gateway-go/frontier_t10_secure_aggregation_research_private.go
-services/gateway-go/frontier_t10_secure_aggregation_research_private_test.go
 services/gateway-go/frontier_t7_portable_continuation_entitled.go
 services/gateway-go/frontier_t7_portable_continuation_entitled_test.go
 services/gateway-go/frontier_t8_skill_evolution_entitled.go
 services/gateway-go/frontier_t8_skill_evolution_entitled_test.go
 services/gateway-go/frontier_t9_continuity_zero_entitled.go
 services/gateway-go/frontier_t9_continuity_zero_entitled_test.go
+services/gateway-go/frontier_t10_aggregate_signal_entitled.go
+services/gateway-go/frontier_t10_aggregate_signal_entitled_test.go
+services/gateway-go/frontier_t10_secure_aggregation_research_private.go # public-paid-private-only
+services/gateway-go/frontier_t10_secure_aggregation_research_private_test.go # public-paid-private-only
 services/gateway-go/cmd/contextlattice-agent-tools/frontier_t5_policy_lab_entitled.go
 services/gateway-go/cmd/contextlattice-agent-tools/frontier_t5_policy_lab_entitled_test.go
 
@@ -102,39 +121,68 @@ docs/entitled-frontier-t1.md
 docs/evals/v3.18-frontier-t1-paid-activation.json
 docs/evals/v3.19-frontier-t2-paid-activation.json
 docs/evals/v3.20-frontier-t3-paid-activation.json
-docs/entitled-frontier-t10.md
-docs/evals/v4.0-frontier-t10-paid-activation.json
 docs/evals/v3.21-frontier-t4-paid-activation.json
 docs/evals/v3.22-frontier-t5-paid-activation.json
 docs/evals/v3.23-frontier-t6-paid-activation.json
 docs/evals/v3.24-frontier-t7-paid-activation.json
 docs/evals/v3.25-frontier-t8-paid-activation.json
 docs/evals/v3.26-frontier-t9-paid-activation.json
+docs/entitled-frontier-t10.md
+docs/evals/v4.0-frontier-t10-paid-activation.json
 
 # Paid release, signing, and operator control surfaces.
 .github/workflows/release-installers.yml
-config/env/premium_dev.env
+config/env/premium_dev.env # public-paid-private-only
 config/env/premium_prod.env
-scripts/tests/test_runtime_license_installers.py
 config/runtime-license/*
+config/frontier_t1_release_provenance.v1.json
 docs/runtime-license.md
 scripts/agent/audit-paid-artifact-integrity
-scripts/agent/audit-private-paid-superset
-config/frontier_t1_release_provenance.v1.json
-scripts/agent/audit-frontier-30-program
-scripts/agent/generate-frontier-t1-source-manifest
+scripts/agent/audit-private-paid-superset # public-paid-private-only
+scripts/tests/Test-ReleaseInstallerIdentity.ps1
+scripts/tests/test_runtime_license_installers.py
 scripts/configure_runtime_license_keys.sh
 scripts/ensure_stripe_price_ids.py
-scripts/frontier_t1_source_contract.py
-scripts/launch_private_dev.sh
-scripts/lib/private_dev_posture.sh
+scripts/launch_private_dev.sh # public-paid-private-only
+scripts/lib/private_dev_posture.sh # public-paid-private-only
 scripts/paid_launch_checklist.sh
-scripts/setup_paid_local_env.sh
-scripts/tests/Test-ReleaseInstallerIdentity.ps1
-scripts/tests/test_frontier_t1_source_archive.py
-scripts/tests/test_frontier_t1_source_manifest.py
-scripts/tests/test_private_dev_posture.py
-scripts/tests/test_release_payload_provenance.py
-scripts/validate_frontier_t1_release_provenance.py
-scripts/validate_frontier_t1_source_archive.py
+scripts/smoke_paid_provider_e2e.sh
+scripts/setup_paid_local_env.sh # public-paid-private-only
+scripts/smoke_x_mrr_funnel.mjs # public-paid-private-only
+scripts/tests/test_private_dev_posture.py # public-paid-private-only
+scripts/validate_x_content_kit.mjs # public-paid-private-only
 scripts/verify_runtime_license_keypair.sh
+scripts/x_mrr_*.mjs # public-paid-private-only
+
+# Private response-intelligence fixture, oracle, custody, and transfer evidence.
+# The compact non-promotional release ledger remains public; the source corpus,
+# evaluators, policy, detailed failure evidence, and test-only exporter do not.
+docs/evals/fixtures/recall-response-compositional-development.v1.json # public-paid-private-only
+docs/evals/fixtures/recall-response-compositional-holdout-custody.v1.json # public-paid-private-only
+docs/evals/fixtures/recall-response-compositional-holdout.v1.json # public-paid-private-only
+docs/evals/fixtures/recall-response-compositional-oracles.v1.json # public-paid-private-only
+docs/evals/fixtures/recall-response-transfer-suite.v1.json # public-paid-private-only
+docs/evals/recall-response-compositional-benchmark.v1.json # public-paid-private-only
+docs/evals/recall-response-transfer-egress-policy.v1.json # public-paid-private-only
+docs/evals/recall-response-transfer.v1.md # public-paid-private-only
+docs/evals/results/recall-response-transfer-unavailable.v1.json # public-paid-private-only
+docs/plans/2026-08-09-001-feat-compositional-response-intelligence-plan.md # public-paid-private-only
+scripts/agent/generate-recall-response-compositional-fixtures # public-paid-private-only
+scripts/agent/recall-response-compositional-eval # public-paid-private-only
+scripts/agent/recall-response-downstream-simulator # public-paid-private-only
+scripts/agent/recall-response-holdout-custody # public-paid-private-only
+scripts/agent/recall-response-transfer-eval # public-paid-private-only
+scripts/agent/test_recall_response_compositional_eval.py # public-paid-private-only
+scripts/agent/test_recall_response_compositional_fixtures.py # public-paid-private-only
+scripts/agent/test_recall_response_transfer.py # public-paid-private-only
+services/gateway-go/memory_recall_response_u9_export_test.go # public-paid-private-only
+
+# Private Frontier program planning and its audit must never enter public/main.
+scripts/agent/audit-frontier-30-program # public-paid-private-only
+scripts/agent/generate-frontier-t1-source-manifest
+scripts/frontier_t1_source_contract.py
+scripts/tests/test_frontier_t1_source_manifest.py
+scripts/tests/test_frontier_t1_source_archive.py
+scripts/tests/test_release_payload_provenance.py
+scripts/validate_frontier_t1_source_archive.py
+scripts/validate_frontier_t1_release_provenance.py

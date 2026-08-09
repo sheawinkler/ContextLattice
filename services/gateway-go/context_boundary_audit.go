@@ -92,6 +92,10 @@ func contextBoundaryRequiredSurfaces() []contextBoundarySurface {
 		{Name: "contextlattice_pack_cli", Path: "scripts/agent/contextlattice-pack", Surface: "agent_cli", ContractID: contextPackResponseContractID, RuntimeOwner: sourceOwnerGoNative, Required: true, Detail: "local CLI context package"},
 		{Name: "contextlattice_pack_script_recall_response_cli", Path: "scripts/agent/contextlattice-pack --response", Surface: "agent_cli", ContractID: recallResponseContractID, RuntimeOwner: sourceOwnerGoNative, Required: true, Detail: "opt-in script CLI proof-carrying recall response"},
 		{Name: "contextlattice_pack_native_recall_response_cli", Path: "contextlattice_pack --response", Surface: "agent_cli", ContractID: recallResponseContractID, RuntimeOwner: sourceOwnerGoNative, Required: true, Detail: "opt-in native CLI proof-carrying recall response"},
+		{Name: "contextlattice_recall_response_cli", Path: "contextlattice_recall_response", Surface: "agent_cli", ContractID: recallResponseContractID, RuntimeOwner: sourceOwnerGoNative, Required: true, Detail: "canonical native CLI proof-carrying recall response"},
+		{Name: "contextlattice_recall_response_dispatch_cli", Path: "contextlattice recall-response", Surface: "agent_cli", ContractID: recallResponseContractID, RuntimeOwner: sourceOwnerGoNative, Required: true, Detail: "canonical contextlattice dispatcher recall response"},
+		{Name: "contextlattice_agent_tools_recall_response_dispatch_cli", Path: "contextlattice-agent-tools recall-response", Surface: "agent_cli", ContractID: recallResponseContractID, RuntimeOwner: sourceOwnerGoNative, Required: true, Detail: "canonical contextlattice-agent-tools dispatcher recall response"},
+		{Name: "contextlattice_recall_response_script_cli", Path: "scripts/agent/contextlattice-recall-response", Surface: "agent_cli", ContractID: recallResponseContractID, RuntimeOwner: sourceOwnerGoNative, Required: true, Detail: "script delegate to the owned native recall response CLI"},
 		{Name: "contextlattice_continuous_cognition_cli", Path: "contextlattice_continuous_cognition", Surface: "agent_cli", ContractID: continuousCognitionContractID, RuntimeOwner: sourceOwnerGoNative, Required: true, Detail: "canonical bounded CLI for observation, investigation, status, outcome, evaluation, rollback, and retirement advice"},
 		{Name: "contextlattice_packet_reconstruct_cli", Path: "contextlattice_packet_reconstruct", Surface: "agent_cli", ContractID: agentPacketContractID, RuntimeOwner: sourceOwnerGoNative, Required: true, Detail: "CLI verified Agent Packet reconstruction"},
 		{Name: "contextlattice_agent_trace_proof_cli", Path: "contextlattice_agent_trace --proof", Surface: "agent_cli", ContractID: agentProofTimelineContractID, RuntimeOwner: sourceOwnerGoNative, Required: true, Detail: "CLI deterministic local agent proof timeline"},
@@ -151,7 +155,13 @@ func contextBoundaryRequiredSurfaces() []contextBoundarySurface {
 		{Name: "agent_session_rollup", Path: "/v1/agents/sessions/{session_id}/rollup", Surface: "agent_http", ContractID: agentSessionRollupContractID, RuntimeOwner: sourceOwnerGoNative, Required: true, Detail: "bounded session rollup"},
 		{Name: "agent_prompt_context_package", Path: "/v1/agents/sessions/{session_id}/context-package", Surface: "agent_http", ContractID: agentPromptContextPackageContractID, RuntimeOwner: sourceOwnerGoNative, Required: true, Detail: "bounded session prompt package"},
 	}
-	return surfaces
+	surfaces = append(surfaces, optionalRecallResponseCanaryBoundarySurfaces()...)
+	surfaces = append(surfaces, optionalFrontierT5BoundarySurfaces()...)
+	surfaces = append(surfaces, optionalFrontierT6BoundarySurfaces()...)
+	surfaces = append(surfaces, optionalFrontierT7BoundarySurfaces()...)
+	surfaces = append(surfaces, optionalFrontierT8BoundarySurfaces()...)
+	surfaces = append(surfaces, optionalFrontierT9BoundarySurfaces()...)
+	return append(surfaces, optionalFrontierT10BoundarySurfaces()...)
 }
 
 func contextBoundaryPayload() map[string]any {

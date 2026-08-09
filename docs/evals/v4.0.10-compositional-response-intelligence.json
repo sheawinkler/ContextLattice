@@ -1,0 +1,3676 @@
+{
+  "comparisons": {
+    "baseline_qualification": {
+      "flat_category_router": {
+        "contract_schema": "recall_response.synthetic_control_projection.v1",
+        "contract_validity": 1.0,
+        "product_candidate_contract_schema": "recall_response.v1",
+        "product_candidate_contract_validity": 1.0,
+        "qualified": true,
+        "trust_violation_count": 0
+      },
+      "raw_retrieval": {
+        "contract_schema": "recall_response.synthetic_control_projection.v1",
+        "contract_validity": 1.0,
+        "product_candidate_contract_schema": "recall_response.v1",
+        "product_candidate_contract_validity": 1.0,
+        "qualified": true,
+        "trust_violation_count": 0
+      },
+      "universal_template": {
+        "contract_schema": "recall_response.synthetic_control_projection.v1",
+        "contract_validity": 1.0,
+        "product_candidate_contract_schema": "recall_response.v1",
+        "product_candidate_contract_validity": 1.0,
+        "qualified": true,
+        "trust_violation_count": 0
+      }
+    },
+    "headline": [
+      {
+        "baseline_condition": "flat_category_router",
+        "baseline_numerator": 72,
+        "baseline_score": 0.72,
+        "baseline_score_tie": [
+          "flat_category_router"
+        ],
+        "candidate_condition": "compositional_router",
+        "candidate_numerator": 80,
+        "candidate_score": 0.8,
+        "denominator": 100,
+        "effect_pass": true,
+        "holm_adjusted_p": 0.015625,
+        "improvement_percentage_points": 8.0,
+        "metric_id": "first_response_resolution.v1",
+        "paired_exact": {
+          "discordant": 8,
+          "gains_count": 8,
+          "losses_count": 0,
+          "one_sided_p": 0.00390625
+        },
+        "statistical_pass": true,
+        "tie_fails": false
+      },
+      {
+        "baseline_condition": "flat_category_router",
+        "baseline_numerator": 72,
+        "baseline_score": 0.72,
+        "baseline_score_tie": [
+          "flat_category_router"
+        ],
+        "candidate_condition": "compositional_router",
+        "candidate_numerator": 75,
+        "candidate_score": 0.75,
+        "denominator": 100,
+        "effect_pass": false,
+        "holm_adjusted_p": 0.375,
+        "improvement_percentage_points": 3.0,
+        "metric_id": "downstream_task_completion.v1",
+        "paired_exact": {
+          "discordant": 3,
+          "gains_count": 3,
+          "losses_count": 0,
+          "one_sided_p": 0.125
+        },
+        "statistical_pass": false,
+        "tie_fails": false
+      },
+      {
+        "baseline_condition": "flat_category_router",
+        "baseline_numerator": 5,
+        "baseline_score": 0.5,
+        "baseline_score_tie": [
+          "universal_template",
+          "flat_category_router"
+        ],
+        "candidate_condition": "compositional_router",
+        "candidate_numerator": 5,
+        "candidate_score": 0.5,
+        "denominator": 10,
+        "effect_pass": false,
+        "holm_adjusted_p": 1.0,
+        "improvement_percentage_points": 0.0,
+        "metric_id": "tool_selection_correct.v1",
+        "paired_exact": {
+          "discordant": 0,
+          "gains_count": 0,
+          "losses_count": 0,
+          "one_sided_p": 1.0
+        },
+        "statistical_pass": false,
+        "tie_fails": true
+      },
+      {
+        "baseline_condition": "flat_category_router",
+        "baseline_numerator": 5,
+        "baseline_score": 0.5,
+        "baseline_score_tie": [
+          "universal_template",
+          "flat_category_router"
+        ],
+        "candidate_condition": "compositional_router",
+        "candidate_numerator": 5,
+        "candidate_score": 0.5,
+        "denominator": 10,
+        "effect_pass": false,
+        "holm_adjusted_p": 1.0,
+        "improvement_percentage_points": 0.0,
+        "metric_id": "parameter_binding_correct.v1",
+        "paired_exact": {
+          "discordant": 0,
+          "gains_count": 0,
+          "losses_count": 0,
+          "one_sided_p": 1.0
+        },
+        "statistical_pass": false,
+        "tie_fails": true
+      }
+    ],
+    "holm_family_size": 4,
+    "next_correct_action": {
+      "best_qualified_baseline_median": 2.0,
+      "candidate_median": 1.0,
+      "condition_medians": {
+        "compositional_router": 1.0,
+        "flat_category_router": 2.0,
+        "raw_retrieval": 3.0,
+        "universal_template": 2.0
+      },
+      "fifteen_percent_reduction_pass": true,
+      "metric_id": "next_correct_action_steps.v1",
+      "reduction_fraction": 0.5
+    },
+    "one_sided_family_alpha": 0.05,
+    "resource_equivalence": {
+      "conditions": {
+        "compositional_router": {
+          "bytes_p95": 16704,
+          "latency_kind": "in_process_wall_clock_ns",
+          "latency_units_median": 3021375.0,
+          "tokens_p95": 4176
+        },
+        "flat_category_router": {
+          "bytes_p95": 1325,
+          "latency_kind": "deterministic_control_units",
+          "latency_units_median": 57.0,
+          "tokens_p95": 332
+        },
+        "raw_retrieval": {
+          "bytes_p95": 1374,
+          "latency_kind": "deterministic_control_units",
+          "latency_units_median": 45.0,
+          "tokens_p95": 344
+        },
+        "universal_template": {
+          "bytes_p95": 1362,
+          "latency_kind": "deterministic_control_units",
+          "latency_units_median": 53.0,
+          "tokens_p95": 341
+        }
+      },
+      "measurement": "product_wall_clock_ns_and_deterministic_test_controls",
+      "promotional_gate_eligible": false
+    },
+    "synthetic_regression_rules_pass": false
+  },
+  "component_ablation_metrics": [
+    {
+      "component": "exact_current_status",
+      "denominator": 60,
+      "failure_count": 0,
+      "metric_id": "component_ablation_downstream_change.v1",
+      "numerator": 18,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 747000
+        },
+        "latency": {
+          "control_deterministic_units_total": 0,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 169005168,
+          "product_timed_repetitions": 300,
+          "product_wall_clock_ns_total": 924501714,
+          "product_warmup_ns_total": 185065204
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 186769
+        },
+        "tool_calls": 0
+      },
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "component": "decision_rationale",
+      "denominator": 106,
+      "failure_count": 5,
+      "metric_id": "component_ablation_downstream_change.v1",
+      "numerator": 14,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 1461747
+        },
+        "latency": {
+          "control_deterministic_units_total": 0,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 344120838,
+          "product_timed_repetitions": 530,
+          "product_wall_clock_ns_total": 1904886228,
+          "product_warmup_ns_total": 378809876
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 365479
+        },
+        "tool_calls": 0
+      },
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "component": "project_continuation",
+      "denominator": 30,
+      "failure_count": 4,
+      "metric_id": "component_ablation_downstream_change.v1",
+      "numerator": 17,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 340548
+        },
+        "latency": {
+          "control_deterministic_units_total": 0,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 83594954,
+          "product_timed_repetitions": 150,
+          "product_wall_clock_ns_total": 459315499,
+          "product_warmup_ns_total": 93599127
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 85150
+        },
+        "tool_calls": 0
+      },
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "component": "preference_constraint",
+      "denominator": 60,
+      "failure_count": 0,
+      "metric_id": "component_ablation_downstream_change.v1",
+      "numerator": 24,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 826542
+        },
+        "latency": {
+          "control_deterministic_units_total": 0,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 191830752,
+          "product_timed_repetitions": 300,
+          "product_wall_clock_ns_total": 1116264170,
+          "product_warmup_ns_total": 205801874
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 206658
+        },
+        "tool_calls": 0
+      },
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "component": "timeline",
+      "denominator": 48,
+      "failure_count": 0,
+      "metric_id": "component_ablation_downstream_change.v1",
+      "numerator": 26,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 560547
+        },
+        "latency": {
+          "control_deterministic_units_total": 0,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 122854289,
+          "product_timed_repetitions": 240,
+          "product_wall_clock_ns_total": 670039750,
+          "product_warmup_ns_total": 138674460
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 140156
+        },
+        "tool_calls": 0
+      },
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "component": "procedure",
+      "denominator": 60,
+      "failure_count": 0,
+      "metric_id": "component_ablation_downstream_change.v1",
+      "numerator": 23,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 823761
+        },
+        "latency": {
+          "control_deterministic_units_total": 0,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 187052752,
+          "product_timed_repetitions": 300,
+          "product_wall_clock_ns_total": 1018010671,
+          "product_warmup_ns_total": 200549295
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 205955
+        },
+        "tool_calls": 0
+      },
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "component": "multi_memory_synthesis",
+      "denominator": 221,
+      "failure_count": 0,
+      "metric_id": "component_ablation_downstream_change.v1",
+      "numerator": 26,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 2639618
+        },
+        "latency": {
+          "control_deterministic_units_total": 0,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 572276922,
+          "product_timed_repetitions": 1105,
+          "product_wall_clock_ns_total": 3263549739,
+          "product_warmup_ns_total": 646589612
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 659992
+        },
+        "tool_calls": 0
+      },
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "component": "conflict_supersession",
+      "denominator": 29,
+      "failure_count": 2,
+      "metric_id": "component_ablation_downstream_change.v1",
+      "numerator": 27,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 301525
+        },
+        "latency": {
+          "control_deterministic_units_total": 0,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 67292707,
+          "product_timed_repetitions": 145,
+          "product_wall_clock_ns_total": 374708917,
+          "product_warmup_ns_total": 68708125
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 75393
+        },
+        "tool_calls": 0
+      },
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "component": "negative_abstention",
+      "denominator": 147,
+      "failure_count": 128,
+      "metric_id": "component_ablation_downstream_change.v1",
+      "numerator": 79,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 1179479
+        },
+        "latency": {
+          "control_deterministic_units_total": 0,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 258250003,
+          "product_timed_repetitions": 735,
+          "product_wall_clock_ns_total": 1403721408,
+          "product_warmup_ns_total": 301146708
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 294927
+        },
+        "tool_calls": 0
+      },
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "component": "memory_to_action",
+      "denominator": 80,
+      "failure_count": 21,
+      "metric_id": "component_ablation_downstream_change.v1",
+      "numerator": 18,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 1083821
+        },
+        "latency": {
+          "control_deterministic_units_total": 0,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 246794791,
+          "product_timed_repetitions": 400,
+          "product_wall_clock_ns_total": 1336008830,
+          "product_warmup_ns_total": 272522124
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 270987
+        },
+        "tool_calls": 0
+      },
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    }
+  ],
+  "conditions": [
+    "raw_retrieval",
+    "universal_template",
+    "flat_category_router",
+    "compositional_router"
+  ],
+  "corpus": {
+    "development": 200,
+    "holdout": 100,
+    "total": 300
+  },
+  "custody": {
+    "promotional_claims_allowed": false,
+    "regression_use_allowed": true,
+    "state": "local_regression/contaminated"
+  },
+  "detailed_ledger_digest": "sha256:1a2e437719dd92c57f215e7e8c85fd12e9d1a88cadb24eb010bd75fceddfbf21",
+  "failure_review": {
+    "denominator_exclusions_allowed": false,
+    "hidden_failures_allowed": false,
+    "reported_failure_count": 161
+  },
+  "feature": "compositional_response_intelligence",
+  "ledger_digest": "sha256:9277a153a39a5cc69addeb3cbeb2cbdfda9b01c6eacbcf465675c3ff1ebbc226",
+  "metrics": [
+    {
+      "condition": "raw_retrieval",
+      "denominator": 200,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "retrieval_quality.v1",
+      "numerator": 176,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 241104
+        },
+        "latency": {
+          "control_deterministic_units_total": 9014,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 60351
+        },
+        "tool_calls": 0
+      },
+      "score": 0.88,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "raw_retrieval",
+      "denominator": 200,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "response_contract_correct.v1",
+      "numerator": 200,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 241104
+        },
+        "latency": {
+          "control_deterministic_units_total": 9014,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 60351
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "raw_retrieval",
+      "denominator": 200,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "first_response_resolution.v1",
+      "numerator": 137,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 241104
+        },
+        "latency": {
+          "control_deterministic_units_total": 9014,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 60351
+        },
+        "tool_calls": 0
+      },
+      "score": 0.685,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "raw_retrieval",
+      "denominator": 200,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "downstream_task_completion.v1",
+      "numerator": 137,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 241104
+        },
+        "latency": {
+          "control_deterministic_units_total": 9014,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 60351
+        },
+        "tool_calls": 0
+      },
+      "score": 0.685,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "raw_retrieval",
+      "denominator": 20,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "tool_selection_correct.v1",
+      "numerator": 13,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 25660
+        },
+        "latency": {
+          "control_deterministic_units_total": 925,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 6423
+        },
+        "tool_calls": 0
+      },
+      "score": 0.65,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "raw_retrieval",
+      "denominator": 20,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "parameter_binding_correct.v1",
+      "numerator": 13,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 25660
+        },
+        "latency": {
+          "control_deterministic_units_total": 925,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 6423
+        },
+        "tool_calls": 0
+      },
+      "score": 0.65,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "raw_retrieval",
+      "denominator": 200,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "temporal_evidence_correct.v1",
+      "numerator": 176,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 241104
+        },
+        "latency": {
+          "control_deterministic_units_total": 9014,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 60351
+        },
+        "tool_calls": 0
+      },
+      "score": 0.88,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "raw_retrieval",
+      "denominator": 200,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "abstention_silence_correct.v1",
+      "numerator": 200,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 241104
+        },
+        "latency": {
+          "control_deterministic_units_total": 9014,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 60351
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "raw_retrieval",
+      "denominator": 12,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "selective_forgetting.v1",
+      "numerator": 0,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 14034
+        },
+        "latency": {
+          "control_deterministic_units_total": 527,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 3514
+        },
+        "tool_calls": 0
+      },
+      "score": 0.0,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "raw_retrieval",
+      "denominator": 20,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "test_time_learning.v1",
+      "numerator": 20,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 24945
+        },
+        "latency": {
+          "control_deterministic_units_total": 924,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 6246
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "raw_retrieval",
+      "denominator": 12,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "long_range_understanding.v1",
+      "numerator": 12,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 15929
+        },
+        "latency": {
+          "control_deterministic_units_total": 576,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 3986
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "raw_retrieval",
+      "denominator": 200,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "instruction_laundering_privacy_clean.v1",
+      "numerator": 200,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 241104
+        },
+        "latency": {
+          "control_deterministic_units_total": 9014,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 60351
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "raw_retrieval",
+      "denominator": 200,
+      "failure_count": 0,
+      "kind": "lower_is_better_integer",
+      "median": 3.0,
+      "metric_id": "next_correct_action_steps.v1",
+      "numerator": 663,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 241104
+        },
+        "latency": {
+          "control_deterministic_units_total": 9014,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 60351
+        },
+        "tool_calls": 0
+      },
+      "score": 3.315,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "universal_template",
+      "denominator": 200,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "retrieval_quality.v1",
+      "numerator": 177,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 245572
+        },
+        "latency": {
+          "control_deterministic_units_total": 10600,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 61454
+        },
+        "tool_calls": 0
+      },
+      "score": 0.885,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "universal_template",
+      "denominator": 200,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "response_contract_correct.v1",
+      "numerator": 200,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 245572
+        },
+        "latency": {
+          "control_deterministic_units_total": 10600,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 61454
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "universal_template",
+      "denominator": 200,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "first_response_resolution.v1",
+      "numerator": 138,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 245572
+        },
+        "latency": {
+          "control_deterministic_units_total": 10600,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 61454
+        },
+        "tool_calls": 0
+      },
+      "score": 0.69,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "universal_template",
+      "denominator": 200,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "downstream_task_completion.v1",
+      "numerator": 138,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 245572
+        },
+        "latency": {
+          "control_deterministic_units_total": 10600,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 61454
+        },
+        "tool_calls": 0
+      },
+      "score": 0.69,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "universal_template",
+      "denominator": 20,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "tool_selection_correct.v1",
+      "numerator": 13,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 26041
+        },
+        "latency": {
+          "control_deterministic_units_total": 1082,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 6519
+        },
+        "tool_calls": 0
+      },
+      "score": 0.65,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "universal_template",
+      "denominator": 20,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "parameter_binding_correct.v1",
+      "numerator": 13,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 26041
+        },
+        "latency": {
+          "control_deterministic_units_total": 1082,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 6519
+        },
+        "tool_calls": 0
+      },
+      "score": 0.65,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "universal_template",
+      "denominator": 200,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "temporal_evidence_correct.v1",
+      "numerator": 177,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 245572
+        },
+        "latency": {
+          "control_deterministic_units_total": 10600,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 61454
+        },
+        "tool_calls": 0
+      },
+      "score": 0.885,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "universal_template",
+      "denominator": 200,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "abstention_silence_correct.v1",
+      "numerator": 200,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 245572
+        },
+        "latency": {
+          "control_deterministic_units_total": 10600,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 61454
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "universal_template",
+      "denominator": 12,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "selective_forgetting.v1",
+      "numerator": 0,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 14334
+        },
+        "latency": {
+          "control_deterministic_units_total": 623,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 3588
+        },
+        "tool_calls": 0
+      },
+      "score": 0.0,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "universal_template",
+      "denominator": 20,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "test_time_learning.v1",
+      "numerator": 20,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 25408
+        },
+        "latency": {
+          "control_deterministic_units_total": 1083,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 6358
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "universal_template",
+      "denominator": 12,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "long_range_understanding.v1",
+      "numerator": 12,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 15770
+        },
+        "latency": {
+          "control_deterministic_units_total": 660,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 3948
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "universal_template",
+      "denominator": 200,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "instruction_laundering_privacy_clean.v1",
+      "numerator": 200,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 245572
+        },
+        "latency": {
+          "control_deterministic_units_total": 10600,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 61454
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "universal_template",
+      "denominator": 200,
+      "failure_count": 0,
+      "kind": "lower_is_better_integer",
+      "median": 2.0,
+      "metric_id": "next_correct_action_steps.v1",
+      "numerator": 462,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 245572
+        },
+        "latency": {
+          "control_deterministic_units_total": 10600,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 61454
+        },
+        "tool_calls": 0
+      },
+      "score": 2.31,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "flat_category_router",
+      "denominator": 200,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "retrieval_quality.v1",
+      "numerator": 180,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 244225
+        },
+        "latency": {
+          "control_deterministic_units_total": 11356,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 61149
+        },
+        "tool_calls": 0
+      },
+      "score": 0.9,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "flat_category_router",
+      "denominator": 200,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "response_contract_correct.v1",
+      "numerator": 200,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 244225
+        },
+        "latency": {
+          "control_deterministic_units_total": 11356,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 61149
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "flat_category_router",
+      "denominator": 200,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "first_response_resolution.v1",
+      "numerator": 140,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 244225
+        },
+        "latency": {
+          "control_deterministic_units_total": 11356,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 61149
+        },
+        "tool_calls": 0
+      },
+      "score": 0.7,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "flat_category_router",
+      "denominator": 200,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "downstream_task_completion.v1",
+      "numerator": 140,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 244225
+        },
+        "latency": {
+          "control_deterministic_units_total": 11356,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 61149
+        },
+        "tool_calls": 0
+      },
+      "score": 0.7,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "flat_category_router",
+      "denominator": 20,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "tool_selection_correct.v1",
+      "numerator": 13,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 25628
+        },
+        "latency": {
+          "control_deterministic_units_total": 1150,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 6415
+        },
+        "tool_calls": 0
+      },
+      "score": 0.65,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "flat_category_router",
+      "denominator": 20,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "parameter_binding_correct.v1",
+      "numerator": 13,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 25628
+        },
+        "latency": {
+          "control_deterministic_units_total": 1150,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 6415
+        },
+        "tool_calls": 0
+      },
+      "score": 0.65,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "flat_category_router",
+      "denominator": 200,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "temporal_evidence_correct.v1",
+      "numerator": 180,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 244225
+        },
+        "latency": {
+          "control_deterministic_units_total": 11356,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 61149
+        },
+        "tool_calls": 0
+      },
+      "score": 0.9,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "flat_category_router",
+      "denominator": 200,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "abstention_silence_correct.v1",
+      "numerator": 200,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 244225
+        },
+        "latency": {
+          "control_deterministic_units_total": 11356,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 61149
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "flat_category_router",
+      "denominator": 12,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "selective_forgetting.v1",
+      "numerator": 0,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 14351
+        },
+        "latency": {
+          "control_deterministic_units_total": 671,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 3592
+        },
+        "tool_calls": 0
+      },
+      "score": 0.0,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "flat_category_router",
+      "denominator": 20,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "test_time_learning.v1",
+      "numerator": 20,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 25055
+        },
+        "latency": {
+          "control_deterministic_units_total": 1153,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 6275
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "flat_category_router",
+      "denominator": 12,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "long_range_understanding.v1",
+      "numerator": 12,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 15339
+        },
+        "latency": {
+          "control_deterministic_units_total": 696,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 3843
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "flat_category_router",
+      "denominator": 200,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "instruction_laundering_privacy_clean.v1",
+      "numerator": 200,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 244225
+        },
+        "latency": {
+          "control_deterministic_units_total": 11356,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 61149
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "flat_category_router",
+      "denominator": 200,
+      "failure_count": 0,
+      "kind": "lower_is_better_integer",
+      "median": 2.0,
+      "metric_id": "next_correct_action_steps.v1",
+      "numerator": 460,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 244225
+        },
+        "latency": {
+          "control_deterministic_units_total": 11356,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 61149
+        },
+        "tool_calls": 0
+      },
+      "score": 2.3,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "compositional_router",
+      "denominator": 200,
+      "failure_count": 1,
+      "kind": "binary",
+      "metric_id": "retrieval_quality.v1",
+      "numerator": 199,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 2665808
+        },
+        "latency": {
+          "control_deterministic_units_total": 0,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 651635052,
+          "product_timed_repetitions": 1000,
+          "product_wall_clock_ns_total": 3599161150,
+          "product_warmup_ns_total": 696099959
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 666528
+        },
+        "tool_calls": 0
+      },
+      "score": 0.995,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "compositional_router",
+      "denominator": 200,
+      "failure_count": 1,
+      "kind": "binary",
+      "metric_id": "response_contract_correct.v1",
+      "numerator": 200,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 2665808
+        },
+        "latency": {
+          "control_deterministic_units_total": 0,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 651635052,
+          "product_timed_repetitions": 1000,
+          "product_wall_clock_ns_total": 3599161150,
+          "product_warmup_ns_total": 696099959
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 666528
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "compositional_router",
+      "denominator": 200,
+      "failure_count": 1,
+      "kind": "binary",
+      "metric_id": "first_response_resolution.v1",
+      "numerator": 158,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 2665808
+        },
+        "latency": {
+          "control_deterministic_units_total": 0,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 651635052,
+          "product_timed_repetitions": 1000,
+          "product_wall_clock_ns_total": 3599161150,
+          "product_warmup_ns_total": 696099959
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 666528
+        },
+        "tool_calls": 0
+      },
+      "score": 0.79,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "compositional_router",
+      "denominator": 200,
+      "failure_count": 1,
+      "kind": "binary",
+      "metric_id": "downstream_task_completion.v1",
+      "numerator": 147,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 2665808
+        },
+        "latency": {
+          "control_deterministic_units_total": 0,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 651635052,
+          "product_timed_repetitions": 1000,
+          "product_wall_clock_ns_total": 3599161150,
+          "product_warmup_ns_total": 696099959
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 666528
+        },
+        "tool_calls": 0
+      },
+      "score": 0.735,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "compositional_router",
+      "denominator": 20,
+      "failure_count": 1,
+      "kind": "binary",
+      "metric_id": "tool_selection_correct.v1",
+      "numerator": 12,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 300837
+        },
+        "latency": {
+          "control_deterministic_units_total": 0,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 79764083,
+          "product_timed_repetitions": 100,
+          "product_wall_clock_ns_total": 427926875,
+          "product_warmup_ns_total": 93385085
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 75217
+        },
+        "tool_calls": 0
+      },
+      "score": 0.6,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "compositional_router",
+      "denominator": 20,
+      "failure_count": 1,
+      "kind": "binary",
+      "metric_id": "parameter_binding_correct.v1",
+      "numerator": 12,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 300837
+        },
+        "latency": {
+          "control_deterministic_units_total": 0,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 79764083,
+          "product_timed_repetitions": 100,
+          "product_wall_clock_ns_total": 427926875,
+          "product_warmup_ns_total": 93385085
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 75217
+        },
+        "tool_calls": 0
+      },
+      "score": 0.6,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "compositional_router",
+      "denominator": 200,
+      "failure_count": 1,
+      "kind": "binary",
+      "metric_id": "temporal_evidence_correct.v1",
+      "numerator": 200,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 2665808
+        },
+        "latency": {
+          "control_deterministic_units_total": 0,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 651635052,
+          "product_timed_repetitions": 1000,
+          "product_wall_clock_ns_total": 3599161150,
+          "product_warmup_ns_total": 696099959
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 666528
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "compositional_router",
+      "denominator": 200,
+      "failure_count": 1,
+      "kind": "binary",
+      "metric_id": "abstention_silence_correct.v1",
+      "numerator": 26,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 2665808
+        },
+        "latency": {
+          "control_deterministic_units_total": 0,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 651635052,
+          "product_timed_repetitions": 1000,
+          "product_wall_clock_ns_total": 3599161150,
+          "product_warmup_ns_total": 696099959
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 666528
+        },
+        "tool_calls": 0
+      },
+      "score": 0.13,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "compositional_router",
+      "denominator": 12,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "selective_forgetting.v1",
+      "numerator": 0,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 170842
+        },
+        "latency": {
+          "control_deterministic_units_total": 0,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 39748042,
+          "product_timed_repetitions": 60,
+          "product_wall_clock_ns_total": 214540338,
+          "product_warmup_ns_total": 42606417
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 42715
+        },
+        "tool_calls": 0
+      },
+      "score": 0.0,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "compositional_router",
+      "denominator": 20,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "test_time_learning.v1",
+      "numerator": 20,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 267218
+        },
+        "latency": {
+          "control_deterministic_units_total": 0,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 63337458,
+          "product_timed_repetitions": 100,
+          "product_wall_clock_ns_total": 344129168,
+          "product_warmup_ns_total": 68887542
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 66811
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "compositional_router",
+      "denominator": 12,
+      "failure_count": 1,
+      "kind": "binary",
+      "metric_id": "long_range_understanding.v1",
+      "numerator": 11,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 181243
+        },
+        "latency": {
+          "control_deterministic_units_total": 0,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 59218627,
+          "product_timed_repetitions": 60,
+          "product_wall_clock_ns_total": 311331752,
+          "product_warmup_ns_total": 68434878
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 45317
+        },
+        "tool_calls": 0
+      },
+      "score": 0.916667,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "compositional_router",
+      "denominator": 200,
+      "failure_count": 1,
+      "kind": "binary",
+      "metric_id": "instruction_laundering_privacy_clean.v1",
+      "numerator": 200,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 2665808
+        },
+        "latency": {
+          "control_deterministic_units_total": 0,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 651635052,
+          "product_timed_repetitions": 1000,
+          "product_wall_clock_ns_total": 3599161150,
+          "product_warmup_ns_total": 696099959
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 666528
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "compositional_router",
+      "denominator": 200,
+      "failure_count": 1,
+      "kind": "lower_is_better_integer",
+      "median": 1.0,
+      "metric_id": "next_correct_action_steps.v1",
+      "numerator": 253,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 2665808
+        },
+        "latency": {
+          "control_deterministic_units_total": 0,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 651635052,
+          "product_timed_repetitions": 1000,
+          "product_wall_clock_ns_total": 3599161150,
+          "product_warmup_ns_total": 696099959
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 666528
+        },
+        "tool_calls": 0
+      },
+      "score": 1.265,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "raw_retrieval",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "retrieval_quality.v1",
+      "numerator": 89,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 123070
+        },
+        "latency": {
+          "control_deterministic_units_total": 4515,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 30803
+        },
+        "tool_calls": 0
+      },
+      "score": 0.89,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "raw_retrieval",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "response_contract_correct.v1",
+      "numerator": 100,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 123070
+        },
+        "latency": {
+          "control_deterministic_units_total": 4515,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 30803
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "raw_retrieval",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "first_response_resolution.v1",
+      "numerator": 71,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 123070
+        },
+        "latency": {
+          "control_deterministic_units_total": 4515,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 30803
+        },
+        "tool_calls": 0
+      },
+      "score": 0.71,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "raw_retrieval",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "downstream_task_completion.v1",
+      "numerator": 71,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 123070
+        },
+        "latency": {
+          "control_deterministic_units_total": 4515,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 30803
+        },
+        "tool_calls": 0
+      },
+      "score": 0.71,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "raw_retrieval",
+      "denominator": 10,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "tool_selection_correct.v1",
+      "numerator": 5,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 12907
+        },
+        "latency": {
+          "control_deterministic_units_total": 456,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 3228
+        },
+        "tool_calls": 0
+      },
+      "score": 0.5,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "raw_retrieval",
+      "denominator": 10,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "parameter_binding_correct.v1",
+      "numerator": 5,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 12907
+        },
+        "latency": {
+          "control_deterministic_units_total": 456,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 3228
+        },
+        "tool_calls": 0
+      },
+      "score": 0.5,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "raw_retrieval",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "temporal_evidence_correct.v1",
+      "numerator": 89,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 123070
+        },
+        "latency": {
+          "control_deterministic_units_total": 4515,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 30803
+        },
+        "tool_calls": 0
+      },
+      "score": 0.89,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "raw_retrieval",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "abstention_silence_correct.v1",
+      "numerator": 100,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 123070
+        },
+        "latency": {
+          "control_deterministic_units_total": 4515,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 30803
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "raw_retrieval",
+      "denominator": 6,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "selective_forgetting.v1",
+      "numerator": 0,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 7084
+        },
+        "latency": {
+          "control_deterministic_units_total": 262,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 1773
+        },
+        "tool_calls": 0
+      },
+      "score": 0.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "raw_retrieval",
+      "denominator": 10,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "test_time_learning.v1",
+      "numerator": 10,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 12622
+        },
+        "latency": {
+          "control_deterministic_units_total": 459,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 3159
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "raw_retrieval",
+      "denominator": 6,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "long_range_understanding.v1",
+      "numerator": 6,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 8137
+        },
+        "latency": {
+          "control_deterministic_units_total": 288,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 2036
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "raw_retrieval",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "instruction_laundering_privacy_clean.v1",
+      "numerator": 100,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 123070
+        },
+        "latency": {
+          "control_deterministic_units_total": 4515,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 30803
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "raw_retrieval",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "lower_is_better_integer",
+      "median": 3.0,
+      "metric_id": "next_correct_action_steps.v1",
+      "numerator": 329,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 123070
+        },
+        "latency": {
+          "control_deterministic_units_total": 4515,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 30803
+        },
+        "tool_calls": 0
+      },
+      "score": 3.29,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "universal_template",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "retrieval_quality.v1",
+      "numerator": 89,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 125181
+        },
+        "latency": {
+          "control_deterministic_units_total": 5306,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 31332
+        },
+        "tool_calls": 0
+      },
+      "score": 0.89,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "universal_template",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "response_contract_correct.v1",
+      "numerator": 100,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 125181
+        },
+        "latency": {
+          "control_deterministic_units_total": 5306,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 31332
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "universal_template",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "first_response_resolution.v1",
+      "numerator": 71,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 125181
+        },
+        "latency": {
+          "control_deterministic_units_total": 5306,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 31332
+        },
+        "tool_calls": 0
+      },
+      "score": 0.71,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "universal_template",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "downstream_task_completion.v1",
+      "numerator": 71,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 125181
+        },
+        "latency": {
+          "control_deterministic_units_total": 5306,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 31332
+        },
+        "tool_calls": 0
+      },
+      "score": 0.71,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "universal_template",
+      "denominator": 10,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "tool_selection_correct.v1",
+      "numerator": 5,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 13071
+        },
+        "latency": {
+          "control_deterministic_units_total": 534,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 3272
+        },
+        "tool_calls": 0
+      },
+      "score": 0.5,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "universal_template",
+      "denominator": 10,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "parameter_binding_correct.v1",
+      "numerator": 5,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 13071
+        },
+        "latency": {
+          "control_deterministic_units_total": 534,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 3272
+        },
+        "tool_calls": 0
+      },
+      "score": 0.5,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "universal_template",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "temporal_evidence_correct.v1",
+      "numerator": 89,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 125181
+        },
+        "latency": {
+          "control_deterministic_units_total": 5306,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 31332
+        },
+        "tool_calls": 0
+      },
+      "score": 0.89,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "universal_template",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "abstention_silence_correct.v1",
+      "numerator": 100,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 125181
+        },
+        "latency": {
+          "control_deterministic_units_total": 5306,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 31332
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "universal_template",
+      "denominator": 6,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "selective_forgetting.v1",
+      "numerator": 0,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 7234
+        },
+        "latency": {
+          "control_deterministic_units_total": 310,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 1811
+        },
+        "tool_calls": 0
+      },
+      "score": 0.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "universal_template",
+      "denominator": 10,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "test_time_learning.v1",
+      "numerator": 10,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 12827
+        },
+        "latency": {
+          "control_deterministic_units_total": 538,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 3212
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "universal_template",
+      "denominator": 6,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "long_range_understanding.v1",
+      "numerator": 6,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 8029
+        },
+        "latency": {
+          "control_deterministic_units_total": 330,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 2010
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "universal_template",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "instruction_laundering_privacy_clean.v1",
+      "numerator": 100,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 125181
+        },
+        "latency": {
+          "control_deterministic_units_total": 5306,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 31332
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "universal_template",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "lower_is_better_integer",
+      "median": 2.0,
+      "metric_id": "next_correct_action_steps.v1",
+      "numerator": 229,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 125181
+        },
+        "latency": {
+          "control_deterministic_units_total": 5306,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 31332
+        },
+        "tool_calls": 0
+      },
+      "score": 2.29,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "flat_category_router",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "retrieval_quality.v1",
+      "numerator": 91,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 124489
+        },
+        "latency": {
+          "control_deterministic_units_total": 5686,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 31166
+        },
+        "tool_calls": 0
+      },
+      "score": 0.91,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "flat_category_router",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "response_contract_correct.v1",
+      "numerator": 100,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 124489
+        },
+        "latency": {
+          "control_deterministic_units_total": 5686,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 31166
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "flat_category_router",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "first_response_resolution.v1",
+      "numerator": 72,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 124489
+        },
+        "latency": {
+          "control_deterministic_units_total": 5686,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 31166
+        },
+        "tool_calls": 0
+      },
+      "score": 0.72,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "flat_category_router",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "downstream_task_completion.v1",
+      "numerator": 72,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 124489
+        },
+        "latency": {
+          "control_deterministic_units_total": 5686,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 31166
+        },
+        "tool_calls": 0
+      },
+      "score": 0.72,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "flat_category_router",
+      "denominator": 10,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "tool_selection_correct.v1",
+      "numerator": 5,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 13003
+        },
+        "latency": {
+          "control_deterministic_units_total": 572,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 3253
+        },
+        "tool_calls": 0
+      },
+      "score": 0.5,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "flat_category_router",
+      "denominator": 10,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "parameter_binding_correct.v1",
+      "numerator": 5,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 13003
+        },
+        "latency": {
+          "control_deterministic_units_total": 572,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 3253
+        },
+        "tool_calls": 0
+      },
+      "score": 0.5,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "flat_category_router",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "temporal_evidence_correct.v1",
+      "numerator": 91,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 124489
+        },
+        "latency": {
+          "control_deterministic_units_total": 5686,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 31166
+        },
+        "tool_calls": 0
+      },
+      "score": 0.91,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "flat_category_router",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "abstention_silence_correct.v1",
+      "numerator": 100,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 124489
+        },
+        "latency": {
+          "control_deterministic_units_total": 5686,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 31166
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "flat_category_router",
+      "denominator": 6,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "selective_forgetting.v1",
+      "numerator": 0,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 7245
+        },
+        "latency": {
+          "control_deterministic_units_total": 334,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 1813
+        },
+        "tool_calls": 0
+      },
+      "score": 0.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "flat_category_router",
+      "denominator": 10,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "test_time_learning.v1",
+      "numerator": 10,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 12776
+        },
+        "latency": {
+          "control_deterministic_units_total": 576,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 3199
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "flat_category_router",
+      "denominator": 6,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "long_range_understanding.v1",
+      "numerator": 6,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 7783
+        },
+        "latency": {
+          "control_deterministic_units_total": 348,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 1950
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "flat_category_router",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "instruction_laundering_privacy_clean.v1",
+      "numerator": 100,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 124489
+        },
+        "latency": {
+          "control_deterministic_units_total": 5686,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 31166
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "flat_category_router",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "lower_is_better_integer",
+      "median": 2.0,
+      "metric_id": "next_correct_action_steps.v1",
+      "numerator": 228,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 124489
+        },
+        "latency": {
+          "control_deterministic_units_total": 5686,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 0,
+          "product_timed_repetitions": 0,
+          "product_wall_clock_ns_total": 0,
+          "product_warmup_ns_total": 0
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 31166
+        },
+        "tool_calls": 0
+      },
+      "score": 2.28,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "compositional_router",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "retrieval_quality.v1",
+      "numerator": 100,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 1347815
+        },
+        "latency": {
+          "control_deterministic_units_total": 0,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 320413875,
+          "product_timed_repetitions": 500,
+          "product_wall_clock_ns_total": 1773313571,
+          "product_warmup_ns_total": 353140079
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 336990
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "compositional_router",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "response_contract_correct.v1",
+      "numerator": 100,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 1347815
+        },
+        "latency": {
+          "control_deterministic_units_total": 0,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 320413875,
+          "product_timed_repetitions": 500,
+          "product_wall_clock_ns_total": 1773313571,
+          "product_warmup_ns_total": 353140079
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 336990
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "compositional_router",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "first_response_resolution.v1",
+      "numerator": 80,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 1347815
+        },
+        "latency": {
+          "control_deterministic_units_total": 0,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 320413875,
+          "product_timed_repetitions": 500,
+          "product_wall_clock_ns_total": 1773313571,
+          "product_warmup_ns_total": 353140079
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 336990
+        },
+        "tool_calls": 0
+      },
+      "score": 0.8,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "compositional_router",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "downstream_task_completion.v1",
+      "numerator": 75,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 1347815
+        },
+        "latency": {
+          "control_deterministic_units_total": 0,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 320413875,
+          "product_timed_repetitions": 500,
+          "product_wall_clock_ns_total": 1773313571,
+          "product_warmup_ns_total": 353140079
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 336990
+        },
+        "tool_calls": 0
+      },
+      "score": 0.75,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "compositional_router",
+      "denominator": 10,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "tool_selection_correct.v1",
+      "numerator": 5,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 153722
+        },
+        "latency": {
+          "control_deterministic_units_total": 0,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 37727541,
+          "product_timed_repetitions": 50,
+          "product_wall_clock_ns_total": 208810080,
+          "product_warmup_ns_total": 39382667
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 38434
+        },
+        "tool_calls": 0
+      },
+      "score": 0.5,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "compositional_router",
+      "denominator": 10,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "parameter_binding_correct.v1",
+      "numerator": 5,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 153722
+        },
+        "latency": {
+          "control_deterministic_units_total": 0,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 37727541,
+          "product_timed_repetitions": 50,
+          "product_wall_clock_ns_total": 208810080,
+          "product_warmup_ns_total": 39382667
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 38434
+        },
+        "tool_calls": 0
+      },
+      "score": 0.5,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "compositional_router",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "temporal_evidence_correct.v1",
+      "numerator": 100,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 1347815
+        },
+        "latency": {
+          "control_deterministic_units_total": 0,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 320413875,
+          "product_timed_repetitions": 500,
+          "product_wall_clock_ns_total": 1773313571,
+          "product_warmup_ns_total": 353140079
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 336990
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "compositional_router",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "abstention_silence_correct.v1",
+      "numerator": 13,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 1347815
+        },
+        "latency": {
+          "control_deterministic_units_total": 0,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 320413875,
+          "product_timed_repetitions": 500,
+          "product_wall_clock_ns_total": 1773313571,
+          "product_warmup_ns_total": 353140079
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 336990
+        },
+        "tool_calls": 0
+      },
+      "score": 0.13,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "compositional_router",
+      "denominator": 6,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "selective_forgetting.v1",
+      "numerator": 0,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 90571
+        },
+        "latency": {
+          "control_deterministic_units_total": 0,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 21510290,
+          "product_timed_repetitions": 30,
+          "product_wall_clock_ns_total": 117141332,
+          "product_warmup_ns_total": 25771791
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 22644
+        },
+        "tool_calls": 0
+      },
+      "score": 0.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "compositional_router",
+      "denominator": 10,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "test_time_learning.v1",
+      "numerator": 10,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 133908
+        },
+        "latency": {
+          "control_deterministic_units_total": 0,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 29763668,
+          "product_timed_repetitions": 50,
+          "product_wall_clock_ns_total": 165387917,
+          "product_warmup_ns_total": 36593790
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 33480
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "compositional_router",
+      "denominator": 6,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "long_range_understanding.v1",
+      "numerator": 6,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 93068
+        },
+        "latency": {
+          "control_deterministic_units_total": 0,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 30874209,
+          "product_timed_repetitions": 30,
+          "product_wall_clock_ns_total": 168010458,
+          "product_warmup_ns_total": 29656209
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 23269
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "compositional_router",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "instruction_laundering_privacy_clean.v1",
+      "numerator": 100,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 1347815
+        },
+        "latency": {
+          "control_deterministic_units_total": 0,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 320413875,
+          "product_timed_repetitions": 500,
+          "product_wall_clock_ns_total": 1773313571,
+          "product_warmup_ns_total": 353140079
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 336990
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    },
+    {
+      "condition": "compositional_router",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "lower_is_better_integer",
+      "median": 1.0,
+      "metric_id": "next_correct_action_steps.v1",
+      "numerator": 125,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 1347815
+        },
+        "latency": {
+          "control_deterministic_units_total": 0,
+          "kind": "source_partitioned.v1",
+          "product_median_ns_total": 320413875,
+          "product_timed_repetitions": 500,
+          "product_wall_clock_ns_total": 1773313571,
+          "product_warmup_ns_total": 353140079
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 336990
+        },
+        "tool_calls": 0
+      },
+      "score": 1.25,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.2.0"
+    }
+  ],
+  "production_projection": {
+    "condition": "compositional_router",
+    "contract_schema": "recall_response.v1",
+    "contract_valid_rows": 1141,
+    "control_projection_source": "python_test_only_control/no_production_seam",
+    "export_artifact_digest": "sha256:4f469e5d32ba4ae8d5838e021d45965c46a46f6c7ba69aa2e6ff3cd2e9def1aa",
+    "export_row_count": 1141,
+    "export_schema_id": "recall_response.u9_go_fixture_export.v2",
+    "production_or_live_utility_claimed": false,
+    "production_runtime_used": false,
+    "projection_source": "go_test_fixture_exporter/recall_response.v1",
+    "seam_available_at_recording": true,
+    "seam_used": true,
+    "timed_repetitions": 5,
+    "warmup_repetitions": 1
+  },
+  "promotion": {
+    "blocked_reasons": [
+      "holdout_custody_local_regression_contaminated",
+      "product_test_seam_not_live_production_runtime",
+      "transfer_evidence_is_u10_and_not_present",
+      "product_eval_failures_present",
+      "product_action_evidence_coverage_incomplete"
+    ],
+    "canary_basis_points": {
+      "conflict_supersession": 0,
+      "decision_rationale": 0,
+      "exact_current_status": 0,
+      "memory_to_action": 0,
+      "multi_memory_synthesis": 0,
+      "negative_abstention": 0,
+      "preference_constraint": 0,
+      "procedure": 0,
+      "project_continuation": 0,
+      "timeline": 0
+    },
+    "causal_utility_claimed": false,
+    "live_utility_claimed": false,
+    "promotional": false
+  },
+  "recorded_at": "2026-08-09T00:00:00Z",
+  "release_train": "v4.0.10",
+  "reproduction": {
+    "command": "scripts/agent/recall-response-compositional-eval --full-ledger --verify-artifact --json",
+    "deterministic_semantics": true,
+    "external_oracle_calls": 0,
+    "go_exporter_invocations": 1,
+    "measured_wall_clock_resources": true,
+    "network_calls": 0,
+    "provider_calls": 0
+  },
+  "schema_id": "recall_response.compositional_public_ledger.v1",
+  "source": {
+    "benchmark_manifest": {
+      "digest": "sha256:0f55f9c2ccd6415bf43ef679ea3231301ebfda39bac62a7327b48e6fad11dc88",
+      "path": "docs/evals/recall-response-compositional-benchmark.v1.json"
+    },
+    "case_identity_digest": "sha256:6c20b2614f2a1c5d5bf979a8d73186d1be120a1db83e54806fc2e091b56ca87d",
+    "custody_receipt_digest": "sha256:0335637fec16b90b0373380679d7a32b07dc9af12ade8fcd6e254c091bbe2e5d",
+    "development_fixture": {
+      "digest": "sha256:db524993bf7bb80045687706543e6fdcd769fdc2b366a4ad8be6aef861a18e13",
+      "path": "docs/evals/fixtures/recall-response-compositional-development.v1.json"
+    },
+    "evaluator_digest": "sha256:2af0af94c6a5c0667894e7f024ec25279c726cc386158ff64aa6171bd37a1f2d",
+    "go_product_exporter_digest": "sha256:c909218861a9365ddbdade22a0ae5c556f551a985b149cec14af5e7d0850a043",
+    "holdout_fixture": {
+      "digest": "sha256:612963c15de0835231ed3fc7ff8aef6869e1caeb53b5bc2009bb10bc8640a0b6",
+      "path": "docs/evals/fixtures/recall-response-compositional-holdout.v1.json"
+    },
+    "oracle_artifact_digest": "sha256:c5fe6b5338ac38f6ae25ce179054695273dffe923879efdf3f043bacea98a0bc",
+    "simulator_digest": "sha256:e2cca2b69b3abd425e3f96f56b0fc98aaedfe5fad46146a649bf94d2f22d2973"
+  },
+  "status": "local_regression_only",
+  "synthetic": true
+}

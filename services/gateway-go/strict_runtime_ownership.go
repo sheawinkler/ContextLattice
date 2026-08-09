@@ -131,7 +131,13 @@ func strictRuntimeOwnedRoutes() []nativeOwnedRoute {
 		{Path: "/telemetry/recall", Surface: "telemetry", Owner: sourceOwnerGoNative, Status: "native", Detail: "recall quality telemetry", Required: true},
 		{Path: "/telemetry/recall/monitor", Surface: "telemetry", Owner: sourceOwnerGoNative, Status: "native", Detail: "recall monitor history", Required: true},
 	}
-	return routes
+	routes = append(routes, optionalRecallResponseCanaryOwnedRoutes()...)
+	routes = append(routes, optionalFrontierT5OwnedRoutes()...)
+	routes = append(routes, optionalFrontierT6OwnedRoutes()...)
+	routes = append(routes, optionalFrontierT7OwnedRoutes()...)
+	routes = append(routes, optionalFrontierT8OwnedRoutes()...)
+	routes = append(routes, optionalFrontierT9OwnedRoutes()...)
+	return append(routes, optionalFrontierT10OwnedRoutes()...)
 }
 
 func pythonFallbackPathCounts(snapshot map[string]any) map[string]int {

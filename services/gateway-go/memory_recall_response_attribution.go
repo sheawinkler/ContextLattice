@@ -80,7 +80,7 @@ func recallResponseBindingFromSample(sample map[string]any) (map[string]any, boo
 
 func recallResponseBindingRefs(value any) ([]any, bool) {
 	rows, ok := value.([]any)
-	if !ok || len(rows) > recallResponseBindingMaxComponents {
+	if !ok || len(rows) == 0 || len(rows) > recallResponseBindingMaxComponents {
 		return nil, false
 	}
 	refs := make([]any, 0, len(rows))
@@ -93,9 +93,11 @@ func recallResponseBindingRefs(value any) ([]any, bool) {
 		ref := strings.TrimSpace(anyToString(row["component_ref"]))
 		kind := strings.ToLower(strings.TrimSpace(anyToString(row["kind"])))
 		digest := strings.TrimSpace(anyToString(row["component_digest"]))
+		componentBinding, bindingOK := recallResponseCanonicalComponentBinding(anyMap(row["binding"]), kind)
 		ordinal := anyToInt(row["ordinal"], 0)
 		if !recallResponseExactOpaqueID(ref, "rrc_") || !recallResponseBindingKindsContains(kind) ||
-			!recallResponseValidDigest(digest) || !recallResponseExactOrdinal(row["ordinal"], index+1) || ordinal != index+1 {
+			!recallResponseValidDigest(digest) || !bindingOK || anyToString(componentBinding["component_digest"]) != digest ||
+			!recallResponseExactOrdinal(row["ordinal"], index+1) || ordinal != index+1 {
 			return nil, false
 		}
 		if _, duplicate := seen[ref]; duplicate {
@@ -107,16 +109,17 @@ func recallResponseBindingRefs(value any) ([]any, bool) {
 			"component_digest": digest,
 			"ordinal":          ordinal,
 			"kind":             kind,
+			"binding":          componentBinding,
 		})
 	}
 	return refs, true
 }
 
 func recallResponseBindingRefFieldsOnly(row map[string]any) bool {
-	if row == nil || len(row) != 4 {
+	if row == nil || len(row) != 5 {
 		return false
 	}
-	for _, key := range []string{"component_ref", "component_digest", "ordinal", "kind"} {
+	for _, key := range []string{"component_ref", "component_digest", "ordinal", "kind", "binding"} {
 		if _, present := row[key]; !present {
 			return false
 		}
@@ -147,8 +150,10 @@ func recallResponseComponentBinding(response map[string]any) ([]any, []any, bool
 		ref := strings.TrimSpace(anyToString(component["component_ref"]))
 		ordinal := anyToInt(component["ordinal"], 0)
 		digest := strings.TrimSpace(anyToString(component["component_digest"]))
+		componentBinding, bindingOK := recallResponseCanonicalComponentBinding(anyMap(component["binding"]), kind)
 		if !recallResponseBindingKindsContains(kind) || !recallResponseExactOpaqueID(ref, "rrc_") ||
-			!recallResponseValidDigest(digest) || !recallResponseExactOrdinal(component["ordinal"], index+1) || ordinal != index+1 {
+			!recallResponseValidDigest(digest) || !bindingOK || anyToString(componentBinding["component_digest"]) != digest ||
+			!recallResponseExactOrdinal(component["ordinal"], index+1) || ordinal != index+1 {
 			return nil, nil, false
 		}
 		expectedRef := "rrc_" + sha256Hex(scopeDigest + "\x00" + kind)[:24]
@@ -167,6 +172,7 @@ func recallResponseComponentBinding(response map[string]any) ([]any, []any, bool
 			"component_digest": digest,
 			"ordinal":          ordinal,
 			"kind":             kind,
+			"binding":          componentBinding,
 		})
 	}
 	return rows, refs, true
@@ -207,15 +213,7 @@ func recallResponseExactOrdinal(value any, expected int) bool {
 }
 
 func recallResponseComponentFieldsOnly(component map[string]any) bool {
-	if component == nil || len(component) != 6 {
-		return false
-	}
-	for _, key := range []string{"component_ref", "kind", "status", "basis", "ordinal", "component_digest"} {
-		if _, present := component[key]; !present {
-			return false
-		}
-	}
-	return anyToString(component["status"]) == "included" && anyToString(component["basis"]) == "deterministic_faceted_taxonomy"
+	return recallResponseModuleShape(component)
 }
 
 // recallResponseComponentDigest intentionally excludes component_digest. It
@@ -225,12 +223,10 @@ func recallResponseComponentDigest(component map[string]any) string {
 	if component == nil {
 		return ""
 	}
-	material := map[string]any{
-		"component_ref": anyToString(component["component_ref"]),
-		"kind":          anyToString(component["kind"]),
-		"status":        anyToString(component["status"]),
-		"basis":         anyToString(component["basis"]),
-		"ordinal":       anyToInt(component["ordinal"], 0),
+	material := cloneJSONMap(component)
+	delete(material, "component_digest")
+	if binding := anyMap(material["binding"]); len(binding) > 0 {
+		delete(binding, "component_digest")
 	}
 	return "sha256:" + sha256Hex(recallResponseCanonicalJSON(material))
 }

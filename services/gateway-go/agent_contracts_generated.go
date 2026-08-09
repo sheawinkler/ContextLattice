@@ -10,7 +10,7 @@ type GeneratedAgentContractRef struct {
 }
 
 const GeneratedAgentContractRegistryID = "contextlattice_agent_output_contracts"
-const GeneratedAgentContractRegistryVersion = 58
+const GeneratedAgentContractRegistryVersion = 61
 
 const GeneratedAgentContractA2aReadinessProfileV1 = "a2a_readiness_profile.v1"
 const GeneratedAgentContractAgentContextProfileV1 = "agent_context_profile.v1"
@@ -86,6 +86,7 @@ const GeneratedAgentContractPolicyPromotionRecommendationV1 = "policy_promotion_
 const GeneratedAgentContractPolicySimulationV1 = "policy_simulation.v1"
 const GeneratedAgentContractPortableContinuationStateV1 = "portable_continuation_state.v1"
 const GeneratedAgentContractPortableContinuationStatusV1 = "portable_continuation_status.v1"
+const GeneratedAgentContractPortableEvidenceIdentityV1 = "portable_evidence_identity.v1"
 const GeneratedAgentContractPrivacyAccountantV1 = "privacy_accountant.v1"
 const GeneratedAgentContractProvenanceV1 = "provenance.v1"
 const GeneratedAgentContractRecallResponseV1 = "recall_response.v1"
@@ -199,6 +200,7 @@ var GeneratedAgentContractIDs = []string{
 	GeneratedAgentContractPolicySimulationV1,
 	GeneratedAgentContractPortableContinuationStateV1,
 	GeneratedAgentContractPortableContinuationStatusV1,
+	GeneratedAgentContractPortableEvidenceIdentityV1,
 	GeneratedAgentContractPrivacyAccountantV1,
 	GeneratedAgentContractProvenanceV1,
 	GeneratedAgentContractRecallResponseV1,
@@ -680,6 +682,12 @@ var GeneratedAgentContracts = []GeneratedAgentContractRef{
 	{
 		SchemaID:           GeneratedAgentContractPortableContinuationStatusV1,
 		PayloadKind:        "bounded_redacted_digest_only_portable_continuation_runtime_status",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractPortableEvidenceIdentityV1,
+		PayloadKind:        "closed_digest_bound_evidence_only_portable_identity",
 		ContractVersion:    1,
 		RequiredOutputMode: "json_object",
 	},

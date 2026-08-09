@@ -712,6 +712,31 @@ func validateAgentContractPayload(contractID string, payload any) []map[string]a
 			}
 		}
 	}
+	if closed, ok := contract["closed_fields_by_path"].(map[string]any); ok {
+		keys := sortedMapKeys(closed)
+		for _, path := range keys {
+			value, exists := dottedPathGet(object, path)
+			if !exists {
+				continue
+			}
+			target, ok := value.(map[string]any)
+			if !ok {
+				findings = append(findings, map[string]any{"reason": "closed_path_not_object", "path": path, "contract_id": contractID})
+				continue
+			}
+			allowed := map[string]bool{}
+			for _, field := range agentContractStringList(closed[path]) {
+				allowed[field] = true
+			}
+			for field := range target {
+				if !allowed[field] {
+					findings = append(findings, map[string]any{
+						"reason": "unexpected_nested_field", "path": path + "." + field, "contract_id": contractID,
+					})
+				}
+			}
+		}
+	}
 	for _, path := range agentContractStringList(contract["required_true_paths"]) {
 		value, exists := dottedPathGet(object, path)
 		if !exists || value != true {
@@ -746,6 +771,27 @@ func validateAgentContractPayload(contractID string, payload any) []map[string]a
 					actual = len(items)
 				}
 				findings = append(findings, map[string]any{"reason": "list_min_items_not_met", "path": path, "min_items": minItemsCount, "actual": actual, "contract_id": contractID})
+			}
+		}
+	}
+	if maxItems, ok := contract["max_items_by_path"].(map[string]any); ok {
+		keys := sortedMapKeys(maxItems)
+		for _, path := range keys {
+			value, exists := dottedPathGet(object, path)
+			if !exists {
+				continue
+			}
+			items, ok := value.([]any)
+			maxItemsCount := anyToInt(maxItems[path], 0)
+			if !ok || maxItemsCount <= 0 || len(items) > maxItemsCount {
+				actual := 0
+				if ok {
+					actual = len(items)
+				}
+				findings = append(findings, map[string]any{
+					"reason": "list_max_items_exceeded", "path": path, "max_items": maxItemsCount,
+					"actual": actual, "contract_id": contractID,
+				})
 			}
 		}
 	}
@@ -825,6 +871,28 @@ func validateAgentContractPayload(contractID string, payload any) []map[string]a
 	}
 	if contractID == agentPacketDeltaOutputContractID {
 		findings = append(findings, agentPacketDeltaOperationFindings(object)...)
+	}
+	if contractID == recallResponseContractID && !validateRecallResponseU2(object) {
+		findings = append(findings, map[string]any{
+			"reason": "recall_response_nested_contract_invalid", "contract_id": contractID,
+		})
+	}
+	if contractID == continuousCognitionContractID {
+		findings = append(findings, continuousCognitionContractFindings(object)...)
+	}
+	if contractID == portableEvidenceIdentitySchemaID {
+		findings = append(findings, portableEvidenceIdentityContractFindings(object)...)
+	}
+	if contractID == contextPassportContractID {
+		passport := anyMap(object["passport"])
+		if identity, present := passport["portable_evidence_identity"]; present {
+			identityObject := anyMap(identity)
+			if identityObject == nil {
+				findings = append(findings, map[string]any{"reason": "portable_evidence_identity_not_object", "path": "passport.portable_evidence_identity", "contract_id": contractID})
+			} else {
+				findings = append(findings, portableEvidenceIdentityContractFindings(identityObject)...)
+			}
+		}
 	}
 	return findings
 }

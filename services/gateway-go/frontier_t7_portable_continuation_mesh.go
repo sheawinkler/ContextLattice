@@ -238,6 +238,9 @@ func frontierT7ValidateContinuationManifest(manifest frontierT7ContinuationManif
 		manifest.LifecycleReceiptDigest, manifest.RepositoryConstraintDigest,
 		manifest.DestinationSessionDigest, manifest.GrantDigest,
 	}
+	if strings.TrimSpace(manifest.EvidenceIdentityDigest) != "" && !frontierT7ValidDigest(manifest.EvidenceIdentityDigest) {
+		return errors.New("continuation manifest evidence identity digest is invalid")
+	}
 	if len(manifest.UnresolvedObligationDigests) > frontierT7MaxObligations {
 		return errors.New("continuation manifest has too many unresolved obligations")
 	}

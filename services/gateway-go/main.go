@@ -329,6 +329,7 @@ type server struct {
 	telemetryRing                   *telemetryRing
 	tokenImpact                     *tokenImpactTelemetry
 	contextPackQuality              *contextPackQualityTelemetry
+	recallResponseRetainedProofHook func(string)
 	utility                         *utilityTelemetry
 	telemetryMetricsMu              sync.Mutex
 	telemetryMetricsState           map[string]any
@@ -7303,6 +7304,8 @@ func buildNativeMux(s *server) *http.ServeMux {
 	mux.HandleFunc(contradictionResolutionPath, s.memoryContradictionResolution)
 	mux.HandleFunc(storageTemperatureDecisionPath, s.memoryStorageTemperature)
 	mux.HandleFunc(frontierT5StatusPath, s.telemetryPolicyLaboratory)
+	registerOptionalRecallResponseCanaryRoutes(mux, s)
+	registerOptionalFrontierT5Routes(mux, s)
 	mux.HandleFunc(frontierT6SteeringPath, s.frontierT6SteeringRoute)
 	mux.HandleFunc(frontierT6SteeringEventsPath, s.frontierT6SteeringEventsRoute)
 	mux.HandleFunc(frontierT6SelectionPath, s.frontierT6SelectionRoute)

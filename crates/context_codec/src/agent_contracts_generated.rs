@@ -9,7 +9,7 @@ pub struct AgentContractRef {
 }
 
 pub const AGENT_CONTRACT_REGISTRY_ID: &str = "contextlattice_agent_output_contracts";
-pub const AGENT_CONTRACT_REGISTRY_VERSION: u32 = 58;
+pub const AGENT_CONTRACT_REGISTRY_VERSION: u32 = 61;
 
 pub const A2A_READINESS_PROFILE_V1: &str = "a2a_readiness_profile.v1";
 pub const AGENT_CONTEXT_PROFILE_V1: &str = "agent_context_profile.v1";
@@ -87,6 +87,7 @@ pub const POLICY_PROMOTION_RECOMMENDATION_V1: &str = "policy_promotion_recommend
 pub const POLICY_SIMULATION_V1: &str = "policy_simulation.v1";
 pub const PORTABLE_CONTINUATION_STATE_V1: &str = "portable_continuation_state.v1";
 pub const PORTABLE_CONTINUATION_STATUS_V1: &str = "portable_continuation_status.v1";
+pub const PORTABLE_EVIDENCE_IDENTITY_V1: &str = "portable_evidence_identity.v1";
 pub const PRIVACY_ACCOUNTANT_V1: &str = "privacy_accountant.v1";
 pub const PROVENANCE_V1: &str = "provenance.v1";
 pub const RECALL_RESPONSE_V1: &str = "recall_response.v1";
@@ -200,6 +201,7 @@ pub const AGENT_CONTRACT_IDS: &[&str] = &[
     POLICY_SIMULATION_V1,
     PORTABLE_CONTINUATION_STATE_V1,
     PORTABLE_CONTINUATION_STATUS_V1,
+    PORTABLE_EVIDENCE_IDENTITY_V1,
     PRIVACY_ACCOUNTANT_V1,
     PROVENANCE_V1,
     RECALL_RESPONSE_V1,
@@ -681,6 +683,12 @@ pub const AGENT_CONTRACTS: &[AgentContractRef] = &[
     AgentContractRef {
         schema_id: PORTABLE_CONTINUATION_STATUS_V1,
         payload_kind: "bounded_redacted_digest_only_portable_continuation_runtime_status",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: PORTABLE_EVIDENCE_IDENTITY_V1,
+        payload_kind: "closed_digest_bound_evidence_only_portable_identity",
         contract_version: 1,
         required_output_mode: "json_object",
     },

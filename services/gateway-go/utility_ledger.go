@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"container/heap"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -891,9 +892,17 @@ func buildUtilityObservation(outcome, quality, impact map[string]any, events []m
 		"utility":           verifiedClaim,
 		"economics":         normalizeUtilityEconomics(outcome),
 		"pairing":           normalizeUtilityPairing(outcome),
-		"measurement_limit": "Observed yield requires independently verified utility and exact model-visible ContextLattice tokens. Causal gain is computed only from leakage-free exact matched controls.",
+		"measurement_limit": "Observed yield requires independently verified utility and exact model-visible ContextLattice tokens. Component outcome eligibility requires an exact retained binding; whole-response causality never becomes component causal credit.",
 	}
 	utilityCopyOutcomeResponseBinding(row, outcome, outcomeBinding)
+	if outcomeBinding != nil {
+		componentEligibility, eligible := recallResponseComponentOutcomeEligibility(outcome, quality, time.Now().UTC())
+		if !eligible {
+			exclusions = append(exclusions, "component_response_binding_ineligible")
+		} else {
+			row["component_outcome_eligibility"] = componentEligibility
+		}
+	}
 	workspaceRef := contextPackLearnedDigestRef(anyToString(outcome["workspace_ref"]))
 	if workspaceRef == "" {
 		workspaceRef = contextPackLearnedDigestRef(anyToString(quality["workspace_ref"]))
@@ -1004,13 +1013,48 @@ func utilityRowMatchesQueryTime(row map[string]any, query utilityQuery) bool {
 	return true
 }
 
+func utilityRowsSortLess(left, right map[string]any) bool {
+	leftCaptured, rightCaptured := anyToString(left["captured_at"]), anyToString(right["captured_at"])
+	if leftCaptured == rightCaptured {
+		return anyToString(left["outcome_id"]) < anyToString(right["outcome_id"])
+	}
+	return leftCaptured < rightCaptured
+}
+
+type utilityLatestRowsHeap []map[string]any
+
+func (h utilityLatestRowsHeap) Len() int           { return len(h) }
+func (h utilityLatestRowsHeap) Less(i, j int) bool { return utilityRowsSortLess(h[i], h[j]) }
+func (h utilityLatestRowsHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+func (h *utilityLatestRowsHeap) Push(value any)    { *h = append(*h, value.(map[string]any)) }
+func (h *utilityLatestRowsHeap) Pop() any {
+	old := *h
+	last := len(old) - 1
+	value := old[last]
+	old[last] = nil
+	*h = old[:last]
+	return value
+}
+
 func (t *utilityTelemetry) rows(query utilityQuery) []map[string]any {
 	if t == nil {
 		return nil
 	}
+
+	// Snapshot only the slice of immutable row references under the mutex.
+	// Filtering, ordering, and cloning are deliberately outside the lock so a
+	// broad read cannot stall record/update writers.
 	t.mu.Lock()
-	selected := make([]map[string]any, 0, len(t.observations))
-	for _, row := range t.observations {
+	observations := append([]map[string]any(nil), t.observations...)
+	t.mu.Unlock()
+
+	selectionLimit := len(observations)
+	if query.Limit > 0 {
+		selectionLimit = minInt(selectionLimit, query.Limit)
+	}
+	selected := make(utilityLatestRowsHeap, 0, selectionLimit)
+	matchedCount := 0
+	for _, row := range observations {
 		if query.Project != "" && !strings.EqualFold(anyToString(row["project"]), query.Project) {
 			continue
 		}
@@ -1032,18 +1076,21 @@ func (t *utilityTelemetry) rows(query utilityQuery) []map[string]any {
 		if !utilityRowMatchesQueryTime(row, query) {
 			continue
 		}
-		selected = append(selected, row)
+		matchedCount++
+		if matchedCount <= selectionLimit {
+			selected = append(selected, row)
+			continue
+		}
+		if matchedCount == selectionLimit+1 {
+			heap.Init(&selected)
+		}
+		if selectionLimit > 0 && utilityRowsSortLess(selected[0], row) {
+			selected[0] = row
+			heap.Fix(&selected, 0)
+		}
 	}
-	t.mu.Unlock()
-	if query.Limit > 0 && len(selected) > query.Limit {
-		sort.SliceStable(selected, func(i, j int) bool {
-			left, right := anyToString(selected[i]["captured_at"]), anyToString(selected[j]["captured_at"])
-			if left == right {
-				return anyToString(selected[i]["outcome_id"]) < anyToString(selected[j]["outcome_id"])
-			}
-			return left < right
-		})
-		selected = selected[len(selected)-query.Limit:]
+	if matchedCount > selectionLimit {
+		sort.SliceStable(selected, func(i, j int) bool { return utilityRowsSortLess(selected[i], selected[j]) })
 	}
 	rows := make([]map[string]any, 0, len(selected))
 	for _, row := range selected {

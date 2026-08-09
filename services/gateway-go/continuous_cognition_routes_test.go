@@ -255,13 +255,20 @@ func TestContinuousCognitionRoutesAreNativeClosedAndRetrievalBounded(t *testing.
 				t.Fatalf("%s %s violated bounded round accounting: %#v", path, operation, progress)
 			}
 			wantStage := map[string]string{
-				continuousCognitionOperationObserve: "frontier", continuousCognitionOperationStatus: "status",
-				continuousCognitionOperationInvestigate: "investigation", continuousCognitionOperationOutcome: "outcome",
+				continuousCognitionOperationObserve: "silence", continuousCognitionOperationStatus: "status",
+				continuousCognitionOperationInvestigate: "silence", continuousCognitionOperationOutcome: "outcome",
 				continuousCognitionOperationEvaluate: "evaluation", continuousCognitionOperationRollback: "rollback",
 				continuousCognitionOperationRetire: "retirement",
 			}[operation]
 			if anyToString(progress["stage"]) != wantStage {
 				t.Fatalf("%s %s returned the wrong lifecycle stage: got=%q want=%q progress=%#v", path, operation, progress["stage"], wantStage, progress)
+			}
+			if wantStage == "silence" {
+				if anyToString(payload["decision"]) != "silence" || anyToString(payload["next_action"]) != "none" || anyToBool(payload["writeback_required"]) {
+					t.Fatalf("%s %s did not close the low-utility action boundary: %#v", path, operation, payload)
+				}
+			} else if anyToString(payload["next_action"]) == "none" || !anyToBool(payload["writeback_required"]) {
+				t.Fatalf("%s %s lost its non-silent action/writeback boundary: %#v", path, operation, payload)
 			}
 			if findings := validateAgentContractPayload(continuousCognitionContractID, payload); len(findings) != 0 {
 				t.Fatalf("%s %s failed contract validation: %#v", path, operation, findings)
@@ -276,6 +283,64 @@ func TestContinuousCognitionRoutesAreNativeClosedAndRetrievalBounded(t *testing.
 	}
 	if calls := backendCalls.Load(); calls != 0 {
 		t.Fatalf("continuous cognition called a backend %d time(s)", calls)
+	}
+}
+
+func TestContinuousCognitionHardSilenceHasNoDispatchMutationOrWriteback(t *testing.T) {
+	var backendCalls atomic.Int64
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		backendCalls.Add(1)
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "hard silence dispatched"})
+	}))
+	defer backend.Close()
+	qualityPath := t.TempDir() + "/quality.ndjson"
+	t.Setenv("GO_CONTEXT_PACK_QUALITY_LEDGER_ENABLED", "true")
+	t.Setenv("GO_CONTEXT_PACK_QUALITY_LEDGER_PATH", qualityPath)
+	s := newTestServer(t, backend.URL)
+	s.memoryStore = continuousCognitionInvestigationFixtureStore()
+	handler := buildMux(s)
+	request := continuousCognitionInvestigationRequest(t, continuousCognitionOperationInvestigate)
+	body, err := json.Marshal(map[string]any{
+		"operation": request.Operation, "query": request.Query, "project": request.Project,
+		"topic_path": request.TopicPath, "agent_id": request.AgentID, "session_id": request.SessionID,
+		"objective_id": request.ObjectiveID, "task_id": request.TaskID,
+		// task_identity_id is deliberately absent: this is a hard-silence predicate.
+		"execution_lane_id": request.ExecutionLaneID, "retrieval_intent": request.RetrievalIntent,
+		"retrieval_mode": request.RetrievalMode, "limit": request.Limit, "token_budget": request.TokenBudget,
+		"as_of": request.AsOf.Format(time.RFC3339Nano),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.memoryStore.mu.RLock()
+	beforeRecent, beforeCurrent, beforeEdges := len(s.memoryStore.recent), len(s.memoryStore.currentState), len(s.memoryStore.edgeOrder)
+	s.memoryStore.mu.RUnlock()
+	ledgerSize := func() int64 {
+		info, statErr := os.Stat(qualityPath)
+		if statErr != nil {
+			return 0
+		}
+		return info.Size()
+	}
+	beforeLedger := ledgerSize()
+	recorder, payload := continuousCognitionServe(t, handler, http.MethodPost, memoryContinuousCognitionPath, body, nil)
+	if recorder.Code != http.StatusOK || anyToString(payload["decision"]) != "silence" ||
+		anyToString(anyMap(payload["silence"])["reason"]) != "missing_identity" {
+		t.Fatalf("missing identity did not hard-silence: status=%d payload=%#v", recorder.Code, payload)
+	}
+	investigation := anyMap(payload["investigation"])
+	coverage := anyMap(investigation["source_coverage"])
+	if backendCalls.Load() != 0 || anyToBool(investigation["execution_performed"]) ||
+		anyToInt(coverage["retrieval_count"], -1) != 0 || anyToInt(coverage["compiler_count"], -1) != 0 ||
+		anyToBool(payload["writeback_required"]) || anyToString(payload["next_action"]) != "none" {
+		t.Fatalf("hard silence emitted dispatch/writeback evidence: backend=%d payload=%#v", backendCalls.Load(), payload)
+	}
+	s.memoryStore.mu.RLock()
+	afterRecent, afterCurrent, afterEdges := len(s.memoryStore.recent), len(s.memoryStore.currentState), len(s.memoryStore.edgeOrder)
+	s.memoryStore.mu.RUnlock()
+	if beforeRecent != afterRecent || beforeCurrent != afterCurrent || beforeEdges != afterEdges || beforeLedger != ledgerSize() {
+		t.Fatalf("hard silence mutated durable/local state: memory=%d/%d %d/%d %d/%d ledger=%d/%d",
+			beforeRecent, afterRecent, beforeCurrent, afterCurrent, beforeEdges, afterEdges, beforeLedger, ledgerSize())
 	}
 }
 

@@ -224,6 +224,80 @@ type searchImpactOutcome struct {
 	ModelVisibleContextTokensExact int
 }
 
+// searchImpactScope is the sole normalized scope authority for search-impact
+// projections.  Its fields are intentionally private: compatibility entry
+// points may construct it only through normalizeSearchImpactScope, while the
+// core paths below own filtering, binding validation, and evidence authority.
+type searchImpactScope struct {
+	project         string
+	taskClass       string
+	retrievalIntent string
+	workspaceRef    string
+	exact           bool
+	valid           bool
+}
+
+func normalizeSearchImpactScope(project, taskClass, retrievalIntent, workspaceRef string, exact bool) searchImpactScope {
+	scope := searchImpactScope{
+		project:         strings.TrimSpace(strings.ToLower(project)),
+		taskClass:       strings.TrimSpace(strings.ToLower(taskClass)),
+		retrievalIntent: strings.TrimSpace(strings.ToLower(retrievalIntent)),
+		exact:           exact,
+		valid:           true,
+	}
+	if strings.TrimSpace(workspaceRef) != "" {
+		scope.workspaceRef = contextPackLearnedDigestRef(workspaceRef)
+		if scope.workspaceRef == "" {
+			scope.valid = false
+		}
+	}
+	return scope
+}
+
+func (scope searchImpactScope) matchesCandidateRow(row map[string]any) bool {
+	if !scope.valid {
+		return false
+	}
+	if scope.project != "" && !strings.EqualFold(anyToString(row["project"]), scope.project) {
+		return false
+	}
+	if scope.taskClass != "" && !strings.EqualFold(anyToString(row["task_class"]), scope.taskClass) {
+		return false
+	}
+	if scope.retrievalIntent != "" && !strings.EqualFold(anyToString(row["retrieval_intent"]), scope.retrievalIntent) {
+		return false
+	}
+	return scope.workspaceRef == "" || contextPackLearnedDigestRef(anyToString(row["workspace_ref"])) == scope.workspaceRef
+}
+
+func (scope searchImpactScope) matchesActivationShadow(shadow map[string]any) bool {
+	if !scope.valid || !scope.exact || scope.project == "" || scope.taskClass == "" || scope.retrievalIntent == "" {
+		return false
+	}
+	projectRef, taskClassRef, valid := searchImpactShadowScopeRefs(shadow)
+	if !valid || projectRef != savedRecallImpactOpaqueScopeRef("project", scope.project) ||
+		taskClassRef != savedRecallImpactOpaqueScopeRef("task_class", scope.taskClass) {
+		return false
+	}
+	refs := anyToStringSlice(shadow["retrieval_intent_scope_refs"])
+	if len(refs) != 1 || refs[0] != savedRecallImpactOpaqueScopeRef("retrieval_intent", scope.retrievalIntent) {
+		return false
+	}
+	return scope.workspaceRef == "" || searchImpactShadowWorkspaceMatches(shadow, scope.workspaceRef)
+}
+
+func (scope searchImpactScope) utilityQuery() utilityQuery {
+	// Exact candidate IDs bound the Utility Ledger join. Retrieval intent is
+	// deliberately omitted here to preserve the existing control/treatment
+	// pairing semantics; the candidate ID set is the stronger exact boundary.
+	return utilityQuery{
+		Project:      scope.project,
+		TaskClass:    scope.taskClass,
+		WorkspaceRef: scope.workspaceRef,
+		Limit:        searchImpactOutcomeSourceLimit,
+	}
+}
+
 func (s *server) searchImpactIntelligenceSnapshot(project, taskClass string) map[string]any {
 	return s.searchImpactIntelligenceSnapshotForScope(project, taskClass, "", false)
 }
@@ -233,15 +307,14 @@ func (s *server) searchImpactIntelligenceSnapshotExact(project, taskClass, retri
 }
 
 func (s *server) searchImpactIntelligenceSnapshotForScope(project, taskClass, retrievalIntent string, exact bool) map[string]any {
+	scope := normalizeSearchImpactScope(project, taskClass, retrievalIntent, "", exact)
 	rows := []map[string]any{}
 	receiptBinding := map[string]any{"pass": false, "missing_receipt_outcome_count": 0}
 	if s != nil && s.contextPackQuality != nil {
 		rows, receiptBinding = s.contextPackQuality.receiptDurableOutcomeRows(searchImpactOutcomeSourceLimit)
 	}
 	rows = reconcileCandidateUtilityVerification(rows, utilityFromServer(s))
-	return s.searchImpactIntelligenceSnapshotFromReconciledRows(
-		project, taskClass, retrievalIntent, exact, rows, receiptBinding,
-	)
+	return s.searchImpactIntelligenceSnapshotCore(scope, rows, receiptBinding)
 }
 
 func (s *server) searchImpactIntelligenceSnapshotFromReconciledRows(
@@ -250,8 +323,8 @@ func (s *server) searchImpactIntelligenceSnapshotFromReconciledRows(
 	rows []map[string]any,
 	receiptBinding map[string]any,
 ) map[string]any {
-	return s.searchImpactIntelligenceSnapshotFromReconciledRowsForScope(
-		project, taskClass, retrievalIntent, "", exact, rows, receiptBinding,
+	return s.searchImpactIntelligenceSnapshotCore(
+		normalizeSearchImpactScope(project, taskClass, retrievalIntent, "", exact), rows, receiptBinding,
 	)
 }
 
@@ -260,8 +333,8 @@ func (s *server) searchImpactIntelligenceSnapshotFromReconciledRowsForWorkspace(
 	rows []map[string]any,
 	receiptBinding map[string]any,
 ) map[string]any {
-	return s.searchImpactIntelligenceSnapshotFromReconciledRowsForScope(
-		project, taskClass, retrievalIntent, contextPackLearnedDigestRef(workspaceRef), true, rows, receiptBinding,
+	return s.searchImpactIntelligenceSnapshotCore(
+		normalizeSearchImpactScope(project, taskClass, retrievalIntent, workspaceRef, true), rows, receiptBinding,
 	)
 }
 
@@ -271,14 +344,33 @@ func (s *server) searchImpactIntelligenceSnapshotFromReconciledRowsForScope(
 	rows []map[string]any,
 	receiptBinding map[string]any,
 ) map[string]any {
-	reconciled := searchImpactReconciledCandidateOutcomesForWorkspace(rows, project, taskClass, retrievalIntent, workspaceRef)
+	return s.searchImpactIntelligenceSnapshotCore(
+		normalizeSearchImpactScope(project, taskClass, retrievalIntent, workspaceRef, exact), rows, receiptBinding,
+	)
+}
+
+// searchImpactIntelligenceSnapshotCore is the sole snapshot projection path.
+// All compatibility methods above normalize their arguments and then enter
+// here; this path alone owns scoped rows, Utility Ledger joins, shadow lookup,
+// and activation-evidence attachment.
+func (s *server) searchImpactIntelligenceSnapshotCore(
+	scope searchImpactScope,
+	rows []map[string]any,
+	receiptBinding map[string]any,
+) map[string]any {
+	if !scope.valid {
+		return buildSearchImpactIntelligence(searchImpactIntelligenceInput{
+			TokenImpactSummary: searchImpactTokenImpactSummary(s.tokenImpactTelemetrySnapshot()),
+			ReceiptLedger:      searchImpactReceiptLedgerStatus(s),
+			ReceiptBinding:     receiptBinding,
+		})
+	}
+	reconciled := searchImpactReconciledCandidateOutcomesCore(rows, scope)
 	utilitySummary := map[string]any{}
 	utilityRows := []map[string]any{}
 	if s != nil && s.utility != nil {
-		scopedUtilityQuery := utilityQuery{
-			Project: project, TaskClass: taskClass, WorkspaceRef: workspaceRef, Limit: searchImpactOutcomeSourceLimit,
-		}
-		if exact {
+		scopedUtilityQuery := scope.utilityQuery()
+		if scope.exact {
 			outcomeIDs := make(map[string]struct{}, len(reconciled))
 			for _, row := range reconciled {
 				if outcomeID := strings.TrimSpace(anyToString(row["outcome_id"])); outcomeID != "" {
@@ -292,7 +384,7 @@ func (s *server) searchImpactIntelligenceSnapshotFromReconciledRowsForScope(
 		projected, pairs, exclusions := utilityPairProjection(utilityRows)
 		utilitySummary = searchImpactUtilitySummary(utilityAggregate(projected, pairs, exclusions))
 	}
-	shadow := s.latestSearchImpactShadowEvaluationForWorkspace(project, taskClass, workspaceRef)
+	shadow := s.latestSearchImpactShadowEvaluationCore(scope)
 	impact := buildSearchImpactIntelligence(searchImpactIntelligenceInput{
 		CandidateOutcomes:  reconciled,
 		UtilitySummary:     utilitySummary,
@@ -302,10 +394,8 @@ func (s *server) searchImpactIntelligenceSnapshotFromReconciledRowsForScope(
 		ReceiptLedger:      searchImpactReceiptLedgerStatus(s),
 		ReceiptBinding:     receiptBinding,
 	})
-	if exact && workspaceRef != "" {
-		attachSearchImpactActivationEvidenceForWorkspace(s, impact, project, taskClass, retrievalIntent, workspaceRef, shadow, reconciled)
-	} else if exact {
-		attachSearchImpactActivationEvidence(impact, project, taskClass, retrievalIntent, shadow, reconciled)
+	if scope.exact {
+		attachSearchImpactActivationEvidenceCore(s, impact, scope, shadow, reconciled)
 	}
 	return impact
 }
@@ -322,13 +412,21 @@ func searchImpactReceiptLedgerStatus(s *server) map[string]any {
 // artifact wins over an older valid artifact; ordinary monitor rows are never
 // treated as comparative evidence.
 func (s *server) latestSearchImpactShadowEvaluation(project, taskClass string) map[string]any {
-	return s.latestSearchImpactShadowEvaluationForWorkspace(project, taskClass, "")
+	return s.latestSearchImpactShadowEvaluationCore(normalizeSearchImpactScope(project, taskClass, "", "", false))
 }
 
 func (s *server) latestSearchImpactShadowEvaluationForWorkspace(project, taskClass, workspaceRef string) map[string]any {
-	project = strings.TrimSpace(strings.ToLower(project))
-	taskClass = strings.TrimSpace(strings.ToLower(taskClass))
-	workspaceRef = contextPackLearnedDigestRef(workspaceRef)
+	return s.latestSearchImpactShadowEvaluationCore(normalizeSearchImpactScope(project, taskClass, "", workspaceRef, false))
+}
+
+func (s *server) latestSearchImpactShadowEvaluationCore(scope searchImpactScope) map[string]any {
+	if !scope.valid {
+		return map[string]any{
+			"schema_id":         savedRecallImpactShadowEvalSchemaID,
+			"comparison_valid":  false,
+			"comparison_reason": "scope_mismatch",
+		}
+	}
 	// A failed comparator append means a previously persisted pass is stale
 	// relative to the current evaluation stream. Do not reuse it for a canary.
 	if s != nil && s.searchImpactComparatorPersistenceUnavailable() {
@@ -338,7 +436,7 @@ func (s *server) latestSearchImpactShadowEvaluationForWorkspace(project, taskCla
 			"comparison_reason": "comparator_persistence_unavailable",
 		}
 	}
-	return s.latestRecallMonitorShadowEvaluationForWorkspace(project, taskClass, workspaceRef)
+	return s.latestRecallMonitorShadowEvaluationForWorkspace(scope.project, scope.taskClass, scope.workspaceRef)
 }
 
 func searchImpactNestedShadowEvaluations(row map[string]any) ([]map[string]any, bool) {
@@ -357,17 +455,21 @@ func searchImpactNestedShadowEvaluations(row map[string]any) ([]map[string]any, 
 }
 
 func searchImpactShadowScopeMatches(row map[string]any, project, taskClass string) bool {
+	return normalizeSearchImpactScope(project, taskClass, "", "", false).matchesShadowProjectTask(row)
+}
+
+func (scope searchImpactScope) matchesShadowProjectTask(row map[string]any) bool {
 	// Canary advice is cohort-specific; an unfiltered or partially filtered
 	// request cannot be joined to a saved-case artifact without mixing scopes.
-	if project == "" || taskClass == "" {
+	if !scope.valid || scope.project == "" || scope.taskClass == "" {
 		return false
 	}
 	projectRef, taskClassRef, valid := searchImpactShadowScopeRefs(row)
 	if !valid {
 		return false
 	}
-	return projectRef == savedRecallImpactOpaqueScopeRef("project", project) &&
-		taskClassRef == savedRecallImpactOpaqueScopeRef("task_class", taskClass)
+	return projectRef == savedRecallImpactOpaqueScopeRef("project", scope.project) &&
+		taskClassRef == savedRecallImpactOpaqueScopeRef("task_class", scope.taskClass)
 }
 
 func searchImpactShadowScopeRefs(row map[string]any) (string, string, bool) {
@@ -394,15 +496,18 @@ func searchImpactShadowScopeRefs(row map[string]any) (string, string, bool) {
 }
 
 func searchImpactShadowIntentScopeMatches(row map[string]any, retrievalIntent string) bool {
-	retrievalIntent = strings.TrimSpace(strings.ToLower(retrievalIntent))
+	return normalizeSearchImpactScope("", "", retrievalIntent, "", true).matchesShadowIntent(row)
+}
+
+func (scope searchImpactScope) matchesShadowIntent(row map[string]any) bool {
 	refs := anyToStringSlice(row["retrieval_intent_scope_refs"])
-	return retrievalIntent != "" && len(refs) == 1 &&
-		refs[0] == savedRecallImpactOpaqueScopeRef("retrieval_intent", retrievalIntent)
+	return scope.valid && scope.retrievalIntent != "" && len(refs) == 1 &&
+		refs[0] == savedRecallImpactOpaqueScopeRef("retrieval_intent", scope.retrievalIntent)
 }
 
 func searchImpactShadowWorkspaceMatches(row map[string]any, workspaceRef string) bool {
-	workspaceRef = contextPackLearnedDigestRef(workspaceRef)
-	return workspaceRef != "" && contextPackLearnedDigestRef(anyToString(row["workspace_ref"])) == workspaceRef
+	scope := normalizeSearchImpactScope("", "", "", workspaceRef, true)
+	return scope.valid && scope.workspaceRef != "" && contextPackLearnedDigestRef(anyToString(row["workspace_ref"])) == scope.workspaceRef
 }
 
 // attachSearchImpactActivationEvidence adds only an opaque, exact-scope proof
@@ -414,7 +519,7 @@ func attachSearchImpactActivationEvidence(
 	shadow map[string]any,
 	outcomes []map[string]any,
 ) {
-	attachSearchImpactActivationEvidenceForWorkspace(nil, impact, project, taskClass, retrievalIntent, "", shadow, outcomes)
+	attachSearchImpactActivationEvidenceCore(nil, impact, normalizeSearchImpactScope(project, taskClass, retrievalIntent, "", true), shadow, outcomes)
 }
 
 func attachSearchImpactActivationEvidenceForWorkspace(
@@ -424,18 +529,28 @@ func attachSearchImpactActivationEvidenceForWorkspace(
 	shadow map[string]any,
 	outcomes []map[string]any,
 ) {
+	attachSearchImpactActivationEvidenceCore(s, impact, normalizeSearchImpactScope(project, taskClass, retrievalIntent, workspaceRef, true), shadow, outcomes)
+}
+
+// attachSearchImpactActivationEvidenceCore is the sole activation-evidence
+// authority. Compatibility wrappers only normalize scope arguments; this
+// path owns fail-closed scope, comparator, chronology, and proof binding.
+func attachSearchImpactActivationEvidenceCore(
+	s *server,
+	impact map[string]any,
+	scope searchImpactScope,
+	shadow map[string]any,
+	outcomes []map[string]any,
+) {
 	delete(impact, "activation_evidence")
-	if !anyToBool(impact["canary_eligible"]) ||
-		!searchImpactShadowScopeMatches(shadow, strings.ToLower(strings.TrimSpace(project)), strings.ToLower(strings.TrimSpace(taskClass))) ||
-		!searchImpactShadowIntentScopeMatches(shadow, retrievalIntent) ||
-		(workspaceRef != "" && !searchImpactShadowWorkspaceMatches(shadow, workspaceRef)) {
+	if !anyToBool(impact["canary_eligible"]) || !scope.matchesActivationShadow(shadow) {
 		return
 	}
 	var actuatorComparator map[string]any
 	var actuatorComparatorRef string
 	var actuatorComparatorOK bool
-	if workspaceRef != "" {
-		actuatorComparator, actuatorComparatorRef, actuatorComparatorOK = contextPackLearnedActuatorComparatorProofForWorkspace(s, shadow, workspaceRef)
+	if scope.workspaceRef != "" {
+		actuatorComparator, actuatorComparatorRef, actuatorComparatorOK = contextPackLearnedActuatorComparatorProofForWorkspace(s, shadow, scope.workspaceRef)
 	} else {
 		actuatorComparator, actuatorComparatorRef, actuatorComparatorOK = contextPackLearnedActuatorComparatorProof(shadow)
 	}
@@ -457,17 +572,17 @@ func attachSearchImpactActivationEvidenceForWorkspace(
 		return
 	}
 	evidence := map[string]any{
-		"project_scope_ref":           contextPackLearnedScopeRef("project", project),
-		"task_class_scope_ref":        contextPackLearnedScopeRef("task_class", taskClass),
-		"retrieval_intent_scope_ref":  contextPackLearnedScopeRef("retrieval_intent", retrievalIntent),
+		"project_scope_ref":           contextPackLearnedScopeRef("project", scope.project),
+		"task_class_scope_ref":        contextPackLearnedScopeRef("task_class", scope.taskClass),
+		"retrieval_intent_scope_ref":  contextPackLearnedScopeRef("retrieval_intent", scope.retrievalIntent),
 		"case_set_ref":                shadow["case_set_ref"],
 		"comparator_evaluated_at":     comparatorEvaluatedAt.UTC().Format(time.RFC3339Nano),
 		"latest_candidate_outcome_at": latestOutcome.Format(time.RFC3339Nano),
 		"actuator_comparator_ref":     actuatorComparatorRef,
 		"reputation_vector_ref":       actuatorComparator["reputation_vector_ref"],
 	}
-	if workspaceRef != "" {
-		evidence["workspace_ref"] = workspaceRef
+	if scope.workspaceRef != "" {
+		evidence["workspace_ref"] = scope.workspaceRef
 	}
 	proof := map[string]any{
 		"schema_id":                   contextPackLearnedActivationContractID,
@@ -481,8 +596,8 @@ func attachSearchImpactActivationEvidenceForWorkspace(
 		"proof_gates":                 impact["proof_gates"],
 		"comparative_shadow":          shadow,
 	}
-	if workspaceRef != "" {
-		proof["workspace_ref"] = workspaceRef
+	if scope.workspaceRef != "" {
+		proof["workspace_ref"] = scope.workspaceRef
 	}
 	evidence["proof_digest"] = contextPackLearnedCanonicalDigest(proof)
 	if !isSearchIntelligenceFullSHA256Ref(anyToString(evidence["proof_digest"])) {
@@ -492,15 +607,24 @@ func attachSearchImpactActivationEvidenceForWorkspace(
 }
 
 func searchImpactReconciledCandidateOutcomes(rows []map[string]any, project, taskClass string) []map[string]any {
-	return searchImpactReconciledCandidateOutcomesForScope(rows, project, taskClass, "")
+	return searchImpactReconciledCandidateOutcomesCore(rows, normalizeSearchImpactScope(project, taskClass, "", "", false))
 }
 
 func searchImpactReconciledCandidateOutcomesForScope(rows []map[string]any, project, taskClass, retrievalIntent string) []map[string]any {
-	return searchImpactReconciledCandidateOutcomesForWorkspace(rows, project, taskClass, retrievalIntent, "")
+	return searchImpactReconciledCandidateOutcomesCore(rows, normalizeSearchImpactScope(project, taskClass, retrievalIntent, "", false))
 }
 
 func searchImpactReconciledCandidateOutcomesForWorkspace(rows []map[string]any, project, taskClass, retrievalIntent, workspaceRef string) []map[string]any {
-	workspaceRef = contextPackLearnedDigestRef(workspaceRef)
+	return searchImpactReconciledCandidateOutcomesCore(rows, normalizeSearchImpactScope(project, taskClass, retrievalIntent, workspaceRef, true))
+}
+
+// searchImpactReconciledCandidateOutcomesCore is the sole candidate-row
+// projection path. It performs scope filtering and canonical response binding
+// exactly once; compatibility wrappers above do not filter or re-identify.
+func searchImpactReconciledCandidateOutcomesCore(rows []map[string]any, scope searchImpactScope) []map[string]any {
+	if !scope.valid {
+		return nil
+	}
 	outcomes := make([]map[string]any, 0, len(rows))
 	for _, row := range rows {
 		// Only the canonical durable outcome row may supply response identity.
@@ -510,16 +634,15 @@ func searchImpactReconciledCandidateOutcomesForWorkspace(rows []map[string]any, 
 		if !responseBindingValid || (responseBindingKey != "" && responseBinding == nil) {
 			continue
 		}
-		if project != "" && !strings.EqualFold(anyToString(row["project"]), project) {
-			continue
+		componentOutcomeCount := 0
+		if responseBinding != nil {
+			componentOutcomes, valid := recallResponseCanonicalComponentOutcomes(row)
+			if !valid {
+				continue
+			}
+			componentOutcomeCount = len(componentOutcomes)
 		}
-		if taskClass != "" && !strings.EqualFold(anyToString(row["task_class"]), taskClass) {
-			continue
-		}
-		if retrievalIntent != "" && !strings.EqualFold(anyToString(row["retrieval_intent"]), retrievalIntent) {
-			continue
-		}
-		if workspaceRef != "" && contextPackLearnedDigestRef(anyToString(row["workspace_ref"])) != workspaceRef {
+		if !scope.matchesCandidateRow(row) {
 			continue
 		}
 		verified := false
@@ -560,6 +683,8 @@ func searchImpactReconciledCandidateOutcomesForWorkspace(rows []map[string]any, 
 			"model_visible_context_tokens_exact": anyToInt(verification["model_visible_context_tokens_exact"], 0),
 			"retrieval_intent":                   strings.TrimSpace(strings.ToLower(anyToString(row["retrieval_intent"]))),
 			"workspace_ref":                      contextPackLearnedDigestRef(anyToString(row["workspace_ref"])),
+			"component_outcome_eligible_count":   componentOutcomeCount,
+			"component_causal_credit_count":      0,
 		}
 		if responseBindingKey != "" {
 			// Carry only the opaque canonical digest/key. Raw response/query/path

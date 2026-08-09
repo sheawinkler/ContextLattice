@@ -963,8 +963,12 @@ func TestContextBoundaryPayloadCoversAgentSurfaces(t *testing.T) {
 		"/v1/codex/preflight",
 		"policy_context_package",
 		"scripts/agent/contextlattice-pack",
+		"scripts/agent/contextlattice-recall-response",
 		"scripts/agent/contextlattice-pack --response",
 		"contextlattice_pack --response",
+		"contextlattice_recall_response",
+		"contextlattice recall-response",
+		"contextlattice-agent-tools recall-response",
 		"contextlattice_continuity_reconcile",
 		"contextlattice_objective_transition",
 		"contextlattice_objective_graph",
@@ -990,8 +994,14 @@ func TestContextBoundaryPayloadCoversAgentSurfaces(t *testing.T) {
 	}{
 		{"/memory/decision-changes", decisionChangeContractID},
 		{"/memory/decision-changes", decisionChangeQueryContractID},
+		{"scripts/agent/contextlattice-recall-response", recallResponseContractID},
+		{"scripts/agent/contextlattice-pack --response", recallResponseContractID},
+		{"contextlattice_pack --response", recallResponseContractID},
 		{"contextlattice_decision_change", decisionChangeContractID},
 		{"contextlattice_decision_change list", decisionChangeQueryContractID},
+		{"contextlattice_recall_response", recallResponseContractID},
+		{"contextlattice recall-response", recallResponseContractID},
+		{"contextlattice-agent-tools recall-response", recallResponseContractID},
 	} {
 		found := false
 		for _, route := range byPath[required.path] {

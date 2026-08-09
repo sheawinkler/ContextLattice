@@ -20,18 +20,20 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"filippo.io/age"
 )
 
 const (
-	contextPassportContractID       = "context_passport.v1"
-	contextPassportVerifyContractID = "context_passport_verify.v1"
-	contextPassportDiffContractID   = "context_passport_diff.v1"
-	contextPassportReplayContractID = "context_passport_replay.v1"
-	contextPassportStatusSchemaID   = "context_passport_status.v1"
-	contextIdentityKeysSchemaID     = "context_identity_keys.v1"
-	contextPassportLedgerSchemaID   = "context_passport_record.v1"
+	contextPassportContractID           = "context_passport.v1"
+	contextPassportVerifyContractID     = "context_passport_verify.v1"
+	contextPassportDiffContractID       = "context_passport_diff.v1"
+	contextPassportReplayContractID     = "context_passport_replay.v1"
+	contextPassportStatusSchemaID       = "context_passport_status.v1"
+	contextIdentityKeysSchemaID         = "context_identity_keys.v1"
+	contextPassportLedgerSchemaID       = "context_passport_record.v1"
+	contextPassportLedgerAnchorSchemaID = "context_passport_ledger_anchor.v1"
 )
 
 var (
@@ -55,48 +57,50 @@ type contextPassportSignature struct {
 }
 
 type contextPassport struct {
-	SchemaID         string                   `json:"schema_id"`
-	Version          int                      `json:"version"`
-	PassportID       string                   `json:"passport_id"`
-	LineageID        string                   `json:"lineage_id"`
-	Project          string                   `json:"project"`
-	Revision         int                      `json:"revision"`
-	ParentPassportID string                   `json:"parent_passport_id,omitempty"`
-	ParentDigest     string                   `json:"parent_digest,omitempty"`
-	CreatedAt        string                   `json:"created_at"`
-	ExpiresAt        string                   `json:"expires_at"`
-	Issuer           contextPassportIssuer    `json:"issuer"`
-	Scope            map[string]any           `json:"scope"`
-	Objective        map[string]any           `json:"objective"`
-	Claims           []map[string]any         `json:"claims"`
-	Evidence         []map[string]any         `json:"evidence"`
-	Lineage          map[string]any           `json:"lineage"`
-	Capabilities     []string                 `json:"capabilities"`
-	Redactions       map[string]any           `json:"redactions"`
-	Replay           map[string]any           `json:"replay"`
-	ContentDigest    string                   `json:"content_digest"`
-	Signature        contextPassportSignature `json:"signature"`
+	SchemaID         string                    `json:"schema_id"`
+	Version          int                       `json:"version"`
+	PassportID       string                    `json:"passport_id"`
+	LineageID        string                    `json:"lineage_id"`
+	Project          string                    `json:"project"`
+	Revision         int                       `json:"revision"`
+	ParentPassportID string                    `json:"parent_passport_id,omitempty"`
+	ParentDigest     string                    `json:"parent_digest,omitempty"`
+	CreatedAt        string                    `json:"created_at"`
+	ExpiresAt        string                    `json:"expires_at"`
+	Issuer           contextPassportIssuer     `json:"issuer"`
+	Scope            map[string]any            `json:"scope"`
+	Objective        map[string]any            `json:"objective"`
+	Claims           []map[string]any          `json:"claims"`
+	Evidence         []map[string]any          `json:"evidence"`
+	Lineage          map[string]any            `json:"lineage"`
+	Capabilities     []string                  `json:"capabilities"`
+	Redactions       map[string]any            `json:"redactions"`
+	Replay           map[string]any            `json:"replay"`
+	EvidenceIdentity *portableEvidenceIdentity `json:"portable_evidence_identity,omitempty"`
+	ContentDigest    string                    `json:"content_digest"`
+	Signature        contextPassportSignature  `json:"signature"`
 }
 
 type contextPassportUnsigned struct {
-	SchemaID         string                `json:"schema_id"`
-	Version          int                   `json:"version"`
-	LineageID        string                `json:"lineage_id"`
-	Project          string                `json:"project"`
-	Revision         int                   `json:"revision"`
-	ParentPassportID string                `json:"parent_passport_id,omitempty"`
-	ParentDigest     string                `json:"parent_digest,omitempty"`
-	CreatedAt        string                `json:"created_at"`
-	ExpiresAt        string                `json:"expires_at"`
-	Issuer           contextPassportIssuer `json:"issuer"`
-	Scope            map[string]any        `json:"scope"`
-	Objective        map[string]any        `json:"objective"`
-	Claims           []map[string]any      `json:"claims"`
-	Evidence         []map[string]any      `json:"evidence"`
-	Lineage          map[string]any        `json:"lineage"`
-	Capabilities     []string              `json:"capabilities"`
-	Redactions       map[string]any        `json:"redactions"`
-	Replay           map[string]any        `json:"replay"`
+	SchemaID         string                    `json:"schema_id"`
+	Version          int                       `json:"version"`
+	LineageID        string                    `json:"lineage_id"`
+	Project          string                    `json:"project"`
+	Revision         int                       `json:"revision"`
+	ParentPassportID string                    `json:"parent_passport_id,omitempty"`
+	ParentDigest     string                    `json:"parent_digest,omitempty"`
+	CreatedAt        string                    `json:"created_at"`
+	ExpiresAt        string                    `json:"expires_at"`
+	Issuer           contextPassportIssuer     `json:"issuer"`
+	Scope            map[string]any            `json:"scope"`
+	Objective        map[string]any            `json:"objective"`
+	Claims           []map[string]any          `json:"claims"`
+	Evidence         []map[string]any          `json:"evidence"`
+	Lineage          map[string]any            `json:"lineage"`
+	Capabilities     []string                  `json:"capabilities"`
+	Redactions       map[string]any            `json:"redactions"`
+	Replay           map[string]any            `json:"replay"`
+	EvidenceIdentity *portableEvidenceIdentity `json:"portable_evidence_identity,omitempty"`
 }
 
 type contextPassportSigned struct {
@@ -141,8 +145,22 @@ type contextPassportLedgerRow struct {
 	BatchID        string                        `json:"batch_id,omitempty"`
 	BatchIndex     int                           `json:"batch_index,omitempty"`
 	BatchSize      int                           `json:"batch_size,omitempty"`
+	PrevEntryHash  string                        `json:"prev_entry_hash,omitempty"`
+	EntryHash      string                        `json:"entry_hash,omitempty"`
 	Passport       contextPassport               `json:"passport"`
 	Reconciliation contextPassportReconciliation `json:"reconciliation"`
+}
+
+// contextPassportLedgerAnchor is an owner-only, bounded durable checkpoint for
+// the append-only ledger. The ledger rows carry the chain links so an anchor
+// cannot be silently discarded and treated as a legacy file on restart.
+type contextPassportLedgerAnchor struct {
+	SchemaID         string `json:"schema_id"`
+	Version          int    `json:"version"`
+	LedgerPathDigest string `json:"ledger_path_digest"`
+	Generation       uint64 `json:"generation"`
+	EntryCount       int    `json:"entry_count"`
+	ChainDigest      string `json:"chain_digest"`
 }
 
 type contextPassportStoreConfig struct {
@@ -160,6 +178,7 @@ type contextPassportStore struct {
 	ioMu            sync.Mutex
 	enabled         bool
 	path            string
+	anchorPath      string
 	maxBytes        int64
 	maxEntries      int
 	maxItemBytes    int
@@ -173,6 +192,7 @@ type contextPassportStore struct {
 	compactions     int
 	lastPersistedAt string
 	lastError       string
+	anchor          contextPassportLedgerAnchor
 }
 
 type portableRedactionStats struct {
@@ -203,6 +223,7 @@ func newContextPassportStore(config contextPassportStoreConfig) (*contextPasspor
 	store := &contextPassportStore{
 		enabled:         config.Enabled,
 		path:            strings.TrimSpace(config.Path),
+		anchorPath:      strings.TrimSpace(config.Path) + ".anchor",
 		maxBytes:        config.MaxBytes,
 		maxEntries:      config.MaxEntries,
 		maxItemBytes:    config.MaxItemBytes,
@@ -220,6 +241,9 @@ func newContextPassportStore(config contextPassportStoreConfig) (*contextPasspor
 		return nil, fmt.Errorf("context identity: %w", err)
 	}
 	store.identity = identity
+	if err := createOwnerOnlyDurableEmptyFileIfMissing(store.anchorPath, false); err != nil {
+		return nil, fmt.Errorf("context passport ledger anchor: %w", err)
+	}
 	if err := store.load(); err != nil {
 		return nil, err
 	}
@@ -384,7 +408,7 @@ func passportUnsigned(passport contextPassport) contextPassportUnsigned {
 		CreatedAt: passport.CreatedAt, ExpiresAt: passport.ExpiresAt, Issuer: passport.Issuer,
 		Scope: passport.Scope, Objective: passport.Objective, Claims: passport.Claims,
 		Evidence: passport.Evidence, Lineage: passport.Lineage, Capabilities: passport.Capabilities,
-		Redactions: passport.Redactions, Replay: passport.Replay,
+		Redactions: passport.Redactions, Replay: passport.Replay, EvidenceIdentity: passport.EvidenceIdentity,
 	}
 }
 
@@ -437,6 +461,9 @@ func verifyContextPassport(passport contextPassport, now time.Time, checkExpiry 
 	if passport.PassportID != expectedID {
 		errorsOut = append(errorsOut, "passport_id_mismatch")
 	}
+	if err := validatePortableEvidenceIdentity(passport.EvidenceIdentity); err != nil {
+		errorsOut = append(errorsOut, "portable_evidence_identity_invalid")
+	}
 	if passport.Signature.Algorithm != "Ed25519" || passport.Signature.KeyID != passport.Issuer.SigningKeyID {
 		errorsOut = append(errorsOut, "signature_metadata_mismatch")
 	} else {
@@ -471,6 +498,15 @@ func decodeContextPassport(value any) (contextPassport, error) {
 	if err != nil {
 		return contextPassport{}, err
 	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return contextPassport{}, err
+	}
+	if identity, present := fields["portable_evidence_identity"]; present {
+		if _, err := decodePortableEvidenceIdentity(identity); err != nil {
+			return contextPassport{}, fmt.Errorf("portable evidence identity: %w", err)
+		}
+	}
 	var passport contextPassport
 	if err := strictJSONDecode(raw, &passport); err != nil {
 		return contextPassport{}, err
@@ -478,9 +514,229 @@ func decodeContextPassport(value any) (contextPassport, error) {
 	return passport, nil
 }
 
+func contextPassportLedgerPathDigest(path string) string {
+	return "sha256:" + digestPrefix("context-passport-ledger-path:"+filepath.Clean(path), 64)
+}
+
+func contextPassportLedgerGenesisDigest(path string) string {
+	return "sha256:" + digestPrefix("context-passport-ledger-genesis:"+contextPassportLedgerPathDigest(path), 64)
+}
+
+func emptyContextPassportLedgerAnchor(path string) contextPassportLedgerAnchor {
+	return contextPassportLedgerAnchor{
+		SchemaID: contextPassportLedgerAnchorSchemaID, Version: 1,
+		LedgerPathDigest: contextPassportLedgerPathDigest(path),
+		ChainDigest:      contextPassportLedgerGenesisDigest(path),
+	}
+}
+
+func contextPassportLedgerUnsignedRow(row contextPassportLedgerRow) contextPassportLedgerRow {
+	row.PrevEntryHash = ""
+	row.EntryHash = ""
+	return row
+}
+
+func contextPassportLedgerRowDigest(previous string, row contextPassportLedgerRow) (string, error) {
+	encoded, err := json.Marshal(contextPassportLedgerUnsignedRow(row))
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(append(append([]byte{}, []byte(previous)...), append([]byte{'\n'}, encoded...)...))
+	return "sha256:" + hex.EncodeToString(sum[:]), nil
+}
+
+func contextPassportLedgerChainRows(path string, rows []contextPassportLedgerRow, generation uint64) ([]contextPassportLedgerRow, contextPassportLedgerAnchor, error) {
+	anchor := emptyContextPassportLedgerAnchor(path)
+	anchor.Generation = generation
+	anchored := make([]contextPassportLedgerRow, len(rows))
+	previous := anchor.ChainDigest
+	for index, row := range rows {
+		row.PrevEntryHash = previous
+		entryHash, err := contextPassportLedgerRowDigest(previous, row)
+		if err != nil {
+			return nil, contextPassportLedgerAnchor{}, err
+		}
+		row.EntryHash = entryHash
+		anchored[index] = row
+		previous = entryHash
+	}
+	anchor.EntryCount = len(anchored)
+	anchor.ChainDigest = previous
+	return anchored, anchor, nil
+}
+
+func validateContextPassportLedgerAnchor(anchor contextPassportLedgerAnchor, path string) error {
+	if anchor.SchemaID != contextPassportLedgerAnchorSchemaID || anchor.Version != 1 ||
+		anchor.LedgerPathDigest != contextPassportLedgerPathDigest(path) || anchor.Generation == 0 || anchor.EntryCount < 0 ||
+		!strings.HasPrefix(anchor.ChainDigest, "sha256:") || len(strings.TrimPrefix(anchor.ChainDigest, "sha256:")) != sha256.Size*2 {
+		return errors.New("context passport ledger anchor is invalid")
+	}
+	return nil
+}
+
+func (s *contextPassportStore) readLedgerAnchor() (contextPassportLedgerAnchor, bool, error) {
+	raw, err := os.ReadFile(s.anchorPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return emptyContextPassportLedgerAnchor(s.path), false, nil
+	}
+	if err != nil {
+		return contextPassportLedgerAnchor{}, true, fmt.Errorf("read context passport ledger anchor: %w", err)
+	}
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return emptyContextPassportLedgerAnchor(s.path), false, nil
+	}
+	var anchor contextPassportLedgerAnchor
+	if err := strictJSONDecode(bytes.TrimSpace(raw), &anchor); err != nil {
+		return contextPassportLedgerAnchor{}, true, fmt.Errorf("decode context passport ledger anchor: %w", err)
+	}
+	if err := validateContextPassportLedgerAnchor(anchor, s.path); err != nil {
+		return contextPassportLedgerAnchor{}, true, fmt.Errorf("validate context passport ledger anchor: %w", err)
+	}
+	return anchor, true, nil
+}
+
+func (s *contextPassportStore) persistLedgerAnchor(anchor contextPassportLedgerAnchor) error {
+	if err := validateContextPassportLedgerAnchor(anchor, s.path); err != nil {
+		return err
+	}
+	s.mu.RLock()
+	currentGeneration := s.anchor.Generation
+	s.mu.RUnlock()
+	if currentGeneration > 0 && anchor.Generation <= currentGeneration {
+		return errors.New("context passport ledger anchor generation is not monotonic")
+	}
+	encoded, err := json.Marshal(anchor)
+	if err != nil {
+		return err
+	}
+	encoded = append(encoded, '\n')
+	if err := writeOwnerOnlyDurableAtomicFile(s.anchorPath, encoded, false); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.anchor = anchor
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *contextPassportStore) recordWriteError(err error) error {
+	if err == nil || s == nil {
+		return err
+	}
+	s.mu.Lock()
+	s.lastError = err.Error()
+	if ownerOnlyAtomicWriteCommitted(err) {
+		s.enabled = false
+		s.lastError = "commit_unknown: " + err.Error()
+	}
+	s.mu.Unlock()
+	return err
+}
+
+func validateContextPassportLedgerRow(row contextPassportLedgerRow) error {
+	if row.SchemaID != contextPassportLedgerSchemaID {
+		return errors.New("context passport ledger row schema is invalid")
+	}
+	if findings := verifyContextPassport(row.Passport, time.Now().UTC(), false); len(findings) > 0 {
+		return fmt.Errorf("context passport ledger row passport is invalid: %s", strings.Join(findings, ","))
+	}
+	if row.BatchID == "" {
+		if row.BatchIndex != 0 || row.BatchSize != 0 {
+			return errors.New("context passport ledger row batch metadata is invalid")
+		}
+	} else if row.BatchSize < 1 || row.BatchSize > 32 || row.BatchIndex < 0 || row.BatchIndex >= row.BatchSize {
+		return errors.New("context passport ledger row batch metadata is invalid")
+	}
+	return nil
+}
+
+func validateCompleteContextPassportLedgerBatches(rows []contextPassportLedgerRow) error {
+	type batchState struct {
+		size    int
+		indices map[int]struct{}
+	}
+	states := map[string]*batchState{}
+	for _, row := range rows {
+		if row.BatchID == "" {
+			continue
+		}
+		state := states[row.BatchID]
+		if state == nil {
+			state = &batchState{size: row.BatchSize, indices: map[int]struct{}{}}
+			states[row.BatchID] = state
+		}
+		if state.size != row.BatchSize {
+			return fmt.Errorf("context passport ledger batch %q has inconsistent size", row.BatchID)
+		}
+		if _, exists := state.indices[row.BatchIndex]; exists {
+			return fmt.Errorf("context passport ledger batch %q has duplicate index", row.BatchID)
+		}
+		state.indices[row.BatchIndex] = struct{}{}
+	}
+	for batchID, state := range states {
+		if len(state.indices) != state.size {
+			return fmt.Errorf("context passport ledger batch %q is incomplete", batchID)
+		}
+	}
+	return nil
+}
+
+func (s *contextPassportStore) verifyAnchoredLedger(rows []contextPassportLedgerRow, anchor contextPassportLedgerAnchor) error {
+	if anchor.EntryCount != len(rows) {
+		return fmt.Errorf("context passport ledger entry count rolled back or truncated: anchor=%d rows=%d", anchor.EntryCount, len(rows))
+	}
+	previous := contextPassportLedgerGenesisDigest(s.path)
+	for index, row := range rows {
+		if row.PrevEntryHash == "" || row.EntryHash == "" || row.PrevEntryHash != previous {
+			return fmt.Errorf("context passport ledger hash chain is invalid at row %d", index)
+		}
+		expected, err := contextPassportLedgerRowDigest(previous, row)
+		if err != nil {
+			return fmt.Errorf("hash context passport ledger row %d: %w", index, err)
+		}
+		if row.EntryHash != expected {
+			return fmt.Errorf("context passport ledger entry hash is invalid at row %d", index)
+		}
+		previous = row.EntryHash
+	}
+	if anchor.ChainDigest != previous {
+		return errors.New("context passport ledger anchor digest mismatch")
+	}
+	return nil
+}
+
+func (s *contextPassportStore) migrateLegacyLedger(rows []contextPassportLedgerRow) error {
+	anchoredRows, anchor, err := contextPassportLedgerChainRows(s.path, rows, 1)
+	if err != nil {
+		return fmt.Errorf("chain legacy context passport ledger: %w", err)
+	}
+	var buffer bytes.Buffer
+	encoder := json.NewEncoder(&buffer)
+	for _, row := range anchoredRows {
+		if err := encoder.Encode(row); err != nil {
+			return err
+		}
+	}
+	if err := writeOwnerOnlyDurableAtomicFile(s.path, buffer.Bytes(), false); err != nil {
+		return fmt.Errorf("migrate legacy context passport ledger: %w", err)
+	}
+	if err := s.persistLedgerAnchor(anchor); err != nil {
+		return fmt.Errorf("anchor migrated context passport ledger: %w", err)
+	}
+	return nil
+}
+
 func (s *contextPassportStore) load() error {
+	anchor, anchorPresent, err := s.readLedgerAnchor()
+	if err != nil {
+		return err
+	}
 	file, err := os.Open(s.path)
 	if errors.Is(err, os.ErrNotExist) {
+		if anchorPresent && anchor.EntryCount != 0 {
+			return errors.New("context passport ledger is missing behind its durable anchor")
+		}
+		s.anchor = anchor
 		return nil
 	}
 	if err != nil {
@@ -490,72 +746,58 @@ func (s *contextPassportStore) load() error {
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 64*1024), maxInt(s.maxItemBytes*2, 2*1024*1024))
 	rows := []contextPassportLedgerRow{}
+	lineNumber := 0
 	for scanner.Scan() {
+		lineNumber++
 		line := bytes.TrimSpace(scanner.Bytes())
 		if len(line) == 0 {
 			continue
 		}
 		var row contextPassportLedgerRow
-		if err := strictJSONDecode(line, &row); err != nil || row.SchemaID != contextPassportLedgerSchemaID || len(verifyContextPassport(row.Passport, time.Now().UTC(), false)) > 0 {
+		if err := strictJSONDecode(line, &row); err != nil {
 			s.parseErrors++
-			continue
+			return fmt.Errorf("context passport ledger row %d is malformed: %w", lineNumber, err)
+		}
+		if err := validateContextPassportLedgerRow(row); err != nil {
+			s.parseErrors++
+			return fmt.Errorf("context passport ledger row %d is invalid: %w", lineNumber, err)
 		}
 		rows = append(rows, row)
 	}
 	if err := scanner.Err(); err != nil {
 		return fmt.Errorf("scan context passport ledger: %w", err)
 	}
-	completeBatches := completePassportLedgerBatches(rows)
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("close context passport ledger: %w", err)
+	}
+	if err := validateCompleteContextPassportLedgerBatches(rows); err != nil {
+		s.parseErrors++
+		return err
+	}
+	if anchorPresent {
+		if err := s.verifyAnchoredLedger(rows, anchor); err != nil {
+			s.parseErrors++
+			return err
+		}
+		s.anchor = anchor
+	} else if len(rows) > 0 {
+		for _, row := range rows {
+			if row.PrevEntryHash != "" || row.EntryHash != "" {
+				return errors.New("context passport ledger chain exists without its durable anchor")
+			}
+		}
+		if err := s.migrateLegacyLedger(rows); err != nil {
+			return err
+		}
+	} else {
+		s.anchor = emptyContextPassportLedgerAnchor(s.path)
+	}
 	for _, row := range rows {
-		if row.BatchID == "" && (row.BatchIndex != 0 || row.BatchSize != 0) {
-			s.parseErrors++
-			continue
-		}
-		if row.BatchID != "" && !completeBatches[row.BatchID] {
-			s.parseErrors++
-			continue
-		}
 		s.applyLedgerRowLocked(row)
 		s.logEntries++
 	}
 	s.trimLocked()
 	return nil
-}
-
-func completePassportLedgerBatches(rows []contextPassportLedgerRow) map[string]bool {
-	type batchState struct {
-		size    int
-		indices map[int]struct{}
-		invalid bool
-	}
-	states := map[string]*batchState{}
-	for _, row := range rows {
-		if row.BatchID == "" {
-			if row.BatchIndex != 0 || row.BatchSize != 0 {
-				continue
-			}
-			continue
-		}
-		state := states[row.BatchID]
-		if state == nil {
-			state = &batchState{size: row.BatchSize, indices: map[int]struct{}{}}
-			states[row.BatchID] = state
-		}
-		if row.BatchSize < 1 || row.BatchSize > 32 || state.size != row.BatchSize || row.BatchIndex < 0 || row.BatchIndex >= row.BatchSize {
-			state.invalid = true
-			continue
-		}
-		if _, duplicate := state.indices[row.BatchIndex]; duplicate {
-			state.invalid = true
-			continue
-		}
-		state.indices[row.BatchIndex] = struct{}{}
-	}
-	complete := map[string]bool{}
-	for id, state := range states {
-		complete[id] = !state.invalid && state.size > 0 && len(state.indices) == state.size
-	}
-	return complete
 }
 
 func (s *contextPassportStore) applyLedgerRowLocked(row contextPassportLedgerRow) {
@@ -582,6 +824,9 @@ func (s *contextPassportStore) get(id string) (contextPassport, bool) {
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if !s.enabled {
+		return contextPassport{}, false
+	}
 	passport, ok := s.passports[strings.TrimSpace(id)]
 	return passport, ok
 }
@@ -652,25 +897,31 @@ func planContextPassportBatch(passports []contextPassport, existing map[string]c
 }
 
 func (s *contextPassportStore) planBatch(passports []contextPassport) []contextPassportReconciliation {
-	if s == nil || !s.enabled {
+	if s == nil {
 		return nil
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if !s.enabled {
+		return nil
+	}
 	return planContextPassportBatch(passports, s.passports)
 }
 
 func (s *contextPassportStore) plan(passport contextPassport) contextPassportReconciliation {
-	if s == nil || !s.enabled {
+	if s == nil {
 		return contextPassportReconciliation{Action: "rejected", Reason: "passport_store_disabled", PassportID: passport.PassportID, Conflict: true}
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if !s.enabled {
+		return contextPassportReconciliation{Action: "rejected", Reason: "passport_store_disabled", PassportID: passport.PassportID, Conflict: true}
+	}
 	return s.planLocked(passport)
 }
 
 func (s *contextPassportStore) record(passport contextPassport) (contextPassportReconciliation, error) {
-	if s == nil || !s.enabled {
+	if s == nil {
 		return contextPassportReconciliation{}, errors.New("context passport store disabled")
 	}
 	if validation := verifyContextPassport(passport, time.Now().UTC(), false); len(validation) > 0 {
@@ -686,6 +937,12 @@ func (s *contextPassportStore) record(passport contextPassport) (contextPassport
 
 	s.ioMu.Lock()
 	defer s.ioMu.Unlock()
+	s.mu.RLock()
+	enabled := s.enabled
+	s.mu.RUnlock()
+	if !enabled {
+		return contextPassportReconciliation{}, errors.New("context passport store disabled")
+	}
 	s.mu.Lock()
 	reconciliation := s.planLocked(passport)
 	if reconciliation.Idempotent {
@@ -710,14 +967,14 @@ func (s *contextPassportStore) record(passport contextPassport) (contextPassport
 	s.reconciliations[passport.PassportID] = reconciliation
 	s.trimLocked()
 	s.mu.Unlock()
-	if err := s.compactIfNeeded(); err != nil {
+	if err := s.compactIfNeededLocked(); err != nil {
 		return reconciliation, err
 	}
 	return reconciliation, nil
 }
 
 func (s *contextPassportStore) recordBatch(passports []contextPassport, requireConflictFree bool) ([]contextPassportReconciliation, error) {
-	if s == nil || !s.enabled {
+	if s == nil {
 		return nil, errors.New("context passport store disabled")
 	}
 	if len(passports) == 0 || len(passports) > 32 {
@@ -738,6 +995,12 @@ func (s *contextPassportStore) recordBatch(passports []contextPassport, requireC
 
 	s.ioMu.Lock()
 	defer s.ioMu.Unlock()
+	s.mu.RLock()
+	enabled := s.enabled
+	s.mu.RUnlock()
+	if !enabled {
+		return nil, errors.New("context passport store disabled")
+	}
 	s.mu.Lock()
 	reconciliations := planContextPassportBatch(passports, s.passports)
 	rows := make([]contextPassportLedgerRow, 0, len(passports))
@@ -785,16 +1048,49 @@ func (s *contextPassportStore) recordBatch(passports []contextPassport, requireC
 	}
 	s.trimLocked()
 	s.mu.Unlock()
-	if err := s.compactIfNeeded(); err != nil {
+	if err := s.compactIfNeededLocked(); err != nil {
 		return reconciliations, err
 	}
 	return reconciliations, nil
 }
 
 func (s *contextPassportStore) appendRows(rows []contextPassportLedgerRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	s.mu.RLock()
+	previous := s.anchor.ChainDigest
+	generation := s.anchor.Generation + 1
+	if previous == "" {
+		previous = contextPassportLedgerGenesisDigest(s.path)
+	}
+	s.mu.RUnlock()
+	anchoredRows, nextAnchor, err := contextPassportLedgerChainRows(s.path, rows, generation)
+	if err != nil {
+		return err
+	}
+	// The chain builder starts from the path-specific genesis. Continue from
+	// the existing durable anchor for normal appends.
+	if previous != contextPassportLedgerGenesisDigest(s.path) {
+		for index, row := range anchoredRows {
+			row.PrevEntryHash = previous
+			entryHash, digestErr := contextPassportLedgerRowDigest(previous, row)
+			if digestErr != nil {
+				return digestErr
+			}
+			row.EntryHash = entryHash
+			anchoredRows[index] = row
+			previous = entryHash
+		}
+		nextAnchor.ChainDigest = previous
+	}
+	s.mu.RLock()
+	nextAnchor.EntryCount = s.anchor.EntryCount + len(anchoredRows)
+	nextAnchor.Generation = s.anchor.Generation + 1
+	s.mu.RUnlock()
 	var buffer bytes.Buffer
 	encoder := json.NewEncoder(&buffer)
-	for _, row := range rows {
+	for _, row := range anchoredRows {
 		if err := encoder.Encode(row); err != nil {
 			return err
 		}
@@ -802,35 +1098,40 @@ func (s *contextPassportStore) appendRows(rows []contextPassportLedgerRow) error
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
 		return err
 	}
-	file, err := os.OpenFile(s.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	file, err := openOwnerOnlyAppend(s.path, false)
 	if err != nil {
-		return err
+		return s.recordWriteError(err)
 	}
+	committed := false
 	for buffer.Len() > 0 {
 		written, writeErr := file.Write(buffer.Bytes())
 		if written > 0 {
 			buffer.Next(written)
+			committed = true
 		}
 		if writeErr != nil {
 			_ = file.Close()
-			return writeErr
+			return s.recordWriteError(&ownerOnlyAtomicWriteError{Operation: "append context passport ledger", Committed: committed, Err: writeErr})
 		}
 		if written == 0 {
 			_ = file.Close()
-			return io.ErrShortWrite
+			return s.recordWriteError(&ownerOnlyAtomicWriteError{Operation: "append context passport ledger", Committed: committed, Err: io.ErrShortWrite})
 		}
 	}
 	if s.fsync {
 		if err := file.Sync(); err != nil {
 			_ = file.Close()
-			return err
+			return s.recordWriteError(&ownerOnlyAtomicWriteError{Operation: "sync context passport ledger", Committed: committed, Err: err})
 		}
 	}
 	if err := file.Close(); err != nil {
-		return err
+		return s.recordWriteError(&ownerOnlyAtomicWriteError{Operation: "close context passport ledger", Committed: committed, Err: err})
+	}
+	if err := s.persistLedgerAnchor(nextAnchor); err != nil {
+		return s.recordWriteError(&ownerOnlyAtomicWriteError{Operation: "persist context passport ledger anchor", Committed: true, Err: err})
 	}
 	s.mu.Lock()
-	s.logEntries += len(rows)
+	s.logEntries += len(anchoredRows)
 	s.lastPersistedAt = nowUTCISO()
 	s.lastError = ""
 	s.mu.Unlock()
@@ -838,6 +1139,12 @@ func (s *contextPassportStore) appendRows(rows []contextPassportLedgerRow) error
 }
 
 func (s *contextPassportStore) compactIfNeeded() error {
+	s.ioMu.Lock()
+	defer s.ioMu.Unlock()
+	return s.compactIfNeededLocked()
+}
+
+func (s *contextPassportStore) compactIfNeededLocked() error {
 	info, err := os.Stat(s.path)
 	if err != nil || info.Size() <= s.maxBytes {
 		return nil
@@ -866,35 +1173,24 @@ func (s *contextPassportStore) compactIfNeeded() error {
 		retainedIDs[left], retainedIDs[right] = retainedIDs[right], retainedIDs[left]
 		retainedRowsReversed[left], retainedRowsReversed[right] = retainedRowsReversed[right], retainedRowsReversed[left]
 	}
-	rows := retainedRowsReversed
-	s.mu.Unlock()
-	tmp := s.path + ".compact-" + randomHex(6)
-	file, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	rows, nextAnchor, err := contextPassportLedgerChainRows(s.path, retainedRowsReversed, s.anchor.Generation+1)
 	if err != nil {
+		s.mu.Unlock()
 		return err
 	}
-	encoder := json.NewEncoder(file)
+	s.mu.Unlock()
+	var buffer bytes.Buffer
+	encoder := json.NewEncoder(&buffer)
 	for _, row := range rows {
 		if err := encoder.Encode(row); err != nil {
-			_ = file.Close()
-			_ = os.Remove(tmp)
 			return err
 		}
 	}
-	if s.fsync {
-		if err := file.Sync(); err != nil {
-			_ = file.Close()
-			_ = os.Remove(tmp)
-			return err
-		}
+	if err := writeOwnerOnlyDurableAtomicFile(s.path, buffer.Bytes(), false); err != nil {
+		return s.recordWriteError(err)
 	}
-	if err := file.Close(); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	if err := os.Rename(tmp, s.path); err != nil {
-		_ = os.Remove(tmp)
-		return err
+	if err := s.persistLedgerAnchor(nextAnchor); err != nil {
+		return s.recordWriteError(&ownerOnlyAtomicWriteError{Operation: "persist compacted context passport ledger anchor", Committed: true, Err: err})
 	}
 	s.mu.Lock()
 	retainedSet := map[string]struct{}{}
@@ -953,8 +1249,40 @@ func (s *contextPassportStore) snapshot() map[string]any {
 	}
 }
 
+func portableCanonicalKey(key string) string {
+	var normalized strings.Builder
+	var lastWritten rune
+	runes := []rune(strings.TrimSpace(key))
+	for index, current := range runes {
+		if unicode.IsUpper(current) {
+			if normalized.Len() > 0 {
+				previous := runes[index-1]
+				var next rune
+				if index+1 < len(runes) {
+					next = runes[index+1]
+				}
+				if previous != '_' && (unicode.IsLower(previous) || unicode.IsDigit(previous) || (unicode.IsUpper(previous) && unicode.IsLower(next))) {
+					normalized.WriteByte('_')
+					lastWritten = '_'
+				}
+			}
+			current = unicode.ToLower(current)
+		}
+		if unicode.IsLetter(current) || unicode.IsDigit(current) {
+			normalized.WriteRune(current)
+			lastWritten = current
+			continue
+		}
+		if normalized.Len() > 0 && lastWritten != '_' {
+			normalized.WriteByte('_')
+			lastWritten = '_'
+		}
+	}
+	return strings.Trim(normalized.String(), "_")
+}
+
 func portableSecretKey(key string) bool {
-	normalized := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(key), "-", "_"))
+	normalized := portableCanonicalKey(key)
 	if normalized == "token_budget" || normalized == "max_prompt_tokens" || normalized == "prompt_tokens" || normalized == "provider_tokens" || normalized == "estimated_tokens" {
 		return false
 	}
@@ -1156,7 +1484,13 @@ func signAndBoundContextPassport(passport *contextPassport, keys *contextIdentit
 }
 
 func (s *server) buildContextPassport(payload map[string]any, synthesis map[string]any) (contextPassport, error) {
-	if s.contextPassports == nil || !s.contextPassports.enabled || s.contextPassports.identity == nil {
+	if s.contextPassports == nil || s.contextPassports.identity == nil {
+		return contextPassport{}, errors.New("context passport store disabled")
+	}
+	s.contextPassports.mu.RLock()
+	passportStoreEnabled := s.contextPassports.enabled
+	s.contextPassports.mu.RUnlock()
+	if !passportStoreEnabled {
 		return contextPassport{}, errors.New("context passport store disabled")
 	}
 	project, err := sanitizeMemoryProject(firstNonEmptyStrings(anyToString(synthesis["project"]), anyToString(payload["project"])))
@@ -1196,6 +1530,18 @@ func (s *server) buildContextPassport(payload map[string]any, synthesis map[stri
 	topicPath := strings.Trim(strings.TrimSpace(firstNonEmptyStrings(anyToString(synthesis["topic_path"]), anyToString(payload["topic_path"]))), "/")
 	query := clipText(strings.TrimSpace(firstNonEmptyStrings(anyToString(synthesis["query"]), anyToString(payload["query"]))), 2000)
 	capabilities := append(defaultPassportCapabilities(), anyToStringSlice(payload["capabilities"])...)
+	var evidenceIdentity *portableEvidenceIdentity
+	if rawIdentity, present := payload["portable_evidence_identity"]; present {
+		evidenceIdentity, err = decodePortableEvidenceIdentity(rawIdentity)
+		if err != nil {
+			return contextPassport{}, fmt.Errorf("portable evidence identity: %w", err)
+		}
+	} else if rawIdentity, present := synthesis["portable_evidence_identity"]; present {
+		evidenceIdentity, err = decodePortableEvidenceIdentity(rawIdentity)
+		if err != nil {
+			return contextPassport{}, fmt.Errorf("portable evidence identity: %w", err)
+		}
+	}
 	passport := contextPassport{
 		SchemaID: contextPassportContractID, Version: 1, LineageID: lineageID,
 		Project: project, Revision: revision, ParentPassportID: parentID, ParentDigest: parentDigest,
@@ -1211,7 +1557,7 @@ func (s *server) buildContextPassport(payload map[string]any, synthesis map[stri
 			"data_classes":   firstNonNil(payload["data_classes"], []any{"learning_memory", "temporal_claim"}),
 			"allowed_agents": firstNonNil(payload["allowed_agents"], []any{}),
 		}, stats),
-		Objective: objective, Claims: claims, Evidence: evidence,
+		Objective: objective, Claims: claims, Evidence: evidence, EvidenceIdentity: evidenceIdentity,
 		Lineage: portableMap(map[string]any{
 			"parent_passport_id": parentID, "parent_digest": parentDigest,
 			"branch": payload["branch"], "commit": payload["commit"],

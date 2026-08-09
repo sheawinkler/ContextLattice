@@ -145,7 +145,7 @@ func TestContextPassportReconciliationPreservesConflictBranches(t *testing.T) {
 	}
 }
 
-func TestContextPassportBatchIsConflictFreeAndIgnoresIncompleteTransactions(t *testing.T) {
+func TestContextPassportBatchIsConflictFreeAndRejectsIncompleteTransactions(t *testing.T) {
 	root := t.TempDir()
 	store := newTestPassportStore(t, root)
 	first := signedTestPassport(t, store, "contextlattice", "lineage_batch_a", 1, nil, "first")
@@ -174,9 +174,13 @@ func TestContextPassportBatchIsConflictFreeAndIgnoresIncompleteTransactions(t *t
 	if err := store.appendRows([]contextPassportLedgerRow{incomplete}); err != nil {
 		t.Fatal(err)
 	}
-	reloaded := newTestPassportStore(t, root)
-	if len(reloaded.passports) != 2 || reloaded.parseErrors == 0 {
-		t.Fatalf("incomplete transaction became visible: count=%d parse_errors=%d", len(reloaded.passports), reloaded.parseErrors)
+	_, err = newContextPassportStore(contextPassportStoreConfig{
+		Enabled: true, Path: filepath.Join(root, "passports.ndjson"),
+		KeyPath: filepath.Join(root, "identity.json"), MaxBytes: 512 * 1024,
+		MaxEntries: 64, MaxItemBytes: 128 * 1024, Fsync: false,
+	})
+	if err == nil {
+		t.Fatal("incomplete transaction was accepted as a valid ledger prefix")
 	}
 }
 
@@ -203,6 +207,136 @@ func TestContextPassportCompactionFailurePreservesInMemoryState(t *testing.T) {
 	}
 }
 
+func TestContextPassportLedgerRejectsRollbackAndMalformedTail(t *testing.T) {
+	root := t.TempDir()
+	store := newTestPassportStore(t, root)
+	first := signedTestPassport(t, store, "contextlattice", "lineage_anchor", 1, nil, "first")
+	if _, err := store.record(first); err != nil {
+		t.Fatal(err)
+	}
+	ledgerPath := filepath.Join(root, "passports.ndjson")
+	oldLedger, err := os.ReadFile(ledgerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := signedTestPassport(t, store, "contextlattice", first.LineageID, 2, &first, "second")
+	if _, err := store.record(second); err != nil {
+		t.Fatal(err)
+	}
+	anchorRaw, err := os.ReadFile(ledgerPath + ".anchor")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(anchorRaw) > 4096 || bytes.Count(anchorRaw, []byte{'\n'}) != 1 {
+		t.Fatalf("passport anchor is not a bounded single checkpoint: bytes=%d lines=%d", len(anchorRaw), bytes.Count(anchorRaw, []byte{'\n'}))
+	}
+	if err := os.WriteFile(ledgerPath, oldLedger, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Restore only the ledger prefix while retaining the current owner-only
+	// anchor. A valid older prefix must not become authoritative.
+	if _, err := newContextPassportStore(contextPassportStoreConfig{
+		Enabled: true, Path: ledgerPath, KeyPath: filepath.Join(root, "identity.json"),
+		MaxBytes: 512 * 1024, MaxEntries: 64, MaxItemBytes: 128 * 1024,
+	}); err == nil {
+		t.Fatal("restored older passport ledger prefix was accepted")
+	}
+
+	if err := os.WriteFile(ledgerPath, append(oldLedger, []byte("{\"schema_id\":\"truncated")...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := newContextPassportStore(contextPassportStoreConfig{
+		Enabled: true, Path: ledgerPath, KeyPath: filepath.Join(root, "identity.json"),
+		MaxBytes: 512 * 1024, MaxEntries: 64, MaxItemBytes: 128 * 1024,
+	}); err == nil {
+		t.Fatal("malformed passport ledger tail was accepted")
+	}
+}
+
+func TestContextPassportCommitUnknownDisablesWriter(t *testing.T) {
+	root := t.TempDir()
+	store := newTestPassportStore(t, root)
+	anchorDirectory := filepath.Join(root, "anchor-directory")
+	if err := os.Mkdir(anchorDirectory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	store.anchorPath = anchorDirectory
+	passport := signedTestPassport(t, store, "contextlattice", "lineage_commit_unknown", 1, nil, "first")
+	if _, err := store.record(passport); err == nil || !ownerOnlyAtomicWriteCommitted(err) {
+		t.Fatalf("passport anchor commit-unknown was not surfaced: %v", err)
+	}
+	if store.enabled || !strings.HasPrefix(store.lastError, "commit_unknown:") {
+		t.Fatalf("passport store remained writable after commit-unknown: enabled=%v error=%q", store.enabled, store.lastError)
+	}
+	if _, err := store.record(passport); err == nil {
+		t.Fatal("disabled passport store accepted a second write")
+	}
+}
+
+func TestContextPassportLegacyLedgerMigratesToDurableChain(t *testing.T) {
+	root := t.TempDir()
+	store := newTestPassportStore(t, root)
+	passport := signedTestPassport(t, store, "contextlattice", "lineage_legacy", 1, nil, "legacy")
+	if _, err := store.record(passport); err != nil {
+		t.Fatal(err)
+	}
+	ledgerPath := filepath.Join(root, "passports.ndjson")
+	anchorPath := ledgerPath + ".anchor"
+	raw, err := os.ReadFile(ledgerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var legacy contextPassportLedgerRow
+	if err := json.Unmarshal(bytes.TrimSpace(raw), &legacy); err != nil {
+		t.Fatal(err)
+	}
+	legacy.PrevEntryHash, legacy.EntryHash = "", ""
+	legacyRaw, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ledgerPath, append(legacyRaw, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(anchorPath); err != nil {
+		t.Fatal(err)
+	}
+	migrated := newTestPassportStore(t, root)
+	if _, ok := migrated.get(passport.PassportID); !ok {
+		t.Fatal("legacy passport was not retained after migration")
+	}
+	if _, err := os.Stat(anchorPath); err != nil {
+		t.Fatalf("legacy anchor was not created: %v", err)
+	}
+	if _, err := newContextPassportStore(contextPassportStoreConfig{
+		Enabled: true, Path: ledgerPath, KeyPath: filepath.Join(root, "identity.json"),
+		MaxBytes: 512 * 1024, MaxEntries: 64, MaxItemBytes: 128 * 1024,
+	}); err != nil {
+		t.Fatalf("migrated passport ledger did not restart: %v", err)
+	}
+}
+
+func TestContextPassportCompactionRechainsAndRestarts(t *testing.T) {
+	root := t.TempDir()
+	store := newTestPassportStore(t, root)
+	first := signedTestPassport(t, store, "contextlattice", "lineage_compaction", 1, nil, "first")
+	if _, err := store.record(first); err != nil {
+		t.Fatal(err)
+	}
+	second := signedTestPassport(t, store, "contextlattice", first.LineageID, 2, &first, "second")
+	if _, err := store.record(second); err != nil {
+		t.Fatal(err)
+	}
+	store.maxBytes = 1
+	if err := store.compactIfNeeded(); err != nil {
+		t.Fatal(err)
+	}
+	restarted := newTestPassportStore(t, root)
+	if len(restarted.passports) != 1 {
+		t.Fatalf("compacted ledger retained %d passports, want one bounded row", len(restarted.passports))
+	}
+}
+
 func TestPortableValueRedactsSecretsTokensAndMachineRoots(t *testing.T) {
 	stats := &portableRedactionStats{}
 	githubToken := "ghp" + "_abcdefghijklmnopqrstuvwxyz123456"
@@ -220,6 +354,44 @@ func TestPortableValueRedactsSecretsTokensAndMachineRoots(t *testing.T) {
 	}
 	if anyToInt(value["token_budget"], 0) != 4096 || stats.SecretKeys == 0 || stats.Tokens == 0 || stats.Paths == 0 {
 		t.Fatalf("redaction stats/value unexpected: value=%v stats=%+v", value, stats)
+	}
+}
+
+func TestPortableSecretKeyCanonicalizesAliasesAndPreservesTokenBudgets(t *testing.T) {
+	for _, key := range []string{
+		"accessToken", "access-token", "ACCESS.TOKEN", "refreshToken", "refresh-token",
+		"privateKey", "private/key", "apiKey", "API-Key", "clientSecret", "credentialID",
+	} {
+		if !portableSecretKey(key) {
+			t.Fatalf("portable secret key %q was accepted", key)
+		}
+	}
+	for _, key := range []string{"token_budget", "tokenBudget", "maxPromptTokens", "prompt-tokens", "provider.tokens", "estimatedTokens"} {
+		if portableSecretKey(key) {
+			t.Fatalf("legitimate token budget key %q was rejected", key)
+		}
+	}
+}
+
+func TestPortableValueRecursivelyDropsCanonicalSecretAliases(t *testing.T) {
+	stats := &portableRedactionStats{}
+	value := portableMap(map[string]any{
+		"safe": map[string]any{
+			"accessToken":     "nested-access-token",
+			"mixed-separator": map[string]any{"private.Key": "nested-private-key"},
+			"tokenBudget":     2048,
+		},
+		"items": []any{map[string]any{"apiKey": "nested-api-key", "refresh-token": "nested-refresh-token"}},
+	}, stats)
+	encoded, _ := json.Marshal(value)
+	text := string(encoded)
+	for _, forbidden := range []string{"nested-access-token", "nested-private-key", "nested-api-key", "nested-refresh-token", "accessToken", "private.Key", "apiKey", "refresh-token"} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("portable output retained %q: %s", forbidden, text)
+		}
+	}
+	if anyToInt(anyMap(value["safe"])["tokenBudget"], 0) != 2048 || stats.SecretKeys != 4 {
+		t.Fatalf("recursive redaction stats/value unexpected: value=%v stats=%+v", value, stats)
 	}
 }
 

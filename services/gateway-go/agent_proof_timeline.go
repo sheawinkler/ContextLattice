@@ -130,6 +130,39 @@ type agentProofTimelineSnapshot struct {
 	SourceAnchorsAfter  map[string]any
 }
 
+func nextProofTimelineRevision(revision uint64) uint64 {
+	if revision == ^uint64(0) {
+		return revision
+	}
+	return revision + 1
+}
+
+func proofTimelineAnchorAtRevision(anchor map[string]any, revision uint64) map[string]any {
+	if anchor == nil {
+		return map[string]any{"available": false}
+	}
+	if _, revisioned := anchor["revision"]; !revisioned {
+		return cloneAnyMap(anchor)
+	}
+	updated := cloneAnyMap(anchor)
+	delete(updated, "digest")
+	updated["revision"] = revision
+	if revision == ^uint64(0) {
+		updated["available"] = false
+		updated["revision_saturated"] = true
+	}
+	updated["digest"] = proofTimelineDigest(updated)
+	return updated
+}
+
+func proofTimelineScopedAnchor(anchor map[string]any) map[string]any {
+	updated := cloneAnyMap(anchor)
+	delete(updated, "digest")
+	delete(updated, "revision")
+	updated["digest"] = proofTimelineDigest(updated)
+	return updated
+}
+
 type proofTimelineCandidate struct {
 	Source     string
 	SourceID   string
@@ -1081,7 +1114,7 @@ func (s *continuityStore) proofTimelineEntryIndexesLocked(scope proofTimelineSco
 }
 
 func (s *continuityStore) proofTimelineAnchorForIndexesLocked(indexes []int, omitted int) map[string]any {
-	available := s.enabled && strings.TrimSpace(s.lastError) == ""
+	available := s.enabled && strings.TrimSpace(s.lastError) == "" && s.proofRevision != ^uint64(0)
 	refs := make([]any, 0, len(indexes))
 	for _, index := range indexes {
 		if index < 0 || index >= len(s.entries) {
@@ -1094,7 +1127,10 @@ func (s *continuityStore) proofTimelineAnchorForIndexesLocked(indexes []int, omi
 	}
 	anchor := map[string]any{
 		"available": available, "selected_count": len(refs), "omitted_count": omitted,
-		"rows_digest": proofTimelineDigest(refs),
+		"rows_digest": proofTimelineDigest(refs), "revision": s.proofRevision,
+	}
+	if s.proofRevision == ^uint64(0) {
+		anchor["revision_saturated"] = true
 	}
 	anchor["digest"] = proofTimelineDigest(anchor)
 	return anchor
@@ -1102,7 +1138,7 @@ func (s *continuityStore) proofTimelineAnchorForIndexesLocked(indexes []int, omi
 
 func (s *continuityStore) proofTimelineAnchorLocked(scope proofTimelineScope) map[string]any {
 	indexes, omitted, _ := s.proofTimelineEntryIndexesLocked(scope)
-	return s.proofTimelineAnchorForIndexesLocked(indexes, omitted)
+	return proofTimelineScopedAnchor(s.proofTimelineAnchorForIndexesLocked(indexes, omitted))
 }
 
 func (s *continuityStore) proofTimelineAnchor(scope proofTimelineScope) map[string]any {
@@ -1114,13 +1150,22 @@ func (s *continuityStore) proofTimelineAnchor(scope proofTimelineScope) map[stri
 	return s.proofTimelineAnchorLocked(scope)
 }
 
-func (s *continuityStore) proofTimelineRows(scope proofTimelineScope) ([]continuityLedgerEntry, map[string]any, bool, bool, int) {
+func (s *continuityStore) proofTimelineCurrentRevision() uint64 {
+	if s == nil {
+		return 0
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.proofRevision
+}
+
+func (s *continuityStore) proofTimelineRowsWithRevision(scope proofTimelineScope) ([]continuityLedgerEntry, map[string]any, bool, bool, int) {
 	if s == nil {
 		return nil, map[string]any{"available": false}, false, false, 0
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	available := s.enabled && strings.TrimSpace(s.lastError) == ""
+	available := s.enabled && strings.TrimSpace(s.lastError) == "" && s.proofRevision != ^uint64(0)
 	valid := available
 	indexes, omitted, _ := s.proofTimelineEntryIndexesLocked(scope)
 	rows := []continuityLedgerEntry{}
@@ -1145,6 +1190,11 @@ func (s *continuityStore) proofTimelineRows(scope proofTimelineScope) ([]continu
 	}
 	anchor := s.proofTimelineAnchorForIndexesLocked(indexes, omitted)
 	return rows, anchor, valid, available, omitted
+}
+
+func (s *continuityStore) proofTimelineRows(scope proofTimelineScope) ([]continuityLedgerEntry, map[string]any, bool, bool, int) {
+	rows, anchor, valid, available, omitted := s.proofTimelineRowsWithRevision(scope)
+	return rows, proofTimelineScopedAnchor(anchor), valid, available, omitted
 }
 
 func (s *temporalClaimStore) proofTimelineClaimsLocked(scope proofTimelineScope) ([]temporalClaim, int, int) {
@@ -1188,8 +1238,11 @@ func (s *temporalClaimStore) proofTimelineAnchorForRowsLocked(rows []temporalCla
 		})
 	}
 	anchor := map[string]any{
-		"available": s.enabled && strings.TrimSpace(s.lastError) == "", "selected_count": len(rows),
-		"omitted_count": omitted, "rows_digest": proofTimelineDigest(refs),
+		"available": s.enabled && strings.TrimSpace(s.lastError) == "" && s.proofRevision != ^uint64(0), "selected_count": len(rows),
+		"omitted_count": omitted, "rows_digest": proofTimelineDigest(refs), "revision": s.proofRevision,
+	}
+	if s.proofRevision == ^uint64(0) {
+		anchor["revision_saturated"] = true
 	}
 	anchor["digest"] = proofTimelineDigest(anchor)
 	return anchor
@@ -1197,7 +1250,7 @@ func (s *temporalClaimStore) proofTimelineAnchorForRowsLocked(rows []temporalCla
 
 func (s *temporalClaimStore) proofTimelineAnchorLocked(scope proofTimelineScope) map[string]any {
 	rows, omitted, _ := s.proofTimelineClaimsLocked(scope)
-	return s.proofTimelineAnchorForRowsLocked(rows, omitted)
+	return proofTimelineScopedAnchor(s.proofTimelineAnchorForRowsLocked(rows, omitted))
 }
 
 func (s *temporalClaimStore) proofTimelineAnchor(scope proofTimelineScope) map[string]any {
@@ -1209,16 +1262,30 @@ func (s *temporalClaimStore) proofTimelineAnchor(scope proofTimelineScope) map[s
 	return s.proofTimelineAnchorLocked(scope)
 }
 
-func (s *temporalClaimStore) proofTimelineRows(scope proofTimelineScope) ([]temporalClaim, map[string]any, bool, int) {
+func (s *temporalClaimStore) proofTimelineCurrentRevision() uint64 {
+	if s == nil {
+		return 0
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.proofRevision
+}
+
+func (s *temporalClaimStore) proofTimelineRowsWithRevision(scope proofTimelineScope) ([]temporalClaim, map[string]any, bool, int) {
 	if s == nil {
 		return nil, map[string]any{"available": false}, false, 0
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	available := s.enabled && strings.TrimSpace(s.lastError) == ""
+	available := s.enabled && strings.TrimSpace(s.lastError) == "" && s.proofRevision != ^uint64(0)
 	rows, omitted, _ := s.proofTimelineClaimsLocked(scope)
 	anchor := s.proofTimelineAnchorForRowsLocked(rows, omitted)
 	return rows, anchor, available, omitted
+}
+
+func (s *temporalClaimStore) proofTimelineRows(scope proofTimelineScope) ([]temporalClaim, map[string]any, bool, int) {
+	rows, anchor, available, omitted := s.proofTimelineRowsWithRevision(scope)
+	return rows, proofTimelineScopedAnchor(anchor), available, omitted
 }
 
 func proofTimelineMapRowsLocked(source []map[string]any, scope proofTimelineScope) ([]map[string]any, int, int) {
@@ -1265,9 +1332,13 @@ func proofTimelineMapRowsAnchor(rows []map[string]any) string {
 
 func (t *contextPackQualityTelemetry) proofTimelineAnchorForRowsLocked(samples []map[string]any, outcomes []map[string]any, omitted int) map[string]any {
 	anchor := map[string]any{
-		"available": true, "sample_count": len(samples), "outcome_count": len(outcomes),
+		"available": t.proofRevision != ^uint64(0), "sample_count": len(samples), "outcome_count": len(outcomes),
 		"omitted_count":      omitted,
 		"sample_rows_digest": proofTimelineMapRowsAnchor(samples), "outcome_rows_digest": proofTimelineMapRowsAnchor(outcomes),
+		"revision": t.proofRevision,
+	}
+	if t.proofRevision == ^uint64(0) {
+		anchor["revision_saturated"] = true
 	}
 	anchor["digest"] = proofTimelineDigest(anchor)
 	return anchor
@@ -1279,7 +1350,7 @@ func (t *contextPackQualityTelemetry) proofTimelineAnchorLocked(scope proofTimel
 	samples, sampleOmitted, sampleScanned := proofTimelineMapRowsLocked(sampleSource, scope)
 	outcomes, outcomeOmitted, outcomeScanned := proofTimelineMapRowsLocked(outcomeSource, scope)
 	_, _ = sampleScanned, outcomeScanned
-	return t.proofTimelineAnchorForRowsLocked(samples, outcomes, sampleOmitted+outcomeOmitted+sampleRetentionOmitted+outcomeRetentionOmitted)
+	return proofTimelineScopedAnchor(t.proofTimelineAnchorForRowsLocked(samples, outcomes, sampleOmitted+outcomeOmitted+sampleRetentionOmitted+outcomeRetentionOmitted))
 }
 
 func (t *contextPackQualityTelemetry) proofTimelineAnchor(scope proofTimelineScope) map[string]any {
@@ -1291,7 +1362,16 @@ func (t *contextPackQualityTelemetry) proofTimelineAnchor(scope proofTimelineSco
 	return t.proofTimelineAnchorLocked(scope)
 }
 
-func (t *contextPackQualityTelemetry) proofTimelineRows(scope proofTimelineScope) ([]map[string]any, []map[string]any, map[string]any, bool, int) {
+func (t *contextPackQualityTelemetry) proofTimelineCurrentRevision() uint64 {
+	if t == nil {
+		return 0
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.proofRevision
+}
+
+func (t *contextPackQualityTelemetry) proofTimelineRowsWithRevision(scope proofTimelineScope) ([]map[string]any, []map[string]any, map[string]any, bool, int) {
 	if t == nil {
 		return nil, nil, map[string]any{"available": false}, false, 0
 	}
@@ -1306,13 +1386,21 @@ func (t *contextPackQualityTelemetry) proofTimelineRows(scope proofTimelineScope
 	anchor := t.proofTimelineAnchorForRowsLocked(sampleRefs, outcomeRefs, omitted)
 	samples := cloneMapSlice(sampleRefs)
 	outcomes := cloneMapSlice(outcomeRefs)
-	return samples, outcomes, anchor, true, omitted
+	return samples, outcomes, anchor, t.proofRevision != ^uint64(0), omitted
+}
+
+func (t *contextPackQualityTelemetry) proofTimelineRows(scope proofTimelineScope) ([]map[string]any, []map[string]any, map[string]any, bool, int) {
+	samples, outcomes, anchor, available, omitted := t.proofTimelineRowsWithRevision(scope)
+	return samples, outcomes, proofTimelineScopedAnchor(anchor), available, omitted
 }
 
 func (t *tokenImpactTelemetry) proofTimelineAnchorForRowsLocked(rows []map[string]any, omitted int) map[string]any {
 	anchor := map[string]any{
-		"available": true, "sample_count": len(rows), "omitted_count": omitted,
-		"rows_digest": proofTimelineMapRowsAnchor(rows),
+		"available": t.proofRevision != ^uint64(0), "sample_count": len(rows), "omitted_count": omitted,
+		"rows_digest": proofTimelineMapRowsAnchor(rows), "revision": t.proofRevision,
+	}
+	if t.proofRevision == ^uint64(0) {
+		anchor["revision_saturated"] = true
 	}
 	anchor["digest"] = proofTimelineDigest(anchor)
 	return anchor
@@ -1322,7 +1410,7 @@ func (t *tokenImpactTelemetry) proofTimelineAnchorLocked(scope proofTimelineScop
 	source, retentionOmitted := proofTimelineRingSource(&t.proofSamples, t.samples, t.sampleCount, scope)
 	rows, omitted, scanned := proofTimelineMapRowsLocked(source, scope)
 	_ = scanned
-	return t.proofTimelineAnchorForRowsLocked(rows, omitted+retentionOmitted)
+	return proofTimelineScopedAnchor(t.proofTimelineAnchorForRowsLocked(rows, omitted+retentionOmitted))
 }
 
 func (t *tokenImpactTelemetry) proofTimelineAnchor(scope proofTimelineScope) map[string]any {
@@ -1334,7 +1422,16 @@ func (t *tokenImpactTelemetry) proofTimelineAnchor(scope proofTimelineScope) map
 	return t.proofTimelineAnchorLocked(scope)
 }
 
-func (t *tokenImpactTelemetry) proofTimelineRows(scope proofTimelineScope) ([]map[string]any, map[string]any, bool, int) {
+func (t *tokenImpactTelemetry) proofTimelineCurrentRevision() uint64 {
+	if t == nil {
+		return 0
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.proofRevision
+}
+
+func (t *tokenImpactTelemetry) proofTimelineRowsWithRevision(scope proofTimelineScope) ([]map[string]any, map[string]any, bool, int) {
 	if t == nil {
 		return nil, map[string]any{"available": false}, false, 0
 	}
@@ -1345,38 +1442,33 @@ func (t *tokenImpactTelemetry) proofTimelineRows(scope proofTimelineScope) ([]ma
 	_ = scanned
 	omitted += retentionOmitted
 	anchor := t.proofTimelineAnchorForRowsLocked(refs, omitted)
-	return cloneMapSlice(refs), anchor, true, omitted
+	return cloneMapSlice(refs), anchor, t.proofRevision != ^uint64(0), omitted
 }
 
-func (s *server) proofTimelineAnchors(scope proofTimelineScope) map[string]any {
-	anchors := map[string]any{}
-	if s == nil {
-		return anchors
-	}
-	if session, events, ok := s.agentSessions.get(scope.SessionID); ok {
-		anchors["agent_session"] = proofTimelineSessionAnchor(session, events)
-	} else {
-		anchors["agent_session"] = map[string]any{"available": false}
-	}
-	anchors["continuity"] = s.continuity.proofTimelineAnchor(scope)
-	anchors["temporal_claim"] = s.temporalClaims.proofTimelineAnchor(scope)
-	anchors["context_pack_quality"] = s.contextPackQuality.proofTimelineAnchor(scope)
-	anchors["token_impact"] = s.tokenImpact.proofTimelineAnchor(scope)
-	return anchors
+func (t *tokenImpactTelemetry) proofTimelineRows(scope proofTimelineScope) ([]map[string]any, map[string]any, bool, int) {
+	rows, anchor, available, omitted := t.proofTimelineRowsWithRevision(scope)
+	return rows, proofTimelineScopedAnchor(anchor), available, omitted
 }
 
 func (s *server) captureAgentProofTimelineSnapshot(session map[string]any, events []map[string]any) agentProofTimelineSnapshot {
 	scope := proofTimelineScopeFromSession(session, events)
-	continuityRows, continuityAnchor, continuityIntegrity, continuityAvailable, continuityOmitted := s.continuity.proofTimelineRows(scope)
-	claims, claimAnchor, claimsAvailable, claimOmitted := s.temporalClaims.proofTimelineRows(scope)
-	qualitySamples, qualityOutcomes, qualityAnchor, qualityAvailable, qualityOmitted := s.contextPackQuality.proofTimelineRows(scope)
-	tokenRows, tokenAnchor, tokenAvailable, tokenOmitted := s.tokenImpact.proofTimelineRows(scope)
+	continuityRows, continuityAnchor, continuityIntegrity, continuityAvailable, continuityOmitted := s.continuity.proofTimelineRowsWithRevision(scope)
+	claims, claimAnchor, claimsAvailable, claimOmitted := s.temporalClaims.proofTimelineRowsWithRevision(scope)
+	qualitySamples, qualityOutcomes, qualityAnchor, qualityAvailable, qualityOmitted := s.contextPackQuality.proofTimelineRowsWithRevision(scope)
+	tokenRows, tokenAnchor, tokenAvailable, tokenOmitted := s.tokenImpact.proofTimelineRowsWithRevision(scope)
 	before := map[string]any{
 		"agent_session":        proofTimelineSessionAnchor(session, events),
 		"continuity":           continuityAnchor,
 		"temporal_claim":       claimAnchor,
 		"context_pack_quality": qualityAnchor,
 		"token_impact":         tokenAnchor,
+	}
+	after := map[string]any{
+		"agent_session":        proofTimelineSessionAnchor(session, events),
+		"continuity":           proofTimelineAnchorAtRevision(continuityAnchor, s.continuity.proofTimelineCurrentRevision()),
+		"temporal_claim":       proofTimelineAnchorAtRevision(claimAnchor, s.temporalClaims.proofTimelineCurrentRevision()),
+		"context_pack_quality": proofTimelineAnchorAtRevision(qualityAnchor, s.contextPackQuality.proofTimelineCurrentRevision()),
+		"token_impact":         proofTimelineAnchorAtRevision(tokenAnchor, s.tokenImpact.proofTimelineCurrentRevision()),
 	}
 	return agentProofTimelineSnapshot{
 		Session: cloneAnyMap(session), Events: cloneMapSlice(events), ContinuityEntries: continuityRows,
@@ -1391,7 +1483,7 @@ func (s *server) captureAgentProofTimelineSnapshot(session map[string]any, event
 			"context_pack_quality": qualityOmitted, "token_impact": tokenOmitted,
 		},
 		SourceAnchorsBefore: before,
-		SourceAnchorsAfter:  s.proofTimelineAnchors(scope),
+		SourceAnchorsAfter:  after,
 	}
 }
 

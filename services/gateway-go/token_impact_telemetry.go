@@ -18,6 +18,7 @@ type tokenImpactTelemetry struct {
 	ledger                     *tokenImpactLedger
 	samples                    []map[string]any
 	proofSamples               proofTimelineMapRing
+	proofRevision              uint64
 	exactArtifactKeys          map[string]string
 	exactArtifactOrder         []string
 	exactArtifactLimit         int
@@ -319,6 +320,7 @@ func (t *tokenImpactTelemetry) applyEntryLocked(entry map[string]any) bool {
 	stored := cloneMap(entry)
 	t.samples = append(t.samples, stored)
 	t.proofSamples.add(stored)
+	t.proofRevision = nextProofTimelineRevision(t.proofRevision)
 	if len(t.samples) > t.limit {
 		t.samples = append([]map[string]any{}, t.samples[len(t.samples)-t.limit:]...)
 	}

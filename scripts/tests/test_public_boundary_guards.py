@@ -440,6 +440,8 @@ class PublicBoundaryGuardTests(unittest.TestCase):
             "services/gateway-go/frontier_t2_proof_timeline_entitled_test.go",
             "services/gateway-go/frontier_t3_utility_entitled.go",
             "services/gateway-go/frontier_t3_utility_entitled_test.go",
+            "services/gateway-go/memory_recall_response_canary_entitled.go",
+            "services/gateway-go/memory_recall_response_canary_entitled_test.go",
             "services/gateway-go/cmd/contextlattice-agent-tools/packet_sync.go",
             "services/gateway-go/cmd/contextlattice-agent-tools/packet_sync_test.go",
             "services/gateway-go/cmd/contextlattice-agent-tools/packet_sync_lock_unix.go",

@@ -23,6 +23,9 @@ var recallResponseRequestFields = []string{
 	"retrieval_mode",
 	"retrieval_intent",
 	"task_class",
+	"as_of",
+	"asOf",
+	"consequence_hint",
 	"agent_id",
 	"agentId",
 	"session_id",
@@ -89,20 +92,21 @@ func recallResponseCompositionInput(request, contextResponse map[string]any) map
 		"task_id":                  firstNonEmptyStrings(anyToString(request["task_id"]), anyToString(request["taskId"])),
 		"task_identity_id":         firstNonEmptyStrings(anyToString(request["task_identity_id"]), anyToString(request["taskIdentityId"])),
 		"execution_lane_id":        firstNonEmptyStrings(anyToString(request["execution_lane_id"]), anyToString(request["executionLaneId"])),
-		"workspace_ref":            request["workspace_ref"],
-		"workspace_id":             request["workspace_id"],
-		"workspaceId":              request["workspaceId"],
 		"retrieval_intent":         request["retrieval_intent"],
 		"retrieval_mode":           request["retrieval_mode"],
+		"task_class":               request["task_class"],
+		"as_of":                    firstNonEmptyStrings(anyToString(request["as_of"]), anyToString(request["asOf"])),
+		"consequence_hint":         request["consequence_hint"],
 		"context_pack":             contextResponse["context_pack"],
 		"source_coverage":          contextResponse["source_coverage"],
 		"memory_trust_assessment":  contextResponse["memory_trust_assessment"],
 		"retrieval_decision_trace": contextResponse["retrieval_decision_trace"],
 		"context_pack_quality":     contextResponse["context_pack_quality"],
 	}
-	// No caller-controlled classification, evidence, conflicts, or durable
-	// quality envelope crosses this boundary. The composer derives those values
-	// only from the server-produced context-pack projection.
+	// No caller-controlled ownership, classification, evidence, conflicts, or
+	// durable quality envelope crosses this boundary. Successful compilation
+	// installs its authoritative workspace below; pre-compilation failure stays
+	// explicitly unowned instead of stamping a caller-provided workspace.
 	return input
 }
 
@@ -146,6 +150,7 @@ func recallResponseCompositionInputFromCompilation(
 	composition["session_id"] = input.SessionID
 	composition["retrieval_mode"] = input.RetrievalMode
 	composition["retrieval_intent"] = input.RetrievalIntent
+	composition["task_class"] = input.TaskClass
 	// Compilation owns the canonical workspace. Caller aliases may select no
 	// ownership scope and must never relabel server-produced evidence.
 	composition["workspace_ref"] = input.WorkspaceRef
@@ -175,6 +180,11 @@ func finalizeRecallResponseTransport(payload map[string]any, agentID, lane, endp
 	// future clipping pass may change component or evidence material. Their
 	// fixed-width replacements cannot change the stamped byte count.
 	payload = attachPayloadFormatContract(recallResponseContractID, payload, agentID, lane, endpoint)
+	if recallResponseRecomputeClippedIdentity(payload) {
+		delete(payload, "format_contract")
+		payload = attachPayloadFormatContract(recallResponseContractID, payload, agentID, lane, endpoint)
+		recallResponseRecomputeClippedIdentity(payload)
+	}
 	payload["response_id"] = recallResponseIDForResponse(payload)
 	payload["response_digest"] = recallResponseSemanticDigest(payload)
 	return payload
@@ -222,6 +232,7 @@ func (s *server) recallResponseRoute(w http.ResponseWriter, r *http.Request, too
 	requestCtx = s.contextWithContextPackLearnedRequestAuthority(requestCtx, r, request, bodyBytes)
 	agentID := strings.TrimSpace(firstNonEmptyStrings(anyToString(request["agent_id"]), anyToString(request["agentId"])))
 	var hookedResponse map[string]any
+	var hookedFallbackResponse func() map[string]any
 	var hookedBinding map[string]any
 	var hookedDurable bool
 	var hookedSampleID string
@@ -237,12 +248,25 @@ func (s *server) recallResponseRoute(w http.ResponseWriter, r *http.Request, too
 		}
 		composition := recallResponseCompositionInputFromCompilation(request, input, artifacts, durable)
 		response := composeRecallResponse(composition)
+		fallbackComposition := cloneJSONMap(composition)
+		delete(fallbackComposition, "_durable_context_pack_quality")
+		var fallbackResponse map[string]any
+		fallback := func() map[string]any {
+			if fallbackResponse == nil {
+				fallbackResponse = projectRecallResponseV1ControlFromArtifacts(fallbackComposition, recallResponseProductionPolicyInput())
+				fallbackResponse = finalizeRecallResponseTransport(fallbackResponse, agentID, "recall_response", endpoint)
+			}
+			return cloneJSONMap(fallbackResponse)
+		}
 		// Apply the recall boundary before deriving identity. The captured
 		// response is the exact public projection if this persistence attempt and
 		// its retained proof both succeed.
 		response = finalizeRecallResponseTransport(response, agentID, "recall_response", endpoint)
+		if !durable || !recallResponseTransportCandidateValid(response) {
+			response = fallback()
+		}
 		var binding map[string]any
-		if durable {
+		if durable && !recallResponseIsV1Control(response) {
 			if canonical, ok := recallResponseBindingFromResponse(response); ok && recallResponseCopyBinding(artifacts.Quality, canonical) {
 				binding = canonical
 			} else {
@@ -254,11 +278,11 @@ func (s *server) recallResponseRoute(w http.ResponseWriter, r *http.Request, too
 				}
 				delete(artifacts.Quality, "selection_receipt")
 				delete(composition, "_durable_context_pack_quality")
-				response = composeRecallResponse(composition)
-				response = finalizeRecallResponseTransport(response, agentID, "recall_response", endpoint)
+				response = fallback()
 			}
 		}
 		hookedResponse = response
+		hookedFallbackResponse = fallback
 		hookedBinding = binding
 		hookedDurable = durable && binding != nil
 		hookedSampleID = anyToString(artifacts.Quality["sample_id"])
@@ -305,12 +329,23 @@ func (s *server) recallResponseRoute(w http.ResponseWriter, r *http.Request, too
 
 	response := hookedResponse
 	if response == nil || status >= http.StatusBadRequest || !anyToBool(contextResponse["ok"]) {
-		response = composeRecallResponse(recallResponseCompositionInput(request, contextResponse))
-		response = finalizeRecallResponseTransport(response, agentID, "recall_response", endpoint)
+		if hookedFallbackResponse != nil {
+			// Compilation succeeded and the hook already projected the exact
+			// artifact set. A later status/error envelope may change the HTTP
+			// status, but it must not replace that snapshot or trigger a second
+			// projection from sanitized error data.
+			response = hookedFallbackResponse()
+		} else {
+			response = projectRecallResponseV1ControlFromArtifacts(recallResponseCompositionInput(request, contextResponse), recallResponseProductionPolicyInput())
+			response = finalizeRecallResponseTransport(response, agentID, "recall_response", endpoint)
+		}
 		hookedDurable = false
 		hookedBinding = nil
 	}
 	if hookedDurable && hookedBinding != nil && s != nil && s.contextPackQuality != nil {
+		if s.recallResponseRetainedProofHook != nil {
+			s.recallResponseRetainedProofHook(hookedSampleID)
+		}
 		// Durable attribution is admitted only from the exact retained quality
 		// row and receipt, never from the hook's in-memory candidate alone.
 		sample, found, sampleErr := s.contextPackQuality.durableQualitySampleForOutcome(hookedSampleID)
@@ -327,8 +362,12 @@ func (s *server) recallResponseRoute(w http.ResponseWriter, r *http.Request, too
 			for _, key := range []string{"recall_response_id", "recall_response_digest", "response_component_refs"} {
 				delete(anyMap(contextResponse["context_pack_quality"]), key)
 			}
-			response = composeRecallResponse(recallResponseCompositionInput(request, contextResponse))
-			response = finalizeRecallResponseTransport(response, agentID, "recall_response", endpoint)
+			if hookedFallbackResponse != nil {
+				response = hookedFallbackResponse()
+			} else {
+				response = projectRecallResponseV1ControlFromArtifacts(recallResponseCompositionInput(request, contextResponse), recallResponseProductionPolicyInput())
+				response = finalizeRecallResponseTransport(response, agentID, "recall_response", endpoint)
+			}
 		}
 	}
 	w.Header().Set("X-ContextLattice-Native-Route", "recall_response")
@@ -336,4 +375,21 @@ func (s *server) recallResponseRoute(w http.ResponseWriter, r *http.Request, too
 		w.Header().Set("X-ContextLattice-Tool", "recall_response")
 	}
 	writeJSON(w, status, response)
+}
+
+func recallResponseIsV1Control(response map[string]any) bool {
+	return anyToString(anyMap(anyMap(response["answer"])["composition"])["primary_module"]) == "v1_control" &&
+		len(contextPackAnyList(anyMap(response["answer"])["components"])) == 0
+}
+
+func recallResponseTransportCandidateValid(response map[string]any) bool {
+	if recallResponseIsV1Control(response) {
+		return true
+	}
+	contract := anyMap(response["format_contract"])
+	if !anyToBool(contract["contract_valid"]) || anyToBool(contract["truncated"]) || !validateRecallResponseU2(response) {
+		return false
+	}
+	_, ok := recallResponseBindingFromResponse(response)
+	return ok
 }

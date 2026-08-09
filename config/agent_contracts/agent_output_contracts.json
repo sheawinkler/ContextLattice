@@ -1,7 +1,7 @@
 {
   "registry_id": "contextlattice_agent_output_contracts",
-  "registry_version": 58,
-  "updated_at": "2026-08-08T00:00:00Z",
+  "registry_version": 61,
+  "updated_at": "2026-08-09T00:00:00Z",
   "default_validator": "contextlattice.boundary.v1",
   "purpose": "Agent-facing ContextLattice payloads must carry explicit contract identifiers and pass boundary validation before being returned or handed to another agent.",
   "shared_fragments": {
@@ -894,7 +894,29 @@
         "receipt_refs": "list",
         "outcome": "object",
         "writeback_required": "bool",
-        "format_contract": "object"
+        "format_contract": "object",
+        "classification.facets": "object",
+        "classification.facets.jobs": "list",
+        "classification.facets.memory_objects": "list",
+        "classification.facets.temporal_state": "string",
+        "classification.facets.evidence_state": "string",
+        "classification.facets.consequence": "string",
+        "answer.proof_spine": "object",
+        "answer.proof_spine.proof_refs": "list",
+        "answer.proof_spine.conflict_refs": "list",
+        "answer.proof_spine.gap_refs": "list",
+        "answer.proof_spine.receipt_refs": "list",
+        "answer.proof_spine.coverage": "list",
+        "answer.composition": "object",
+        "answer.composition.ordered_modules": "list",
+        "answer.components": "list",
+        "request_scope.as_of": "string",
+        "request_scope.task_class": "string",
+        "request_scope.temporal_premise_digest": "string",
+        "request_scope.snapshot_digest": "string",
+        "request_scope.receipt_digest": "string",
+        "request_scope.condition": "string",
+        "request_scope.ablation": "string"
       },
       "required_fields_by_path": {
         "classification": [
@@ -903,11 +925,20 @@
           "temporal_mode",
           "evidence_state",
           "consequence",
-          "posture"
+          "posture",
+          "facets"
+        ],
+        "classification.facets": [
+          "jobs",
+          "memory_objects",
+          "temporal_state",
+          "evidence_state",
+          "consequence"
         ],
         "request_scope": [
           "scope_digest",
           "query_digest",
+          "owner_ref",
           "workspace_ref",
           "project_ref",
           "topic_ref",
@@ -916,7 +947,14 @@
           "task_ref",
           "task_identity_ref",
           "execution_lane_ref",
-          "retrieval_intent"
+          "retrieval_intent",
+          "as_of",
+          "task_class",
+          "temporal_premise_digest",
+          "snapshot_digest",
+          "receipt_digest",
+          "condition",
+          "ablation"
         ],
         "answer": [
           "summary",
@@ -924,7 +962,32 @@
           "basis",
           "claim_refs",
           "components",
-          "progressive_disclosure"
+          "progressive_disclosure",
+          "proof_spine",
+          "composition"
+        ],
+        "answer.proof_spine": [
+          "primary_result",
+          "as_of",
+          "temporal_premise_digest",
+          "proof_refs",
+          "confidence_basis",
+          "conflict_refs",
+          "gap_refs",
+          "memory_boundary",
+          "next_move",
+          "receipt_refs",
+          "disclosure",
+          "coverage"
+        ],
+        "answer.composition": [
+          "condition",
+          "ablation",
+          "primary_module",
+          "ordered_modules",
+          "proof_strategy",
+          "coverage_status",
+          "fallback_reason"
         ],
         "answer.progressive_disclosure": [
           "level",
@@ -991,6 +1054,95 @@
           "max_string_bytes",
           "max_list_items",
           "validation"
+        ]
+      },
+      "closed_fields_by_path": {
+        "classification.facets": [
+          "jobs",
+          "memory_objects",
+          "temporal_state",
+          "evidence_state",
+          "consequence"
+        ],
+        "answer.proof_spine": [
+          "primary_result",
+          "as_of",
+          "temporal_premise_digest",
+          "proof_refs",
+          "confidence_basis",
+          "conflict_refs",
+          "gap_refs",
+          "memory_boundary",
+          "next_move",
+          "receipt_refs",
+          "disclosure",
+          "coverage"
+        ],
+        "answer.proof_spine.coverage[]": [
+          "obligation",
+          "status",
+          "proof_refs"
+        ],
+        "answer.composition": [
+          "condition",
+          "ablation",
+          "primary_module",
+          "ordered_modules",
+          "proof_strategy",
+          "coverage_status",
+          "fallback_reason"
+        ],
+        "answer.components[]": [
+          "component_ref",
+          "kind",
+          "module_type",
+          "status",
+          "basis",
+          "ordinal",
+          "primary",
+          "proof_refs",
+          "temporal_premise_digest",
+          "payload",
+          "binding",
+          "component_digest"
+        ],
+        "answer.components[].binding": [
+          "condition",
+          "ablation",
+          "arm",
+          "exposure_bucket",
+          "policy_version",
+          "proof_digest",
+          "snapshot_digest",
+          "receipt_digest",
+          "owner_ref",
+          "task_ref",
+          "lane_ref",
+          "intent",
+          "temporal_premise_digest",
+          "verifier_digest",
+          "component_digest"
+        ]
+      },
+      "max_items_by_path": {
+        "classification.facets.jobs": 4,
+        "classification.facets.memory_objects": 4,
+        "answer.proof_spine.proof_refs": 8,
+        "answer.proof_spine.conflict_refs": 8,
+        "answer.proof_spine.gap_refs": 8,
+        "answer.proof_spine.receipt_refs": 8,
+        "answer.components": 6
+      },
+      "enum_values_by_path": {
+        "answer.composition.condition": [
+          "raw_retrieval",
+          "universal_template",
+          "flat_category_router",
+          "compositional_router"
+        ],
+        "answer.composition.coverage_status": [
+          "satisfied",
+          "unsatisfied"
         ]
       },
       "required_true_paths": [
@@ -1989,7 +2141,20 @@
         "recorded": "bool",
         "reconciliation": "object",
         "private_key_exported": "bool",
-        "format_contract": "object"
+        "format_contract": "object",
+        "passport.portable_evidence_identity": "object",
+        "passport.portable_evidence_identity.schema_id": "string",
+        "passport.portable_evidence_identity.version": "int",
+        "passport.portable_evidence_identity.response_digest": "string",
+        "passport.portable_evidence_identity.cognition_digest": "string",
+        "passport.portable_evidence_identity.temporal_premise_digest": "string",
+        "passport.portable_evidence_identity.ordered_component_set_digest": "string",
+        "passport.portable_evidence_identity.scope_digest": "string",
+        "passport.portable_evidence_identity.gap_digest": "string",
+        "passport.portable_evidence_identity.action_boundary_digest": "string",
+        "passport.portable_evidence_identity.basis": "string",
+        "passport.portable_evidence_identity.can_authorize": "bool",
+        "passport.portable_evidence_identity.identity_digest": "string"
       },
       "required_fields_by_path": {
         "format_contract": [
@@ -7967,6 +8132,7 @@
         "project": "string",
         "passport_id": "string",
         "passport_digest": "string",
+        "evidence_identity_digest": "string",
         "lineage_digest": "string",
         "checkpoint_digest": "string",
         "lifecycle_receipt_digest": "string",
@@ -8456,6 +8622,8 @@
         "import_receipts",
         "manifests",
         "reconciliations",
+        "evidence_identity_bound_manifests",
+        "evidence_identity_legacy_manifests",
         "updated_at",
         "state_hash",
         "limits",
@@ -8476,6 +8644,8 @@
         "import_receipts": "int",
         "manifests": "int",
         "reconciliations": "int",
+        "evidence_identity_bound_manifests": "int",
+        "evidence_identity_legacy_manifests": "int",
         "updated_at": "string",
         "state_hash": "string",
         "limits": "object",
@@ -9936,6 +10106,7 @@
         "operation",
         "phase",
         "decision",
+        "next_action",
         "request_scope",
         "observation",
         "frontier",
@@ -9948,6 +10119,7 @@
         "progress",
         "safety",
         "gaps",
+        "silence",
         "writeback_required",
         "format_contract"
       ],
@@ -9960,6 +10132,7 @@
         "operation",
         "phase",
         "decision",
+        "next_action",
         "request_scope",
         "observation",
         "frontier",
@@ -9972,6 +10145,7 @@
         "progress",
         "safety",
         "gaps",
+        "silence",
         "writeback_required",
         "format_contract"
       ],
@@ -9984,6 +10158,7 @@
         "operation": "string",
         "phase": "string",
         "decision": "string",
+        "next_action": "string",
         "request_scope": "object",
         "observation": "object",
         "frontier": "object",
@@ -9996,6 +10171,7 @@
         "progress": "object",
         "safety": "object",
         "gaps": "list",
+        "silence": "object",
         "writeback_required": "bool",
         "format_contract": "object",
         "request_scope.scope_digest": "string",
@@ -10027,6 +10203,12 @@
         "frontier.utility_score": "number",
         "frontier.expected_utility": "object",
         "frontier.stop_reason": "string",
+        "silence.reason": "string",
+        "silence.value_inputs": "object",
+        "silence.value_score": "int",
+        "silence.threshold": "int",
+        "silence.policy_version": "string",
+        "silence.loop_guard_digest": "string",
         "investigation.state": "string",
         "investigation.mode": "string",
         "investigation.context_pack_ref": "string",
@@ -10124,6 +10306,14 @@
           "acquisition_cost",
           "score"
         ],
+        "silence": [
+          "reason",
+          "value_inputs",
+          "value_score",
+          "threshold",
+          "policy_version",
+          "loop_guard_digest"
+        ],
         "investigation": [
           "state",
           "mode",
@@ -10210,8 +10400,7 @@
         "safety.requires_explicit_authorization",
         "safety.requires_external_worker",
         "investigation.mutations_suppressed",
-        "activation.one_shot",
-        "writeback_required"
+        "activation.one_shot"
       ],
       "required_false_paths": [
         "safety.automatic_model_execution",
@@ -10361,6 +10550,64 @@
         "timestamp",
         "installation_id",
         "stable_installation_id"
+      ],
+      "forbidden_scope": "recursive"
+    },
+    "portable_evidence_identity.v1": {
+      "contract_version": 1,
+      "payload_kind": "closed_digest_bound_evidence_only_portable_identity",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "reject_partial_malformed_mismatched_or_authority_bearing_evidence_identity_without_persistence_or_credit",
+      "max_total_json_bytes": 8192,
+      "max_string_bytes": 512,
+      "max_list_items": 16,
+      "required_fields": [
+        "schema_id",
+        "version",
+        "response_digest",
+        "cognition_digest",
+        "temporal_premise_digest",
+        "ordered_component_set_digest",
+        "scope_digest",
+        "gap_digest",
+        "action_boundary_digest",
+        "basis",
+        "can_authorize",
+        "identity_digest"
+      ],
+      "field_types": {
+        "schema_id": "string",
+        "version": "int",
+        "response_digest": "string",
+        "cognition_digest": "string",
+        "temporal_premise_digest": "string",
+        "ordered_component_set_digest": "string",
+        "scope_digest": "string",
+        "gap_digest": "string",
+        "action_boundary_digest": "string",
+        "basis": "string",
+        "can_authorize": "bool",
+        "identity_digest": "string"
+      },
+      "required_false_paths": [
+        "can_authorize"
+      ],
+      "required_string_contains": {
+        "schema_id": "portable_evidence_identity.v1",
+        "basis": "evidence_only",
+        "identity_digest": "sha256:"
+      },
+      "forbidden_fields": [
+        "authorization",
+        "credential",
+        "private_key",
+        "secret",
+        "secrets",
+        "password",
+        "token",
+        "raw_prompt",
+        "messages",
+        "tool_calls"
       ],
       "forbidden_scope": "recursive"
     }
