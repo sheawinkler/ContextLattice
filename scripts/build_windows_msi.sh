@@ -14,7 +14,7 @@ MSI_NAME="${MSI_NAME:-ContextLattice-windows-${MSI_ARCH}.msi}"
 MSI_PATH="${DIST_DIR}/${MSI_NAME}"
 VERSION_RAW="${MSI_VERSION:-$(git -C "${ROOT_DIR}" describe --tags --abbrev=0 2>/dev/null || echo "0.0.0")}"
 VERSION="$(echo "${VERSION_RAW}" | sed -E 's/^[^0-9]*([0-9]+\.[0-9]+\.[0-9]+).*/\1/')"
-RELEASE_LANE="${RELEASE_LANE:-public}"
+RELEASE_LANE="${RELEASE_LANE:-}"
 
 cleanup() {
   rm -rf "${TMP_DIR}"
@@ -26,10 +26,13 @@ if [[ ! -d "${PKG_DIR}" ]]; then
   exit 1
 fi
 
-[[ "${RELEASE_LANE}" == "public" ]] || {
-  echo "ERROR: the public repository builds only RELEASE_LANE=public MSIs." >&2
-  exit 1
-}
+case "${RELEASE_LANE}" in
+  paid|public) ;;
+  *)
+    echo "ERROR: RELEASE_LANE must be explicitly set to 'paid' or 'public'." >&2
+    exit 1
+    ;;
+esac
 
 if ! command -v docker >/dev/null 2>&1; then
   echo "ERROR: docker is required to build MSI from macOS/Linux." >&2
@@ -43,12 +46,12 @@ fi
 
 mkdir -p "${DIST_DIR}" "${STAGE_DIR}"
 
-cp "${PKG_DIR}/ContextLattice-Install.cmd" "${STAGE_DIR}/"
-cp "${PKG_DIR}/ContextLattice-Monitor.cmd" "${STAGE_DIR}/"
-sed "s/@RELEASE_LANE@/${RELEASE_LANE}/g" \
-  "${PKG_DIR}/Install-ContextLattice.ps1" > "${STAGE_DIR}/Install-ContextLattice.ps1"
-cp "${PKG_DIR}/Monitor-ContextLattice.ps1" "${STAGE_DIR}/"
-cp "${PKG_DIR}/README.txt" "${STAGE_DIR}/"
+python3 "${ROOT_DIR}/scripts/release_installer_outer.py" stage \
+  --root "${ROOT_DIR}" \
+  --kind windows \
+  --lane "${RELEASE_LANE}" \
+  --release-tag "${RELEASE_TAG}" \
+  --output "${STAGE_DIR}" >/dev/null
 cp "${PKG_DIR}/contextlattice.wxs" "${STAGE_DIR}/"
 
 PAYLOAD_OUT_DIR="${PAYLOAD_BUILD_DIR}" \

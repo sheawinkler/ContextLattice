@@ -4,7 +4,7 @@ umask 077
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT_DIR="${PAYLOAD_OUT_DIR:-${ROOT_DIR}/dist/payload}"
-RELEASE_LANE="${RELEASE_LANE:-public}"
+RELEASE_LANE="${RELEASE_LANE:-}"
 RELEASE_TAG="${RELEASE_TAG:-}"
 RELEASE_COMMIT="${RELEASE_COMMIT:-}"
 PAYLOAD_FORMATS="${PAYLOAD_FORMATS:-tar.gz zip}"
@@ -23,7 +23,8 @@ fail() {
   exit 1
 }
 
-[[ "${RELEASE_LANE}" == "public" ]] || fail "the public repository builds only RELEASE_LANE=public payloads."
+[[ "${RELEASE_LANE}" == "public" ]] || \
+  fail "the public repository builds only RELEASE_LANE=public payloads."
 SOURCE_REMOTE="public"
 SOURCE_TRACKING_REF="refs/remotes/public/main"
 SOURCE_REF="refs/heads/main"
@@ -52,6 +53,8 @@ if [[ -z "${RELEASE_COMMIT}" ]]; then
 fi
 source_commit="$(git -C "${ROOT_DIR}" rev-parse --verify "${RELEASE_COMMIT}^{commit}" 2>/dev/null)" || \
   fail "RELEASE_COMMIT does not resolve to a commit: ${RELEASE_COMMIT}"
+source_tree="$(git -C "${ROOT_DIR}" rev-parse --verify "${source_commit}^{tree}" 2>/dev/null)" || \
+  fail "RELEASE_COMMIT tree cannot be resolved: ${source_commit}"
 head_commit="$(git -C "${ROOT_DIR}" rev-parse --verify HEAD)"
 
 if [[ "${tag_commit}" != "${source_commit}" ]]; then
@@ -76,66 +79,66 @@ if ! git -C "${ROOT_DIR}" merge-base --is-ancestor "${source_commit}" "${source_
   fail "tagged commit ${source_commit} is not reachable from approved ${RELEASE_LANE} source ref ${SOURCE_TRACKING_REF} (${source_ref_tip})."
 fi
 
-while IFS= read -r source_path; do
-  case "${source_path}" in
-    docs/private/*|private_docs/*|private/*|.ops/*|\
-    config/runtime-license/*|\
-    contextlattice-dashboard/app/api/workspace/invitations/*|\
-    contextlattice-dashboard/app/api/workspace/members/*|\
-    contextlattice-dashboard/app/auth/invite/*|\
-    contextlattice-dashboard/lib/workspaceInvitations.ts|\
-    services/gateway-go/cognition_activation_entitled.go|\
-    services/gateway-go/context_mesh_orchestration_entitled.go|\
-    services/gateway-go/frontier_t1_governance_entitled.go|\
-    services/gateway-go/frontier_t2_packet_retention_entitled.go|\
-    services/gateway-go/frontier_t2_proof_timeline_entitled.go|\
-    services/gateway-go/frontier_t3_utility_entitled.go|\
-    services/gateway-go/frontier_t4_retrieval_entitled.go|\
-    services/gateway-go/frontier_t4_retrieval_entitled_test.go|\
-    services/gateway-go/frontier_t5_policy_lab_entitled.go|\
-    services/gateway-go/frontier_t5_policy_lab_entitled_test.go|\
-    services/gateway-go/frontier_t6_agent_fit_entitled.go|\
-    services/gateway-go/frontier_t6_agent_fit_entitled_test.go|\
-    services/gateway-go/frontier_t7_portable_continuation_entitled.go|\
-    services/gateway-go/frontier_t7_portable_continuation_entitled_test.go|\
-    services/gateway-go/frontier_t8_skill_evolution_entitled.go|\
-    services/gateway-go/frontier_t8_skill_evolution_entitled_test.go|\
-    services/gateway-go/frontier_t9_continuity_zero_entitled.go|\
-    services/gateway-go/frontier_t9_continuity_zero_entitled_test.go|\
-    services/gateway-go/frontier_t10_aggregate_signal_entitled.go|\
-    services/gateway-go/frontier_t10_aggregate_signal_entitled_test.go|\
-    services/gateway-go/frontier_t10_secure_aggregation_research_private.go|\
-    services/gateway-go/frontier_t10_secure_aggregation_research_private_test.go|\
-    config/frontier_t1_release_provenance.v1.json|\
-    docs/evals/v3.21-frontier-t4-paid-activation.json|\
-    docs/evals/v3.22-frontier-t5-paid-activation.json|\
-    docs/evals/v3.23-frontier-t6-paid-activation.json|\
-    docs/evals/v3.24-frontier-t7-paid-activation.json|\
-    docs/evals/v3.25-frontier-t8-paid-activation.json|\
-    docs/evals/v3.26-frontier-t9-paid-activation.json|\
-    docs/evals/v4.0-frontier-t10-paid-activation.json)
-      fail "public source ref contains a paid/private path: ${source_path}"
-      ;;
-  esac
-done < <(git -C "${ROOT_DIR}" ls-tree -r --name-only "${source_commit}")
+if [[ "${RELEASE_LANE}" == "public" ]]; then
+  while IFS= read -r source_path; do
+    case "${source_path}" in
+      docs/private/*|private_docs/*|private/*|.ops/*|\
+      config/runtime-license/*|\
+      contextlattice-dashboard/app/api/workspace/invitations/*|\
+      contextlattice-dashboard/app/api/workspace/members/*|\
+      contextlattice-dashboard/app/auth/invite/*|\
+      contextlattice-dashboard/lib/workspaceInvitations.ts|\
+      services/gateway-go/cognition_activation_entitled.go|\
+      services/gateway-go/context_mesh_orchestration_entitled.go|\
+      services/gateway-go/frontier_t1_governance_entitled.go|\
+      services/gateway-go/frontier_t2_packet_retention_entitled.go|\
+      services/gateway-go/frontier_t2_proof_timeline_entitled.go|\
+      services/gateway-go/frontier_t4_retrieval_entitled.go|\
+      services/gateway-go/frontier_t4_retrieval_entitled_test.go|\
+      services/gateway-go/frontier_t5_policy_lab_entitled.go|\
+      services/gateway-go/frontier_t5_policy_lab_entitled_test.go|\
+      services/gateway-go/frontier_t6_agent_fit_entitled.go|\
+      services/gateway-go/frontier_t6_agent_fit_entitled_test.go|\
+      services/gateway-go/frontier_t7_portable_continuation_entitled.go|\
+      services/gateway-go/frontier_t7_portable_continuation_entitled_test.go|\
+      services/gateway-go/frontier_t8_skill_evolution_entitled.go|\
+      services/gateway-go/frontier_t8_skill_evolution_entitled_test.go|\
+      services/gateway-go/frontier_t9_continuity_zero_entitled.go|\
+      services/gateway-go/frontier_t9_continuity_zero_entitled_test.go|\
+      services/gateway-go/frontier_t10_aggregate_signal_entitled.go|\
+      services/gateway-go/frontier_t10_aggregate_signal_entitled_test.go|\
+      services/gateway-go/frontier_t10_secure_aggregation_research_private.go|\
+      services/gateway-go/frontier_t10_secure_aggregation_research_private_test.go|\
+      docs/evals/v3.21-frontier-t4-paid-activation.json|\
+      docs/evals/v3.22-frontier-t5-paid-activation.json|\
+      docs/evals/v3.23-frontier-t6-paid-activation.json|\
+      docs/evals/v3.24-frontier-t7-paid-activation.json|\
+      docs/evals/v3.25-frontier-t8-paid-activation.json|\
+      docs/evals/v3.26-frontier-t9-paid-activation.json|\
+      docs/evals/v4.0-frontier-t10-paid-activation.json)
+        fail "public source ref contains a paid/private path: ${source_path}"
+        ;;
+    esac
+  done < <(git -C "${ROOT_DIR}" ls-tree -r --name-only "${source_commit}")
 
-public_runtime_marker='context_policy_activation\.v1|context_mesh_orchestration\.v1|frontier_delta_packet_automation\.v1|frontier_shared_proof_timeline\.v1|frontier_t4_retrieval_governance_state\.v1|frontier_t5_policy_laboratory_governance_state\.v1|frontier_t6_agent_fit_governance_state\.v1|frontier_t7_portable_continuation_governance_state\.v1|frontier_t8_skill_evolution_governance_state\.v1|frontier_t9_continuity_zero_governance_state\.v1|frontier_t10_aggregate_governance_state\.v1|contextlattice_runtime_license_public_keys\.v1|CONTEXTLATTICE_FRONTIER_T2_|CONTEXTLATTICE_FRONTIER_T5_POLICY_GOVERNANCE|CONTEXTLATTICE_FRONTIER_T6_AGENT_FIT_GOVERNANCE|CONTEXTLATTICE_FRONTIER_T7_PORTABLE_CONTINUATION_GOVERNANCE|CONTEXTLATTICE_FRONTIER_T8_SKILL_EVOLUTION_GOVERNANCE|CONTEXTLATTICE_FRONTIER_T9_CONTINUITY_ZERO_GOVERNANCE|CONTEXTLATTICE_FRONTIER_T10_AGGREGATE_GOVERNANCE|GO_V4_(ENTITLEMENT|RUNTIME_LICENSE|MACHINE_BINDING)|runtimeLicenseVerifier|runtimeLicenseSchemaID'
-if git -C "${ROOT_DIR}" grep -n -I -E "${public_runtime_marker}" "${source_commit}" -- \
-    Dockerfile.gateway-go docker-compose.yml services/gateway-go \
-    >"${TMP_DIR}/public-runtime-markers.txt" 2>/dev/null; then
-  cat "${TMP_DIR}/public-runtime-markers.txt" >&2
-  fail "public source ref contains paid/private runtime markers."
-fi
+  public_runtime_marker='context_policy_activation\.v1|context_mesh_orchestration\.v1|frontier_delta_packet_automation\.v1|frontier_shared_proof_timeline\.v1|frontier_t4_retrieval_governance_state\.v1|frontier_t5_policy_laboratory_governance_state\.v1|frontier_t6_agent_fit_governance_state\.v1|frontier_t7_portable_continuation_governance_state\.v1|frontier_t8_skill_evolution_governance_state\.v1|frontier_t9_continuity_zero_governance_state\.v1|frontier_t10_aggregate_governance_state\.v1|contextlattice_runtime_license_public_keys\.v1|CONTEXTLATTICE_FRONTIER_T2_|CONTEXTLATTICE_FRONTIER_T5_POLICY_GOVERNANCE|CONTEXTLATTICE_FRONTIER_T6_AGENT_FIT_GOVERNANCE|CONTEXTLATTICE_FRONTIER_T7_PORTABLE_CONTINUATION_GOVERNANCE|CONTEXTLATTICE_FRONTIER_T8_SKILL_EVOLUTION_GOVERNANCE|CONTEXTLATTICE_FRONTIER_T9_CONTINUITY_ZERO_GOVERNANCE|CONTEXTLATTICE_FRONTIER_T10_AGGREGATE_GOVERNANCE|GO_V4_(ENTITLEMENT|RUNTIME_LICENSE|MACHINE_BINDING)|runtimeLicenseVerifier|runtimeLicenseSchemaID'
+  if git -C "${ROOT_DIR}" grep -n -I -E "${public_runtime_marker}" "${source_commit}" -- \
+      Dockerfile.gateway-go docker-compose.yml services/gateway-go \
+      >"${TMP_DIR}/public-runtime-markers.txt" 2>/dev/null; then
+    cat "${TMP_DIR}/public-runtime-markers.txt" >&2
+    fail "public source ref contains paid/private runtime markers."
+  fi
 
-public_paid_dashboard_marker='(/api/workspace/(members|invitations)|WorkspaceInvitation|workspaceInvitations|activeWorkspaceId|Workspace people)'
-if git -C "${ROOT_DIR}" grep -n -I -E "${public_paid_dashboard_marker}" "${source_commit}" -- \
-    contextlattice-dashboard/app \
-    contextlattice-dashboard/components \
-    contextlattice-dashboard/lib \
-    contextlattice-dashboard/prisma \
-    >"${TMP_DIR}/public-paid-dashboard-markers.txt" 2>/dev/null; then
-  cat "${TMP_DIR}/public-paid-dashboard-markers.txt" >&2
-  fail "public source ref contains paid workspace-collaboration markers."
+  public_paid_dashboard_marker='(/api/workspace/(members|invitations)|WorkspaceInvitation|workspaceInvitations|activeWorkspaceId|Workspace people)'
+  if git -C "${ROOT_DIR}" grep -n -I -E "${public_paid_dashboard_marker}" "${source_commit}" -- \
+      contextlattice-dashboard/app \
+      contextlattice-dashboard/components \
+      contextlattice-dashboard/lib \
+      contextlattice-dashboard/prisma \
+      >"${TMP_DIR}/public-paid-dashboard-markers.txt" 2>/dev/null; then
+    cat "${TMP_DIR}/public-paid-dashboard-markers.txt" >&2
+    fail "public source ref contains paid workspace-collaboration markers."
+  fi
 fi
 
 untracked_non_dist="$(
@@ -167,6 +170,51 @@ rm -f \
   "${OUT_DIR}/contextlattice-payload.zip.sha256" \
   "${OUT_DIR}/${METADATA_NAME}"
 
+OUTER_CONTRACT_PATH="${TMP_DIR}/installer-outer-contract.json"
+python3 "${ROOT_DIR}/scripts/release_installer_outer.py" contract \
+  --root "${ROOT_DIR}" \
+  --lane "${RELEASE_LANE}" \
+  --release-tag "${RELEASE_TAG}" \
+  --output "${OUTER_CONTRACT_PATH}"
+
+# Validate the Git namespace before extraction so case-insensitive build hosts
+# cannot alias one tracked payload path over another.
+python3 -B - "${ROOT_DIR}" "${source_commit}" <<'PY'
+from __future__ import annotations
+
+import subprocess
+import sys
+from pathlib import Path, PurePosixPath
+
+root = Path(sys.argv[1]).resolve()
+commit = sys.argv[2]
+sys.path.insert(0, str(root / "scripts"))
+from release_payload_policy import payload_exclusion_reason, portable_payload_path_key
+
+raw = subprocess.check_output(["git", "ls-tree", "-r", "-z", commit], cwd=root)
+portable: dict[str, str] = {}
+for record in raw.split(b"\0"):
+    if not record:
+        continue
+    metadata, raw_path = record.split(b"\t", 1)
+    mode, object_type, _object_id = metadata.decode("ascii").split(" ", 2)
+    relative = raw_path.decode("utf-8")
+    if object_type != "blob" or mode not in {"100644", "100755"}:
+        continue
+    if payload_exclusion_reason(relative) is not None:
+        continue
+    parts = PurePosixPath(relative).parts
+    for index in range(1, len(parts) + 1):
+        prefix = PurePosixPath(*parts[:index]).as_posix()
+        key = portable_payload_path_key(prefix)
+        prior = portable.get(key)
+        if prior is not None and prior != prefix:
+            raise SystemExit(
+                f"ERROR: release payload paths collide on case-insensitive filesystems: {prior}, {prefix}"
+            )
+        portable[key] = prefix
+PY
+
 # The clean checkout gate guarantees worktree attributes are exactly the
 # attributes from the selected tag.
 git -C "${ROOT_DIR}" archive \
@@ -176,7 +224,7 @@ git -C "${ROOT_DIR}" archive \
 
 source_epoch="$(git -C "${ROOT_DIR}" show -s --format=%ct "${source_commit}")"
 
-python3 - "${STAGE_DIR}" "${BUILD_OUT_DIR}" "${RELEASE_LANE}" "${RELEASE_TAG}" "${source_commit}" "${source_epoch}" "${PAYLOAD_FORMATS}" "${SOURCE_REPOSITORY}" "${SOURCE_REF}" <<'PY'
+python3 -B - "${STAGE_DIR}" "${BUILD_OUT_DIR}" "${RELEASE_LANE}" "${RELEASE_TAG}" "${source_commit}" "${source_epoch}" "${PAYLOAD_FORMATS}" "${SOURCE_REPOSITORY}" "${SOURCE_REF}" "${source_tree}" "${ROOT_DIR}" "${OUTER_CONTRACT_PATH}" <<'PY'
 from __future__ import annotations
 
 import gzip
@@ -190,7 +238,7 @@ import sys
 import tarfile
 import time
 import zipfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 stage = Path(sys.argv[1]).resolve()
 out = Path(sys.argv[2]).resolve()
@@ -201,29 +249,57 @@ epoch = int(sys.argv[6])
 formats = sys.argv[7].split()
 source_repository = sys.argv[8]
 source_ref = sys.argv[9]
+source_tree = sys.argv[10]
+source_root = Path(sys.argv[11]).resolve()
+outer_contract_path = Path(sys.argv[12]).resolve()
+sys.path.insert(0, str(source_root / "scripts"))
+from release_payload_policy import payload_exclusion_reason, portable_payload_path_key
+
 metadata_name = "contextlattice-release.json"
 embedded_metadata_name = ".contextlattice-release.json"
 
+if not re.fullmatch(r"[0-9a-f]{40}", source_tree):
+    raise SystemExit("ERROR: release source tree is not a full Git object ID")
+runtime_tag = re.sub(r"-public$", "", tag)
+if not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?", runtime_tag):
+    raise SystemExit(f"ERROR: release tag cannot produce a runtime version: {tag}")
+runtime_version = runtime_tag[1:]
+build_channel = "candidate" if "-" in runtime_version else "stable"
+outer_contract = json.loads(outer_contract_path.read_text(encoding="utf-8"))
+outer_contract_sha256 = outer_contract.pop("contract_sha256", "")
+observed_outer_contract_sha256 = hashlib.sha256(
+    json.dumps(
+        outer_contract, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    ).encode("utf-8")
+).hexdigest()
+if (
+    outer_contract.get("schema_id")
+    != "contextlattice_installer_outer_contract.v1"
+    or outer_contract.get("lane") != lane
+    or outer_contract.get("release_tag") != tag
+    or outer_contract_sha256 != observed_outer_contract_sha256
+):
+    raise SystemExit("ERROR: installer outer contract is invalid or not release-bound")
+
 paid_markers = {
+    "contextlattice-dashboard/app/api/workspace/invitations/accept/route.ts": "hashWorkspaceInvitationToken",
+    "contextlattice-dashboard/app/api/workspace/members/route.ts": "generateWorkspaceInvitationToken",
     "services/gateway-go/cognition_activation_entitled.go": "context_policy_activation.v1",
     "services/gateway-go/context_mesh_orchestration_entitled.go": "context_mesh_orchestration.v1",
+    "services/gateway-go/frontier_t1_governance_entitled.go": "frontier_t1_governance_state.v1",
+    "services/gateway-go/frontier_t2_packet_retention_entitled.go": "frontier_delta_packet_automation.v1",
+    "services/gateway-go/frontier_t2_proof_timeline_entitled.go": "frontier_shared_proof_timeline.v1",
+    "services/gateway-go/frontier_t4_retrieval_entitled.go": "frontier_t4_retrieval_governance.v1",
+    "services/gateway-go/frontier_t5_policy_lab_entitled.go": "frontier_t5_policy_laboratory_governance.v1",
+    "services/gateway-go/frontier_t6_agent_fit_entitled.go": "frontier_t6_agent_fit_governance.v1",
     "services/gateway-go/frontier_t7_portable_continuation_entitled.go": "frontier_t7_portable_continuation_governance.v1",
-    "services/gateway-go/frontier_t7_portable_continuation_entitled_test.go": "frontier_t7_portable_continuation_governance.v1",
-    "docs/evals/v3.24-frontier-t7-paid-activation.json": "frontier_t7_paid_activation.v1",
     "services/gateway-go/frontier_t8_skill_evolution_entitled.go": "frontier_t8_skill_evolution_governance.v1",
-    "services/gateway-go/frontier_t8_skill_evolution_entitled_test.go": "frontier_t8_skill_evolution_governance.v1",
-    "docs/evals/v3.25-frontier-t8-paid-activation.json": "frontier_t8_paid_activation.v1",
     "services/gateway-go/frontier_t9_continuity_zero_entitled.go": "frontier_t9_continuity_zero_governance.v1",
-    "services/gateway-go/frontier_t9_continuity_zero_entitled_test.go": "frontier_t9_continuity_zero_governance.v1",
-    "docs/evals/v3.26-frontier-t9-paid-activation.json": "frontier_t9_paid_activation.v1",
     "services/gateway-go/frontier_t10_aggregate_signal_entitled.go": "frontier_t10_aggregate_governance.v1",
-    "services/gateway-go/frontier_t10_aggregate_signal_entitled_test.go": "frontier_t10_aggregate_governance.v1",
-    "services/gateway-go/frontier_t10_secure_aggregation_research_private.go": "frontier_t10_secure_aggregation_research.v1",
-    "services/gateway-go/frontier_t10_secure_aggregation_research_private_test.go": "frontier_t10_secure_aggregation_research.v1",
-    "docs/evals/v4.0-frontier-t10-paid-activation.json": "frontier_t10_paid_activation.v1",
 }
 paid_runtime_files = {
     "Dockerfile.gateway-go": "COPY config/runtime-license ./config/runtime-license",
+    "config/frontier_t1_release_provenance.v1.json": "contextlattice_frontier_t1_release_provenance.v1",
     "config/runtime-license/public_keys.json": "contextlattice_runtime_license_public_keys.v1",
     "docker-compose.yml": "GO_V4_ENTITLEMENT_MODE",
 }
@@ -253,16 +329,29 @@ for relative, marker in paid_runtime_files.items():
 metadata = {
     "approved_source_ref": source_ref,
     "approved_source_repository": source_repository,
+    "build_channel": build_channel,
     "commit": commit,
     "forbidden_paid_marker_paths": sorted(paid_markers),
     "forbidden_paid_runtime_paths": sorted(paid_runtime_files),
+    "frontier_t1_eval_ledger_sha256": "",
+    "frontier_t1_private_proof_commit": "",
+    "frontier_t1_provenance_blob_sha1": "",
+    "frontier_t1_release_gate": "not_applicable",
+    "frontier_t1_tested_source_manifest_sha256": "",
+    "frontier_t1_reviewed_source_commit": "",
+    "frontier_t1_reviewed_source_tree": "",
+    "frontier_t2_release_gate": "not_applicable",
+    "installer_outer_contract_schema_id": outer_contract["schema_id"],
+    "installer_outer_contract_sha256": outer_contract_sha256,
     "lane": lane,
     "payload_root": "contextlattice",
     "release_ref": f"refs/tags/{tag}",
+    "runtime_version": runtime_version,
     "required_paid_markers": [],
     "required_paid_runtime_files": [],
     "schema_id": "contextlattice_release_payload.v2",
     "source": "approved_lane_tagged_checkout",
+    "source_tree": source_tree,
     "tag": tag,
 }
 metadata_bytes = (json.dumps(metadata, indent=2, sort_keys=True) + "\n").encode("utf-8")
@@ -272,105 +361,20 @@ if len(metadata_bytes) > 4096:
 (out / metadata_name).write_bytes(metadata_bytes)
 os.utime(stage / embedded_metadata_name, (epoch, epoch))
 
-denied_roots = {
-    ".backup",
-    ".contextlattice.config",
-    ".github",
-    ".mcp-servers",
-    ".ops",
-    "archive",
-    "artifacts",
-    "bench",
-    "data",
-    "dev",
-    "development",
-    "dist",
-    "docker_compose_backup",
-    "logs",
-    "packaging",
-    "private_docs",
-    "promptfoo",
-    "reports",
-    "tmp",
-    "trae_runs",
-    "trajectories",
-}
-denied_parts = {
-    "__pycache__",
-    ".data",
-    ".pytest_cache",
-    ".mypy_cache",
-    ".ruff_cache",
-    "backups",
-    "cache",
-    "caches",
-    "credentials",
-    "evidence",
-    "fixtures",
-    "node_modules",
-    "secrets",
-    "target",
-    "test",
-    "test-evidence",
-    "test-results",
-    "test_evidence",
-    "testdata",
-    "tests",
-}
-denied_docs = {"audits", "evals", "perf", "perf-candidate-notes", "private"}
-denied_root_files = {
-    ".env_dev",
-    ".env_prod",
-    ".envrc",
-    ".gitattributes",
-    ".gitignore",
-    ".node-version",
-    ".nvmrc",
-    "AGENTS.md",
-    "CODE_OF_CONDUCT.md",
-    "CONTRIBUTING.md",
-    "glama.json",
-    "justfile",
-    "launch.applescript",
-    "pytest.ini",
-    "trae_config.template.yaml",
-}
-secret_suffixes = {".key", ".p12", ".pem", ".pfx"}
-test_suffixes = ("_test.go", "_test.py", ".spec.ts", ".spec.tsx", ".test.ts", ".test.tsx")
-
-
-def denied(relative: Path) -> str | None:
-    posix = relative.as_posix()
-    lowered = [part.lower() for part in relative.parts]
-    name = relative.name.lower()
-    if relative.parts and relative.parts[0] in denied_roots:
-        return "developer/local-state root"
-    if len(relative.parts) >= 2 and relative.parts[0] == "docs" and relative.parts[1] in denied_docs:
-        return "private or test-evidence documentation"
-    if relative.as_posix() == "services/orchestrator":
-        return "legacy runtime symlink"
-    if len(relative.parts) >= 2 and relative.parts[:2] == ("config", "runtime-license"):
-        lowered_name = relative.name.lower()
-        if "private" in lowered_name or "signing" in lowered_name:
-            return "private runtime-license signing material"
-    if relative.as_posix() in denied_root_files:
-        return "developer policy file"
-    if any(part in denied_parts for part in lowered):
-        return "developer/test/cache path"
-    if name == ".env" or name.startswith(".env.") or name.startswith(".env_"):
-        if posix != ".env.example":
-            return "environment/local secret file"
-    if name.endswith(".pid") or ".bak" in name or name.endswith(test_suffixes):
-        return "generated/test artifact"
-    if relative.suffix.lower() in secret_suffixes:
-        return "secret key material"
-    return None
-
-
 paths = sorted(stage.rglob("*"), key=lambda path: path.relative_to(stage).as_posix())
+portable_paths = {}
 for path in paths:
     relative = path.relative_to(stage)
-    reason = denied(relative)
+    for index in range(1, len(relative.parts) + 1):
+        prefix = PurePosixPath(*relative.parts[:index]).as_posix()
+        portable_key = portable_payload_path_key(prefix)
+        prior = portable_paths.get(portable_key)
+        if prior is not None and prior != prefix:
+            raise SystemExit(
+                f"ERROR: release payload paths collide on case-insensitive filesystems: {prior}, {prefix}"
+            )
+        portable_paths[portable_key] = prefix
+    reason = payload_exclusion_reason(relative.as_posix())
     if reason:
         raise SystemExit(f"ERROR: excluded path entered payload ({reason}): {relative.as_posix()}")
     if path.is_symlink():

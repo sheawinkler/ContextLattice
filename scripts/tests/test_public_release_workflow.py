@@ -8,6 +8,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github/workflows/public-release-installers.yml"
 PAYLOAD_BUILDER = ROOT / "scripts/build_release_payload.sh"
+OUTER_CONTRACT = ROOT / "scripts/release_installer_outer.py"
+PAYLOAD_POLICY = ROOT / "scripts/release_payload_policy.py"
+INSTALLER_BUILDERS = {
+    "macos": ROOT / "scripts/build_macos_dmg.sh",
+    "windows": ROOT / "scripts/build_windows_msi.sh",
+    "linux": ROOT / "scripts/build_linux_bundle.sh",
+}
 
 
 def workflow_job(workflow: str, name: str) -> str:
@@ -21,6 +28,27 @@ def workflow_job(workflow: str, name: str) -> str:
 
 
 class PublicReleaseWorkflowTests(unittest.TestCase):
+    def test_public_builders_bind_the_shared_outer_installer_contract(self) -> None:
+        self.assertTrue(OUTER_CONTRACT.is_file())
+        self.assertTrue(PAYLOAD_POLICY.is_file())
+
+        payload_builder = PAYLOAD_BUILDER.read_text(encoding="utf-8")
+        self.assertIn('release_installer_outer.py" contract \\', payload_builder)
+        self.assertIn("from release_payload_policy import", payload_builder)
+        self.assertIn('[[ "${RELEASE_LANE}" == "public" ]]', payload_builder)
+        self.assertNotIn('SOURCE_TRACKING_REF="refs/remotes/public-paid/main"', payload_builder)
+
+        for kind, path in INSTALLER_BUILDERS.items():
+            with self.subTest(kind=kind):
+                builder = path.read_text(encoding="utf-8")
+                self.assertIn('release_installer_outer.py" stage \\', builder)
+                self.assertIn('--lane "${RELEASE_LANE}"', builder)
+
+        linux_builder = INSTALLER_BUILDERS["linux"].read_text(encoding="utf-8")
+        self.assertIn('release_installer_outer.py" validate \\', linux_builder)
+        self.assertIn('release_installer_outer.py" build-linux-archive \\', linux_builder)
+        self.assertIn('release_installer_outer.py" validate-linux-archive \\', linux_builder)
+
     def test_runtime_guard_allows_disabled_t1_compatibility_status_only(self) -> None:
         builder = PAYLOAD_BUILDER.read_text(encoding="utf-8")
         match = re.search(r"public_runtime_marker='([^']+)'", builder)
