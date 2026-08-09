@@ -43,6 +43,18 @@
       ]
     },
     {
+      "id": "recall_response.v1",
+      "summary": "One owned native recall-response projection with bounded fallback and compatibility aliases.",
+      "contracts": [
+        "recall_response.v1"
+      ],
+      "artifacts": [
+        "services/gateway-go/cmd/contextlattice-agent-tools/recall_response_cli.go",
+        "scripts/agent/contextlattice-recall-response",
+        "scripts/agent/contextlattice-pack"
+      ]
+    },
+    {
       "id": "synthesis_pack.v1",
       "summary": "Deterministic synthesis groups evidence, bridges topics, preserves constraints, and proposes next actions.",
       "contracts": [

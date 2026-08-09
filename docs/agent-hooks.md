@@ -78,6 +78,7 @@ Installed commands:
 | `contextlattice_policy_lab` | Primary Policy Laboratory CLI for simulation, scoped cards, promotion evidence, reversible lifecycle, contradiction, storage-temperature, and governance status. |
 | `contextlattice_agent_fit` | Primary Agent Fit CLI for resumable steering, advisory runner/model selection, effective profiles, and explicit-use context preparation. |
 | `contextlattice_continuous_cognition` | One-shot, proof-carrying observation, bounded local investigation, status, canonical outcome/evaluation, rollback advice, and retirement advice. |
+| `contextlattice_recall_response` | Canonical bounded proof-carrying recall response CLI; `contextlattice_pack --response` and script compatibility surfaces delegate here. |
 | `contextlattice_continuity_zero` | Primary zero-entry CLI: select one unambiguous live objective and bind its packet, checkpoint, Agent Fit profile, preparation, repository commit, provenance, risks, and next move into one path-free manifest. |
 | `contextlattice_aggregate_signal` | Primary Aggregate Signal CLI for local preview, explicit opt-in queueing, cohort-suppressed reports, privacy accounting, and immediate opt-out. |
 | `contextlattice_agent_tools portable-continuation` | Primary Portable Continuation CLI family for signed grants, provenance-preserving imports, encrypted manifests, dry-run reconciliation, and bounded status. |

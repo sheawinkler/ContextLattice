@@ -13,12 +13,159 @@ const (
 	recallResponseMaxReceipts  = 8
 )
 
-// composeRecallResponse is the side-effect-free response projection used by
-// recall surfaces. It consumes already-materialized retrieval/receipt maps and
-// emits only bounded claims and opaque references. It deliberately does not
-// read memory, write telemetry, execute actions, or attach a transport
-// contract; callers attach the shared validator contract at their boundary.
 func composeRecallResponse(input map[string]any) map[string]any {
+	return composeRecallResponseWithPolicy(input, recallResponseProductionPolicyInput())
+}
+
+// composeRecallResponseWithPolicy enriches the stable v1 control projection
+// with U2 router and proof metadata. The exact control projection is retained
+// and returned if any nested U2 invariant fails.
+func composeRecallResponseWithPolicy(input map[string]any, policy validatedRecallResponsePolicyInput) map[string]any {
+	prepared, asOf := recallResponsePrepareTemporalInput(input)
+	control := composeRecallResponseV1Control(prepared, policy, asOf)
+	candidate := cloneJSONMap(control)
+	evidence := contextPackAnyList(candidate["evidence"])
+	conflicts := contextPackAnyList(candidate["conflicts"])
+	gaps := contextPackAnyList(candidate["gaps"])
+	policy, facets := recallResponseBindArtifactIdentity(prepared, candidate, policy, asOf)
+	// The fallback must describe the exact same retrieval and receipt artifact,
+	// even though it deliberately removes candidate evidence and components.
+	_, _ = recallResponseBindArtifactIdentity(prepared, control, policy, asOf)
+	posture := recallResponseDerivedPosture(facets, len(evidence), len(conflicts), len(gaps))
+	candidate["classification"] = recallResponseLegacyClassification(facets, posture)
+	scope := anyMap(candidate["request_scope"])
+	temporalPremiseDigest := anyToString(scope["temporal_premise_digest"])
+	snapshotDigest := policy.snapshotDigest
+	receiptDigest := policy.receiptDigest
+	proof := recallResponseProofSpine(candidate, asOf, temporalPremiseDigest, snapshotDigest, receiptDigest, prepared)
+	answer := anyMap(candidate["answer"])
+	compressedProof, compression, compressionOK := recallResponseCompressProof(candidate, proof, policy, prepared)
+	if !compressionOK || !compression.Sufficient {
+		return recallResponseCandidateOrControl(control, nil, policy, asOf, false)
+	}
+	proof = compressedProof
+	answer["proof_spine"] = proof
+	modules, primaryModule, orderedModules, modulesOK := recallResponseBuildModules(candidate, proof, policy, prepared)
+	if !modulesOK {
+		return recallResponseCandidateOrControl(control, nil, policy, asOf, false)
+	}
+	answer["components"] = modules
+	composition := recallResponseComposition(policy, proof)
+	composition["primary_module"] = primaryModule
+	composition["ordered_modules"] = recallResponseAnyStrings(orderedModules)
+	answer["composition"] = composition
+
+	candidate["response_id"] = recallResponseIDForResponse(candidate)
+	candidate["response_digest"] = recallResponseSemanticDigest(candidate)
+	if !recallResponseFitCandidateBudget(candidate) {
+		return recallResponseCandidateOrControl(control, nil, policy, asOf, false)
+	}
+	return recallResponseCandidateOrControl(control, candidate, policy, asOf, true)
+}
+
+// recallResponseBindArtifactIdentity derives the one artifact identity shared
+// by a candidate and its fail-closed control. It never rereads a source. The
+// scope digest remains the v1 request identity; the explicit snapshot and
+// receipt fields bind the exact materialized attempt without a circular hash.
+func recallResponseBindArtifactIdentity(
+	prepared, response map[string]any,
+	policy validatedRecallResponsePolicyInput,
+	asOf string,
+) (validatedRecallResponsePolicyInput, map[string]any) {
+	contextPack := anyMap(prepared["context_pack"])
+	if len(contextPack) == 0 {
+		contextPack = anyMap(prepared["contextPack"])
+	}
+	sourceCoverage := anyMap(prepared["source_coverage"])
+	if len(sourceCoverage) == 0 {
+		sourceCoverage = anyMap(prepared["sourceCoverage"])
+	}
+	rankedEvidence := contextPackAnyList(contextPack["ranked_evidence"])
+	if len(rankedEvidence) == 0 {
+		rankedEvidence = contextPackAnyList(contextPack["rankedEvidence"])
+	}
+	if len(rankedEvidence) == 0 {
+		rankedEvidence = contextPackAnyList(prepared["evidence"])
+	}
+	evidence := contextPackAnyList(response["evidence"])
+	conflicts := contextPackAnyList(response["conflicts"])
+	gaps := contextPackAnyList(response["gaps"])
+	retrievalIntent := recallResponseSafeMode(firstNonEmptyStrings(anyToString(prepared["retrieval_intent"]), "decision"), "decision")
+	facets := recallResponseFacets(prepared, rankedEvidence, sourceCoverage, retrievalIntent, len(evidence), len(conflicts), len(gaps), asOf)
+	temporalPremiseDigest := anyToString(recallResponseTemporalPremise(asOf, anyToString(facets["temporal_state"]))["digest"])
+	if !recallResponseValidDigest(policy.snapshotDigest) {
+		policy.snapshotDigest = recallResponseSnapshotArtifactDigest(
+			prepared, contextPack, sourceCoverage, rankedEvidence, evidence, conflicts, gaps, temporalPremiseDigest,
+		)
+	}
+	if !recallResponseValidDigest(policy.receiptDigest) {
+		policy.receiptDigest = recallResponseReceiptArtifactDigest(prepared, contextPack, contextPackAnyList(response["receipt_refs"]))
+	}
+	scope := anyMap(response["request_scope"])
+	scope["as_of"] = asOf
+	scope["task_class"] = recallResponseSafeTaskClass(anyToString(prepared["task_class"]))
+	scope["temporal_premise_digest"] = temporalPremiseDigest
+	scope["snapshot_digest"] = policy.snapshotDigest
+	scope["receipt_digest"] = policy.receiptDigest
+	scope["condition"] = policy.condition
+	scope["ablation"] = policy.ablation
+	return policy, facets
+}
+
+func recallResponsePrepareTemporalInput(input map[string]any) (map[string]any, string) {
+	prepared := cloneJSONMap(input)
+	rawAsOf := firstNonEmptyStrings(anyToString(input["as_of"]), anyToString(input["asOf"]))
+	asOf, asOfValid := recallResponseNormalizeAsOfWithValidity(rawAsOf)
+	var revisionStart, revisionEnd string
+	unverifiableHistoricalEvidence := 0
+	for _, key := range []string{"context_pack", "contextPack"} {
+		pack := anyMap(prepared[key])
+		if len(pack) == 0 {
+			continue
+		}
+		for _, evidenceKey := range []string{"ranked_evidence", "rankedEvidence", "temporal_claims", "proof_claims"} {
+			if _, present := pack[evidenceKey]; present {
+				if !asOfValid {
+					pack[evidenceKey] = []any{}
+					continue
+				}
+				filtered, unverifiable := recallResponseTemporalEvidenceAtOrBefore(contextPackAnyList(pack[evidenceKey]), asOf)
+				pack[evidenceKey] = filtered
+				unverifiableHistoricalEvidence += unverifiable
+			}
+		}
+		revisionStart = firstNonEmptyStrings(revisionStart, anyToString(pack["snapshot_revision_start"]))
+		revisionEnd = firstNonEmptyStrings(revisionEnd, anyToString(pack["snapshot_revision_end"]))
+	}
+	for _, evidenceKey := range []string{"evidence", "temporal_claims", "proof_claims"} {
+		if _, present := prepared[evidenceKey]; present {
+			if !asOfValid {
+				prepared[evidenceKey] = []any{}
+			} else {
+				filtered, unverifiable := recallResponseTemporalEvidenceAtOrBefore(contextPackAnyList(prepared[evidenceKey]), asOf)
+				prepared[evidenceKey] = filtered
+				unverifiableHistoricalEvidence += unverifiable
+			}
+		}
+	}
+	prepared["as_of"] = asOf
+	if !asOfValid {
+		prepared["_invalid_as_of"] = true
+	}
+	if unverifiableHistoricalEvidence > 0 {
+		prepared["_historical_unverifiable_evidence"] = unverifiableHistoricalEvidence
+	}
+	if revisionStart != "" && revisionEnd != "" && revisionStart != revisionEnd {
+		prepared["_snapshot_revision_changed"] = true
+	}
+	delete(prepared, "asOf")
+	return prepared, asOf
+}
+
+// composeRecallResponseV1Control is the side-effect-free compatibility
+// projection. It consumes one already-materialized retrieval/receipt snapshot
+// and never reads memory, writes telemetry, or executes actions.
+func composeRecallResponseV1Control(input map[string]any, policy validatedRecallResponsePolicyInput, asOf string) map[string]any {
 	contextPack := anyMap(input["context_pack"])
 	if len(contextPack) == 0 {
 		contextPack = anyMap(input["contextPack"])
@@ -42,17 +189,25 @@ func composeRecallResponse(input map[string]any) map[string]any {
 	executionLaneID := strings.TrimSpace(firstNonEmptyStrings(anyToString(input["execution_lane_id"]), anyToString(input["executionLaneId"])))
 	retrievalIntent := recallResponseSafeMode(firstNonEmptyStrings(anyToString(input["retrieval_intent"]), "decision"), "decision")
 	retrievalMode := recallResponseSafeRetrievalMode(anyToString(input["retrieval_mode"]))
+	taskClass := recallResponseSafeTaskClass(anyToString(input["task_class"]))
 
 	queryDigest := "sha256:" + sha256Hex(firstNonEmptyStrings(query, "<empty-query>"))
 	workspaceRef := recallResponseScopeRef("workspace", workspace)
 	projectRef := recallResponseScopeRef("project", project)
 	scopeNamespace := "sha256:" + sha256Hex(workspaceRef+"\x00"+projectRef)
 	scopeDigest := "sha256:" + sha256Hex(strings.Join([]string{
-		queryDigest, workspaceRef, projectRef, topicPath, agentID, sessionID, taskID, taskIdentityID, executionLaneID, retrievalIntent, retrievalMode,
+		queryDigest, workspaceRef, projectRef, topicPath, agentID, sessionID, taskID, taskIdentityID, executionLaneID,
+		retrievalIntent, retrievalMode, taskClass, asOf, policy.condition, policy.ablation,
+		policy.snapshotDigest, policy.receiptDigest,
 	}, "\x00"))
+	ownerIdentity := workspaceRef
+	if workspace == "" {
+		ownerIdentity = "missing-owner-authority\x00" + scopeDigest
+	}
 	scope := map[string]any{
 		"scope_digest":       scopeDigest,
 		"query_digest":       queryDigest,
+		"owner_ref":          recallResponseScopedOpaqueRef(scopeNamespace, "owner", ownerIdentity),
 		"workspace_ref":      workspaceRef,
 		"project_ref":        projectRef,
 		"topic_ref":          recallResponseScopedOpaqueRef(scopeNamespace, "topic", topicPath),
@@ -77,7 +232,10 @@ func composeRecallResponse(input map[string]any) map[string]any {
 	gaps := recallResponseGaps(input, contextPack, sourceCoverage, rankedEvidence, scopeDigest, len(evidence), len(conflicts), recallResponseMaxGaps)
 	confidence := recallResponseConfidence(evidence, sourceCoverage, conflicts, gaps)
 	stateStatus := recallResponseStateStatus(len(evidence), len(conflicts), len(gaps))
-	classification := recallResponseClassification(input, rankedEvidence, sourceCoverage, retrievalIntent, len(evidence), len(conflicts), len(gaps))
+	facets := recallResponseFacets(input, rankedEvidence, sourceCoverage, retrievalIntent, len(evidence), len(conflicts), len(gaps), asOf)
+	posture := recallResponseDerivedPosture(facets, len(evidence), len(conflicts), len(gaps))
+	classification := recallResponseLegacyClassification(facets, posture)
+	delete(classification, "facets")
 
 	claimRefs := make([]any, 0, len(evidence))
 	for _, raw := range evidence {
@@ -104,7 +262,7 @@ func composeRecallResponse(input map[string]any) map[string]any {
 		answerSummary = "Bounded evidence is available, but unresolved limits remain; verify before acting."
 		answerMode = "qualified_answer"
 	}
-	components := recallResponseComponents(classification, len(evidence), len(conflicts), len(gaps), scopeDigest)
+	components := recallResponseComponents(classification, rankedEvidence, taskClass, len(evidence), len(conflicts), len(gaps), scopeDigest)
 
 	nextActionKind := "retrieve_or_verify"
 	nextActionLabel := "Retrieve or verify the remaining proof"
@@ -236,10 +394,14 @@ func recallResponseEvidenceRefs(items []any, scopeDigest string, limit int) []an
 		if !recallResponseValidDigest(digest) {
 			digest = "sha256:" + sha256Hex(firstNonEmptyStrings(anyToString(item["text"]), identity))
 		}
+		role := "support"
+		if strings.EqualFold(strings.TrimSpace(anyToString(item["support"])), "context") {
+			role = "context"
+		}
 		out = append(out, map[string]any{
 			"ref_id":         refID,
 			"kind":           kind,
-			"role":           "support",
+			"role":           role,
 			"status":         status,
 			"confidence":     roundFloat(confidence, 4),
 			"source_ref":     recallResponseScopedOpaqueRef(scopeDigest, "source", anyToString(item["source"])),
@@ -330,11 +492,27 @@ func recallResponseGaps(input, contextPack, sourceCoverage map[string]any, ranke
 			anyMap(out[len(out)-1])["refs"] = excludedRefs
 		}
 	}
+	if anyToBool(input["_invalid_as_of"]) {
+		add("invalid_temporal_premise", "The requested as_of premise is malformed or later than the server's bounded clock.", true)
+	}
+	if anyToInt(input["_historical_unverifiable_evidence"], 0) > 0 {
+		add("historical_evidence_without_valid_time", "Evidence outside the requested time boundary or with missing or malformed temporal metadata was excluded from support.", true)
+	}
+	workspace := strings.TrimSpace(firstNonEmptyStrings(
+		anyToString(input["workspace_ref"]), anyToString(input["workspace_id"]), anyToString(input["workspaceId"]),
+		anyToString(anyMap(input["learned_activation"])["workspace_ref"]),
+	))
+	if workspace == "" {
+		add("missing_owner_scope", "No server-authoritative owner or workspace scope was available for attribution.", true)
+	}
 	if evidenceCount == 0 {
 		add("no_bounded_evidence", "No bounded evidence reference survived the response projection.", true)
 	}
 	if conflictCount > 0 {
 		add("unresolved_conflicts", "Conflicting evidence remains unresolved.", true)
+	}
+	if anyToBool(input["_snapshot_revision_changed"]) {
+		add("snapshot_revision_changed", "The source revision changed while the proof snapshot was assembled.", true)
 	}
 	for _, raw := range contextPackAnyList(contextPack["proof_claims"]) {
 		claim := anyMap(raw)
@@ -619,7 +797,7 @@ func recallResponseStricterConsequence(computed, supplied string) string {
 	return computed
 }
 
-func recallResponseComponents(classification map[string]any, evidenceCount, conflictCount, gapCount int, scopeDigest string) []any {
+func recallResponseComponents(classification map[string]any, rankedEvidence []any, taskClass string, evidenceCount, conflictCount, gapCount int, scopeDigest string) []any {
 	selected := map[string]bool{}
 	add := func(kind string) {
 		if kind != "" {
@@ -654,6 +832,10 @@ func recallResponseComponents(classification map[string]any, evidenceCount, conf
 			add("procedure")
 		case "project_state":
 			add("project_continuation")
+		case "conflict":
+			add("conflict_supersession")
+		case "negative":
+			add("negative_abstention")
 		}
 	}
 	if conflictCount > 0 {
@@ -665,10 +847,27 @@ func recallResponseComponents(classification map[string]any, evidenceCount, conf
 	if evidenceCount > 0 && len(selected) == 0 {
 		add("multi_memory_synthesis")
 	}
-	order := []string{
-		"exact_current_status", "decision_rationale", "project_continuation", "preference_constraint",
-		"timeline", "procedure", "multi_memory_synthesis", "conflict_supersession",
-		"negative_abstention", "memory_to_action",
+	if recallResponseHasStructuredActionEvidence(rankedEvidence) {
+		add("memory_to_action")
+	}
+	primary := recallResponsePrimaryModuleKind(classification, selected, taskClass, evidenceCount)
+	order := []string{primary}
+	// A structured advisory action is the highest-value secondary: it remains
+	// evidence-only, cannot authorize execution, and should not be displaced by
+	// generic synthesis when the three-secondary budget is tight.
+	if primary != "memory_to_action" && selected["memory_to_action"] {
+		order = append(order, "memory_to_action")
+	}
+	for _, kind := range recallResponseModuleOrder {
+		if kind == primary || kind == "memory_to_action" || recallResponseModuleSafety[kind] {
+			continue
+		}
+		order = append(order, kind)
+	}
+	for _, kind := range []string{"conflict_supersession", "negative_abstention"} {
+		if kind != primary {
+			order = append(order, kind)
+		}
 	}
 	out := []any{}
 	for _, kind := range order {
@@ -686,6 +885,97 @@ func recallResponseComponents(classification map[string]any, evidenceCount, conf
 		out = append(out, component)
 	}
 	return out
+}
+
+func recallResponsePrimaryModuleKind(classification map[string]any, selected map[string]bool, taskClass string, evidenceCount int) string {
+	taskClass = recallResponseSafeTaskClass(taskClass)
+	for _, candidate := range []struct {
+		task string
+		kind string
+	}{
+		{task: "action", kind: "memory_to_action"},
+		{task: "procedure", kind: "procedure"},
+		{task: "continuation", kind: "project_continuation"},
+		{task: "timeline", kind: "timeline"},
+		{task: "status", kind: "exact_current_status"},
+		{task: "fact", kind: "exact_current_status"},
+		{task: "decision", kind: "decision_rationale"},
+		{task: "preference", kind: "preference_constraint"},
+	} {
+		if taskClass == candidate.task && selected[candidate.kind] {
+			return candidate.kind
+		}
+	}
+	jobs := map[string]bool{}
+	orderedJobs := []string{}
+	for _, raw := range contextPackAnyList(classification["jobs"]) {
+		job := strings.TrimSpace(anyToString(raw))
+		if job != "" && !jobs[job] {
+			jobs[job] = true
+			orderedJobs = append(orderedJobs, job)
+		}
+	}
+	objects := map[string]bool{}
+	for _, raw := range contextPackAnyList(classification["objects"]) {
+		objects[strings.TrimSpace(anyToString(raw))] = true
+	}
+	if objects["conflict"] && selected["conflict_supersession"] {
+		return "conflict_supersession"
+	}
+	if objects["negative"] && selected["negative_abstention"] {
+		return "negative_abstention"
+	}
+	if (objects["preference"] || objects["constraint"]) && jobs["look_up"] && selected["preference_constraint"] {
+		return "preference_constraint"
+	}
+	// Normalized domain jobs outrank generic verify/explain jobs that may have
+	// been introduced by the retrieval intent. Ambiguous free-text requests do
+	// not reach these labels because the router removes unsupported act/apply.
+	for _, candidate := range []struct {
+		job  string
+		kind string
+	}{
+		{job: "act", kind: "memory_to_action"},
+		{job: "apply", kind: "procedure"},
+		{job: "continue", kind: "project_continuation"},
+		{job: "reconstruct", kind: "timeline"},
+	} {
+		if jobs[candidate.job] && selected[candidate.kind] {
+			return candidate.kind
+		}
+	}
+	for _, job := range orderedJobs {
+		kind := ""
+		switch job {
+		case "look_up":
+			kind = "exact_current_status"
+		case "explain":
+			if selected["decision_rationale"] {
+				kind = "decision_rationale"
+			} else {
+				kind = "multi_memory_synthesis"
+			}
+		case "compare", "verify":
+			kind = "multi_memory_synthesis"
+		}
+		if selected[kind] {
+			return kind
+		}
+	}
+	if evidenceCount == 0 && selected["negative_abstention"] {
+		return "negative_abstention"
+	}
+	for _, kind := range recallResponseModuleOrder {
+		if selected[kind] && !recallResponseModuleSafety[kind] {
+			return kind
+		}
+	}
+	for _, kind := range []string{"negative_abstention", "conflict_supersession"} {
+		if selected[kind] {
+			return kind
+		}
+	}
+	return ""
 }
 
 func recallResponseStateStatus(evidenceCount, conflictCount, gapCount int) string {
@@ -728,7 +1018,7 @@ func recallResponseSafeKind(value string) string {
 
 func recallResponseSafeStatus(value string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
-	allowed := map[string]bool{"selected": true, "selected_truncated": true, "supported": true, "supported_with_limits": true, "contested": true, "quarantined": true, "omitted": true, "stale": true, "superseded": true, "retracted": true, "unknown": true}
+	allowed := map[string]bool{"selected": true, "selected_truncated": true, "supported": true, "supported_with_limits": true, "active": true, "current": true, "contested": true, "quarantined": true, "omitted": true, "stale": true, "superseded": true, "retracted": true, "revoked": true, "expired": true, "unknown": true}
 	if allowed[value] {
 		return value
 	}
@@ -758,10 +1048,14 @@ func recallResponseExactOpaqueID(value, prefix string) bool {
 }
 
 func recallResponseEvidenceStatus(item map[string]any) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(anyToString(item["support"]))) {
+	case "distractor", "non_support", "unsupported":
+		return "quarantined", false
+	}
 	if rawStatus := strings.TrimSpace(firstNonEmptyStrings(anyToString(item["status"]), anyToString(item["proof_status"]))); rawStatus != "" {
 		status := recallResponseSafeStatus(rawStatus)
 		switch status {
-		case "selected", "selected_truncated", "supported", "supported_with_limits":
+		case "selected", "selected_truncated", "supported", "supported_with_limits", "active", "current":
 			return status, true
 		default:
 			return status, false

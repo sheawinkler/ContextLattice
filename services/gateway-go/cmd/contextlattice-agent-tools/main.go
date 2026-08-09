@@ -40,6 +40,7 @@ var nativeToolNames = map[string]string{
 	"contextlattice_search":                          "search",
 	"contextlattice_pack":                            "pack",
 	"contextlattice_packet_reconstruct":              "packet-reconstruct",
+	"contextlattice_recall_response":                 "recall-response",
 	"contextlattice_synthesis_pack":                  "synthesis-pack",
 	"contextlattice_synthesis_pack_v2":               "synthesis-pack-v2",
 	"contextlattice_retrieval_plan":                  "retrieval-plan",
@@ -254,7 +255,18 @@ func (c *cli) run(argv []string) error {
 		if len(args) == 0 {
 			return c.usage()
 		}
-		command = strings.TrimSpace(args[0])
+		dispatch := strings.TrimSpace(args[0])
+		if dispatch == "contextlattice" {
+			args = args[1:]
+			if len(args) == 0 {
+				return c.usage()
+			}
+			dispatch = strings.TrimSpace(args[0])
+		}
+		command = nativeToolNames[filepath.Base(dispatch)]
+		if command == "" {
+			command = dispatch
+		}
 		args = args[1:]
 	}
 	args = applyCLIOutputDefaults(
@@ -282,6 +294,8 @@ func (c *cli) run(argv []string) error {
 		return c.cmdWrite(args)
 	case "pack":
 		return c.cmdPack(args)
+	case "recall-response":
+		return c.cmdRecallResponse(args)
 	case "packet-reconstruct":
 		return c.cmdPacketReconstruct(args)
 	case "synthesis-pack":
@@ -418,8 +432,9 @@ Primary workflow:
 
 Advanced/compatibility commands:
   search                         lifecycle-aware memory search
-  pack                           bounded context package
-  packet-reconstruct             verify and rebuild a delta against its trusted base packet
+ pack                           bounded context package
+  recall-response               bounded proof-carrying recall response
+ packet-reconstruct             verify and rebuild a delta against its trusted base packet
   synthesis-pack                 synthesis package over ranked evidence, topics, and graph links
   synthesis-pack-v2              proof-carrying synthesis with temporal claims and retrieval plan
   retrieval-plan                 deterministic advisor-only evidence and source plan
@@ -477,7 +492,8 @@ Advanced/compatibility commands:
   skill-evolution                usage receipts, efficacy review, and skill lifecycle candidates
 
 The same binary is intended to be symlinked or wrapped as contextlattice_search,
-contextlattice_pack, contextlattice_packet_reconstruct, contextlattice_synthesis_pack,
+ contextlattice_pack, contextlattice_packet_reconstruct, contextlattice_synthesis_pack,
+contextlattice_recall_response,
 contextlattice_synthesis_pack_v2,
 contextlattice_retrieval_plan, contextlattice_claim_write, contextlattice_claim_query,
 contextlattice_continuity_reconcile, contextlattice_objective_transition,
@@ -779,6 +795,7 @@ func adoptionInstallChecks(globalHome string) map[string]any {
 		"contextlattice-agent-tools",
 		"contextlattice_search",
 		"contextlattice_pack",
+		"contextlattice_recall_response",
 		"contextlattice_synthesis_pack",
 		"contextlattice_synthesis_pack_v2",
 		"contextlattice_retrieval_plan",
@@ -1382,6 +1399,9 @@ func resolveContent(parsed parsedArgs) (string, error) {
 }
 
 func (c *cli) cmdPack(args []string) error {
+	if cliArgPresent(args, "response") {
+		return c.cmdRecallResponse(args)
+	}
 	return c.cmdPackWithRouteMode(args, "contextlattice_pack", "/memory/context-pack", "context-pack", true)
 }
 
@@ -2940,31 +2960,6 @@ func (c *cli) requestWithRetries(path string, payload any, timeout float64, retr
 	return nil, last
 }
 
-func (c *cli) requestRecallResponseWithRetries(path string, payload any, timeout float64, retries int, delay float64) (map[string]any, error) {
-	var last map[string]any
-	var lastErr error
-	for attempt := 0; attempt <= maxInt(retries, 0); attempt++ {
-		result, _, err := c.requestJSON(context.Background(), http.MethodPost, path, payload, timeout)
-		if len(result) > 0 {
-			last = result
-		}
-		if err == nil {
-			return result, nil
-		}
-		lastErr = err
-		// The native route deliberately returns recall_response.v1 even when
-		// retrieval failed. Preserve that bounded abstention instead of turning
-		// it into the context-pack failure envelope.
-		if firstString(result["schema_id"]) == "recall_response.v1" {
-			return result, nil
-		}
-		if attempt < retries {
-			time.Sleep(time.Duration(delay*float64(attempt+1)) * time.Second)
-		}
-	}
-	return last, lastErr
-}
-
 func derivedAgentTaskID(project, objective string) string {
 	normalizedProject := strings.ToLower(strings.TrimSpace(project))
 	normalizedObjective := strings.ToLower(strings.Join(strings.Fields(objective), " "))
@@ -2975,13 +2970,6 @@ func derivedAgentTaskID(project, objective string) string {
 func (c *cli) ensureSession(project, objective, taskID, agentID string, timeout float64) string {
 	ownership := adapterOwnership(parsedArgs{})
 	ownership["task_id"] = taskID
-	return c.ensureSessionForAgent(project, objective, envString("CONTEXTLATTICE_AGENT", "agent-cli"), agentID, ownership, adapterProfile{}, timeout)
-}
-
-func (c *cli) ensureRecallResponseSession(project, objective, taskID, agentID string, timeout float64) string {
-	ownership := adapterOwnership(parsedArgs{})
-	ownership["task_id"] = taskID
-	ownership["session_surface"] = "recall-response"
 	return c.ensureSessionForAgent(project, objective, envString("CONTEXTLATTICE_AGENT", "agent-cli"), agentID, ownership, adapterProfile{}, timeout)
 }
 
@@ -3101,171 +3089,6 @@ func normalizePackOutput(raw map[string]any, query string, budget int) map[strin
 	raw["context_budget_chars"] = budget
 	raw["writeback_required"] = true
 	return raw
-}
-
-var recallResponseCLIAllowedFields = map[string]bool{
-	"ok": true, "schema_id": true, "version": true, "response_id": true, "response_digest": true,
-	"request_scope": true, "classification": true, "answer": true, "state": true, "evidence": true,
-	"confidence": true, "conflicts": true, "gaps": true, "inferences": true, "next_action": true,
-	"action_boundary": true, "disclosure": true, "receipt_refs": true, "outcome": true,
-	"writeback_required": true, "format_contract": true,
-}
-
-var recallResponseCLIForbiddenFields = map[string]bool{
-	"context_pack": true, "raw_contextlattice_json": true, "raw_retrieval_payload": true, "raw_retrieval": true,
-	"raw_prompt": true, "prompt": true, "prompts": true, "messages": true, "tool_calls": true,
-	"function_call": true, "secret": true, "secrets": true, "api_key": true, "password": true,
-	"credential": true, "authorization": true, "private_key": true, "file_path": true, "local_path": true,
-	"paths": true, "query": true, "project": true, "project_name": true, "topic_path": true,
-	"timestamp": true, "exact_timestamp": true, "raw_text": true, "text": true, "excerpt": true,
-	"content": true, "packet": true, "agent_packet": true,
-}
-
-func recallResponseCLIHasForbiddenField(value any) bool {
-	switch typed := value.(type) {
-	case map[string]any:
-		for key, nested := range typed {
-			if recallResponseCLIForbiddenFields[key] || recallResponseCLIHasForbiddenField(nested) {
-				return true
-			}
-		}
-	case []any:
-		for _, nested := range typed {
-			if recallResponseCLIHasForbiddenField(nested) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func compactRecallResponse(raw map[string]any) (map[string]any, error) {
-	if firstString(raw["schema_id"]) != "recall_response.v1" {
-		return nil, errors.New("gateway did not return recall_response.v1")
-	}
-	if recallResponseCLIHasForbiddenField(raw) {
-		return nil, errors.New("gateway recall response contained a forbidden raw field")
-	}
-	for key := range raw {
-		if !recallResponseCLIAllowedFields[key] {
-			return nil, errors.New("gateway recall response contained an unexpected field")
-		}
-	}
-	projected := map[string]any{}
-	for key := range recallResponseCLIAllowedFields {
-		value, exists := raw[key]
-		if !exists {
-			return nil, errors.New("gateway recall response omitted a required field")
-		}
-		projected[key] = value
-	}
-	if !asBool(projected["ok"]) || asInt(projected["version"]) != 1 ||
-		!recallResponseCLIExactID(firstString(projected["response_id"]), "rr_") ||
-		!recallResponseCLIValidDigest(firstString(projected["response_digest"])) ||
-		firstString(projected["response_id"]) != cliRecallResponseID(projected) ||
-		firstString(projected["response_digest"]) != cliRecallResponseDigest(projected) {
-		return nil, errors.New("gateway recall response identity was malformed")
-	}
-	format := asMap(projected["format_contract"])
-	validation := asMap(format["validation"])
-	if firstString(format["registry_id"]) != generatedAgentContractRegistryID ||
-		asInt(format["registry_version"]) != generatedAgentContractRegistryVersion ||
-		firstString(format["schema_id"]) != "recall_response.v1" ||
-		!asBool(format["contract_valid"]) || firstString(validation["status"]) != "passed" {
-		return nil, errors.New("gateway recall response contract was invalid")
-	}
-	return projected, nil
-}
-
-func recallResponseCLIExactID(value, prefix string) bool {
-	if !strings.HasPrefix(value, prefix) || len(value) != len(prefix)+24 {
-		return false
-	}
-	for _, ch := range value[len(prefix):] {
-		if !((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f')) {
-			return false
-		}
-	}
-	return true
-}
-
-func recallResponseCLIValidDigest(value string) bool {
-	if !strings.HasPrefix(value, "sha256:") || len(value) != len("sha256:")+64 {
-		return false
-	}
-	for _, ch := range value[len("sha256:"):] {
-		if !((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f')) {
-			return false
-		}
-	}
-	return true
-}
-
-func cliRecallResponseDigest(payload map[string]any) string {
-	semantic := map[string]any{}
-	for key, value := range payload {
-		if key != "format_contract" && key != "response_digest" {
-			semantic[key] = value
-		}
-	}
-	raw, _ := json.Marshal(semantic)
-	return "sha256:" + hex.EncodeToString(sha256Sum(raw))
-}
-
-func cliRecallResponseID(payload map[string]any) string {
-	semantic := map[string]any{}
-	for key, value := range payload {
-		if key != "response_id" && key != "response_digest" && key != "format_contract" {
-			semantic[key] = value
-		}
-	}
-	raw, _ := json.Marshal(semantic)
-	return "rr_" + hex.EncodeToString(sha256Sum(raw))[:24]
-}
-
-func failureRecallResponse() map[string]any {
-	scopeRef := func(kind string) string {
-		return "ref_" + hex.EncodeToString(sha256Sum([]byte("recall-response-cli-unavailable\x00" + kind)))[:24]
-	}
-	response := map[string]any{
-		"ok": true, "schema_id": "recall_response.v1", "version": 1,
-		"request_scope": map[string]any{
-			"scope_digest": scopeRef("scope"), "query_digest": scopeRef("query"), "workspace_ref": scopeRef("workspace"),
-			"project_ref": scopeRef("project"), "topic_ref": scopeRef("topic"), "agent_ref": scopeRef("agent"),
-			"session_ref": scopeRef("session"), "task_ref": scopeRef("task"), "task_identity_ref": scopeRef("task_identity"),
-			"execution_lane_ref": scopeRef("execution_lane"), "retrieval_intent": "decision",
-		},
-		"classification": map[string]any{"jobs": []any{"look_up"}, "objects": []any{"fact"}, "temporal_mode": "current", "evidence_state": "degraded", "consequence": "informational", "posture": "abstain"},
-		"answer": map[string]any{
-			"summary": "Recall response unavailable; retrieve or verify before acting.", "answer_mode": "abstention",
-			"basis": []any{"bounded_response_projection", "explicit_action_boundary"}, "claim_refs": []any{}, "components": []any{},
-			"progressive_disclosure": map[string]any{"level": "summary", "available_levels": []any{"summary", "proof_refs", "next_action"}, "next_level_requires": "recover recall response availability"},
-		},
-		"state":    map[string]any{"status": "abstain", "source_complete": false, "evidence_count": 0, "conflict_count": 0, "gap_count": 1, "retrieval_mode": "balanced"},
-		"evidence": []any{}, "confidence": map[string]any{"label": "abstain", "score": 0.0, "basis": []any{"unavailable_surface"}, "calibrated": false},
-		"conflicts": []any{}, "gaps": []any{map[string]any{"code": "unavailable_surface", "material": true, "reason": "Recall response retrieval was unavailable.", "required_for_action": true}},
-		"inferences":      []any{map[string]any{"inference_id": "inf_" + hex.EncodeToString(sha256Sum([]byte("unavailable")))[:24], "claim_ref": "response_state", "basis_refs": []any{}, "status": "deterministic_metadata_only", "confidence": 0.0, "disclosure": "This is response-state metadata, not a memory fact."}},
-		"next_action":     map[string]any{"kind": "retrieve_or_verify", "label": "Recover recall response availability, then retrieve or verify", "reason": "The response is advisory-only and does not authorize external mutation.", "requires_verification": true, "authority": "advisory_only", "execution_performed": false},
-		"action_boundary": map[string]any{"can_act": false, "requires_confirmation": true, "allowed": []any{"retrieve_missing_sources"}, "forbidden": []any{"external_mutation", "credential_access", "raw_memory_export"}, "reason": "Recall responses provide evidence and advice only; an agent must independently authorize and execute any mutation.", "execution_performed": false},
-		"disclosure":      map[string]any{"bounded": true, "raw_retrieval_included": false, "raw_prompt_included": false, "paths_included": false, "secrets_included": false, "inference_boundary": "Only deterministic response metadata and opaque proof references are returned.", "omission_policy": "Unavailable evidence is disclosed as a gap and never becomes implicit support."},
-		"receipt_refs":    []any{}, "outcome": map[string]any{"status": "not_attributable", "attributable": false, "receipt_id": "", "execution_performed": false}, "writeback_required": true,
-	}
-	response["response_id"] = cliRecallResponseID(response)
-	response["response_digest"] = cliRecallResponseDigest(response)
-	response["format_contract"] = map[string]any{
-		"registry_id": generatedAgentContractRegistryID, "registry_version": generatedAgentContractRegistryVersion, "schema_id": "recall_response.v1", "contract_version": 1,
-		"required_output_mode": "json_object", "validator": "contextlattice.boundary.v1", "contract_valid": true, "truncated": false,
-		"omitted_counts":    map[string]any{"strings_clipped": 0, "lists_clipped": 0, "optional_fields_compacted": 0, "boundary_passes": 0, "json_bytes_reduced": 0},
-		"actual_json_bytes": 0, "max_total_json_bytes": 64000, "max_string_bytes": 2400, "max_list_items": 32,
-		"validation": map[string]any{"status": "passed", "errors": []any{}},
-	}
-	encoded, _ := json.Marshal(response)
-	for previous := -1; previous != len(encoded); {
-		previous = len(encoded)
-		response["format_contract"].(map[string]any)["actual_json_bytes"] = previous
-		encoded, _ = json.Marshal(response)
-	}
-	return response
 }
 
 func isAgentPacketWireSchema(schemaID string) bool {
@@ -4110,6 +3933,7 @@ func auditContextBoundary(payload map[string]any) map[string]any {
 		"policy_context_package", "scripts/agent/contextlattice-pack", "scripts/agent/compaction-handoff-payload",
 		"contextlattice_synthesis_pack_v2", "contextlattice_retrieval_plan", "contextlattice_claim_write", "contextlattice_claim_query",
 		"contextlattice_continuity_reconcile", "contextlattice_objective_transition", "contextlattice_objective_graph", "contextlattice_decision_change", "contextlattice_decision_change list", "contextlattice_retrieval_governance",
+		"scripts/agent/contextlattice-recall-response", "scripts/agent/contextlattice-pack --response", "contextlattice_pack --response", "contextlattice_recall_response", "contextlattice recall-response", "contextlattice-agent-tools recall-response",
 		"contextlattice_async_inbox_drain", "contextlattice_continuous_cognition",
 		"scripts/agent_hooks/contextlattice_pre_compaction_write.sh", "scripts/agent_hooks/contextlattice_post_compaction_read.sh",
 	}
@@ -4119,6 +3943,12 @@ func auditContextBoundary(payload map[string]any) map[string]any {
 		contractID string
 	}{
 		{"/memory/agent-packet/reconstruct", "agent_packet_reconstruction.v1"},
+		{"scripts/agent/contextlattice-recall-response", "recall_response.v1"},
+		{"scripts/agent/contextlattice-pack --response", "recall_response.v1"},
+		{"contextlattice_pack --response", "recall_response.v1"},
+		{"contextlattice_recall_response", "recall_response.v1"},
+		{"contextlattice recall-response", "recall_response.v1"},
+		{"contextlattice-agent-tools recall-response", "recall_response.v1"},
 		{"/v1/agents/sessions/{session_id}/proof-timeline", "agent_proof_timeline.v1"},
 		{"/memory/continuity/reconcile", "task_identity_reconciliation.v1"},
 		{"/memory/objectives/transition", "objective_transition.v1"},
@@ -4296,7 +4126,7 @@ func (c *cli) cmdRuntimeDoctor(args []string) error {
 	c.applyBaseURL(parsed)
 	globalHome := parsed.string("global_home", envString("CONTEXTLATTICE_GLOBAL_HOME", filepath.Join(homeDir(), ".contextlattice")))
 	binDir := filepath.Join(globalHome, "bin")
-	core := []string{"contextlattice_search", "contextlattice_pack", "contextlattice_synthesis_pack", "contextlattice_synthesis_pack_v2", "contextlattice_retrieval_plan", "contextlattice_retrieval_governance", "contextlattice_claim_write", "contextlattice_claim_query", "contextlattice_continuity_reconcile", "contextlattice_objective_transition", "contextlattice_objective_graph", "contextlattice_decision_change", "contextlattice_write", "contextlattice_agent_session", "contextlattice_agent_discover", "contextlattice_async_inbox_drain", "contextlattice_runner_quality", "contextlattice_run_advisor", "contextlattice_agent_runtime_doctor", "contextlattice_strict_runtime_native_ownership", "contextlattice_context_boundary", "contextlattice_state"}
+	core := []string{"contextlattice_search", "contextlattice_pack", "contextlattice_recall_response", "contextlattice_synthesis_pack", "contextlattice_synthesis_pack_v2", "contextlattice_retrieval_plan", "contextlattice_retrieval_governance", "contextlattice_claim_write", "contextlattice_claim_query", "contextlattice_continuity_reconcile", "contextlattice_objective_transition", "contextlattice_objective_graph", "contextlattice_decision_change", "contextlattice_write", "contextlattice_agent_session", "contextlattice_agent_discover", "contextlattice_async_inbox_drain", "contextlattice_runner_quality", "contextlattice_run_advisor", "contextlattice_agent_runtime_doctor", "contextlattice_strict_runtime_native_ownership", "contextlattice_context_boundary", "contextlattice_state"}
 	checks := []map[string]any{}
 	for _, name := range core {
 		path := filepath.Join(binDir, name)

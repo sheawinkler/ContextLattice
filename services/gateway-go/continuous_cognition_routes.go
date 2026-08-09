@@ -335,29 +335,49 @@ func (s *server) continuousCognitionRoute(w http.ResponseWriter, r *http.Request
 			return strings.EqualFold(agentSessionProject(row), request.Project) && sessionVisibility.allows(row)
 		},
 	)
+	frontierPolicy := continuousCognitionFrontierPolicy{
+		MaxRounds: 3, InvestigateThreshold: 0.55, ContinueThreshold: 0.70, ConsequenceHighThreshold: 0.70,
+	}
+	// Hard silence predicates are evaluated before an explicit investigation so
+	// terminal, duplicate, identity-incomplete, or policy-suppressed cycles
+	// cannot dispatch even a read-only investigation.
+	preInvestigationFrontier := computeContinuousCognitionFrontier(observation, frontierPolicy)
+	preInvestigationSilence := decideContinuousCognitionSilence(
+		request, observation, preInvestigationFrontier,
+		authorizationErr != nil || !authorization.Authorized,
+	)
 	investigation := continuousCognitionDefaultInvestigation(request.Operation, observation.SourceComplete)
-	if request.Operation == continuousCognitionOperationInvestigate {
+	if request.Operation == continuousCognitionOperationInvestigate && !continuousCognitionHardSilence(preInvestigationSilence.Reason) {
 		var gaps []continuousCognitionGap
 		investigation, gaps = investigateContinuousCognitionLocalMemory(r.Context(), s.memoryStore, request)
 		applyContinuousCognitionInvestigation(&observation, investigation, gaps)
 	}
+	frontier := computeContinuousCognitionFrontier(observation, frontierPolicy)
+	silence := decideContinuousCognitionSilence(
+		request, observation, frontier,
+		authorizationErr != nil || !authorization.Authorized,
+	)
 	activation := continuousCognitionDefaultActivation()
-	if authorizationErr == nil && authorization.Authorized {
-		activation = projectContinuousCognitionActivation(
-			s.frontierT6,
-			authorization.WorkspaceID,
-			authorization.AuthorizationDigest,
-			request,
-			request.AsOf,
-		)
+	governance := continuousCognitionDefaultGovernance()
+	if silence.Reason == "not_silenced" {
+		if authorizationErr == nil && authorization.Authorized {
+			activation = projectContinuousCognitionActivation(
+				s.frontierT6,
+				authorization.WorkspaceID,
+				authorization.AuthorizationDigest,
+				request,
+				request.AsOf,
+			)
+		}
+		applyContinuousCognitionActivation(&observation, activation)
+		var governanceGaps []continuousCognitionGap
+		governance, governanceGaps = projectContinuousCognitionGovernance(s, request, proofSnapshot, observation, activation, authorizedWorkspaceRef)
+		applyContinuousCognitionGovernance(&observation, governance, governanceGaps)
+		frontier = computeContinuousCognitionFrontier(observation, frontierPolicy)
 	}
-	applyContinuousCognitionActivation(&observation, activation)
-	governance, governanceGaps := projectContinuousCognitionGovernance(s, request, proofSnapshot, observation, activation, authorizedWorkspaceRef)
-	applyContinuousCognitionGovernance(&observation, governance, governanceGaps)
-	frontier := computeContinuousCognitionFrontier(observation, continuousCognitionFrontierPolicy{
-		MaxRounds: 3, InvestigateThreshold: 0.55, ContinueThreshold: 0.70, ConsequenceHighThreshold: 0.70,
-	})
-	response := buildContinuousCognitionSemanticPayloadWithGovernance(request, observation, frontier, investigation, activation, governance)
+	// Silence is decided from the pre-activation proof snapshot and never
+	// exposes or records an activation candidate.
+	response := buildContinuousCognitionSemanticPayloadWithGovernanceAndSilence(request, observation, frontier, investigation, activation, governance, silence)
 	response = finalizeContinuousCognitionTransport(response, request.AgentID, "continuous_cognition", endpoint)
 	if findings := validateAgentContractPayload(continuousCognitionContractID, response); len(findings) != 0 {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "continuous cognition contract validation failed"})

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"container/heap"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -70,6 +71,40 @@ type objectiveGraphEdge struct {
 type objectiveGraphRelationRef struct {
 	RelatedObjectiveID string
 	TransitionIndex    int
+}
+
+type objectiveReplayCursor struct {
+	objectiveID string
+	indexes     []int
+	position    int
+}
+
+type objectiveReplayHeap []objectiveReplayCursor
+
+func (h objectiveReplayHeap) Len() int { return len(h) }
+
+func (h objectiveReplayHeap) Less(i, j int) bool {
+	left := h[i].indexes[h[i].position]
+	right := h[j].indexes[h[j].position]
+	if left != right {
+		return left > right
+	}
+	return h[i].objectiveID < h[j].objectiveID
+}
+
+func (h objectiveReplayHeap) Swap(i, j int) { h[i], h[j] = h[j], h[i] }
+
+func (h *objectiveReplayHeap) Push(value any) {
+	*h = append(*h, value.(objectiveReplayCursor))
+}
+
+func (h *objectiveReplayHeap) Pop() any {
+	old := *h
+	last := len(old) - 1
+	value := old[last]
+	old[last] = objectiveReplayCursor{}
+	*h = old[:last]
+	return value
 }
 
 const (
@@ -535,6 +570,61 @@ traversal:
 	return selected, inspections, inspectionLimit, selectionInspections, selectionLimit, truncated
 }
 
+func (s *continuityStore) objectiveGraphReplaySelectedLocked(
+	project string,
+	selected map[string]struct{},
+	asOf time.Time,
+	inspectionLimit int,
+) ([]objectiveTransition, int, bool, int) {
+	objectiveIDs := make([]string, 0, len(selected))
+	for objectiveID := range selected {
+		objectiveIDs = append(objectiveIDs, objectiveID)
+	}
+	sort.Strings(objectiveIDs)
+	cursors := make(objectiveReplayHeap, 0, len(objectiveIDs))
+	for _, objectiveID := range objectiveIDs {
+		indexes := s.objectiveTransitionIndex[continuityScopedIndexKey(project, objectiveID)]
+		if len(indexes) == 0 {
+			continue
+		}
+		cursors = append(cursors, objectiveReplayCursor{
+			objectiveID: objectiveID,
+			indexes:     indexes,
+			position:    len(indexes) - 1,
+		})
+	}
+	heap.Init(&cursors)
+	filtered := make([]objectiveTransition, 0, minInt(inspectionLimit, maxInt(len(selected), 64)))
+	seenIndexes := make(map[int]struct{}, minInt(inspectionLimit, 1024))
+	inspections := 0
+	invalidIndexes := 0
+	for cursors.Len() > 0 && inspections < inspectionLimit {
+		cursor := heap.Pop(&cursors).(objectiveReplayCursor)
+		index := cursor.indexes[cursor.position]
+		inspections++
+		if _, duplicate := seenIndexes[index]; duplicate {
+			invalidIndexes++
+		} else {
+			seenIndexes[index] = struct{}{}
+			if index < 0 || index >= len(s.objectiveTransitions) {
+				invalidIndexes++
+			} else {
+				transition := s.objectiveTransitions[index]
+				if transition.ObjectiveID != cursor.objectiveID || !strings.EqualFold(transition.Project, project) {
+					invalidIndexes++
+				} else if objectiveGraphTransitionEligible(transition, project, asOf) {
+					filtered = append(filtered, transition)
+				}
+			}
+		}
+		cursor.position--
+		if cursor.position >= 0 {
+			heap.Push(&cursors, cursor)
+		}
+	}
+	return filtered, inspections, cursors.Len() > 0, invalidIndexes
+}
+
 func (s *continuityStore) objectiveGraph(project string, objectiveID string, asOf time.Time, includeTransitions bool, limit int) map[string]any {
 	asOf = continuityAsOfOrNow(asOf)
 	limit = clampInt(limit, 1, 5000)
@@ -544,26 +634,20 @@ func (s *continuityStore) objectiveGraph(project string, objectiveID string, asO
 	}
 	s.mu.RLock()
 	selected, relationInspections, relationInspectionLimit, selectionInspections, selectionInspectionLimit, traversalTruncated := s.objectiveGraphSelectionLocked(project, objectiveID, asOf, limit)
-	filtered := make([]objectiveTransition, 0, minInt(objectiveGraphMaxReplayInspections, maxInt(limit, 64)))
-	projectIndexes := s.objectiveProjectIndex[strings.ToLower(project)]
-	replayInspections := 0
-	replayTruncated := false
-	for position := len(projectIndexes) - 1; position >= 0; position-- {
-		if replayInspections >= objectiveGraphMaxReplayInspections {
-			replayTruncated = true
-			break
-		}
-		replayInspections++
-		index := projectIndexes[position]
-		if index < 0 || index >= len(s.objectiveTransitions) {
-			continue
-		}
-		transition := s.objectiveTransitions[index]
-		if _, chosen := selected[transition.ObjectiveID]; chosen && objectiveGraphTransitionEligible(transition, project, asOf) {
-			filtered = append(filtered, transition)
+	replayInspectionLimit := objectiveGraphMaxReplayInspections
+	filtered, replayInspections, replayTruncated, invalidReplayIndexes := s.objectiveGraphReplaySelectedLocked(
+		project, selected, asOf, replayInspectionLimit,
+	)
+	s.mu.RUnlock()
+	if invalidReplayIndexes > 0 {
+		return map[string]any{
+			"ok": false, "schema_id": objectiveGraphContractID, "error": "objective_transition_index_invalid",
+			"project": project, "objective_id": objectiveID, "as_of": asOf.UTC().Format(time.RFC3339Nano),
+			"complete": false, "graph_truncated": true, "index_integrity_valid": false,
+			"invalid_index_count":     invalidReplayIndexes,
+			"replay_inspection_count": replayInspections, "replay_inspection_limit": replayInspectionLimit,
 		}
 	}
-	s.mu.RUnlock()
 	sort.SliceStable(filtered, func(i, j int) bool {
 		return objectiveTransitionChronologyLess(filtered[i], filtered[j])
 	})
@@ -701,10 +785,12 @@ edgeCollection:
 		"traversal_truncated": traversalTruncated, "node_link_truncated": nodeLinkTruncated,
 		"edge_truncated": edgeTruncated, "transition_truncated": transitionTruncated,
 		"replay_truncated":          replayTruncated,
+		"index_integrity_valid":     true,
+		"invalid_index_count":       0,
 		"transitions_included":      includeTransitions,
 		"relation_inspection_count": relationInspections, "relation_inspection_limit": relationInspectionLimit,
 		"selection_inspection_count": selectionInspections, "selection_inspection_limit": selectionInspectionLimit,
-		"replay_inspection_count": replayInspections, "replay_inspection_limit": objectiveGraphMaxReplayInspections,
+		"replay_inspection_count": replayInspections, "replay_inspection_limit": replayInspectionLimit,
 		"nodes": nodeRows, "edges": edges, "node_count": len(nodeRows), "edge_count": len(edges),
 		"transition_count": len(filtered), "transition_count_exact": !replayTruncated,
 		"transition_omitted_count": transitionOmitted, "ledger_status": s.snapshot(),

@@ -912,6 +912,7 @@ type contextPackEvidenceItem struct {
 	DiversityKey            string
 	DisplayTruncated        bool
 	TrustAssessment         map[string]any
+	RecallMetadata          map[string]any
 	LearnedBaseScore        float64
 	LearnedMultiplier       float64
 	LearnedInfluenceApplied bool
@@ -1187,6 +1188,7 @@ func contextPackRankedEvidenceWithLearningAt(
 			DiversityKey:     diversityKey,
 			DisplayTruncated: displayTruncated,
 			TrustAssessment:  retrievalReceiptPrecomputedAssessment(anyMap(source["memory_trust_assessment"])),
+			RecallMetadata:   recallResponseProjectEvidenceMetadata(source),
 		})
 	}
 	for _, item := range contextPackAnyList(contextPack["relevant_decisions"]) {
@@ -1302,6 +1304,9 @@ func contextPackRankedEvidenceWithLearningAt(
 		}
 		if item.Timestamp != "" {
 			renderedItem["timestamp"] = item.Timestamp
+		}
+		if len(item.RecallMetadata) > 0 {
+			renderedItem["recall_metadata"] = cloneJSONMap(item.RecallMetadata)
 		}
 		rendered = append(rendered, renderedItem)
 	}

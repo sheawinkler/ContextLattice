@@ -48,6 +48,7 @@ type contextPackQualityTelemetry struct {
 	outcomes                      []map[string]any
 	proofSamples                  proofTimelineMapRing
 	proofOutcomes                 proofTimelineMapRing
+	proofRevision                 uint64
 	outcomeKeys                   map[string]struct{}
 	durableReceiptSamples         map[string]string
 	sampleCount                   int64
@@ -599,6 +600,11 @@ func (t *contextPackQualityTelemetry) loadPersistedRows() {
 				// into an apparently usable legacy row during restart.
 				continue
 			}
+			if anyToString(row["schema_id"]) == contextPackQualityOutcomeSchemaID {
+				if _, ok := recallResponseCanonicalComponentOutcomes(row); !ok {
+					continue
+				}
+			}
 		}
 		switch anyToString(row["schema_id"]) {
 		case contextPackQualitySchemaID:
@@ -747,7 +753,7 @@ func contextPackQualityLegacyOutcomeIdentifiersUnsafe(row map[string]any) bool {
 		"verification_evidence_digest": {}, "verifier_id": {}, "verification_passed": {},
 		"regression_case_ref": {}, "regression_partition": {}, "traffic_class": {}, "synthetic": {}, "stability": {},
 		"topic_path": {}, "topic_ref": {}, "quality_sample_admission": {}, "quality_sample_admission_ref": {}, "attribution_binding": {},
-		"recall_response_id": {}, "recall_response_digest": {}, "response_component_refs": {},
+		"recall_response_id": {}, "recall_response_digest": {}, "response_component_refs": {}, "recall_response_component_outcomes": {},
 	}
 	for key := range row {
 		if _, allowed := allowedOutcomeKeys[key]; !allowed {
@@ -1728,6 +1734,12 @@ func contextPackQualityRowBindingValid(row map[string]any) bool {
 		return true
 	}
 	_, ok := recallResponseBindingFromSample(row)
+	if !ok {
+		return false
+	}
+	if schemaID == contextPackQualityOutcomeSchemaID {
+		_, ok = recallResponseCanonicalComponentOutcomes(row)
+	}
 	return ok
 }
 
@@ -2467,6 +2479,10 @@ func contextPackQualityOutcomeFromSampleChecked(sample map[string]any) (map[stri
 	if !responseBindingOK {
 		return nil, errContextPackOutcomeInvalidResponseBinding
 	}
+	componentOutcomes, componentOutcomesOK := recallResponseCanonicalComponentOutcomes(sample)
+	if !componentOutcomesOK {
+		return nil, errContextPackOutcomeInvalidResponseBinding
+	}
 	sampleID := contextPackQualityIdentifier(firstNonEmptyStrings(anyToString(sample["sample_id"]), anyToString(sample["context_pack_quality_sample_id"])), 200)
 	taskID := contextPackQualityIdentifier(firstNonEmptyStrings(anyToString(sample["task_id"]), anyToString(sample["taskId"])), 160)
 	firstPassRaw, firstPassPresent := contextPackOutcomeFirstPresent(sample, "first_pass_success", "succeeded_first_pass", "success_first_pass")
@@ -2578,6 +2594,9 @@ func contextPackQualityOutcomeFromSampleChecked(sample map[string]any) (map[stri
 	copyContextPackQualityProofIdentity(entry, sample)
 	if responseBinding != nil && !recallResponseCopyBinding(entry, responseBinding) {
 		return nil, errContextPackOutcomeInvalidResponseBinding
+	}
+	if len(componentOutcomes) > 0 {
+		entry["recall_response_component_outcomes"] = componentOutcomes
 	}
 	if policyID := contextPackQualityIdentifier(sample["policy_id"], 160); policyID != "" {
 		entry["policy_id"] = policyID
@@ -2902,13 +2921,28 @@ func (t *contextPackQualityTelemetry) durableQualitySampleForOutcome(sampleID st
 	if t == nil || strings.TrimSpace(sampleID) == "" || !contextPackQualityLedgerAvailable(t.ledger) {
 		return nil, false, nil
 	}
+	rows, err := t.durableQualityLedgerRows()
+	if err != nil {
+		return nil, false, err
+	}
+	return contextPackQualitySampleFromDurableRows(rows, sampleID)
+}
+
+func (t *contextPackQualityTelemetry) durableQualityLedgerRows() ([]map[string]any, error) {
+	if t == nil || !contextPackQualityLedgerAvailable(t.ledger) {
+		return nil, errContextPackReceiptLedgerUnavailable
+	}
 	t.ledger.mu.Lock()
 	rows, _, err := t.ledger.readRowsUnlocked()
 	t.ledger.mu.Unlock()
 	if err != nil {
 		t.ledger.setError(err)
-		return nil, false, err
+		return nil, err
 	}
+	return rows, nil
+}
+
+func contextPackQualitySampleFromDurableRows(rows []map[string]any, sampleID string) (map[string]any, bool, error) {
 	var found map[string]any
 	for _, row := range rows {
 		if anyToString(row["schema_id"]) != contextPackQualitySchemaID || anyToString(row["sample_id"]) != sampleID {
@@ -3021,6 +3055,16 @@ func bindContextPackQualityOutcomeSample(entry, sample map[string]any) (map[stri
 	}
 	bound["quality_sample_admission"] = contextPackOutcomeAdmissionSchemaID
 	bound["quality_sample_admission_ref"] = ref
+	if canonicalBinding != nil {
+		componentEligibility, eligible := recallResponseComponentOutcomeEligibility(bound, sample, time.Now().UTC())
+		if !eligible {
+			return nil, errContextPackOutcomeInvalidResponseBinding
+		}
+		// Exact component bindings are retained with the verified outcome, but
+		// eligibility is observational and causal credit remains independently
+		// false until a matched control or same-snapshot ablation is verified.
+		bound["recall_response_component_outcomes"] = componentEligibility
+	}
 	return bound, nil
 }
 
@@ -3030,13 +3074,14 @@ func (t *contextPackQualityTelemetry) authoritativeOutcomeForSample(sampleID str
 	if t == nil || strings.TrimSpace(sampleID) == "" || !contextPackQualityLedgerAvailable(t.ledger) {
 		return nil, false, nil
 	}
-	t.ledger.mu.Lock()
-	rows, _, err := t.ledger.readRowsUnlocked()
-	t.ledger.mu.Unlock()
+	rows, err := t.durableQualityLedgerRows()
 	if err != nil {
-		t.ledger.setError(err)
 		return nil, false, err
 	}
+	return contextPackAuthoritativeOutcomeFromDurableRows(rows, sampleID)
+}
+
+func contextPackAuthoritativeOutcomeFromDurableRows(rows []map[string]any, sampleID string) (map[string]any, bool, error) {
 	var found map[string]any
 	for _, row := range rows {
 		if anyToString(row["schema_id"]) != contextPackQualityOutcomeSchemaID || anyToString(row["sample_id"]) != sampleID || !contextPackOutcomeHasAuthoritativeSampleAdmission(row) {
@@ -3054,6 +3099,30 @@ func (t *contextPackQualityTelemetry) authoritativeOutcomeForSample(sampleID str
 		return nil, false, nil
 	}
 	return found, true, nil
+}
+
+// durableQualitySampleAndOutcomeForSample joins the canonical quality sample
+// and its authoritative outcome from one immutable ledger read. Continuous
+// Cognition must compare both rows from the same bounded durable snapshot; two
+// independent reads duplicate the full parse and can observe different files
+// across an atomic compaction.
+func (t *contextPackQualityTelemetry) durableQualitySampleAndOutcomeForSample(sampleID string) (map[string]any, map[string]any, bool, bool, error) {
+	if t == nil || strings.TrimSpace(sampleID) == "" || !contextPackQualityLedgerAvailable(t.ledger) {
+		return nil, nil, false, false, nil
+	}
+	rows, err := t.durableQualityLedgerRows()
+	if err != nil {
+		return nil, nil, false, false, err
+	}
+	sample, sampleFound, err := contextPackQualitySampleFromDurableRows(rows, sampleID)
+	if err != nil {
+		return nil, nil, false, false, err
+	}
+	outcome, outcomeFound, err := contextPackAuthoritativeOutcomeFromDurableRows(rows, sampleID)
+	if err != nil {
+		return nil, nil, false, false, err
+	}
+	return sample, outcome, sampleFound, outcomeFound, nil
 }
 
 // authoritativeOutcomeSampleDurableLocked proves that the exact sample used at
@@ -3222,6 +3291,7 @@ func (t *contextPackQualityTelemetry) applyQualityEntryLocked(entry map[string]a
 	stored := cloneMap(entry)
 	t.samples = append(t.samples, stored)
 	t.proofSamples.add(stored)
+	t.proofRevision = nextProofTimelineRevision(t.proofRevision)
 	if len(t.samples) > t.limit {
 		t.samples = append([]map[string]any{}, t.samples[len(t.samples)-t.limit:]...)
 	}
@@ -3286,6 +3356,7 @@ func (t *contextPackQualityTelemetry) applyOutcomeEntryLocked(entry map[string]a
 	stored := cloneMap(entry)
 	t.outcomes = append(t.outcomes, stored)
 	t.proofOutcomes.add(stored)
+	t.proofRevision = nextProofTimelineRevision(t.proofRevision)
 	if len(t.outcomes) > t.limit {
 		t.outcomes = append([]map[string]any{}, t.outcomes[len(t.outcomes)-t.limit:]...)
 	}

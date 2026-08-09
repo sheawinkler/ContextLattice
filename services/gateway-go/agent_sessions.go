@@ -373,16 +373,26 @@ func agentSessionEffectiveStatus(row map[string]any, now time.Time, idleTTL time
 	return status
 }
 
-func (s *agentSessionStore) effectiveSessionLocked(row map[string]any, now time.Time) map[string]any {
+func agentSessionEffectiveSnapshot(row map[string]any, idleTTL time.Duration, now time.Time) map[string]any {
 	copyRow := cloneAnyMap(row)
-	status := agentSessionEffectiveStatus(copyRow, now, s.idleTTL)
+	status := agentSessionEffectiveStatus(copyRow, now, idleTTL)
 	copyRow["status"] = status
 	copyRow["stale"] = status == "expired"
-	copyRow["idle_ttl_seconds"] = int(s.idleTTL.Seconds())
+	copyRow["idle_ttl_seconds"] = int(idleTTL.Seconds())
 	if status == "expired" {
 		copyRow["expired_at"] = now.UTC().Format(time.RFC3339)
 	}
 	return copyRow
+}
+
+// effectiveSessionLocked is retained for callers that already hold the
+// session-store lock. Read-only cognition snapshots use
+// agentSessionEffectiveSnapshot after releasing that lock.
+func (s *agentSessionStore) effectiveSessionLocked(row map[string]any, now time.Time) map[string]any {
+	if s == nil {
+		return agentSessionEffectiveSnapshot(row, 0, now)
+	}
+	return agentSessionEffectiveSnapshot(row, s.idleTTL, now)
 }
 
 func agentSessionOwnership(session map[string]any) map[string]any {

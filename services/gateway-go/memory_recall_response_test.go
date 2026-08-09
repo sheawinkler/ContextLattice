@@ -13,6 +13,7 @@ func recallResponseTestInput(withEvidence bool) map[string]any {
 		"project":          "private-project",
 		"topic_path":       "decision/retrieval",
 		"agent_id":         "agent-alpha",
+		"workspace_ref":    "workspace-alpha",
 		"retrieval_intent": "decision",
 		"retrieval_mode":   "impact_per_token",
 		"source_coverage":  map[string]any{"complete": true, "returned": []any{"qdrant"}},

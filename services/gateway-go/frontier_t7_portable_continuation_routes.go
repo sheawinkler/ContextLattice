@@ -55,6 +55,7 @@ type frontierT7ManifestRouteRequest struct {
 	Project                     string   `json:"project"`
 	PassportID                  string   `json:"passport_id"`
 	PassportDigest              string   `json:"passport_digest"`
+	EvidenceIdentityDigest      string   `json:"evidence_identity_digest,omitempty"`
 	LineageDigest               string   `json:"lineage_digest"`
 	CheckpointDigest            string   `json:"checkpoint_digest"`
 	LifecycleReceiptDigest      string   `json:"lifecycle_receipt_digest"`
@@ -274,6 +275,16 @@ func (s *server) frontierT7ManifestsRoute(w http.ResponseWriter, r *http.Request
 		s.frontierT7WriteError(w, http.StatusBadRequest, "invalid_manifest_request", err)
 		return
 	}
+	if rawIdentity, present := payload["evidence_identity_digest"]; present {
+		if rawIdentity == nil {
+			s.frontierT7WriteError(w, http.StatusBadRequest, "invalid_manifest_request", errors.New("evidence_identity_digest cannot be null"))
+			return
+		}
+		if value, ok := rawIdentity.(string); ok && strings.TrimSpace(value) == "" {
+			s.frontierT7WriteError(w, http.StatusBadRequest, "invalid_manifest_request", errors.New("evidence_identity_digest cannot be empty"))
+			return
+		}
+	}
 	now := time.Now().UTC()
 	switch strings.ToLower(strings.TrimSpace(request.Operation)) {
 	case "create":
@@ -287,7 +298,7 @@ func (s *server) frontierT7ManifestsRoute(w http.ResponseWriter, r *http.Request
 			s.frontierT7WriteError(w, http.StatusBadRequest, "invalid_manifest_request", err)
 			return
 		}
-		manifest, err := s.frontierT7.prepareManifest(frontierT7ContinuationRequest{Project: request.Project, PassportID: request.PassportID, PassportDigest: request.PassportDigest, LineageDigest: request.LineageDigest, CheckpointDigest: request.CheckpointDigest, LifecycleReceiptDigest: request.LifecycleReceiptDigest, UnresolvedObligationDigests: request.UnresolvedObligationDigests, RepositoryConstraintDigest: request.RepositoryConstraintDigest, DestinationSessionDigest: request.DestinationSessionDigest, RecipientKeyID: grant.RecipientKeyID, Grant: grant, Transport: request.Transport, ExpiresAt: expiresAt}, now)
+		manifest, err := s.frontierT7.prepareManifest(frontierT7ContinuationRequest{Project: request.Project, PassportID: request.PassportID, PassportDigest: request.PassportDigest, EvidenceIdentityDigest: request.EvidenceIdentityDigest, LineageDigest: request.LineageDigest, CheckpointDigest: request.CheckpointDigest, LifecycleReceiptDigest: request.LifecycleReceiptDigest, UnresolvedObligationDigests: request.UnresolvedObligationDigests, RepositoryConstraintDigest: request.RepositoryConstraintDigest, DestinationSessionDigest: request.DestinationSessionDigest, RecipientKeyID: grant.RecipientKeyID, Grant: grant, Transport: request.Transport, ExpiresAt: expiresAt}, now)
 		if err != nil {
 			s.frontierT7WriteError(w, http.StatusUnprocessableEntity, "manifest_create_failed", err)
 			return

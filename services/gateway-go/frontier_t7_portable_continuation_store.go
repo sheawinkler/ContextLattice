@@ -15,6 +15,7 @@ const (
 	frontierT7GrantRevocationSchemaID = "collaborative_context_grant_revocation.v1"
 	frontierT7StatusSchemaID          = "portable_continuation_status.v1"
 	frontierT7StateSchemaID           = "portable_continuation_state.v1"
+	frontierT7StateAnchorSchemaID     = "portable_continuation_state_anchor.v1"
 
 	frontierT7EnabledEnv   = "CONTEXTLATTICE_FRONTIER_T7_PORTABLE_CONTINUATION_ENABLED"
 	frontierT7StatePathEnv = "CONTEXTLATTICE_FRONTIER_T7_PORTABLE_CONTINUATION_STATE_PATH"
@@ -100,13 +101,14 @@ func frontierT7VerifyGrantRevocation(value frontierT7GrantRevocation) bool {
 }
 
 type frontierT7ManifestRecord struct {
-	ManifestID     string `json:"manifest_id"`
-	ManifestDigest string `json:"manifest_digest"`
-	Project        string `json:"project"`
-	RecipientKeyID string `json:"recipient_key_id"`
-	Direction      string `json:"direction"`
-	CreatedAt      string `json:"created_at"`
-	ExpiresAt      string `json:"expires_at"`
+	ManifestID             string `json:"manifest_id"`
+	ManifestDigest         string `json:"manifest_digest"`
+	EvidenceIdentityDigest string `json:"evidence_identity_digest,omitempty"`
+	Project                string `json:"project"`
+	RecipientKeyID         string `json:"recipient_key_id"`
+	Direction              string `json:"direction"`
+	CreatedAt              string `json:"created_at"`
+	ExpiresAt              string `json:"expires_at"`
 }
 
 type frontierT7ReplayRecord struct {
@@ -118,6 +120,7 @@ type frontierT7ReplayRecord struct {
 type frontierT7PortableState struct {
 	SchemaID       string                                  `json:"schema_id"`
 	Version        int                                     `json:"version"`
+	Generation     uint64                                  `json:"generation,omitempty"`
 	Grants         map[string]frontierT7CollaborativeGrant `json:"grants"`
 	GrantUsage     map[string]int                          `json:"grant_usage"`
 	Revocations    map[string]frontierT7GrantRevocation    `json:"revocations"`
@@ -129,16 +132,26 @@ type frontierT7PortableState struct {
 	StateHash      string                                  `json:"state_hash"`
 }
 
+type frontierT7StateAnchor struct {
+	SchemaID        string `json:"schema_id"`
+	Version         int    `json:"version"`
+	StatePathDigest string `json:"state_path_digest"`
+	Generation      uint64 `json:"generation"`
+	StateHash       string `json:"state_hash"`
+}
+
 type frontierT7PortableStore struct {
 	mu              sync.RWMutex
 	enabled         bool
 	path            string
+	anchorPath      string
 	dedicatedParent bool
 	limits          frontierT7StoreLimits
 	identity        *contextIdentityKeys
 	state           frontierT7PortableState
 	fileBytes       int64
 	lastErrorCode   string
+	anchor          frontierT7StateAnchor
 	unlock          func()
 }
 
@@ -194,6 +207,29 @@ func frontierT7StateHash(value frontierT7PortableState) string {
 	return frontierT7Digest(value)
 }
 
+func frontierT7StatePathDigest(path string) string {
+	return frontierT7Digest(map[string]any{"schema_id": frontierT7StateAnchorSchemaID, "path": filepath.Clean(path)})
+}
+
+func frontierT7StateAnchorFor(path string, state frontierT7PortableState) frontierT7StateAnchor {
+	return frontierT7StateAnchor{
+		SchemaID:        frontierT7StateAnchorSchemaID,
+		Version:         1,
+		StatePathDigest: frontierT7StatePathDigest(path),
+		Generation:      state.Generation,
+		StateHash:       state.StateHash,
+	}
+}
+
+func validateFrontierT7StateAnchor(anchor frontierT7StateAnchor, path string) error {
+	if anchor.SchemaID != frontierT7StateAnchorSchemaID || anchor.Version != 1 ||
+		anchor.StatePathDigest != frontierT7StatePathDigest(path) || anchor.Generation == 0 ||
+		!frontierT7ValidDigest(anchor.StateHash) {
+		return errors.New("portable continuation state anchor is invalid")
+	}
+	return nil
+}
+
 func frontierT7PortableStatePath() string {
 	return resolveStoragePath(frontierT7StatePathEnv, frontierT7DefaultStatePath)
 }
@@ -207,9 +243,12 @@ func newFrontierT7PortableStoreWithParent(path string, limits frontierT7StoreLim
 	if path == "." || path == "" || identity == nil {
 		return nil, errors.New("portable continuation state path and signing identity are required")
 	}
-	store := &frontierT7PortableStore{enabled: true, path: path, dedicatedParent: dedicatedParent, limits: frontierT7NormalizeStoreLimits(limits), identity: identity, state: emptyFrontierT7PortableState()}
+	store := &frontierT7PortableStore{enabled: true, path: path, anchorPath: path + ".anchor", dedicatedParent: dedicatedParent, limits: frontierT7NormalizeStoreLimits(limits), identity: identity, state: emptyFrontierT7PortableState()}
 	if err := prepareOwnerOnlyFile(store.path, dedicatedParent); err != nil {
 		return nil, fmt.Errorf("prepare portable continuation state: %w", err)
+	}
+	if err := createOwnerOnlyDurableEmptyFileIfMissing(store.anchorPath, dedicatedParent); err != nil {
+		return nil, fmt.Errorf("prepare portable continuation state anchor: %w", err)
 	}
 	unlock, err := lockOwnerOnlyMigration(store.path + ".lock")
 	if err != nil {
@@ -246,15 +285,65 @@ func (s *frontierT7PortableStore) close() {
 	}
 }
 
+func (s *frontierT7PortableStore) readStateAnchor() (frontierT7StateAnchor, bool, error) {
+	raw, err := os.ReadFile(s.anchorPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return frontierT7StateAnchor{}, false, nil
+	}
+	if err != nil {
+		return frontierT7StateAnchor{}, true, fmt.Errorf("read portable continuation state anchor: %w", err)
+	}
+	if strings.TrimSpace(string(raw)) == "" {
+		return frontierT7StateAnchor{}, false, nil
+	}
+	var anchor frontierT7StateAnchor
+	if err := strictJSONDecode(raw, &anchor); err != nil {
+		return frontierT7StateAnchor{}, true, fmt.Errorf("decode portable continuation state anchor: %w", err)
+	}
+	if err := validateFrontierT7StateAnchor(anchor, s.path); err != nil {
+		return frontierT7StateAnchor{}, true, fmt.Errorf("validate portable continuation state anchor: %w", err)
+	}
+	return anchor, true, nil
+}
+
+func (s *frontierT7PortableStore) persistStateAnchor(anchor frontierT7StateAnchor) error {
+	if err := validateFrontierT7StateAnchor(anchor, s.path); err != nil {
+		return err
+	}
+	if s.anchor.Generation > 0 && anchor.Generation <= s.anchor.Generation {
+		return errors.New("portable continuation state anchor generation is not monotonic")
+	}
+	raw, err := json.Marshal(anchor)
+	if err != nil {
+		return err
+	}
+	raw = append(raw, '\n')
+	if err := writeOwnerOnlyDurableAtomicFile(s.anchorPath, raw, s.dedicatedParent); err != nil {
+		return err
+	}
+	s.anchor = anchor
+	return nil
+}
+
 func (s *frontierT7PortableStore) load() error {
+	anchor, anchorPresent, err := s.readStateAnchor()
+	if err != nil {
+		return err
+	}
 	info, err := os.Stat(s.path)
 	if errors.Is(err, os.ErrNotExist) {
+		if anchorPresent {
+			return errors.New("portable continuation state is missing behind its durable anchor")
+		}
 		return s.saveLocked(time.Now().UTC())
 	}
 	if err != nil {
 		return fmt.Errorf("stat portable continuation state: %w", err)
 	}
 	if info.Size() == 0 {
+		if anchorPresent {
+			return errors.New("portable continuation state is truncated behind its durable anchor")
+		}
 		return s.saveLocked(time.Now().UTC())
 	}
 	if info.Size() > int64(s.limits.MaxBytes) {
@@ -271,6 +360,26 @@ func (s *frontierT7PortableStore) load() error {
 	if err := frontierT7ValidatePortableState(state, s.limits); err != nil {
 		return err
 	}
+	if state.Generation == 0 {
+		if anchorPresent {
+			return errors.New("portable continuation legacy state has an unexpected durable anchor")
+		}
+		// A state written before the generation field is a supported legacy
+		// format. saveLocked re-seals it at generation one and creates the
+		// external owner-only anchor before the store becomes usable.
+		s.state = state
+		if err := s.saveLocked(time.Now().UTC()); err != nil {
+			return fmt.Errorf("migrate portable continuation state anchor: %w", err)
+		}
+		return nil
+	}
+	if !anchorPresent {
+		return errors.New("portable continuation state has no durable anchor")
+	}
+	if anchor.Generation != state.Generation || anchor.StateHash != state.StateHash {
+		return errors.New("portable continuation state rolled back or durable anchor mismatched")
+	}
+	s.anchor = anchor
 	s.state, s.fileBytes = state, info.Size()
 	return nil
 }
@@ -317,6 +426,9 @@ func frontierT7ValidatePortableState(state frontierT7PortableState, limits front
 			mustParseFrontierT7Time(record.CreatedAt).IsZero() || mustParseFrontierT7Time(record.ExpiresAt).IsZero() {
 			return errors.New("portable continuation manifest state is invalid")
 		}
+		if strings.TrimSpace(record.EvidenceIdentityDigest) != "" && !frontierT7ValidDigest(record.EvidenceIdentityDigest) {
+			return errors.New("portable continuation manifest evidence identity state is invalid")
+		}
 	}
 	for id, record := range state.Replay {
 		if id == "" || !frontierT7ValidDigest(record.ManifestDigest) || mustParseFrontierT7Time(record.RecordedAt).IsZero() || mustParseFrontierT7Time(record.ExpiresAt).IsZero() {
@@ -331,6 +443,11 @@ func frontierT7ValidatePortableState(state frontierT7PortableState, limits front
 
 func (s *frontierT7PortableStore) saveLocked(now time.Time) error {
 	s.trimExpiredLocked(now)
+	if s.state.Generation == 0 {
+		s.state.Generation = 1
+	} else {
+		s.state.Generation++
+	}
 	s.state.UpdatedAt = now.UTC().Format(time.RFC3339Nano)
 	s.state.StateHash = frontierT7StateHash(s.state)
 	if err := frontierT7ValidatePortableState(s.state, s.limits); err != nil {
@@ -346,6 +463,10 @@ func (s *frontierT7PortableStore) saveLocked(now time.Time) error {
 	content := append(raw, '\n')
 	if err := writeOwnerOnlyDurableAtomicFile(s.path, content, s.dedicatedParent); err != nil {
 		return err
+	}
+	anchor := frontierT7StateAnchorFor(s.path, s.state)
+	if err := s.persistStateAnchor(anchor); err != nil {
+		return &ownerOnlyAtomicWriteError{Operation: "persist portable continuation state anchor", Committed: true, Err: err}
 	}
 	s.fileBytes, s.lastErrorCode = int64(len(content)), ""
 	return nil
@@ -374,11 +495,14 @@ func (s *frontierT7PortableStore) mutate(now time.Time, apply func() error) erro
 }
 
 func (s *frontierT7PortableStore) mutateMaybe(now time.Time, apply func() (bool, error)) error {
-	if s == nil || !s.enabled {
+	if s == nil {
 		return errors.New("portable continuation store is disabled")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if !s.enabled {
+		return errors.New("portable continuation store is disabled")
+	}
 	before, err := json.Marshal(s.state)
 	if err != nil {
 		return err
@@ -428,11 +552,14 @@ func frontierT7GrantRevocationReason(grant frontierT7CollaborativeGrant, revoked
 }
 
 func (s *frontierT7PortableStore) getGrant(grantID string) (frontierT7CollaborativeGrant, bool) {
-	if s == nil || !s.enabled {
+	if s == nil {
 		return frontierT7CollaborativeGrant{}, false
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if !s.enabled {
+		return frontierT7CollaborativeGrant{}, false
+	}
 	grant, exists := s.state.Grants[strings.TrimSpace(grantID)]
 	return grant, exists
 }
@@ -488,11 +615,14 @@ func (s *frontierT7PortableStore) authorize(grantID string, request frontierT7Gr
 			return decision.Allowed, nil
 		})
 	}
-	if s == nil || !s.enabled {
+	if s == nil {
 		return decision, errors.New("portable continuation store is disabled")
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if !s.enabled {
+		return decision, errors.New("portable continuation store is disabled")
+	}
 	err := apply()
 	return decision, err
 }
@@ -615,11 +745,14 @@ func (s *frontierT7PortableStore) createManifest(request frontierT7ContinuationR
 }
 
 func (s *frontierT7PortableStore) prepareManifest(request frontierT7ContinuationRequest, now time.Time) (frontierT7ContinuationManifest, error) {
-	if s == nil || !s.enabled {
+	if s == nil {
 		return frontierT7ContinuationManifest{}, errors.New("portable continuation store is disabled")
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if !s.enabled {
+		return frontierT7ContinuationManifest{}, errors.New("portable continuation store is disabled")
+	}
 	grant, exists := s.state.Grants[request.Grant.GrantID]
 	if !exists || grant.GrantDigest != request.Grant.GrantDigest {
 		return frontierT7ContinuationManifest{}, errors.New("continuation grant not found")
@@ -653,7 +786,7 @@ func (s *frontierT7PortableStore) recordCreatedManifest(manifest frontierT7Conti
 		if len(s.state.Manifests) >= s.limits.MaxManifests {
 			return false, errors.New("portable continuation manifest capacity reached")
 		}
-		s.state.Manifests[key] = frontierT7ManifestRecord{ManifestID: manifest.ManifestID, ManifestDigest: manifest.ManifestDigest, Project: manifest.Project, RecipientKeyID: manifest.RecipientKeyID, Direction: "created", CreatedAt: manifest.CreatedAt, ExpiresAt: manifest.ExpiresAt}
+		s.state.Manifests[key] = frontierT7ManifestRecord{ManifestID: manifest.ManifestID, ManifestDigest: manifest.ManifestDigest, EvidenceIdentityDigest: manifest.EvidenceIdentityDigest, Project: manifest.Project, RecipientKeyID: manifest.RecipientKeyID, Direction: "created", CreatedAt: manifest.CreatedAt, ExpiresAt: manifest.ExpiresAt}
 		return true, nil
 	})
 }
@@ -715,7 +848,7 @@ func (s *frontierT7PortableStore) reconcileManifest(manifest frontierT7Continuat
 		}
 		s.state.Replay = stagedReplay
 		s.state.GrantUsage[grant.GrantID]++
-		s.state.Manifests[key] = frontierT7ManifestRecord{ManifestID: manifest.ManifestID, ManifestDigest: manifest.ManifestDigest, Project: manifest.Project, RecipientKeyID: manifest.RecipientKeyID, Direction: "reconciled", CreatedAt: manifest.CreatedAt, ExpiresAt: manifest.ExpiresAt}
+		s.state.Manifests[key] = frontierT7ManifestRecord{ManifestID: manifest.ManifestID, ManifestDigest: manifest.ManifestDigest, EvidenceIdentityDigest: manifest.EvidenceIdentityDigest, Project: manifest.Project, RecipientKeyID: manifest.RecipientKeyID, Direction: "reconciled", CreatedAt: manifest.CreatedAt, ExpiresAt: manifest.ExpiresAt}
 		return true, nil
 	})
 	return result, err
@@ -729,6 +862,7 @@ func (s *frontierT7PortableStore) snapshot(now time.Time) map[string]any {
 	defer s.mu.RUnlock()
 	active, exhausted := 0, 0
 	reconciliations := 0
+	evidenceIdentityBound, evidenceIdentityLegacy := 0, 0
 	revoked := frontierT7RevokedSet(s.state.Revocations)
 	for id, grant := range s.state.Grants {
 		if frontierT7GrantRevocationReason(grant, revoked) != "" {
@@ -746,19 +880,25 @@ func (s *frontierT7PortableStore) snapshot(now time.Time) map[string]any {
 		if manifest.Direction == "reconciled" {
 			reconciliations++
 		}
+		if strings.TrimSpace(manifest.EvidenceIdentityDigest) == "" {
+			evidenceIdentityLegacy++
+		} else {
+			evidenceIdentityBound++
+		}
 	}
 	return map[string]any{
 		"ok": s.enabled, "schema_id": frontierT7StatusSchemaID, "version": 1, "enabled": s.enabled,
 		"grants": len(s.state.Grants), "revocations": len(s.state.Revocations),
 		"import_plans": len(s.state.ImportPlans), "import_receipts": len(s.state.ImportReceipts),
 		"manifests": len(s.state.Manifests), "reconciliations": reconciliations,
-		"updated_at": s.state.UpdatedAt, "state_hash": s.state.StateHash,
+		"evidence_identity_bound_manifests": evidenceIdentityBound, "evidence_identity_legacy_manifests": evidenceIdentityLegacy,
+		"updated_at": s.state.UpdatedAt, "state_hash": s.state.StateHash, "generation": s.state.Generation,
 		"limits":        map[string]any{"max_bytes": s.limits.MaxBytes, "max_grants": s.limits.MaxGrants, "max_revocations": s.limits.MaxRevocations, "max_plans": s.limits.MaxPlans, "max_receipts": s.limits.MaxReceipts, "max_manifests": s.limits.MaxManifests, "max_replay": s.limits.MaxReplay},
 		"ownership":     map[string]any{"import_execution_owner": "external_import_worker", "transport_owned_by_contextlattice": false},
 		"data_handling": map[string]any{"bounded": true, "redacted": true, "content_references_digest_only": true, "raw_payloads_included": false},
 		"safety":        map[string]any{"gateway_execution_performed": false, "model_execution_performed": false, "subprocess_execution_performed": false, "ordinary_memory_mutated": false, "private_key_exported": false},
 		"grant_status":  map[string]any{"active": active, "exhausted": exhausted},
-		"storage":       map[string]any{"file_bytes": s.fileBytes, "last_error_code": s.lastErrorCode, "replay_records": len(s.state.Replay)},
+		"storage":       map[string]any{"file_bytes": s.fileBytes, "last_error_code": s.lastErrorCode, "replay_records": len(s.state.Replay), "anchor_generation": s.anchor.Generation},
 		"network_calls": 0,
 	}
 }

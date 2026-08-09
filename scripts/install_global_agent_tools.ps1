@@ -137,6 +137,7 @@ $hookRuntimePythonFiles = @(
     "scripts\agent\audit-codex-session-store",
     "scripts\agent\compaction-handoff-payload",
     "scripts\agent\contextlattice-session",
+    "scripts\agent\contextlattice-recall-response",
     "scripts\agent_contracts.py",
     "scripts\agent_orchestration.py",
     "scripts\contextlattice_client.py"
@@ -533,6 +534,7 @@ $goNativeCommands = @(
     "contextlattice",
     "contextlattice_search",
     "contextlattice_pack",
+    "contextlattice_recall_response",
     "contextlattice_packet_reconstruct",
     "contextlattice_synthesis_pack",
     "contextlattice_synthesis_pack_v2",

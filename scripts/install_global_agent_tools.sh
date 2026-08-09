@@ -345,6 +345,7 @@ HOOK_RUNTIME_PYTHON_FILES=(
   scripts/agent/audit-codex-session-store
   scripts/agent/compaction-handoff-payload
   scripts/agent/contextlattice-session
+  scripts/agent/contextlattice-recall-response
   scripts/agent_contracts.py
   scripts/agent_orchestration.py
   scripts/contextlattice_client.py
@@ -720,6 +721,7 @@ GO_NATIVE_COMMANDS=(
   contextlattice
   contextlattice_search
   contextlattice_pack
+  contextlattice_recall_response
   contextlattice_packet_reconstruct
   contextlattice_synthesis_pack
   contextlattice_synthesis_pack_v2
@@ -976,6 +978,7 @@ log "Installed global ContextLattice tools:"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice-agent-tools"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_search"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_pack"
+log "  - ${GLOBAL_BIN_DIR}/contextlattice_recall_response"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_packet_reconstruct"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_synthesis_pack"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_synthesis_pack_v2"

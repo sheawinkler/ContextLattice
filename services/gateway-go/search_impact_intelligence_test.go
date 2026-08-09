@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -45,6 +46,37 @@ func searchImpactEligibleOutcome(id string, capturedAt time.Time, success, repai
 		"wire_tokens_exact":                  90,
 		"model_visible_context_tokens_exact": 72,
 	}
+}
+
+func searchImpactScopedCandidateFixture(t *testing.T, id, project, taskClass, retrievalIntent, workspaceRef string, capturedAt time.Time) map[string]any {
+	t.Helper()
+	row := evidenceReputationTestOutcome(1, true, "verifier-"+id)
+	row["outcome_id"] = id
+	row["project"] = project
+	row["task_class"] = taskClass
+	row["retrieval_intent"] = retrievalIntent
+	row["workspace_ref"] = workspaceRef
+	row["gateway_received_at"] = capturedAt.UTC().Format(time.RFC3339Nano)
+	ref := outcomeIntelligenceCandidateRef("scope-" + id)
+	digest := anyToString(row["verification_evidence_digest"])
+	row["evidence_attribution"] = []any{map[string]any{
+		"entity_type": "candidate", "entity_id": ref, "candidate_ref": ref,
+		"result_level_credit": "selection_receipt_bound", "selection_state": "selected",
+		"attribution_method": "counterfactual", "verifier_id": row["verifier_id"],
+		"verification_evidence_digest": digest,
+	}}
+	row["candidate_utility_verification"] = map[string]any{
+		"outcome_id": row["outcome_id"], "sample_id": row["sample_id"],
+		"independently_verified": true, "verification_status": "verified",
+		"evidence_digest": digest, "verifier_id": row["verifier_id"],
+		"observed_yield_eligible": true, "wire_tokens_exact": 90, "model_visible_context_tokens_exact": 72,
+		"workspace_ref": workspaceRef,
+	}
+	_, binding := contextPackOutcomeResponseBindingFixture(t, "search-impact-scope-"+id)
+	if !recallResponseCopyBinding(row, binding) || !recallResponseCopyBinding(anyMap(row["candidate_utility_verification"]), binding) {
+		t.Fatal("failed to attach canonical scope fixture binding")
+	}
+	return row
 }
 
 func searchImpactCausalUtilityRows(controlOne, treatmentOne, controlTwo, treatmentTwo string) []map[string]any {
@@ -350,6 +382,62 @@ func TestSearchImpactReconciledCandidateOutcomesRequiresSelectedEvidence(t *test
 	}
 }
 
+func TestSearchImpactScopeWrappersMatchCoreAndRemainAuthorizationMonotonic(t *testing.T) {
+	baseTime := time.Date(2026, time.August, 4, 12, 0, 0, 0, time.UTC)
+	workspaceA := contextPackLearnedScopeRef("workspace", "scope-a")
+	workspaceB := contextPackLearnedScopeRef("workspace", "scope-b")
+	rows := []map[string]any{
+		searchImpactScopedCandidateFixture(t, "scope-a-decision", "contextlattice", "coding", "decision", workspaceA, baseTime),
+		searchImpactScopedCandidateFixture(t, "scope-a-exploration", "contextlattice", "coding", "exploration", workspaceA, baseTime.Add(time.Minute)),
+		searchImpactScopedCandidateFixture(t, "scope-b-decision", "contextlattice", "coding", "decision", workspaceB, baseTime.Add(2*time.Minute)),
+		searchImpactScopedCandidateFixture(t, "scope-other-project", "other", "coding", "decision", workspaceA, baseTime.Add(3*time.Minute)),
+	}
+
+	scope := normalizeSearchImpactScope(" ContextLattice ", " CODING ", " DECISION ", workspaceA, true)
+	core := searchImpactReconciledCandidateOutcomesCore(rows, scope)
+	wrapper := searchImpactReconciledCandidateOutcomesForWorkspace(rows, "ContextLattice", "CODING", "DECISION", workspaceA)
+	if !reflect.DeepEqual(core, wrapper) {
+		t.Fatalf("workspace compatibility wrapper diverged from core:\ncore=%#v\nwrapper=%#v", core, wrapper)
+	}
+	if got, want := len(core), 1; got != want {
+		t.Fatalf("exact workspace scope count = %d, want %d", got, want)
+	}
+	if got := anyToString(core[0]["response_binding_key"]); got == "" || !utilitySHA256DigestValid(got) {
+		t.Fatalf("core lost canonical opaque response identity: %#v", core[0])
+	}
+
+	broad := searchImpactReconciledCandidateOutcomes(rows, "contextlattice", "coding")
+	intent := searchImpactReconciledCandidateOutcomesForScope(rows, "contextlattice", "coding", "decision")
+	if len(broad) < len(intent) || len(intent) < len(core) {
+		t.Fatalf("scope authorization was not monotonic: broad=%d intent=%d workspace=%d", len(broad), len(intent), len(core))
+	}
+	invalid := searchImpactReconciledCandidateOutcomesForWorkspace(rows, "contextlattice", "coding", "decision", "not-a-digest")
+	if len(invalid) != 0 {
+		t.Fatalf("malformed workspace scope broadened into eligible rows: %#v", invalid)
+	}
+}
+
+func TestSearchImpactMalformedScopeSnapshotFailsClosedWithoutReauthorization(t *testing.T) {
+	rows := []map[string]any{
+		searchImpactScopedCandidateFixture(t, "malformed-scope", "contextlattice", "coding", "decision", contextPackLearnedScopeRef("workspace", "scope-a"), time.Date(2026, time.August, 4, 12, 0, 0, 0, time.UTC)),
+	}
+	s := &server{}
+	snapshot := s.searchImpactIntelligenceSnapshotFromReconciledRowsForWorkspace(
+		"contextlattice", "coding", "decision", "not-a-digest", rows,
+		map[string]any{"pass": true},
+	)
+	if got := anyToInt(anyMap(snapshot["outcome_intelligence"])["receipt_bound_utility_reconciled_candidate_outcome_count"], -1); got != 0 {
+		t.Fatalf("malformed snapshot scope retained candidate rows: %d", got)
+	}
+	if anyToBool(snapshot["canary_eligible"]) {
+		t.Fatalf("malformed snapshot scope authorized a canary: %#v", snapshot)
+	}
+	shadow := s.latestSearchImpactShadowEvaluationForWorkspace("contextlattice", "coding", "not-a-digest")
+	if anyToBool(shadow["comparison_valid"]) || anyToString(shadow["comparison_reason"]) != "scope_mismatch" {
+		t.Fatalf("malformed shadow scope was not fail-closed: %#v", shadow)
+	}
+}
+
 func TestReconcileCandidateUtilityVerificationCarriesExactOutcomeProof(t *testing.T) {
 	row := map[string]any{
 		"outcome_id": "outcome-exact", "evidence_attribution": []any{map[string]any{
@@ -539,6 +627,28 @@ func TestSearchImpactReconciledOutcomesCarryOpaqueBindingAndIgnoreRequestScope(t
 	}
 	if got := anyToString(outcomes[0]["response_binding_key"]); got == "" || !utilitySHA256DigestValid(got) {
 		t.Fatalf("opaque response binding key missing or malformed: %#v", outcomes[0])
+	}
+	if got := anyToInt(outcomes[0]["component_outcome_eligible_count"], -1); got != 0 {
+		t.Fatalf("binding presence alone inflated component outcome eligibility: %#v", outcomes[0])
+	}
+	componentBindings, ok := recallResponseComponentBindingRows(binding)
+	if !ok || len(componentBindings) == 0 {
+		t.Fatal("failed to construct component outcome eligibility fixture")
+	}
+	componentOutcomes := make([]any, 0, len(componentBindings))
+	for _, raw := range componentBindings {
+		component := anyMap(raw)
+		componentOutcomes = append(componentOutcomes, map[string]any{
+			"component_ref": component["component_ref"], "kind": component["kind"], "ordinal": component["ordinal"],
+			"binding": cloneJSONMap(anyMap(component["binding"])), "outcome_eligible": true, "causal_credit": false,
+			"causal_reason": "matched_control_or_same_snapshot_ablation_required",
+		})
+	}
+	row["recall_response_component_outcomes"] = componentOutcomes
+	outcomes = searchImpactReconciledCandidateOutcomesForWorkspace([]map[string]any{row}, "contextlattice", "coding", "", "")
+	if len(outcomes) != 1 || anyToInt(outcomes[0]["component_outcome_eligible_count"], 0) != len(componentOutcomes) ||
+		anyToInt(outcomes[0]["component_causal_credit_count"], -1) != 0 {
+		t.Fatalf("exact component outcomes did not project eligibility without causal inflation: %#v", outcomes)
 	}
 	keyOnly := cloneJSONMap(row)
 	for _, key := range []string{"recall_response_id", "recall_response_digest", "response_component_refs"} {
@@ -1171,6 +1281,27 @@ func BenchmarkLatestSearchImpactShadowEvaluationFromStartupIndex(b *testing.B) {
 		selected := s.latestSearchImpactShadowEvaluation("contextlattice", "coding")
 		if !anyToBool(selected["comparison_valid"]) {
 			b.Fatalf("startup index lost exact comparator evidence: %#v", selected)
+		}
+	}
+}
+
+func BenchmarkSearchImpactReconciledCandidateOutcomesCoreLargeRows(b *testing.B) {
+	rows := make([]map[string]any, 10000)
+	for index := range rows {
+		rows[index] = map[string]any{
+			"outcome_id":          "large-row-" + anyToString(index),
+			"project":             "contextlattice",
+			"task_class":          "coding",
+			"retrieval_intent":    "decision",
+			"gateway_received_at": "2026-08-04T12:00:00Z",
+		}
+	}
+	scope := normalizeSearchImpactScope("contextlattice", "coding", "decision", "", true)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for index := 0; index < b.N; index++ {
+		if got := searchImpactReconciledCandidateOutcomesCore(rows, scope); len(got) != 0 {
+			b.Fatalf("unverified large-row input became eligible: %d", len(got))
 		}
 	}
 }

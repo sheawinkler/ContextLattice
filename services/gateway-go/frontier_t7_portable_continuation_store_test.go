@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -138,6 +139,115 @@ func TestFrontierT7PortableStoreFailsClosedAtCapacity(t *testing.T) {
 	second.Subject.SnapshotDigest = frontierT7TestDigest("second-subject")
 	if _, err := store.createGrant(second, now.Add(time.Second)); err == nil {
 		t.Fatal("grant capacity was not enforced")
+	}
+}
+
+func TestFrontierT7PortableStoreRejectsRestoredOlderState(t *testing.T) {
+	root := t.TempDir()
+	identity, err := loadOrCreateContextIdentity(filepath.Join(root, "identity.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	statePath := filepath.Join(root, "portable.json")
+	store, err := newFrontierT7PortableStore(statePath, frontierT7StoreLimits{}, identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initial, err := os.ReadFile(statePath)
+	if err != nil {
+		store.close()
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if _, err := store.createGrant(frontierT7StoreTestGrantRequest(identity, now), now); err != nil {
+		store.close()
+		t.Fatal(err)
+	}
+	anchorRaw, err := os.ReadFile(statePath + ".anchor")
+	if err != nil {
+		store.close()
+		t.Fatal(err)
+	}
+	if len(anchorRaw) > 4096 || bytes.Count(anchorRaw, []byte{'\n'}) != 1 {
+		store.close()
+		t.Fatalf("portable continuation anchor is not a bounded single checkpoint: bytes=%d lines=%d", len(anchorRaw), bytes.Count(anchorRaw, []byte{'\n'}))
+	}
+	store.close()
+	if err := os.WriteFile(statePath, initial, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if restored, err := newFrontierT7PortableStore(statePath, frontierT7StoreLimits{}, identity); err == nil {
+		restored.close()
+		t.Fatal("restored older self-consistent continuation state was accepted")
+	}
+}
+
+func TestFrontierT7PortableStoreMigratesLegacyStateWithAnchor(t *testing.T) {
+	root := t.TempDir()
+	identity, err := loadOrCreateContextIdentity(filepath.Join(root, "identity.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	statePath := filepath.Join(root, "portable.json")
+	store, err := newFrontierT7PortableStore(statePath, frontierT7StoreLimits{}, identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.close()
+	raw, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var legacy frontierT7PortableState
+	if err := strictJSONDecode(raw, &legacy); err != nil {
+		t.Fatal(err)
+	}
+	legacy.Generation = 0
+	legacy.StateHash = frontierT7StateHash(legacy)
+	legacyRaw, err := json.MarshalIndent(legacy, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyRaw = append(legacyRaw, '\n')
+	if err := os.WriteFile(statePath, legacyRaw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(statePath + ".anchor"); err != nil {
+		t.Fatal(err)
+	}
+	migrated, err := newFrontierT7PortableStore(statePath, frontierT7StoreLimits{}, identity)
+	if err != nil {
+		t.Fatalf("legacy state migration failed: %v", err)
+	}
+	if migrated.state.Generation != 1 || migrated.anchor.Generation != 1 || migrated.anchor.StateHash != migrated.state.StateHash {
+		migrated.close()
+		t.Fatalf("legacy state was not resealed at generation one: state=%#v anchor=%#v", migrated.state, migrated.anchor)
+	}
+	migrated.close()
+}
+
+func TestFrontierT7PortableStoreCommitUnknownDisablesWriter(t *testing.T) {
+	root := t.TempDir()
+	identity, err := loadOrCreateContextIdentity(filepath.Join(root, "identity.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	statePath := filepath.Join(root, "portable.json")
+	store, err := newFrontierT7PortableStore(statePath, frontierT7StoreLimits{}, identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.close()
+	anchorPath := filepath.Join(root, "anchor-directory")
+	if err := os.Mkdir(anchorPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	store.anchorPath = anchorPath
+	if _, err := store.createGrant(frontierT7StoreTestGrantRequest(identity, time.Now().UTC()), time.Now().UTC()); err == nil || !ownerOnlyAtomicWriteCommitted(err) {
+		t.Fatalf("anchor commit-unknown was not surfaced: %v", err)
+	}
+	if store.enabled || store.lastErrorCode != "commit_unknown" {
+		t.Fatalf("store remained writable after commit-unknown: enabled=%v error=%q", store.enabled, store.lastErrorCode)
 	}
 }
 

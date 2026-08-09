@@ -73,6 +73,7 @@ type temporalClaimStore struct {
 	fsync             bool
 	claims            map[string]temporalClaim
 	proofSessionIndex map[string][]string
+	proofRevision     uint64
 	logEntries        int
 	parseErrors       int
 	lastPersistedAt   string
@@ -257,6 +258,7 @@ func (s *temporalClaimStore) setClaimLocked(claim temporalClaim) {
 		s.removeProofClaimRefLocked(previous)
 	}
 	s.claims[claim.ClaimID] = claim
+	s.proofRevision = nextProofTimelineRevision(s.proofRevision)
 	if key := temporalClaimProofIndexKey(claim.Project, claim.SessionID); key != "" {
 		refs := append(s.proofSessionIndex[key], claim.ClaimID)
 		limit := maxAgentProofTimelineSourceScans * 2
@@ -499,6 +501,7 @@ func (s *temporalClaimStore) trimLocked() {
 	for _, claim := range rows[s.maxClaims:] {
 		s.removeProofClaimRefLocked(claim)
 		delete(s.claims, claim.ClaimID)
+		s.proofRevision = nextProofTimelineRevision(s.proofRevision)
 	}
 }
 

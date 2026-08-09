@@ -182,6 +182,7 @@ type continuityStore struct {
 	unlock                   func()
 	fileBytes                int64
 	entries                  []continuityLedgerEntry
+	proofRevision            uint64
 	lastHash                 string
 	proofIdentityIndex       map[string][]int
 	taskIdentities           map[string]taskIdentityRecord
@@ -425,6 +426,7 @@ func (s *continuityStore) load() error {
 			return fmt.Errorf("apply continuity ledger sequence %d: %w", expectedSequence, err)
 		}
 		s.entries = append(s.entries, entry)
+		s.proofRevision = nextProofTimelineRevision(s.proofRevision)
 		s.indexProofTimelineEntryLocked(entry, len(s.entries)-1)
 		previousHash = entry.EntryHash
 		expectedSequence++
@@ -637,6 +639,7 @@ func (s *continuityStore) appendLocked(rows []continuityLedgerAppend) ([]continu
 			return nil, s.disableAfterCommitUnknown("apply persisted continuity ledger entry", err)
 		}
 		s.entries = append(s.entries, entry)
+		s.proofRevision = nextProofTimelineRevision(s.proofRevision)
 		s.indexProofTimelineEntryLocked(entry, len(s.entries)-1)
 		s.lastHash = entry.EntryHash
 	}

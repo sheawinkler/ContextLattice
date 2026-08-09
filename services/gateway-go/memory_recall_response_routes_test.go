@@ -120,6 +120,8 @@ func TestRecallResponseRoutesProjectOnlyBoundedOpaqueResponse(t *testing.T) {
 	t.Setenv("ORCH_RETRIEVAL_SOURCES", "qdrant")
 	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "qdrant")
 	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "")
+	t.Setenv("GO_CONTEXT_PACK_QUALITY_LEDGER_ENABLED", "true")
+	t.Setenv("GO_CONTEXT_PACK_QUALITY_LEDGER_PATH", filepath.Join(t.TempDir(), "quality.ndjson"))
 	backend, paths := recallResponseRouteBackend(t, false)
 	s := newTestServer(t, backend.URL)
 	gateway := httptest.NewServer(buildMux(s))
@@ -256,7 +258,7 @@ func TestRecallResponseRouteStaysUnboundWhenDurabilityUnavailable(t *testing.T) 
 	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "qdrant")
 	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "")
 	t.Setenv("GO_CONTEXT_PACK_QUALITY_LEDGER_ENABLED", "false")
-	backend, _ := recallResponseRouteBackend(t, false)
+	backend, paths := recallResponseRouteBackend(t, false)
 	s := newTestServer(t, backend.URL)
 	gateway := httptest.NewServer(buildMux(s))
 	defer gateway.Close()
@@ -264,6 +266,9 @@ func TestRecallResponseRouteStaysUnboundWhenDurabilityUnavailable(t *testing.T) 
 	_, payload, raw := recallResponseRouteRequest(t, http.MethodPost, gateway.URL+memoryRecallResponsePath, `{"project":"contextlattice","query":"what is the verified next action"}`, nil)
 	if anyToBool(anyMap(payload["outcome"])["attributable"]) {
 		t.Fatalf("response became attributable without durable quality proof: %#v", payload["outcome"])
+	}
+	if !recallResponseIsV1Control(payload) {
+		t.Fatalf("persistence failure did not return the same-artifact v1 control: %#v", payload)
 	}
 	if len(s.contextPackQuality.samples) != 1 {
 		t.Fatalf("expected one local fallback quality sample: %#v", s.contextPackQuality.samples)
@@ -275,6 +280,71 @@ func TestRecallResponseRouteStaysUnboundWhenDurabilityUnavailable(t *testing.T) 
 		if strings.Contains(raw, leaked) {
 			t.Fatalf("unbound response leaked internal binding field %q: %s", leaked, raw)
 		}
+	}
+	retrievalCalls := 0
+	for _, path := range *paths {
+		if path == "/v1/retrieval/query" {
+			retrievalCalls++
+		}
+	}
+	if retrievalCalls != 1 {
+		t.Fatalf("persistence fallback performed a second retrieval: paths=%v", *paths)
+	}
+}
+
+func TestRecallResponseRouteFailsClosedAfterRetainedProofMutation(t *testing.T) {
+	for _, mode := range []string{"missing", "changed"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
+			t.Setenv("ORCH_RETRIEVAL_SOURCES", "qdrant")
+			t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "qdrant")
+			t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "")
+			t.Setenv("GO_CONTEXT_PACK_QUALITY_LEDGER_ENABLED", "true")
+			ledgerPath := filepath.Join(t.TempDir(), "quality.ndjson")
+			t.Setenv("GO_CONTEXT_PACK_QUALITY_LEDGER_PATH", ledgerPath)
+			backend, paths := recallResponseRouteBackend(t, false)
+			s := newTestServer(t, backend.URL)
+			s.recallResponseRetainedProofHook = func(_ string) {
+				raw, err := os.ReadFile(ledgerPath)
+				if err != nil {
+					return
+				}
+				if mode == "missing" {
+					_ = os.WriteFile(ledgerPath, nil, 0o600)
+					return
+				}
+				rows := strings.Split(strings.TrimSpace(string(raw)), "\n")
+				if len(rows) == 0 {
+					return
+				}
+				row := map[string]any{}
+				if json.Unmarshal([]byte(rows[0]), &row) != nil {
+					return
+				}
+				row["recall_response_digest"] = "sha256:" + strings.Repeat("f", 64)
+				changed, err := json.Marshal(row)
+				if err == nil {
+					_ = os.WriteFile(ledgerPath, append(changed, '\n'), 0o600)
+				}
+			}
+			gateway := httptest.NewServer(buildMux(s))
+			defer gateway.Close()
+
+			_, payload, raw := recallResponseRouteRequest(t, http.MethodPost, gateway.URL+memoryRecallResponsePath,
+				`{"project":"contextlattice","query":"what is the verified next action","agent_id":"retained-proof-test"}`, nil)
+			if !recallResponseIsV1Control(payload) || anyToBool(anyMap(payload["outcome"])["attributable"]) {
+				t.Fatalf("%s retained proof mutation kept candidate attribution: %#v raw=%s", mode, payload, raw)
+			}
+			retrievalCalls := 0
+			for _, path := range *paths {
+				if path == "/v1/retrieval/query" {
+					retrievalCalls++
+				}
+			}
+			if retrievalCalls != 1 {
+				t.Fatalf("%s retained proof fallback repeated retrieval: %v", mode, *paths)
+			}
+		})
 	}
 }
 

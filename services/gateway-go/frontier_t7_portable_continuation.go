@@ -823,6 +823,7 @@ type frontierT7ContinuationManifest struct {
 	Project                     string                   `json:"project"`
 	PassportID                  string                   `json:"passport_id"`
 	PassportDigest              string                   `json:"passport_digest"`
+	EvidenceIdentityDigest      string                   `json:"evidence_identity_digest,omitempty"`
 	LineageDigest               string                   `json:"lineage_digest"`
 	CheckpointDigest            string                   `json:"checkpoint_digest"`
 	LifecycleReceiptDigest      string                   `json:"lifecycle_receipt_digest"`
@@ -847,6 +848,7 @@ type frontierT7ContinuationUnsigned struct {
 	Project                     string                `json:"project"`
 	PassportID                  string                `json:"passport_id"`
 	PassportDigest              string                `json:"passport_digest"`
+	EvidenceIdentityDigest      string                `json:"evidence_identity_digest,omitempty"`
 	LineageDigest               string                `json:"lineage_digest"`
 	CheckpointDigest            string                `json:"checkpoint_digest"`
 	LifecycleReceiptDigest      string                `json:"lifecycle_receipt_digest"`
@@ -865,7 +867,7 @@ type frontierT7ContinuationUnsigned struct {
 func frontierT7ContinuationUnsignedValue(manifest frontierT7ContinuationManifest) frontierT7ContinuationUnsigned {
 	return frontierT7ContinuationUnsigned{
 		SchemaID: manifest.SchemaID, Version: manifest.Version, ManifestID: manifest.ManifestID, Project: manifest.Project,
-		PassportID: manifest.PassportID, PassportDigest: manifest.PassportDigest, LineageDigest: manifest.LineageDigest,
+		PassportID: manifest.PassportID, PassportDigest: manifest.PassportDigest, EvidenceIdentityDigest: manifest.EvidenceIdentityDigest, LineageDigest: manifest.LineageDigest,
 		CheckpointDigest: manifest.CheckpointDigest, LifecycleReceiptDigest: manifest.LifecycleReceiptDigest,
 		UnresolvedObligationDigests: manifest.UnresolvedObligationDigests, RepositoryConstraintDigest: manifest.RepositoryConstraintDigest,
 		DestinationSessionDigest: manifest.DestinationSessionDigest, RecipientKeyID: manifest.RecipientKeyID,
@@ -878,6 +880,7 @@ type frontierT7ContinuationRequest struct {
 	Project                     string
 	PassportID                  string
 	PassportDigest              string
+	EvidenceIdentityDigest      string
 	LineageDigest               string
 	CheckpointDigest            string
 	LifecycleReceiptDigest      string
@@ -903,6 +906,11 @@ func frontierT7CreateContinuationManifest(keys *contextIdentityKeys, request fro
 		return frontierT7ContinuationManifest{}, err
 	}
 	digests := append([]string{request.PassportDigest, request.LineageDigest, request.CheckpointDigest, request.LifecycleReceiptDigest, request.RepositoryConstraintDigest, request.DestinationSessionDigest, request.Grant.GrantDigest}, request.UnresolvedObligationDigests...)
+	if strings.TrimSpace(request.EvidenceIdentityDigest) != "" {
+		if !frontierT7ValidDigest(request.EvidenceIdentityDigest) {
+			return frontierT7ContinuationManifest{}, errors.New("evidence identity reference requires a SHA-256 digest")
+		}
+	}
 	if len(request.UnresolvedObligationDigests) > frontierT7MaxObligations {
 		return frontierT7ContinuationManifest{}, errors.New("too many unresolved obligations")
 	}
@@ -928,10 +936,10 @@ func frontierT7CreateContinuationManifest(keys *contextIdentityKeys, request fro
 	obligations := append([]string(nil), request.UnresolvedObligationDigests...)
 	sort.Strings(obligations)
 	issuer := contextPassportIssuer{InstanceID: keys.InstanceID, SigningKeyID: keys.SigningKeyID, SigningPublicKey: keys.SigningPublicKey}
-	seed := map[string]any{"project": project, "passport": request.PassportDigest, "checkpoint": request.CheckpointDigest, "destination": request.DestinationSessionDigest, "recipient": request.RecipientKeyID, "grant": request.Grant.GrantDigest, "created": now.UTC().Format(time.RFC3339Nano)}
+	seed := map[string]any{"project": project, "passport": request.PassportDigest, "evidence_identity": request.EvidenceIdentityDigest, "checkpoint": request.CheckpointDigest, "destination": request.DestinationSessionDigest, "recipient": request.RecipientKeyID, "grant": request.Grant.GrantDigest, "created": now.UTC().Format(time.RFC3339Nano)}
 	manifest := frontierT7ContinuationManifest{
 		SchemaID: frontierT7ContinuationSchemaID, Version: 1, ManifestID: "contmanifest_" + strings.TrimPrefix(frontierT7Digest(seed), "sha256:")[:24],
-		Project: project, PassportID: request.PassportID, PassportDigest: request.PassportDigest, LineageDigest: request.LineageDigest,
+		Project: project, PassportID: request.PassportID, PassportDigest: request.PassportDigest, EvidenceIdentityDigest: request.EvidenceIdentityDigest, LineageDigest: request.LineageDigest,
 		CheckpointDigest: request.CheckpointDigest, LifecycleReceiptDigest: request.LifecycleReceiptDigest,
 		UnresolvedObligationDigests: obligations, RepositoryConstraintDigest: request.RepositoryConstraintDigest,
 		DestinationSessionDigest: request.DestinationSessionDigest, RecipientKeyID: request.RecipientKeyID,

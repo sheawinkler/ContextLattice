@@ -1,0 +1,47 @@
+#!/usr/bin/env python3
+"""Delegate recall-response requests to the owned Go-native CLI."""
+
+from __future__ import annotations
+
+import os
+import shlex
+import shutil
+import sys
+from pathlib import Path
+
+
+def _native_command() -> list[str]:
+    explicit = os.getenv("CONTEXTLATTICE_AGENT_TOOLS_COMMAND", "").strip()
+    if explicit:
+        command = shlex.split(explicit)
+        if command:
+            return command
+
+    explicit_path = os.getenv("CONTEXTLATTICE_AGENT_TOOLS_BIN", "").strip()
+    candidates = []
+    if explicit_path:
+        candidates.append(Path(explicit_path).expanduser())
+    global_home = Path(os.getenv("CONTEXTLATTICE_GLOBAL_HOME", "~/.contextlattice")).expanduser()
+    candidates.append(global_home / "bin" / "contextlattice-agent-tools")
+    candidates.append(global_home / "bin" / "contextlattice-agent-tools.exe")
+    for candidate in candidates:
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return [str(candidate)]
+    discovered = shutil.which("contextlattice-agent-tools")
+    if discovered:
+        return [discovered]
+    raise SystemExit(
+        "contextlattice recall-response requires the installed Go-native "
+        "contextlattice-agent-tools binary; run scripts/install_global_agent_tools.sh first"
+    )
+
+
+def main() -> int:
+    args = [arg for arg in sys.argv[1:] if arg != "--response" and not arg.startswith("--response=")]
+    command = _native_command() + ["recall-response", *args]
+    os.execvpe(command[0], command, os.environ.copy())
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

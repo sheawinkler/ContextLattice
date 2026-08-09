@@ -4,8 +4,8 @@
   "contract_version": 1,
   "product": {
     "name": "ContextLattice",
-    "version": "4.0.9",
-    "stable_tag": "v4.0.9",
+    "version": "4.0.10",
+    "stable_tag": "v4.0.10",
     "release_train": "4.0",
     "category": "local_first_agent_intelligence_layer",
     "canonical_description": "The local-first intelligence layer that gives AI agents durable continuity, explainable retrieval, portable context, and verified learning across harnesses.",
@@ -326,6 +326,11 @@
       "description": "Bind the exact active mission, checkpoint, agent fit, preparation, repository identity, provenance, risks, and next move into one zero-entry manifest, then govern external delivery without surrendering execution control."
     },
     {
+      "id": "recall_response_component_canary_governance",
+      "buyer_label": "Component canaries with receipts",
+      "description": "Govern independent response-component canaries through signed operator policy, immutable rollback receipts, exact bindings, and zero-default public behavior."
+    },
+    {
       "id": "frontier_aggregate_signal",
       "buyer_label": "Signal without surrender",
       "description": "Preview and queue only clipped sufficient statistics locally, enforce cohort suppression and bounded privacy accounting, and opt out without exporting raw memory or prompts."
@@ -487,6 +492,7 @@
         "frontier_portable_continuation_governance",
         "frontier_skill_evolution_governance",
         "frontier_continuity_zero_automation",
+        "recall_response_component_canary_governance",
         "frontier_aggregate_signal",
         "frontier_private_aggregate_learning"
       ]
@@ -540,6 +546,7 @@
         "frontier_portable_continuation_governance",
         "frontier_skill_evolution_governance",
         "frontier_continuity_zero_automation",
+        "recall_response_component_canary_governance",
         "frontier_aggregate_signal",
         "frontier_private_aggregate_learning"
       ]
@@ -610,6 +617,7 @@
       "/memory/portable-continuation/governance",
       "/memory/skills/foundry/evolution/governance",
       "/memory/continuity-zero/governance",
+      "/memory/recall-response/canary-policy",
       "/memory/aggregate-signal/governance"
     ]
   },
@@ -883,6 +891,20 @@
       ],
       "routes": [
         "/memory/continuity-zero/governance"
+      ]
+    },
+    {
+      "feature_id": "recall_response_component_canary_governance",
+      "eligible_plan_ids": [
+        "operator",
+        "enterprise"
+      ],
+      "allowed_roles": [
+        "owner",
+        "admin"
+      ],
+      "routes": [
+        "/memory/recall-response/canary-policy"
       ]
     },
     {
