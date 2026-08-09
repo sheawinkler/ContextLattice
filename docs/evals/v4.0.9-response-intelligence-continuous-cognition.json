@@ -1,0 +1,158 @@
+{
+  "schema_id": "contextlattice_eval_ledger.v1",
+  "feature": "response_intelligence_continuous_cognition",
+  "lane": "shared_public_safe_with_paid_private_governance_extensions",
+  "release_train": "v4.0.9",
+  "recorded_at": "2026-08-09T05:18:13Z",
+  "objective": "Complete three increasing response-intelligence levels: authority-gated learned context, proof-carrying recall responses, and governed Continuous Cognition bound to durable outcomes and Utility evidence.",
+  "source": {
+    "private_feature_commit": "80eaf4eb892feef75010c7a8dc32e0a8c6e9b68a",
+    "private_feature_tree": "3c238d4d2d9cf041e8eec208e02d2abe3c2c0794",
+    "public_feature_commit": "fdde37a12e7bdcc180b2236e162a459a784c783f",
+    "public_feature_tree": "735496e0baa9a80b9848e87c5d8078708b03cf89",
+    "public_paid_feature_commit": "25cbe952a3c0f69c448fbc107702d334d9b5f2b1",
+    "public_paid_feature_tree": "f726d12571ae18bb5abc94a2ac1c60483762d2e7"
+  },
+  "baseline": {
+    "learned_context_activation": "staged_without_canonical_workspace_authority",
+    "recall_output": "retrieval_rows_or_generic_context_pack",
+    "response_identity": "unavailable",
+    "response_bound_quality_and_outcome": false,
+    "response_bound_utility": false,
+    "continuous_cognition_lifecycle": "unavailable"
+  },
+  "target": {
+    "learned_context_activation": "workspace_scoped_authority_gated_and_receipt_bound",
+    "recall_output": "closed_proof_carrying_recall_response_v1",
+    "response_identity": "recomputable_response_and_component_digests",
+    "response_bound_quality_and_outcome": true,
+    "response_bound_utility": true,
+    "continuous_cognition_lifecycle": [
+      "observe",
+      "investigate",
+      "status",
+      "outcome",
+      "evaluate",
+      "rollback",
+      "retire"
+    ],
+    "action_boundary": "advisory_only",
+    "independent_utility_requirement": "persisted_exactly_bound_verifier_evidence",
+    "causal_requirement": "existing_leakage_free_exact_matched_control_projection"
+  },
+  "holdout": {
+    "kind": "disjoint_synthetic_response_contract_matrix",
+    "conditions": [
+      "no_recall",
+      "retrieval_only",
+      "static_recall_response",
+      "continuous_cognition"
+    ],
+    "baseline_cases": 5,
+    "holdout_cases": 6,
+    "total_cases": 11,
+    "preregistered_before_implementation": false,
+    "network_dependency": false
+  },
+  "results": {
+    "status": "pass",
+    "offline_eval_version": "1.2.0",
+    "contract_registry_version": 58,
+    "static_recall_response": {
+      "contract_validity": 1.0,
+      "evidence_precision": 0.954545,
+      "evidence_recall": 1.0,
+      "citation_proof_integrity": 1.0,
+      "correctness": 1.0,
+      "currentness": 1.0,
+      "conflict_handling": 1.0,
+      "abstention": 1.0,
+      "next_action": 1.0,
+      "determinism": 1.0
+    },
+    "continuous_cognition": {
+      "all_seven_operations_valid": true,
+      "all_seven_operations_deterministic": true,
+      "external_execution_claimed": false,
+      "independent_utility_claimed": false,
+      "causal_lift_claimed": false
+    },
+    "private_local_ci": "passed_all_go_packages_vet_contracts_eval_rust_lifecycle_and_install_smoke",
+    "private_full_race": "passed_all_packages_with_official_frontier_strict_latency_gate_disabled_for_race_instrumentation",
+    "context_boundary": "passed_168_of_168_registry_v58",
+    "native_ownership": "passed_142_of_142",
+    "live_orbstack": "passed_rebuilt_gateway_new_routes_all_operations_and_oversized_ingress_rejection",
+    "host_lifecycle": "passed_18_of_18",
+    "failure_injection": "passed_13_of_13",
+    "isolated_schedule_identity": "passed_six_bounded_supervisor_runs_without_vm_or_gateway_repair",
+    "public_projection": "passed_exact_tree_audit",
+    "public_paid_projection": "passed_exact_tree_audit_in_official_shared_runner_performance_mode",
+    "release_publication": "pending_until_immutable_tags_and_release_assets_exist"
+  },
+  "cost": {
+    "provider_calls": 0,
+    "provider_tokens": 0,
+    "external_network_calls_in_offline_eval": 0,
+    "new_services": 0,
+    "new_persistent_stores": 0,
+    "new_dependencies": 0,
+    "requests_per_cli_invocation": 1
+  },
+  "latency": {
+    "private_go_gateway_all_packages_seconds": 72.179,
+    "private_go_cli_all_packages_seconds": 2.25,
+    "private_go_state_all_packages_seconds": 0.116,
+    "go_vet_all_packages_seconds": 1.465,
+    "private_race_gateway_all_packages_seconds": 318.523,
+    "private_race_cli_all_packages_seconds": 5.057,
+    "private_race_state_all_packages_seconds": 1.142,
+    "offline_eval_latency_ms": null,
+    "measurement_basis": "tool-reported local duration on the development host; offline evaluator intentionally does not infer production latency"
+  },
+  "tool_calls": {
+    "offline_evaluator": 0,
+    "runtime_gateway_rebuilds": 1,
+    "runtime_gateway_restarts": 1,
+    "runtime_vm_restarts": 0,
+    "unrelated_process_or_container_restarts": 0
+  },
+  "failures": [
+    {
+      "stage": "full_race_latency_gate",
+      "status": "resolved",
+      "failure": "The first full race run completed without a race report but the unrelated proof-timeline p95 exceeded its non-instrumented 20 millisecond ceiling under race instrumentation.",
+      "resolution": "Rerun the same full race suite once with the repository's official CONTEXTLATTICE_FRONTIER_STRICT_LATENCY_GATE=0 race mode; every package passed without weakening correctness, durability, or race detection."
+    },
+    {
+      "stage": "public_paid_strict_storage_timing",
+      "status": "preexisting_environment_sensitive",
+      "failure": "The strict external-device shared-proof fsync p95 exceeded 250 milliseconds on both the candidate and its unchanged base.",
+      "resolution": "Retain the threshold and record the contradiction; the exact candidate passed the repository's official shared_runner release mode, while correctness and persistence checks remained active."
+    },
+    {
+      "stage": "independent_utility",
+      "status": "unproven",
+      "failure": "Synthetic contract quality is not independently reconciled product Utility or causal lift.",
+      "resolution": "Keep the action boundary advisory and require exact persisted verification plus the existing leakage-free matched-control projector before either claim becomes eligible."
+    }
+  ],
+  "reproduction": [
+    "go -C services/gateway-go test ./... -count=1",
+    "go -C services/gateway-go vet ./...",
+    "CONTEXTLATTICE_FRONTIER_STRICT_LATENCY_GATE=0 go -C services/gateway-go test -race ./... -count=1",
+    "python3 -m unittest scripts.tests.test_recall_response_offline_eval",
+    "scripts/agent/recall-response-offline-eval --check --pretty",
+    "scripts/agent/audit-agent-output-contracts --check --pretty",
+    "cargo fmt --manifest-path crates/Cargo.toml --all -- --check",
+    "cargo test --manifest-path crates/Cargo.toml -p context_codec",
+    "scripts/agent/audit-host-supervisor-safety --pretty",
+    "python3 scripts/tests/test_orbstack_self_heal_install.py",
+    "python3 -m json.tool docs/evals/v4.0.9-response-intelligence-continuous-cognition.json",
+    "git diff --check"
+  ],
+  "rollback": {
+    "source": "pin the previous release tag for the gateway and global agent tools",
+    "state": "no migration is required; existing memory, session, task, quality, outcome, and Utility records remain authoritative and compatible",
+    "behavior": "stop invoking the new recall-response and Continuous Cognition routes; no lifecycle mutation needs reversal"
+  }
+}
