@@ -53,8 +53,8 @@ def copy_fixture(destination: Path) -> None:
 class CommercialTruthTests(unittest.TestCase):
     def test_contract_decisions(self) -> None:
         contract = json.loads((ROOT / "config/commercial_truth.v1.json").read_text(encoding="utf-8"))
-        self.assertEqual(contract["product"]["version"], "4.0.9")
-        self.assertEqual(contract["product"]["stable_tag"], "v4.0.9")
+        self.assertEqual(contract["product"]["version"], "4.0.10")
+        self.assertEqual(contract["product"]["stable_tag"], "v4.0.10")
         self.assertEqual(contract["product"]["release_train"], "4.0")
         self.assertEqual(contract["product"]["category"], "local_first_agent_intelligence_layer")
         self.assertIn("local-first intelligence layer", contract["product"]["canonical_description"])
@@ -109,6 +109,7 @@ class CommercialTruthTests(unittest.TestCase):
         continuity_zero = "frontier_continuity_zero_automation"
         aggregate_signal = "frontier_aggregate_signal"
         private_aggregate_learning = "frontier_private_aggregate_learning"
+        response_canary = "recall_response_component_canary_governance"
         self.assertTrue(frontier.isdisjoint(plans["free"]["feature_ids"]))
         self.assertIn(utility_core, plans["free"]["feature_ids"])
         self.assertTrue((frontier_t1 | {shared_proof}).isdisjoint(plans["starter"]["feature_ids"]))
@@ -141,6 +142,9 @@ class CommercialTruthTests(unittest.TestCase):
             self.assertNotIn(private_aggregate_learning, plans[plan_id]["feature_ids"])
         for plan_id in {"operator", "enterprise"}:
             self.assertIn(private_aggregate_learning, plans[plan_id]["feature_ids"])
+            self.assertIn(response_canary, plans[plan_id]["feature_ids"])
+        for plan_id in {"free", "starter", "team"}:
+            self.assertNotIn(response_canary, plans[plan_id]["feature_ids"])
         self.assertTrue(
             {"frontier_retrieval_receipt_governance", "frontier_causal_bridge_governance"}.issubset(
                 plans["team"]["feature_ids"]
@@ -163,6 +167,7 @@ class CommercialTruthTests(unittest.TestCase):
                 skill_evolution,
                 continuity_zero,
                 private_aggregate_learning,
+                response_canary,
                 utility_analytics,
                 utility_operations,
             },
@@ -226,7 +231,7 @@ class CommercialTruthTests(unittest.TestCase):
         self.assertEqual(launch["one_liner"], contract["product"]["canonical_description"])
         self.assertIn("CLI", launch["primary_cta"])
         self.assertIn(version, launch["copy_blocks"]["github_release"]["title"])
-        self.assertNotIn("v4.0.1", serialized)
+        self.assertNotIn("v4.0.9", serialized)
         self.assertNotIn("HTTP-first, MCP-compatible", serialized)
 
     def test_public_projection_has_no_private_paths(self) -> None:
@@ -236,7 +241,7 @@ class CommercialTruthTests(unittest.TestCase):
         self.assertNotIn("file://", payload)
         self.assertNotIn("BEGIN PRIVATE KEY", payload)
         public_truth = json.loads(payload)
-        self.assertEqual(public_truth["product"]["version"], "4.0.9")
+        self.assertEqual(public_truth["product"]["version"], "4.0.10")
         self.assertEqual(
             public_truth["release_availability"]["frontier_semantic_continuity_automation"]["availability"],
             "generally_available",
