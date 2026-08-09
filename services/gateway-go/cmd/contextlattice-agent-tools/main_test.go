@@ -315,6 +315,138 @@ func TestPackCommandMarksNativeCLIAndSession(t *testing.T) {
 	}
 }
 
+func TestPackCommandResponseModeUsesBoundedRecallRoute(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CONTEXTLATTICE_ASYNC_INBOX_ACK_PATH", filepath.Join(t.TempDir(), "seen.json"))
+	var responsePayload, sessionStartPayload map[string]any
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/agents/sessions/start":
+			if err := json.NewDecoder(r.Body).Decode(&sessionStartPayload); err != nil {
+				t.Fatalf("decode session start: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "session": map[string]any{"id": "sess-response"}})
+		case "/memory/recall/response":
+			if err := json.NewDecoder(r.Body).Decode(&responsePayload); err != nil {
+				t.Fatalf("decode recall response request: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(failureRecallResponse())
+		case "/v1/agents/sessions/sess-response/rollup":
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "rollup": map[string]any{"agent_inbox": map[string]any{"items": []any{}}}})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer gateway.Close()
+
+	var stdout bytes.Buffer
+	c := newCLI(&stdout, ioDiscard{})
+	c.baseURL = gateway.URL
+	if err := c.run([]string{"contextlattice_pack", "response task", "--project", "alpha", "--response", "--raw"}); err != nil {
+		t.Fatalf("run response mode: %v", err)
+	}
+	if responsePayload["session_id"] != "sess-response" || responsePayload["include_retrieval_debug"] != false {
+		t.Fatalf("response request did not preserve session or suppress debug: %#v", responsePayload)
+	}
+	if _, ok := responsePayload["output_mode"]; ok {
+		t.Fatalf("response request crossed Agent Packet mode boundary: %#v", responsePayload)
+	}
+	tags := asList(sessionStartPayload["tags"])
+	if len(tags) < 3 || firstString(tags[2]) != "recall-response" {
+		t.Fatalf("response session was not marked as a recall-response surface: %#v", sessionStartPayload)
+	}
+	var output map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
+		t.Fatalf("decode response output: %v", err)
+	}
+	if output["schema_id"] != "recall_response.v1" {
+		t.Fatalf("unexpected response schema: %#v", output)
+	}
+	if _, ok := output["context_pack"]; ok {
+		t.Fatalf("response output leaked context-pack envelope: %#v", output)
+	}
+	if _, ok := output["agent_packet"]; ok {
+		t.Fatalf("response output leaked Agent Packet/raw content: %s", stdout.String())
+	}
+}
+
+func TestPackCommandResponseModeRejectsLeakingGatewayShape(t *testing.T) {
+	serverResponseID := "rr_aaaaaaaaaaaaaaaaaaaaaaaa"
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/memory/recall/response" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		response := failureRecallResponse()
+		response["response_id"] = serverResponseID
+		response["context_pack"] = map[string]any{"raw": "must not cross the response boundary"}
+		_ = json.NewEncoder(w).Encode(response)
+	}))
+	defer gateway.Close()
+
+	var stdout bytes.Buffer
+	c := newCLI(&stdout, ioDiscard{})
+	c.baseURL = gateway.URL
+	if err := c.run([]string{"contextlattice_pack", "malformed response", "--response", "--soft", "--no-auto-session", "--retries", "0", "--raw"}); err != nil {
+		t.Fatalf("run malformed response fallback: %v", err)
+	}
+	var output map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
+		t.Fatalf("decode malformed response fallback: %v", err)
+	}
+	if firstString(output["response_id"]) == serverResponseID || firstString(asMap(output["classification"])["posture"]) != "abstain" {
+		t.Fatalf("malformed server response was silently projected: %#v", output)
+	}
+	if _, exists := output["context_pack"]; exists || strings.Contains(stdout.String(), "must not cross the response boundary") {
+		t.Fatalf("malformed server response leaked through fallback: %s", stdout.String())
+	}
+}
+
+func TestCompactRecallResponseRejectsStaleIdentityAndRegistry(t *testing.T) {
+	t.Run("stale_semantic_identity", func(t *testing.T) {
+		response := failureRecallResponse()
+		asMap(response["answer"])["summary"] = "allowed field changed after identity was stamped"
+		if _, err := compactRecallResponse(response); err == nil {
+			t.Fatal("stale recall response identity was accepted")
+		}
+	})
+	t.Run("registry_mismatch", func(t *testing.T) {
+		response := failureRecallResponse()
+		asMap(response["format_contract"])["registry_id"] = "agent_contract_registry:stale"
+		if _, err := compactRecallResponse(response); err == nil {
+			t.Fatal("stale recall response registry was accepted")
+		}
+	})
+}
+
+func TestPackCommandResponseModeSoftFailureIsBoundedAbstention(t *testing.T) {
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/memory/recall/response" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusBadGateway)
+		_ = json.NewEncoder(w).Encode(failureRecallResponse())
+	}))
+	defer gateway.Close()
+
+	var stdout bytes.Buffer
+	c := newCLI(&stdout, ioDiscard{})
+	c.baseURL = gateway.URL
+	if err := c.run([]string{"contextlattice_pack", "unavailable task", "--response", "--soft", "--no-auto-session", "--retries", "0", "--raw"}); err != nil {
+		t.Fatalf("run bounded response failure: %v", err)
+	}
+	var output map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
+		t.Fatalf("decode bounded response failure: %v", err)
+	}
+	if output["schema_id"] != "recall_response.v1" || firstString(asMap(output["classification"])["posture"]) != "abstain" {
+		t.Fatalf("response failure did not remain bounded abstention: %#v", output)
+	}
+	if _, ok := output["context_pack"]; ok || strings.Contains(stdout.String(), "failed_after_retries") {
+		t.Fatalf("response failure leaked context-pack failure envelope: %s", stdout.String())
+	}
+}
+
 func TestPackCommandReusesCachedLiveSession(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("CONTEXTLATTICE_ASYNC_INBOX_ACK_PATH", filepath.Join(t.TempDir(), "seen.json"))

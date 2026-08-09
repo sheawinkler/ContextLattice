@@ -20,11 +20,13 @@ const (
 )
 
 type evidenceReputationOptions struct {
-	Project        string
-	TaskClass      string
-	AsOf           time.Time
-	MinimumSamples int
-	MaxEntries     int
+	Project         string
+	TaskClass       string
+	RetrievalIntent string
+	WorkspaceRef    string
+	AsOf            time.Time
+	MinimumSamples  int
+	MaxEntries      int
 }
 
 type evidenceReputationAccumulator struct {
@@ -132,6 +134,8 @@ func buildEvidenceReputation(rows []map[string]any, options evidenceReputationOp
 	}
 	project := strings.TrimSpace(options.Project)
 	taskClass := strings.TrimSpace(options.TaskClass)
+	retrievalIntent := strings.TrimSpace(options.RetrievalIntent)
+	workspaceRef := contextPackLearnedDigestRef(options.WorkspaceRef)
 	accumulators := map[string]*evidenceReputationAccumulator{}
 	excluded := map[string]int{}
 
@@ -140,6 +144,13 @@ func buildEvidenceReputation(rows []map[string]any, options evidenceReputationOp
 			continue
 		}
 		if taskClass != "" && !strings.EqualFold(taskClass, strings.TrimSpace(anyToString(row["task_class"]))) {
+			continue
+		}
+		if retrievalIntent != "" && !strings.EqualFold(retrievalIntent, strings.TrimSpace(anyToString(row["retrieval_intent"]))) {
+			continue
+		}
+		if workspaceRef != "" && contextPackLearnedDigestRef(anyToString(row["workspace_ref"])) != workspaceRef {
+			excluded["workspace_scope_mismatch"]++
 			continue
 		}
 		if !anyToBool(row["calibration_eligible"]) {
@@ -183,6 +194,7 @@ func buildEvidenceReputation(rows []map[string]any, options evidenceReputationOp
 				excluded["attribution_invalid"]++
 				continue
 			}
+			verifiedCandidateIssuer := ""
 			if entityType == "candidate" {
 				if contextPackOpaqueCandidateRef(firstPresentAny(attribution["candidate_ref"], entityID)) == "" ||
 					anyToString(attribution["result_level_credit"]) != "selection_receipt_bound" {
@@ -197,6 +209,7 @@ func buildEvidenceReputation(rows []map[string]any, options evidenceReputationOp
 					excluded["candidate_utility_verification_missing"]++
 					continue
 				}
+				verifiedCandidateIssuer = strings.TrimSpace(anyToString(anyMap(row["candidate_utility_verification"])["verifier_id"]))
 			}
 			attributionDigest := strings.TrimSpace(firstNonEmptyStrings(anyToString(attribution["verification_evidence_digest"]), verificationDigest))
 			if attributionDigest != verificationDigest {
@@ -204,6 +217,9 @@ func buildEvidenceReputation(rows []map[string]any, options evidenceReputationOp
 				continue
 			}
 			verifierID := strings.TrimSpace(anyToString(attribution["verifier_id"]))
+			if entityType == "candidate" {
+				verifierID = verifiedCandidateIssuer
+			}
 			producerID := strings.TrimSpace(anyToString(attribution["producer_agent_id"]))
 			verifierSubject := strings.TrimSpace(anyToString(attribution["verifier_id_subject_ref"]))
 			producerSubject := strings.TrimSpace(anyToString(attribution["producer_agent_id_subject_ref"]))
@@ -232,7 +248,10 @@ func buildEvidenceReputation(rows []map[string]any, options evidenceReputationOp
 				continue
 			}
 			acc.VerificationIDs[verificationDigest] = struct{}{}
-			issuer := strings.TrimSpace(firstNonEmptyStrings(anyToString(attribution["issuer"]), verifierID))
+			// Independence is a verifier property, never a reporter-selected
+			// issuer label. Candidate rows tighten this further to the exact
+			// reconciled Utility Ledger verifier above.
+			issuer := verifierID
 			if issuer != "" {
 				acc.IndependentIssuers[strings.ToLower(issuer)] = struct{}{}
 			}
@@ -328,10 +347,14 @@ func buildEvidenceReputation(rows []map[string]any, options evidenceReputationOp
 	for reason, count := range excluded {
 		exclusionPayload[reason] = count
 	}
+	scope := map[string]any{"project": project, "task_class": taskClass, "retrieval_intent": retrievalIntent}
+	if workspaceRef != "" {
+		scope["workspace_ref"] = workspaceRef
+	}
 	return map[string]any{
 		"ok": true, "schema_id": evidenceReputationContractID, "version": 1,
 		"generated_at": asOf.Format(time.RFC3339Nano),
-		"scope":        map[string]any{"project": project, "task_class": taskClass},
+		"scope":        scope,
 		"policy": map[string]any{
 			"minimum_samples": minimumSamples, "minimum_independent_issuers": 2,
 			"decay_half_life_days": evidenceReputationHalfLifeDays,
@@ -356,8 +379,27 @@ func evidenceReputationCandidateUtilityVerified(row, attribution map[string]any)
 	if !anyToBool(verification["independently_verified"]) || anyToString(verification["verification_status"]) != "verified" {
 		return false
 	}
+	rowBinding, rowBindingKey, rowBindingValid := canonicalTelemetryResponseBinding(row)
+	verificationBinding, verificationBindingKey, verificationBindingValid := canonicalTelemetryResponseBinding(verification)
+	if !rowBindingValid || !verificationBindingValid {
+		return false
+	}
+	if rowBindingKey != "" || verificationBindingKey != "" {
+		// A bound candidate credit must retain the complete canonical binding on
+		// both sides of the Utility reconciliation. A digest/key alone cannot
+		// turn a partial or missing binding into verified candidate evidence.
+		if rowBinding == nil || verificationBinding == nil || rowBindingKey != verificationBindingKey ||
+			!recallResponseBindingsEqual(rowBinding, verificationBinding) {
+			return false
+		}
+	}
 	if anyToString(verification["outcome_id"]) != anyToString(row["outcome_id"]) ||
 		anyToString(verification["sample_id"]) != anyToString(row["sample_id"]) {
+		return false
+	}
+	rowWorkspace := contextPackLearnedDigestRef(anyToString(row["workspace_ref"]))
+	verificationWorkspace := contextPackLearnedDigestRef(anyToString(verification["workspace_ref"]))
+	if (rowWorkspace != "" || verificationWorkspace != "") && rowWorkspace != verificationWorkspace {
 		return false
 	}
 	digest := strings.TrimSpace(anyToString(verification["evidence_digest"]))
@@ -386,13 +428,44 @@ func evidenceReputationOutcomePolarity(row map[string]any) (bool, bool) {
 }
 
 func (s *server) evidenceReputationSnapshot(project, taskClass string, minimumSamples, limit int) map[string]any {
+	return s.evidenceReputationSnapshotExact(project, taskClass, "", minimumSamples, limit)
+}
+
+func (s *server) evidenceReputationSnapshotExact(project, taskClass, retrievalIntent string, minimumSamples, limit int) map[string]any {
 	rows := []map[string]any{}
 	if s != nil && s.contextPackQuality != nil {
 		rows, _ = s.contextPackQuality.receiptDurableOutcomeRows(evidenceReputationMaxRows)
 	}
 	rows = reconcileCandidateUtilityVerification(rows, utilityFromServer(s))
+	return evidenceReputationSnapshotFromReconciledRows(
+		rows, project, taskClass, retrievalIntent, minimumSamples, limit, time.Now().UTC(),
+	)
+}
+
+func evidenceReputationSnapshotFromReconciledRows(
+	rows []map[string]any,
+	project, taskClass, retrievalIntent string,
+	minimumSamples, limit int,
+	asOf time.Time,
+) map[string]any {
 	return buildEvidenceReputation(rows, evidenceReputationOptions{
-		Project: project, TaskClass: taskClass, AsOf: time.Now().UTC(),
+		Project: project, TaskClass: taskClass, RetrievalIntent: retrievalIntent, AsOf: asOf,
+		MinimumSamples: minimumSamples, MaxEntries: limit,
+	})
+}
+
+func evidenceReputationSnapshotFromReconciledRowsForWorkspace(
+	rows []map[string]any,
+	project, taskClass, retrievalIntent, workspaceRef string,
+	minimumSamples, limit int,
+	asOf time.Time,
+) map[string]any {
+	workspaceRef = contextPackLearnedDigestRef(workspaceRef)
+	if workspaceRef == "" {
+		return map[string]any{}
+	}
+	return buildEvidenceReputation(rows, evidenceReputationOptions{
+		Project: project, TaskClass: taskClass, RetrievalIntent: retrievalIntent, WorkspaceRef: workspaceRef, AsOf: asOf,
 		MinimumSamples: minimumSamples, MaxEntries: limit,
 	})
 }
@@ -404,20 +477,66 @@ func utilityFromServer(s *server) *utilityTelemetry {
 	return s.utility
 }
 
+// canonicalTelemetryResponseBinding accepts the canonical top-level response
+// binding carried by a durable outcome/Utility row. Search-impact projections
+// may retain only response_binding_key, but every durable reputation/Utility
+// join separately requires the complete binding.
+func canonicalTelemetryResponseBinding(row map[string]any) (map[string]any, string, bool) {
+	topLevel, topLevelValid := recallResponseBindingFromSample(row)
+	if !topLevelValid {
+		return nil, "", false
+	}
+	binding := topLevel
+	key := ""
+	if binding != nil {
+		key = recallResponseBindingKey(binding)
+		if key == "" {
+			return nil, "", false
+		}
+	}
+
+	if rawKey, present := row["response_binding_key"]; present {
+		suppliedKey := strings.TrimSpace(anyToString(rawKey))
+		if !utilitySHA256DigestValid(suppliedKey) || (key != "" && key != suppliedKey) {
+			return nil, "", false
+		}
+		key = suppliedKey
+	}
+	return binding, key, true
+}
+
 // reconcileCandidateUtilityVerification is the sole join between candidate
 // outcome attribution and the independent Utility Ledger verifier receipt.
 // Callers may only treat a candidate as verified after the later predicate
 // evidenceReputationCandidateUtilityVerified confirms this exact join.
 func reconcileCandidateUtilityVerification(rows []map[string]any, utility *utilityTelemetry) []map[string]any {
-	if utility == nil {
-		return rows
-	}
 	for _, row := range rows {
 		if !evidenceReputationHasCandidateAttribution(row) {
 			continue
 		}
+		// Any existing verification is reporter-provided until this pass joins
+		// it to the current independent Utility observation. Never retain a
+		// stale or forged verification when that join cannot be established.
+		delete(row, "candidate_utility_verification")
+		if utility == nil {
+			continue
+		}
 		observation, found := utility.observation(anyToString(row["outcome_id"]))
 		if !found {
+			continue
+		}
+		rowWorkspace := contextPackLearnedDigestRef(anyToString(row["workspace_ref"]))
+		observationWorkspace := contextPackLearnedDigestRef(anyToString(observation["workspace_ref"]))
+		if (rowWorkspace != "" || observationWorkspace != "") && rowWorkspace != observationWorkspace {
+			continue
+		}
+		rowBinding, rowBindingKey, rowBindingValid := canonicalTelemetryResponseBinding(row)
+		observationBinding, observationBindingKey, observationBindingValid := canonicalTelemetryResponseBinding(observation)
+		if !rowBindingValid || !observationBindingValid || rowBindingKey != observationBindingKey {
+			continue
+		}
+		if rowBindingKey != "" && (rowBinding == nil || observationBinding == nil ||
+			!recallResponseBindingsEqual(rowBinding, observationBinding)) {
 			continue
 		}
 		claim := anyMap(observation["utility"])
@@ -431,7 +550,7 @@ func reconcileCandidateUtilityVerification(rows []map[string]any, utility *utili
 		if anyToBool(denominator["model_visible_context_tokens_exact"]) {
 			modelVisibleTokensExact = anyToInt(denominator["model_visible_context_tokens"], 0)
 		}
-		row["candidate_utility_verification"] = map[string]any{
+		verification := map[string]any{
 			"outcome_id":                         anyToString(observation["outcome_id"]),
 			"sample_id":                          anyToString(observation["sample_id"]),
 			"independently_verified":             anyToBool(claim["independently_verified"]),
@@ -441,7 +560,12 @@ func reconcileCandidateUtilityVerification(rows []map[string]any, utility *utili
 			"observed_yield_eligible":            anyToBool(eligibility["observed_yield_eligible"]),
 			"wire_tokens_exact":                  maxInt(0, wireTokensExact),
 			"model_visible_context_tokens_exact": maxInt(0, modelVisibleTokensExact),
+			"workspace_ref":                      observationWorkspace,
 		}
+		if observationBinding != nil && !recallResponseCopyBinding(verification, observationBinding) {
+			continue
+		}
+		row["candidate_utility_verification"] = verification
 	}
 	return rows
 }
@@ -486,6 +610,8 @@ func (s *server) telemetryEvidenceReputationRoute(w http.ResponseWriter, r *http
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"ok": false, "error": "invalid_limit"})
 		return
 	}
-	payload := s.evidenceReputationSnapshot(r.URL.Query().Get("project"), r.URL.Query().Get("task_class"), minimumSamples, limit)
+	payload := s.evidenceReputationSnapshotExact(
+		r.URL.Query().Get("project"), r.URL.Query().Get("task_class"), r.URL.Query().Get("retrieval_intent"), minimumSamples, limit,
+	)
 	writeJSON(w, http.StatusOK, attachPayloadFormatContract(evidenceReputationContractID, payload, "", "evidence_reputation", evidenceReputationPath))
 }

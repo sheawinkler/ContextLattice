@@ -540,6 +540,7 @@ $goNativeCommands = @(
     "contextlattice_retrieval_governance",
     "contextlattice_policy_lab",
     "contextlattice_agent_fit",
+    "contextlattice_continuous_cognition",
     "contextlattice_continuity_zero",
     "contextlattice_claim_write",
     "contextlattice_aggregate_signal",

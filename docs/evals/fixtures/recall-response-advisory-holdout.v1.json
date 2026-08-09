@@ -1,0 +1,277 @@
+{
+  "schema_id": "recall_response_eval_fixture.v1",
+  "fixture_id": "recall_response_advisory_holdout_v1",
+  "split": "holdout",
+  "description": "Synthetic frozen holdout for conflict, freshness, ranking, and next-action behavior.",
+  "synthetic": true,
+  "independent_from_baseline": true,
+  "frozen_before_response_tuning": false,
+  "cases": [
+    {
+      "case_id": "holdout-current",
+      "request": {
+        "scope_ref": "scope_holdout_current",
+        "request_ref": "request_holdout_current",
+        "session_ref": "session_holdout_current",
+        "intent": "decision"
+      },
+      "evidence": [
+        {
+          "evidence_ref": "ev_holdout_current_a",
+          "source_ref": "source_kappa",
+          "citation_ref": "proof_holdout_current_a",
+          "rank": 1,
+          "support": "direct",
+          "currentness": "current",
+          "conflict_group": "",
+          "numeric_value": null
+        },
+        {
+          "evidence_ref": "ev_holdout_current_b",
+          "source_ref": "source_lambda",
+          "citation_ref": "proof_holdout_current_b",
+          "rank": 2,
+          "support": "context",
+          "currentness": "stale",
+          "conflict_group": "",
+          "numeric_value": null
+        }
+      ],
+      "expected": {
+        "required_evidence_refs": ["ev_holdout_current_a"],
+        "acceptable_evidence_refs": ["ev_holdout_current_a"],
+        "citation_refs": ["proof_holdout_current_a"],
+        "status": "answer",
+        "correctness": "supported",
+        "currentness": "current",
+        "conflict_handling": "none",
+        "abstain": false,
+        "next_action": "verify_before_action",
+        "decision_impact": "high",
+        "ranked_evidence_refs": ["ev_holdout_current_a", "ev_holdout_current_b"],
+        "numeric_values": [],
+        "minimum_source_diversity": 1
+      }
+    },
+    {
+      "case_id": "holdout-conflict",
+      "request": {
+        "scope_ref": "scope_holdout_conflict",
+        "request_ref": "request_holdout_conflict",
+        "session_ref": "session_holdout_conflict",
+        "intent": "decision"
+      },
+      "evidence": [
+        {
+          "evidence_ref": "ev_holdout_conflict_a",
+          "source_ref": "source_mu",
+          "citation_ref": "proof_holdout_conflict_a",
+          "rank": 1,
+          "support": "direct",
+          "currentness": "current",
+          "conflict_group": "conflict_holdout_one",
+          "numeric_value": 7
+        },
+        {
+          "evidence_ref": "ev_holdout_conflict_b",
+          "source_ref": "source_nu",
+          "citation_ref": "proof_holdout_conflict_b",
+          "rank": 2,
+          "support": "direct",
+          "currentness": "superseded",
+          "conflict_group": "conflict_holdout_one",
+          "numeric_value": 9
+        }
+      ],
+      "expected": {
+        "required_evidence_refs": ["ev_holdout_conflict_a", "ev_holdout_conflict_b"],
+        "acceptable_evidence_refs": ["ev_holdout_conflict_a", "ev_holdout_conflict_b"],
+        "citation_refs": ["proof_holdout_conflict_a", "proof_holdout_conflict_b"],
+        "status": "verify",
+        "correctness": "contested",
+        "currentness": "contested",
+        "conflict_handling": "surface_and_abstain",
+        "abstain": true,
+        "next_action": "verify_conflict",
+        "decision_impact": "high",
+        "ranked_evidence_refs": ["ev_holdout_conflict_a", "ev_holdout_conflict_b"],
+        "numeric_values": [],
+        "minimum_source_diversity": 2
+      }
+    },
+    {
+      "case_id": "holdout-stale",
+      "request": {
+        "scope_ref": "scope_holdout_stale",
+        "request_ref": "request_holdout_stale",
+        "session_ref": "session_holdout_stale",
+        "intent": "current"
+      },
+      "evidence": [
+        {
+          "evidence_ref": "ev_holdout_stale_a",
+          "source_ref": "source_xi",
+          "citation_ref": "proof_holdout_stale_a",
+          "rank": 1,
+          "support": "direct",
+          "currentness": "stale",
+          "conflict_group": "",
+          "numeric_value": null
+        }
+      ],
+      "expected": {
+        "required_evidence_refs": ["ev_holdout_stale_a"],
+        "acceptable_evidence_refs": ["ev_holdout_stale_a"],
+        "citation_refs": ["proof_holdout_stale_a"],
+        "status": "verify",
+        "correctness": "stale",
+        "currentness": "stale",
+        "conflict_handling": "none",
+        "abstain": true,
+        "next_action": "verify_currentness",
+        "decision_impact": "medium",
+        "ranked_evidence_refs": ["ev_holdout_stale_a"],
+        "numeric_values": [],
+        "minimum_source_diversity": 1
+      }
+    },
+    {
+      "case_id": "holdout-ranking",
+      "request": {
+        "scope_ref": "scope_holdout_ranking",
+        "request_ref": "request_holdout_ranking",
+        "session_ref": "session_holdout_ranking",
+        "intent": "rank"
+      },
+      "evidence": [
+        {
+          "evidence_ref": "ev_holdout_ranking_a",
+          "source_ref": "source_omicron",
+          "citation_ref": "proof_holdout_ranking_a",
+          "rank": 1,
+          "support": "direct",
+          "currentness": "current",
+          "conflict_group": "",
+          "numeric_value": null
+        },
+        {
+          "evidence_ref": "ev_holdout_ranking_b",
+          "source_ref": "source_pi",
+          "citation_ref": "proof_holdout_ranking_b",
+          "rank": 2,
+          "support": "direct",
+          "currentness": "current",
+          "conflict_group": "",
+          "numeric_value": null
+        },
+        {
+          "evidence_ref": "ev_holdout_ranking_c",
+          "source_ref": "source_rho",
+          "citation_ref": "proof_holdout_ranking_c",
+          "rank": 3,
+          "support": "distractor",
+          "currentness": "current",
+          "conflict_group": "",
+          "numeric_value": null
+        }
+      ],
+      "expected": {
+        "required_evidence_refs": ["ev_holdout_ranking_a", "ev_holdout_ranking_b"],
+        "acceptable_evidence_refs": ["ev_holdout_ranking_a", "ev_holdout_ranking_b"],
+        "citation_refs": ["proof_holdout_ranking_a", "proof_holdout_ranking_b"],
+        "status": "answer",
+        "correctness": "supported",
+        "currentness": "current",
+        "conflict_handling": "none",
+        "abstain": false,
+        "next_action": "verify_before_action",
+        "decision_impact": "medium",
+        "ranked_evidence_refs": ["ev_holdout_ranking_a", "ev_holdout_ranking_b"],
+        "numeric_values": [],
+        "minimum_source_diversity": 2
+      }
+    },
+    {
+      "case_id": "holdout-next-action",
+      "request": {
+        "scope_ref": "scope_holdout_next_action",
+        "request_ref": "request_holdout_next_action",
+        "session_ref": "session_holdout_next_action",
+        "intent": "procedure"
+      },
+      "evidence": [
+        {
+          "evidence_ref": "ev_holdout_next_action_a",
+          "source_ref": "source_sigma",
+          "citation_ref": "proof_holdout_next_action_a",
+          "rank": 1,
+          "support": "direct",
+          "currentness": "current",
+          "conflict_group": "",
+          "numeric_value": null
+        }
+      ],
+      "expected": {
+        "required_evidence_refs": ["ev_holdout_next_action_a"],
+        "acceptable_evidence_refs": ["ev_holdout_next_action_a"],
+        "citation_refs": ["proof_holdout_next_action_a"],
+        "status": "answer",
+        "correctness": "supported",
+        "currentness": "current",
+        "conflict_handling": "none",
+        "abstain": false,
+        "next_action": "verify_before_action",
+        "decision_impact": "medium",
+        "ranked_evidence_refs": ["ev_holdout_next_action_a"],
+        "numeric_values": [],
+        "minimum_source_diversity": 1
+      }
+    },
+    {
+      "case_id": "holdout-ambiguous",
+      "request": {
+        "scope_ref": "scope_holdout_ambiguous",
+        "request_ref": "request_holdout_ambiguous",
+        "session_ref": "session_holdout_ambiguous",
+        "intent": "decision"
+      },
+      "evidence": [
+        {
+          "evidence_ref": "ev_holdout_ambiguous_a",
+          "source_ref": "source_tau",
+          "citation_ref": "proof_holdout_ambiguous_a",
+          "rank": 1,
+          "support": "direct",
+          "currentness": "current",
+          "conflict_group": "",
+          "numeric_value": null
+        },
+        {
+          "evidence_ref": "ev_holdout_ambiguous_b",
+          "source_ref": "source_upsilon",
+          "citation_ref": "proof_holdout_ambiguous_b",
+          "rank": 2,
+          "support": "direct",
+          "currentness": "current",
+          "conflict_group": "",
+          "numeric_value": null
+        }
+      ],
+      "expected": {
+        "required_evidence_refs": ["ev_holdout_ambiguous_a"],
+        "acceptable_evidence_refs": ["ev_holdout_ambiguous_a"],
+        "citation_refs": ["proof_holdout_ambiguous_a"],
+        "status": "answer",
+        "correctness": "supported",
+        "currentness": "current",
+        "conflict_handling": "none",
+        "abstain": false,
+        "next_action": "verify_before_action",
+        "decision_impact": "medium",
+        "ranked_evidence_refs": ["ev_holdout_ambiguous_a"],
+        "numeric_values": [],
+        "minimum_source_diversity": 1
+      }
+    }
+  ]
+}

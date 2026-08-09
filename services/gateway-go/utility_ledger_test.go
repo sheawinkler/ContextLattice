@@ -10,7 +10,9 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 func utilityTestDigest(seed string) string {
@@ -121,6 +123,228 @@ func TestUtilityObservationRequiresCompleteExactSourceJoin(t *testing.T) {
 	reasons := anyToStringList(anyMap(row["eligibility"])["exclusion_reasons"], 32)
 	if anyToBool(anyMap(row["eligibility"])["observed_yield_eligible"]) || !containsString(reasons, "source_join_key_missing_agent_id") {
 		t.Fatalf("incomplete exact source join must be excluded: %#v", row)
+	}
+}
+
+func TestUtilityRowsForOutcomeIDsBoundsCloningAndRetainsMatchedControls(t *testing.T) {
+	rows := make([]map[string]any, 0, 11)
+	wanted := make(map[string]struct{}, 5)
+	opaqueControlRef := ""
+	for index := 0; index < 5; index++ {
+		controlID := "control-" + strconv.Itoa(index)
+		treatmentID := "treatment-" + strconv.Itoa(index)
+		captured := "2026-08-04T12:0" + strconv.Itoa(index) + ":00Z"
+		control := map[string]any{"outcome_id": controlID, "project": "contextlattice", "task_class": "coding", "captured_at": captured, "pairing": map[string]any{"arm": "control"}}
+		controlRef := controlID
+		if index == 4 {
+			controlRef = utilityOpaqueControlRef(control)
+			opaqueControlRef = controlRef
+		}
+		rows = append(rows,
+			control,
+			map[string]any{"outcome_id": treatmentID, "project": "contextlattice", "task_class": "coding", "captured_at": captured, "pairing": map[string]any{"arm": "treatment", "matched_control_outcome_id": controlRef}},
+		)
+		wanted[treatmentID] = struct{}{}
+	}
+	rows = append(rows, map[string]any{"outcome_id": "unrelated", "project": "contextlattice", "task_class": "coding", "captured_at": "2026-08-04T13:00:00Z"})
+	telemetry := &utilityTelemetry{limit: len(rows), observations: rows}
+	telemetry.reindexLocked()
+	if _, indexed := telemetry.byOpaqueControlRef[opaqueControlRef]; !indexed {
+		t.Fatalf("opaque matched-control index was not built: %#v", telemetry.byOpaqueControlRef)
+	}
+	selected := telemetry.rowsForOutcomeIDs(utilityQuery{Project: "contextlattice", TaskClass: "coding", Limit: 2}, wanted)
+	if len(selected) != 4 {
+		t.Fatalf("bounded exact-outcome projection returned %d rows, want two newest treatments plus two controls: %#v", len(selected), selected)
+	}
+	seen := map[string]struct{}{}
+	for _, row := range selected {
+		seen[anyToString(row["outcome_id"])] = struct{}{}
+	}
+	for _, expected := range []string{"treatment-3", "treatment-4", "control-3", "control-4"} {
+		if _, present := seen[expected]; !present {
+			t.Fatalf("bounded exact-outcome projection omitted %s: %#v", expected, selected)
+		}
+	}
+	if _, leaked := seen["unrelated"]; leaked {
+		t.Fatalf("unrelated utility row crossed the activation projection: %#v", selected)
+	}
+	selectedID := anyToString(selected[0]["outcome_id"])
+	selected[0]["project"] = "mutated"
+	for _, row := range rows {
+		if anyToString(row["outcome_id"]) == selectedID && anyToString(row["project"]) != "contextlattice" {
+			t.Fatalf("activation projection returned caller-mutable ledger state: %#v", row)
+		}
+	}
+}
+
+func TestUtilityRowsHonorLimitAndRetrievalIntent(t *testing.T) {
+	rows := make([]map[string]any, 0, 6)
+	for index := 0; index < 6; index++ {
+		intent := "decision"
+		if index%2 == 0 {
+			intent = "exploration"
+		}
+		rows = append(rows, map[string]any{
+			"outcome_id": "limited-" + strconv.Itoa(index), "project": "contextlattice",
+			"task_class": "agent_workflow", "retrieval_intent": intent,
+			"captured_at": "2026-08-04T12:0" + strconv.Itoa(index) + ":00Z",
+		})
+	}
+	telemetry := &utilityTelemetry{limit: len(rows), observations: rows}
+	selected := telemetry.rows(utilityQuery{Project: "contextlattice", RetrievalIntent: "decision", Limit: 2})
+	if len(selected) != 2 || anyToString(selected[0]["outcome_id"]) != "limited-3" || anyToString(selected[1]["outcome_id"]) != "limited-5" {
+		t.Fatalf("bounded retrieval-intent Utility query returned the wrong rows: %#v", selected)
+	}
+	selected[0]["project"] = "caller-mutation"
+	if anyToString(rows[3]["project"]) != "contextlattice" {
+		t.Fatal("bounded Utility rows exposed mutable ledger state")
+	}
+}
+
+func TestUtilityHistoricalQueryRejectsFutureMutableRevision(t *testing.T) {
+	asOf := time.Date(2026, time.August, 8, 12, 0, 0, 0, time.UTC)
+	row := map[string]any{
+		"outcome_id": "historical-utility", "project": "contextlattice", "task_class": "agent_workflow",
+		"retrieval_intent": "decision", "captured_at": "2026-08-08T10:00:00Z", "updated_at": "2026-08-08T13:00:00Z",
+		"utility": map[string]any{"independently_verified": true, "verification_status": "verified", "verified_at": "2026-08-08T13:00:00Z"},
+	}
+	telemetry := &utilityTelemetry{limit: 4, observations: []map[string]any{row}}
+	telemetry.reindexLocked()
+	query := utilityQuery{Project: "contextlattice", To: asOf, Limit: 4}
+	wanted := map[string]struct{}{"historical-utility": {}}
+	if rows := telemetry.rowsForOutcomeIDs(query, wanted); len(rows) != 0 {
+		t.Fatalf("future Utility revision changed a historical query: %#v", rows)
+	}
+	row["updated_at"] = "2026-08-08T11:00:00Z"
+	if rows := telemetry.rowsForOutcomeIDs(query, wanted); len(rows) != 0 {
+		t.Fatalf("future Utility verification changed a historical query: %#v", rows)
+	}
+	anyMap(row["utility"])["verified_at"] = "2026-08-08T11:30:00Z"
+	if rows := telemetry.rowsForOutcomeIDs(query, wanted); len(rows) != 1 {
+		t.Fatalf("boundary-visible Utility revision was not returned: %#v", rows)
+	}
+}
+
+func utilityRowsForOutcomeIDsTestRow(outcomeID, capturedAt string, revision int, pairing map[string]any) map[string]any {
+	return map[string]any{
+		"schema_id": utilityObservationContractID, "outcome_id": outcomeID,
+		"project": "contextlattice", "task_class": "coding", "captured_at": capturedAt,
+		"revision": revision, "pairing": pairing,
+	}
+}
+
+func TestUtilityRowsForOutcomeIDsReindexesAfterRetention(t *testing.T) {
+	telemetry := &utilityTelemetry{limit: 3, observations: []map[string]any{}, byOutcome: map[string]int{}, byOpaqueControlRef: map[string]int{}}
+	oldControl := utilityRowsForOutcomeIDsTestRow("control-old", "2026-08-04T12:00:00Z", 1, map[string]any{"arm": "control"})
+	oldControlRef := utilityOpaqueControlRef(oldControl)
+	rows := []map[string]any{
+		oldControl,
+		utilityRowsForOutcomeIDsTestRow("treatment-old", "2026-08-04T12:01:00Z", 1, map[string]any{"arm": "treatment", "matched_control_outcome_id": oldControlRef}),
+		utilityRowsForOutcomeIDsTestRow("control-new", "2026-08-04T12:02:00Z", 1, map[string]any{"arm": "control"}),
+		utilityRowsForOutcomeIDsTestRow("treatment-new", "2026-08-04T12:03:00Z", 1, map[string]any{"arm": "treatment", "matched_control_outcome_id": "control-new"}),
+	}
+	telemetry.mu.Lock()
+	for _, row := range rows {
+		telemetry.applyLocked(row)
+	}
+	_, oldOutcomeIndexed := telemetry.byOutcome["control-old"]
+	_, oldOpaqueIndexed := telemetry.byOpaqueControlRef[oldControlRef]
+	telemetry.mu.Unlock()
+	if oldOutcomeIndexed || oldOpaqueIndexed {
+		t.Fatalf("retention left an evicted control indexed: outcome=%t opaque=%t", oldOutcomeIndexed, oldOpaqueIndexed)
+	}
+
+	wanted := map[string]struct{}{"treatment-old": {}, "treatment-new": {}}
+	selected := telemetry.rowsForOutcomeIDs(utilityQuery{Project: "contextlattice", TaskClass: "coding", Limit: 2}, wanted)
+	seen := map[string]struct{}{}
+	for _, row := range selected {
+		seen[anyToString(row["outcome_id"])] = struct{}{}
+	}
+	for _, expected := range []string{"treatment-old", "treatment-new", "control-new"} {
+		if _, present := seen[expected]; !present {
+			t.Fatalf("retained indexed projection omitted %s: %#v", expected, selected)
+		}
+	}
+	if _, present := seen["control-old"]; present {
+		t.Fatalf("evicted opaque control leaked through a stale index: %#v", selected)
+	}
+}
+
+func TestUtilityRowsForOutcomeIDsConcurrentReindexAndLookup(t *testing.T) {
+	telemetry := &utilityTelemetry{limit: 32, observations: []map[string]any{}, byOutcome: map[string]int{}, byOpaqueControlRef: map[string]int{}}
+	wanted := map[string]struct{}{}
+	for index := 0; index < 8; index++ {
+		controlID := "race-control-" + strconv.Itoa(index)
+		treatmentID := "race-treatment-" + strconv.Itoa(index)
+		control := utilityRowsForOutcomeIDsTestRow(controlID, "2026-08-04T12:00:00Z", 1, map[string]any{"arm": "control"})
+		controlRef := controlID
+		if index%2 == 0 {
+			controlRef = utilityOpaqueControlRef(control)
+		}
+		telemetry.applyLocked(control)
+		telemetry.applyLocked(utilityRowsForOutcomeIDsTestRow(treatmentID, "2026-08-04T12:00:00Z", 1, map[string]any{
+			"arm": "treatment", "matched_control_outcome_id": controlRef,
+		}))
+		wanted[treatmentID] = struct{}{}
+	}
+
+	errCh := make(chan string, 1)
+	report := func(message string) {
+		select {
+		case errCh <- message:
+		default:
+		}
+	}
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for iteration := 0; iteration < 200; iteration++ {
+			index := iteration % 8
+			controlID := "race-control-" + strconv.Itoa(index)
+			treatmentID := "race-treatment-" + strconv.Itoa(index)
+			control := utilityRowsForOutcomeIDsTestRow(controlID, "2026-08-04T12:00:00Z", iteration+2, map[string]any{"arm": "control"})
+			controlRef := controlID
+			if index%2 == 0 {
+				controlRef = utilityOpaqueControlRef(control)
+			}
+			telemetry.mu.Lock()
+			telemetry.applyLocked(control)
+			telemetry.applyLocked(utilityRowsForOutcomeIDsTestRow(treatmentID, "2026-08-04T12:00:00Z", iteration+2, map[string]any{
+				"arm": "treatment", "matched_control_outcome_id": controlRef,
+			}))
+			telemetry.applyLocked(utilityRowsForOutcomeIDsTestRow("race-unrelated-"+strconv.Itoa(iteration), "2026-08-04T13:00:00Z", 1, nil))
+			telemetry.mu.Unlock()
+		}
+	}()
+	for reader := 0; reader < 4; reader++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for iteration := 0; iteration < 250; iteration++ {
+				rows := telemetry.rowsForOutcomeIDs(utilityQuery{Project: "contextlattice", TaskClass: "coding", Limit: 8}, wanted)
+				for _, row := range rows {
+					if anyToString(row["outcome_id"]) == "" || anyToString(row["project"]) != "contextlattice" {
+						report("concurrent indexed projection returned an invalid row")
+						return
+					}
+					row["project"] = "caller-mutation"
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	select {
+	case message := <-errCh:
+		t.Fatal(message)
+	default:
+	}
+	telemetry.mu.Lock()
+	defer telemetry.mu.Unlock()
+	for _, row := range telemetry.observations {
+		if anyToString(row["project"]) != "contextlattice" {
+			t.Fatalf("caller mutation crossed the clone boundary: %#v", row)
+		}
 	}
 }
 

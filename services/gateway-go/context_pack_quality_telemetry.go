@@ -11,21 +11,24 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
 
 const (
-	contextPackQualitySchemaID           = "contextlattice_context_pack_quality.v1"
-	contextPackQualityOutcomeSchemaID    = "contextlattice_context_pack_outcome.v1"
-	contextPackQualityTelemetrySchemaID  = "contextlattice_context_pack_quality_telemetry.v1"
-	contextPackSelectionReceiptSchemaID  = "contextlattice_context_pack_selection_receipt.v1"
-	contextPackOutcomeBindingSchemaID    = "contextlattice_context_pack_outcome_attribution_binding.v1"
-	contextPackRegressionFixtureSchemaID = "contextlattice_context_pack_regression_fixture.v1"
-	contextPackOutcomeAdmissionSchemaID  = "contextlattice_context_pack_outcome_admission.v1"
-	contextPackSelectionReceiptLimit     = 24
-	contextPackCandidateAttemptLimit     = 64
+	contextPackQualitySchemaID            = "contextlattice_context_pack_quality.v1"
+	contextPackQualityOutcomeSchemaID     = "contextlattice_context_pack_outcome.v1"
+	contextPackQualityTelemetrySchemaID   = "contextlattice_context_pack_quality_telemetry.v1"
+	contextPackSelectionReceiptSchemaID   = "contextlattice_context_pack_selection_receipt.v1"
+	contextPackSelectionReceiptV2SchemaID = "contextlattice_context_pack_selection_receipt.v2"
+	contextPackOutcomeBindingSchemaID     = "contextlattice_context_pack_outcome_attribution_binding.v1"
+	contextPackRegressionFixtureSchemaID  = "contextlattice_context_pack_regression_fixture.v1"
+	contextPackOutcomeAdmissionSchemaID   = "contextlattice_context_pack_outcome_admission.v1"
+	contextPackSelectionReceiptLimit      = 24
+	contextPackCandidateAttemptLimit      = 64
 	// Outcome counters are observational calibration inputs, not a bulk
 	// accounting interface. Keep each claim bounded so one authenticated
 	// report cannot dominate a bounded aggregate or overflow its counters.
@@ -81,6 +84,9 @@ type contextPackQualityLedger struct {
 	lastError                string
 	lastPruneError           string
 	durabilityUnacknowledged bool
+	receiptPairIndexMu       sync.RWMutex
+	receiptPairs             map[string]struct{}
+	receiptPairsReady        bool
 	writeFile                func(string, []byte, bool) error
 }
 
@@ -103,10 +109,11 @@ type contextPackRegressionFixtureStore struct {
 }
 
 var (
-	errContextPackReceiptLedgerUnavailable = errors.New("context-pack receipt ledger durability is unavailable")
-	errContextPackOutcomeInvalidNumeric    = errors.New("context-pack outcome has an invalid numeric claim")
-	errContextPackOutcomeSampleConflict    = errors.New("context-pack sample already has a different authoritative outcome")
-	errContextPackPrivacyMigrationRejected = errors.New("context-pack quality privacy migration rejected")
+	errContextPackReceiptLedgerUnavailable      = errors.New("context-pack receipt ledger durability is unavailable")
+	errContextPackOutcomeInvalidNumeric         = errors.New("context-pack outcome has an invalid numeric claim")
+	errContextPackOutcomeInvalidResponseBinding = errors.New("context-pack outcome has an invalid recall response binding")
+	errContextPackOutcomeSampleConflict         = errors.New("context-pack sample already has a different authoritative outcome")
+	errContextPackPrivacyMigrationRejected      = errors.New("context-pack quality privacy migration rejected")
 )
 
 func newContextPackQualityTelemetry(limit int) *contextPackQualityTelemetry {
@@ -455,6 +462,13 @@ func (s *server) recordContextPackQuality(sample map[string]any) {
 	s.contextPackQuality.recordQuality(sample)
 }
 
+func (s *server) recordContextPackQualityDurably(sample map[string]any) error {
+	if s == nil || s.contextPackQuality == nil || len(sample) == 0 {
+		return errContextPackReceiptLedgerUnavailable
+	}
+	return s.contextPackQuality.recordQualityDurably(sample)
+}
+
 func (s *server) recordContextPackQualityOutcome(sample map[string]any) bool {
 	recorded, _ := s.recordContextPackQualityOutcomeDurably(sample)
 	return recorded
@@ -574,6 +588,16 @@ func (t *contextPackQualityTelemetry) loadPersistedRows() {
 				// an in-memory-only normalization escape hatch.
 				t.ledger.failClosedPrivacyMigration(fmt.Errorf("%w: ledger changed to an unsafe legacy outcome row during load", errContextPackPrivacyMigrationRejected))
 				return
+			}
+		}
+		if len(row) == 0 {
+			continue
+		}
+		if (anyToString(row["schema_id"]) == contextPackQualitySchemaID || anyToString(row["schema_id"]) == contextPackQualityOutcomeSchemaID) && recallResponseBindingHasAnyFields(row) {
+			if _, ok := recallResponseBindingFromSample(row); !ok {
+				// A partial or malformed response binding is never downgraded
+				// into an apparently usable legacy row during restart.
+				continue
 			}
 		}
 		switch anyToString(row["schema_id"]) {
@@ -713,7 +737,8 @@ func contextPackQualityLegacyOutcomeIdentifiersUnsafe(row map[string]any) bool {
 	allowedOutcomeKeys := map[string]struct{}{
 		"schema_id": {}, "version": {}, "capturedAt": {}, "gateway_received_at": {},
 		"outcome_id": {}, "sample_id": {}, "task_id": {}, "project": {}, "task_class": {}, "retrieval_intent": {},
-		"session_id": {}, "task_identity_id": {}, "execution_lane_id": {}, "agent_id": {},
+		"workspace_ref": {},
+		"session_id":    {}, "task_identity_id": {}, "execution_lane_id": {}, "agent_id": {},
 		"first_pass_success": {}, "repair_required": {}, "retry_count": {}, "observed_followup_tokens": {},
 		"outcome_source": {}, "outcome_class": {}, "context_attribution": {}, "calibration_eligible": {},
 		"policy_id": {}, "policy_arm": {}, "policy_phase": {},
@@ -722,6 +747,7 @@ func contextPackQualityLegacyOutcomeIdentifiersUnsafe(row map[string]any) bool {
 		"verification_evidence_digest": {}, "verifier_id": {}, "verification_passed": {},
 		"regression_case_ref": {}, "regression_partition": {}, "traffic_class": {}, "synthetic": {}, "stability": {},
 		"topic_path": {}, "topic_ref": {}, "quality_sample_admission": {}, "quality_sample_admission_ref": {}, "attribution_binding": {},
+		"recall_response_id": {}, "recall_response_digest": {}, "response_component_refs": {},
 	}
 	for key := range row {
 		if _, allowed := allowedOutcomeKeys[key]; !allowed {
@@ -960,6 +986,14 @@ func contextPackQualityLegacyOutcomeIdentifiersUnsafe(row map[string]any) bool {
 	}
 	if value, present := row["topic_ref"]; present && !fullRef(value) {
 		return true
+	}
+	if value, present := row["workspace_ref"]; present && !fullRef(value) {
+		return true
+	}
+	if recallResponseBindingHasAnyFields(row) {
+		if _, valid := recallResponseBindingFromSample(row); !valid {
+			return true
+		}
 	}
 	if value, present := row["regression_case_ref"]; present && !fullRef(value) {
 		return true
@@ -1289,16 +1323,8 @@ func (t *contextPackQualityTelemetry) recordQuality(sample map[string]any) {
 	}
 	if receipt := contextPackSelectionReceiptFromSample(entry["selection_receipt"]); len(receipt) > 0 {
 		entry["selection_receipt"] = receipt
-		if contextPackQualityLedgerAvailable(t.ledger) {
-			if err := t.ledger.append(entry); err == nil {
-				t.mu.Lock()
-				t.applyQualityEntryLocked(entry)
-				t.markDurableReceiptSampleLocked(entry)
-				t.mu.Unlock()
-				return
-			} else {
-				t.ledger.setError(err)
-			}
+		if err := t.recordQualityEntryDurably(entry); err == nil {
+			return
 		}
 		// A receipt that was not durably acknowledged must never become an
 		// in-memory candidate-binding source. Keep ordinary quality telemetry
@@ -1317,6 +1343,51 @@ func (t *contextPackQualityTelemetry) recordQuality(sample map[string]any) {
 			t.ledger.setError(err)
 		}
 	}
+}
+
+func (t *contextPackQualityTelemetry) recordQualityDurably(sample map[string]any) error {
+	if t == nil {
+		return errContextPackReceiptLedgerUnavailable
+	}
+	entry := contextPackQualityEntryFromSample(sample)
+	if len(entry) == 0 {
+		return errors.New("context-pack quality sample is invalid")
+	}
+	receipt := contextPackSelectionReceiptFromSample(entry["selection_receipt"])
+	if len(receipt) == 0 {
+		return errContextPackReceiptLedgerUnavailable
+	}
+	entry["selection_receipt"] = receipt
+	return t.recordQualityEntryDurably(entry)
+}
+
+func (t *contextPackQualityTelemetry) recordQualityLocallyWithoutReceipt(sample map[string]any) {
+	if t == nil {
+		return
+	}
+	entry := contextPackQualityEntryFromSample(sample)
+	if len(entry) == 0 {
+		return
+	}
+	delete(entry, "selection_receipt")
+	t.mu.Lock()
+	t.applyQualityEntryLocked(entry)
+	t.mu.Unlock()
+}
+
+func (t *contextPackQualityTelemetry) recordQualityEntryDurably(entry map[string]any) error {
+	if t == nil || !contextPackQualityLedgerAvailable(t.ledger) {
+		return errContextPackReceiptLedgerUnavailable
+	}
+	if err := t.ledger.appendReceiptBound(entry); err != nil {
+		t.ledger.setError(err)
+		return err
+	}
+	t.mu.Lock()
+	t.applyQualityEntryLocked(entry)
+	t.markDurableReceiptSampleLocked(entry)
+	t.mu.Unlock()
+	return nil
 }
 
 func (t *contextPackQualityTelemetry) recordOutcome(sample map[string]any) bool {
@@ -1346,6 +1417,9 @@ func (t *contextPackQualityTelemetry) recordOutcomeEntry(entry map[string]any) b
 func (t *contextPackQualityTelemetry) recordOutcomeEntryDurably(entry map[string]any) (bool, error) {
 	if t == nil || anyToString(entry["schema_id"]) != contextPackQualityOutcomeSchemaID {
 		return false, nil
+	}
+	if !contextPackQualityRowBindingValid(entry) {
+		return false, errContextPackOutcomeInvalidResponseBinding
 	}
 	entry = cloneJSONMap(entry)
 	t.mu.Lock()
@@ -1567,6 +1641,12 @@ func (t *contextPackQualityTelemetry) outcomeForUtility(outcomeID string) (map[s
 }
 
 func contextPackQualityEntryFromSample(sample map[string]any) map[string]any {
+	binding, bindingOK := recallResponseBindingFromSample(sample)
+	if !bindingOK {
+		// Binding fields are all-or-nothing. Returning no durable entry makes
+		// malformed rows fail closed at both local and durable persistence.
+		return nil
+	}
 	sampleID := contextPackQualityIdentifier(sample["sample_id"], 200)
 	if sampleID == "" {
 		return nil
@@ -1620,13 +1700,35 @@ func contextPackQualityEntryFromSample(sample map[string]any) map[string]any {
 		entry["topic_ref"] = topicRef
 	}
 	copyContextPackQualityProofIdentity(entry, sample)
+	if binding != nil && !recallResponseCopyBinding(entry, binding) {
+		return nil
+	}
+	workspaceRef := contextPackLearnedDigestRef(anyToString(sample["workspace_ref"]))
 	if receipt := contextPackSelectionReceiptFromSample(sample["selection_receipt"]); len(receipt) > 0 {
 		entry["selection_receipt"] = receipt
+		if receiptWorkspaceRef := contextPackLearnedDigestRef(anyToString(anyMap(receipt["learned_activation"])["workspace_ref"])); receiptWorkspaceRef != "" {
+			if workspaceRef != "" && workspaceRef != receiptWorkspaceRef {
+				return nil
+			}
+			workspaceRef = receiptWorkspaceRef
+		}
+	}
+	if workspaceRef != "" {
+		entry["workspace_ref"] = workspaceRef
 	}
 	if encoding := contextPackQualityIdentifier(sample["tokenizer_encoding"], 80); encoding != "" {
 		entry["tokenizer_encoding"] = encoding
 	}
 	return entry
+}
+
+func contextPackQualityRowBindingValid(row map[string]any) bool {
+	schemaID := anyToString(row["schema_id"])
+	if (schemaID != contextPackQualitySchemaID && schemaID != contextPackQualityOutcomeSchemaID) || !recallResponseBindingHasAnyFields(row) {
+		return true
+	}
+	_, ok := recallResponseBindingFromSample(row)
+	return ok
 }
 
 // contextPackQualityIdentifier is intentionally stricter than a clipped
@@ -1825,7 +1927,7 @@ func contextPackSelectionEvidenceRole(value any) string {
 	return "support"
 }
 
-func contextPackSelectionReceiptCandidate(row map[string]any, state string, fallbackOrdinal int) map[string]any {
+func contextPackSelectionReceiptCandidate(row map[string]any, state string, fallbackOrdinal int, allowLearned bool) map[string]any {
 	if state != "selected" && state != "omitted" {
 		return nil
 	}
@@ -1837,18 +1939,109 @@ func contextPackSelectionReceiptCandidate(row map[string]any, state string, fall
 	if ordinal <= 0 {
 		ordinal = fallbackOrdinal
 	}
-	return map[string]any{
+	candidate := map[string]any{
 		"candidate_ref":   ref,
 		"selection_state": state,
 		"ordinal":         clampInt(ordinal, 1, 10_000),
 		"evidence_role":   contextPackSelectionEvidenceRole(row["role"]),
 		"evidence_kind":   contextPackSelectionEvidenceKind(firstPresentAny(row["evidence_kind"], row["kind"])),
 	}
+	if !allowLearned {
+		return candidate
+	}
+	applied, appliedOK := firstPresentAny(row["learned_influence_applied"], row["outcome_influence_applied"]).(bool)
+	if !appliedOK || !applied {
+		return candidate
+	}
+	occurrence, occurrenceOK := contextPackOutcomeBoundedCount(row["occurrence"], 1_000_000)
+	baseScore, baseOK := contextPolicyNumber(firstPresentAny(row["learned_base_score"], row["base_score"]))
+	multiplier, multiplierOK := contextPolicyNumber(firstPresentAny(row["learned_multiplier"], row["outcome_multiplier"]))
+	finalScore, finalOK := contextPolicyNumber(firstPresentAny(row["score"], row["final_score"]))
+	if !occurrenceOK || occurrence < 1 || !baseOK || !multiplierOK || !finalOK || baseScore < 0 || baseScore > 10_000 ||
+		multiplier < 0.85 || multiplier > 1.15 || finalScore < 0 || finalScore > 11_500 ||
+		math.Abs(finalScore-baseScore*multiplier) > 0.001 {
+		return candidate
+	}
+	candidate["learned_influence_applied"] = true
+	candidate["occurrence"] = int(occurrence)
+	candidate["learned_base_score"] = roundFloat(baseScore, 6)
+	candidate["learned_multiplier"] = roundFloat(multiplier, 6)
+	candidate["final_score"] = roundFloat(finalScore, 6)
+	return candidate
+}
+
+func contextPackSelectionReceiptCandidateIdentity(candidate map[string]any, allowLearned bool) string {
+	ref := anyToString(candidate["candidate_ref"])
+	if !allowLearned || !anyToBool(candidate["learned_influence_applied"]) {
+		return ref
+	}
+	return ref + "\x00" + strconv.Itoa(anyToInt(candidate["occurrence"], 0))
+}
+
+// contextPackLearnedReceiptCaptureMatchesActivation binds the durable V2
+// candidate rows to the exact occurrence-aware vector applied by the actuator.
+// A digest alone is insufficient because bounded compiler output can otherwise
+// omit an affected candidate while retaining a nonzero applied count.
+func contextPackLearnedReceiptCaptureMatchesActivation(candidates []map[string]any, activation map[string]any) bool {
+	performed, performedOK := activation["performed"].(bool)
+	appliedCount, appliedOK := contextPackOutcomeBoundedCount(activation["applied_candidate_count"], contextPackSelectionReceiptLimit)
+	if !performedOK || !appliedOK {
+		return false
+	}
+	vector := make([]map[string]any, 0, appliedCount)
+	seen := make(map[string]struct{}, appliedCount)
+	for _, candidate := range candidates {
+		if !anyToBool(candidate["learned_influence_applied"]) {
+			continue
+		}
+		candidateRef := contextPackOpaqueCandidateRef(candidate["candidate_ref"])
+		occurrence, occurrenceOK := contextPackOutcomeBoundedCount(candidate["occurrence"], 1_000_000)
+		baseScore, baseOK := contextPolicyNumber(candidate["learned_base_score"])
+		multiplier, multiplierOK := contextPolicyNumber(candidate["learned_multiplier"])
+		finalScore, finalOK := contextPolicyNumber(candidate["final_score"])
+		if candidateRef == "" || !occurrenceOK || occurrence < 1 || !baseOK || !multiplierOK || !finalOK {
+			return false
+		}
+		key := candidateRef + "\x00" + strconv.FormatInt(occurrence, 10)
+		if _, duplicate := seen[key]; duplicate {
+			return false
+		}
+		seen[key] = struct{}{}
+		vector = append(vector, map[string]any{
+			"candidate_ref": candidateRef,
+			"occurrence":    int(occurrence),
+			"base_score":    roundFloat(baseScore, 6),
+			"multiplier":    roundFloat(multiplier, 6),
+			"final_score":   roundFloat(finalScore, 6),
+		})
+	}
+	if !performed {
+		return appliedCount == 0 && len(vector) == 0
+	}
+	if appliedCount < 1 || len(vector) != int(appliedCount) {
+		return false
+	}
+	sort.Slice(vector, func(i, j int) bool {
+		leftRef := anyToString(vector[i]["candidate_ref"])
+		rightRef := anyToString(vector[j]["candidate_ref"])
+		if leftRef == rightRef {
+			return anyToInt(vector[i]["occurrence"], 0) < anyToInt(vector[j]["occurrence"], 0)
+		}
+		return leftRef < rightRef
+	})
+	return contextPackLearnedCanonicalDigest(vector) == anyToString(activation["ranking_vector_digest"])
 }
 
 func contextPackSelectionReceiptFromCandidates(candidates []map[string]any) map[string]any {
+	return contextPackSelectionReceiptFromCandidatesWithActivation(candidates, nil)
+}
+
+func contextPackSelectionReceiptFromCandidatesWithActivation(candidates []map[string]any, activation map[string]any) map[string]any {
 	if len(candidates) > contextPackSelectionReceiptLimit {
 		candidates = candidates[:contextPackSelectionReceiptLimit]
+	}
+	if len(activation) > 0 && !contextPackLearnedReceiptCaptureMatchesActivation(candidates, activation) {
+		return nil
 	}
 	selected := 0
 	omitted := 0
@@ -1861,31 +2054,61 @@ func contextPackSelectionReceiptFromCandidates(candidates []map[string]any) map[
 		}
 		rows = append(rows, candidate)
 	}
-	receiptDigestParts := make([]string, 0, len(candidates)+1)
-	receiptDigestParts = append(receiptDigestParts, contextPackSelectionReceiptSchemaID)
-	for _, candidate := range candidates {
-		receiptDigestParts = append(receiptDigestParts, strings.Join([]string{
-			anyToString(candidate["candidate_ref"]), anyToString(candidate["selection_state"]),
-			anyToString(candidate["ordinal"]), anyToString(candidate["evidence_role"]), anyToString(candidate["evidence_kind"]),
-		}, "\x00"))
+	schemaID, version := contextPackSelectionReceiptSchemaID, 1
+	if len(activation) > 0 {
+		schemaID, version = contextPackSelectionReceiptV2SchemaID, 2
 	}
-	digest := sha256Hex(strings.Join(receiptDigestParts, "\x00"))
-	return map[string]any{
-		"schema_id":       contextPackSelectionReceiptSchemaID,
-		"version":         1,
-		"receipt_id":      "cpr_" + digest[:24],
-		"receipt_digest":  "sha256:" + digest,
+	if len(activation) == 0 {
+		receiptDigestParts := make([]string, 0, len(candidates)+1)
+		receiptDigestParts = append(receiptDigestParts, contextPackSelectionReceiptSchemaID)
+		for _, candidate := range candidates {
+			receiptDigestParts = append(receiptDigestParts, strings.Join([]string{
+				anyToString(candidate["candidate_ref"]), anyToString(candidate["selection_state"]),
+				anyToString(candidate["ordinal"]), anyToString(candidate["evidence_role"]), anyToString(candidate["evidence_kind"]),
+			}, "\x00"))
+		}
+		digest := sha256Hex(strings.Join(receiptDigestParts, "\x00"))
+		return map[string]any{
+			"schema_id": contextPackSelectionReceiptSchemaID, "version": 1,
+			"receipt_id": "cpr_" + digest[:24], "receipt_digest": "sha256:" + digest,
+			"candidate_limit": contextPackSelectionReceiptLimit, "candidate_count": len(rows),
+			"selected_count": selected, "omitted_count": omitted, "candidates": rows,
+		}
+	}
+	receipt := map[string]any{
+		"schema_id":       schemaID,
+		"version":         version,
 		"candidate_limit": contextPackSelectionReceiptLimit,
 		"candidate_count": len(rows),
 		"selected_count":  selected,
 		"omitted_count":   omitted,
 		"candidates":      rows,
 	}
+	if len(activation) > 0 {
+		receipt["learned_activation"] = activation
+	}
+	raw, err := json.Marshal(receipt)
+	if err != nil {
+		return nil
+	}
+	digest := sha256Hex(string(raw))
+	receipt["receipt_id"] = "cpr_" + digest[:24]
+	receipt["receipt_digest"] = "sha256:" + digest
+	return receipt
 }
 
 // contextPackSelectionReceipt records selection facts only. It deliberately
 // excludes candidate text, summaries, source locations, and query data.
 func contextPackSelectionReceipt(ranked, omitted any) map[string]any {
+	return contextPackSelectionReceiptWithActivation(ranked, omitted, nil)
+}
+
+func contextPackSelectionReceiptWithActivation(ranked, omitted any, rawActivation map[string]any) map[string]any {
+	activation := contextPackLearnedActivationReceiptFromSample(rawActivation)
+	if len(rawActivation) > 0 && len(activation) == 0 && !contextPackLearnedNativeControlActivationFromSample(rawActivation) {
+		return nil
+	}
+	allowLearned := len(activation) > 0
 	candidates := make([]map[string]any, 0, contextPackSelectionReceiptLimit)
 	seen := map[string]struct{}{}
 	appendRows := func(rows []map[string]any, state string) {
@@ -1893,21 +2116,21 @@ func contextPackSelectionReceipt(ranked, omitted any) map[string]any {
 			if len(candidates) >= contextPackSelectionReceiptLimit {
 				return
 			}
-			candidate := contextPackSelectionReceiptCandidate(row, state, index+1)
+			candidate := contextPackSelectionReceiptCandidate(row, state, index+1, allowLearned)
 			if len(candidate) == 0 {
 				continue
 			}
-			ref := anyToString(candidate["candidate_ref"])
-			if _, duplicate := seen[ref]; duplicate {
+			identity := contextPackSelectionReceiptCandidateIdentity(candidate, allowLearned)
+			if _, duplicate := seen[identity]; duplicate {
 				continue
 			}
-			seen[ref] = struct{}{}
+			seen[identity] = struct{}{}
 			candidates = append(candidates, candidate)
 		}
 	}
 	appendRows(parseRows(ranked), "selected")
 	appendRows(parseRows(omitted), "omitted")
-	return contextPackSelectionReceiptFromCandidates(candidates)
+	return contextPackSelectionReceiptFromCandidatesWithActivation(candidates, activation)
 }
 
 // contextPackSelectionReceiptFromSample is the durable ledger boundary. Even
@@ -1918,6 +2141,14 @@ func contextPackSelectionReceiptFromSample(value any) map[string]any {
 	if len(raw) == 0 {
 		return nil
 	}
+	activation := map[string]any(nil)
+	allowLearned := anyToString(raw["schema_id"]) == contextPackSelectionReceiptV2SchemaID && anyToInt(raw["version"], 0) == 2
+	if allowLearned {
+		activation = contextPackLearnedActivationReceiptFromSample(anyMap(raw["learned_activation"]))
+		if len(activation) == 0 {
+			return nil
+		}
+	}
 	candidates := make([]map[string]any, 0, contextPackSelectionReceiptLimit)
 	seen := map[string]struct{}{}
 	for index, row := range parseRows(raw["candidates"]) {
@@ -1925,18 +2156,204 @@ func contextPackSelectionReceiptFromSample(value any) map[string]any {
 			break
 		}
 		state := strings.ToLower(strings.TrimSpace(anyToString(row["selection_state"])))
-		candidate := contextPackSelectionReceiptCandidate(row, state, index+1)
+		candidate := contextPackSelectionReceiptCandidate(row, state, index+1, allowLearned)
 		if len(candidate) == 0 {
 			continue
 		}
-		ref := anyToString(candidate["candidate_ref"])
-		if _, duplicate := seen[ref]; duplicate {
+		identity := contextPackSelectionReceiptCandidateIdentity(candidate, allowLearned)
+		if _, duplicate := seen[identity]; duplicate {
 			continue
 		}
-		seen[ref] = struct{}{}
+		seen[identity] = struct{}{}
 		candidates = append(candidates, candidate)
 	}
-	return contextPackSelectionReceiptFromCandidates(candidates)
+	return contextPackSelectionReceiptFromCandidatesWithActivation(candidates, activation)
+}
+
+func contextPackLearnedActivationReceiptFromSample(raw map[string]any) map[string]any {
+	if len(raw) == 0 || anyToString(raw["schema_id"]) != contextPackLearnedActivationContractID || anyToInt(raw["version"], 0) != 1 {
+		return nil
+	}
+	allowed := map[string]struct{}{}
+	for _, key := range []string{
+		"schema_id", "version", "activation_receipt_id", "armed", "eligible", "arm", "performed", "reason",
+		"canary_percent", "exposure_bucket_basis_points", "request_ref", "project_scope_ref", "task_class_scope_ref",
+		"retrieval_intent_scope_ref", "workspace_ref", "policy_ref", "impact_proof_ref", "reputation_snapshot_ref",
+		"actuator_comparator_ref", "ranking_vector_digest", "applied_candidate_count", "raw_query_or_content_stored",
+	} {
+		allowed[key] = struct{}{}
+	}
+	for key := range raw {
+		if _, ok := allowed[key]; !ok {
+			return nil
+		}
+	}
+	exactBool := func(key string) (bool, bool) {
+		value, ok := raw[key].(bool)
+		return value, ok
+	}
+	armed, armedOK := exactBool("armed")
+	eligible, eligibleOK := exactBool("eligible")
+	performed, performedOK := exactBool("performed")
+	rawStored, rawStoredOK := exactBool("raw_query_or_content_stored")
+	if !armedOK || !eligibleOK || !performedOK || !rawStoredOK || rawStored || !armed || !eligible {
+		return nil
+	}
+	arm := strings.ToLower(strings.TrimSpace(anyToString(raw["arm"])))
+	if arm != "control" && arm != "canary" {
+		return nil
+	}
+	receiptID := contextPackQualityIdentifier(raw["activation_receipt_id"], 80)
+	reason := contextPackQualityIdentifier(raw["reason"], 80)
+	if !strings.HasPrefix(receiptID, "cla_") || reason == "" {
+		return nil
+	}
+	canaryPercent, canaryOK := contextPackOutcomeBoundedCount(raw["canary_percent"], 10)
+	bucket, bucketOK := contextPackOutcomeBoundedCount(raw["exposure_bucket_basis_points"], 9999)
+	appliedCount, appliedOK := contextPackOutcomeBoundedCount(raw["applied_candidate_count"], contextPackSelectionReceiptLimit)
+	if !canaryOK || canaryPercent < 1 || !bucketOK || !appliedOK || (performed && appliedCount == 0) || (!performed && appliedCount != 0) {
+		return nil
+	}
+	refs := map[string]string{}
+	for _, key := range []string{
+		"request_ref", "project_scope_ref", "task_class_scope_ref", "retrieval_intent_scope_ref", "workspace_ref",
+		"policy_ref", "impact_proof_ref", "actuator_comparator_ref", "reputation_snapshot_ref",
+	} {
+		refs[key] = contextPackLearnedDigestRef(anyToString(raw[key]))
+		if refs[key] == "" {
+			return nil
+		}
+	}
+	rankingVector := contextPackLearnedDigestRef(anyToString(raw["ranking_vector_digest"]))
+	if performed && rankingVector == "" || !performed && rankingVector != "" {
+		return nil
+	}
+	canonicalDecision := contextPackLearnedActivationDecision{
+		RequestRef:              refs["request_ref"],
+		ProjectScopeRef:         refs["project_scope_ref"],
+		TaskClassScopeRef:       refs["task_class_scope_ref"],
+		RetrievalIntentScopeRef: refs["retrieval_intent_scope_ref"],
+		WorkspaceRef:            refs["workspace_ref"],
+		PolicyRef:               refs["policy_ref"],
+		ImpactProofRef:          refs["impact_proof_ref"],
+		ActuatorComparatorRef:   refs["actuator_comparator_ref"],
+		ReputationSnapshotRef:   refs["reputation_snapshot_ref"],
+		CanaryPercent:           int(canaryPercent),
+		ExposureBucket:          int(bucket),
+		Arm:                     arm,
+	}
+	if receiptID != contextPackLearnedActivationReceiptID(canonicalDecision) {
+		return nil
+	}
+	return map[string]any{
+		"schema_id": contextPackLearnedActivationContractID, "version": 1,
+		"activation_receipt_id": receiptID, "armed": armed, "eligible": eligible,
+		"arm": arm, "performed": performed, "reason": reason,
+		"canary_percent": int(canaryPercent), "exposure_bucket_basis_points": int(bucket),
+		"request_ref": refs["request_ref"], "project_scope_ref": refs["project_scope_ref"],
+		"task_class_scope_ref": refs["task_class_scope_ref"], "retrieval_intent_scope_ref": refs["retrieval_intent_scope_ref"],
+		"workspace_ref": refs["workspace_ref"], "policy_ref": refs["policy_ref"],
+		"impact_proof_ref": refs["impact_proof_ref"], "actuator_comparator_ref": refs["actuator_comparator_ref"],
+		"reputation_snapshot_ref": refs["reputation_snapshot_ref"],
+		"ranking_vector_digest":   rankingVector, "applied_candidate_count": int(appliedCount),
+		"raw_query_or_content_stored": false,
+	}
+}
+
+// contextPackLearnedNativeControlActivationFromSample recognizes the exact
+// unarmed or ineligible native-control envelope emitted by the compiler. Such
+// a decision has not applied learned influence, so it must retain the ordinary
+// V1 receipt used to bootstrap candidate outcomes. Anything malformed or
+// eligible remains fail-closed at the learned receipt boundary.
+func contextPackLearnedNativeControlActivationFromSample(raw map[string]any) bool {
+	schemaID, schemaOK := raw["schema_id"].(string)
+	if len(raw) == 0 || !schemaOK || schemaID != contextPackLearnedActivationContractID {
+		return false
+	}
+	version, versionOK := contextPackOutcomeBoundedCount(raw["version"], 1)
+	if !versionOK || version != 1 {
+		return false
+	}
+	allowed := map[string]struct{}{}
+	for _, key := range []string{
+		"schema_id", "version", "activation_receipt_id", "armed", "eligible", "arm", "performed", "reason",
+		"canary_percent", "exposure_bucket_basis_points", "request_ref", "project_scope_ref", "task_class_scope_ref",
+		"retrieval_intent_scope_ref", "workspace_ref", "policy_ref", "impact_proof_ref", "reputation_snapshot_ref",
+		"actuator_comparator_ref", "ranking_vector_digest", "applied_candidate_count", "raw_query_or_content_stored",
+	} {
+		allowed[key] = struct{}{}
+	}
+	for key := range raw {
+		if _, ok := allowed[key]; !ok {
+			return false
+		}
+	}
+	exactBool := func(key string) (bool, bool) {
+		value, ok := raw[key].(bool)
+		return value, ok
+	}
+	_, armedOK := exactBool("armed")
+	eligible, eligibleOK := exactBool("eligible")
+	performed, performedOK := exactBool("performed")
+	rawStored, rawStoredOK := exactBool("raw_query_or_content_stored")
+	if !armedOK || !eligibleOK || !performedOK || !rawStoredOK || eligible || performed || rawStored {
+		return false
+	}
+	arm, armOK := raw["arm"].(string)
+	activationReceiptID, receiptIDOK := raw["activation_receipt_id"].(string)
+	rankingVector, rankingVectorOK := raw["ranking_vector_digest"].(string)
+	reason, reasonOK := raw["reason"].(string)
+	if !armOK || !receiptIDOK || !rankingVectorOK || !reasonOK || strings.ToLower(strings.TrimSpace(arm)) != "shadow" ||
+		strings.TrimSpace(activationReceiptID) != "" || strings.TrimSpace(rankingVector) != "" ||
+		contextPackQualityIdentifier(reason, 80) == "" {
+		return false
+	}
+	canaryPercent, canaryOK := contextPackOutcomeBoundedCount(raw["canary_percent"], 10)
+	appliedCount, appliedOK := contextPackOutcomeBoundedCount(raw["applied_candidate_count"], 0)
+	if !canaryOK || canaryPercent > 10 || !appliedOK || appliedCount != 0 {
+		return false
+	}
+	if !contextPackLearnedNativeControlBucketValid(raw["exposure_bucket_basis_points"]) {
+		return false
+	}
+	for _, key := range []string{
+		"request_ref", "project_scope_ref", "task_class_scope_ref", "retrieval_intent_scope_ref", "workspace_ref",
+		"policy_ref", "impact_proof_ref", "actuator_comparator_ref", "reputation_snapshot_ref",
+	} {
+		value, ok := raw[key].(string)
+		if !ok {
+			return false
+		}
+		if value != "" && contextPackLearnedDigestRef(value) == "" {
+			return false
+		}
+	}
+	return true
+}
+
+func contextPackLearnedNativeControlBucketValid(value any) bool {
+	if _, ok := contextPackOutcomeBoundedCount(value, 9999); ok {
+		return true
+	}
+	switch typed := value.(type) {
+	case int:
+		return typed == -1
+	case int8:
+		return typed == -1
+	case int16:
+		return typed == -1
+	case int32:
+		return typed == -1
+	case int64:
+		return typed == -1
+	case float64:
+		return typed == -1
+	case json.Number:
+		parsed, err := typed.Int64()
+		return err == nil && parsed == -1
+	default:
+		return false
+	}
 }
 
 // contextPackOutcomeBoundedCount accepts only an exact, finite, non-negative
@@ -2046,6 +2463,10 @@ func contextPackQualityOutcomeFromSample(sample map[string]any) map[string]any {
 }
 
 func contextPackQualityOutcomeFromSampleChecked(sample map[string]any) (map[string]any, error) {
+	responseBinding, responseBindingOK := recallResponseBindingFromSample(sample)
+	if !responseBindingOK {
+		return nil, errContextPackOutcomeInvalidResponseBinding
+	}
 	sampleID := contextPackQualityIdentifier(firstNonEmptyStrings(anyToString(sample["sample_id"]), anyToString(sample["context_pack_quality_sample_id"])), 200)
 	taskID := contextPackQualityIdentifier(firstNonEmptyStrings(anyToString(sample["task_id"]), anyToString(sample["taskId"])), 160)
 	firstPassRaw, firstPassPresent := contextPackOutcomeFirstPresent(sample, "first_pass_success", "succeeded_first_pass", "success_first_pass")
@@ -2155,6 +2576,9 @@ func contextPackQualityOutcomeFromSampleChecked(sample map[string]any) (map[stri
 		entry["candidate_attribution_attempts"] = attempts
 	}
 	copyContextPackQualityProofIdentity(entry, sample)
+	if responseBinding != nil && !recallResponseCopyBinding(entry, responseBinding) {
+		return nil, errContextPackOutcomeInvalidResponseBinding
+	}
 	if policyID := contextPackQualityIdentifier(sample["policy_id"], 160); policyID != "" {
 		entry["policy_id"] = policyID
 	}
@@ -2494,8 +2918,11 @@ func (t *contextPackQualityTelemetry) durableQualitySampleForOutcome(sampleID st
 		if len(canonical) == 0 {
 			continue
 		}
-		if found != nil && contextPackQualitySampleAdmissionRef(found) != contextPackQualitySampleAdmissionRef(canonical) {
-			return nil, false, errContextPackOutcomeSampleConflict
+		if found != nil {
+			if contextPackQualitySampleAdmissionRef(found) != contextPackQualitySampleAdmissionRef(canonical) ||
+				!contextPackQualityResponseBindingsEqual(found, canonical) {
+				return nil, false, errContextPackOutcomeSampleConflict
+			}
 		}
 		found = canonical
 	}
@@ -2524,6 +2951,18 @@ func contextPackQualitySampleAdmissionRef(sample map[string]any) string {
 	return "sha256:" + sha256Hex(string(encoded))
 }
 
+func contextPackQualityResponseBindingsEqual(left, right map[string]any) bool {
+	leftBinding, leftOK := recallResponseBindingFromSample(left)
+	rightBinding, rightOK := recallResponseBindingFromSample(right)
+	if !leftOK || !rightOK {
+		return false
+	}
+	if leftBinding == nil || rightBinding == nil {
+		return leftBinding == nil && rightBinding == nil
+	}
+	return recallResponseBindingsEqual(leftBinding, rightBinding)
+}
+
 func contextPackOutcomeHasAuthoritativeSampleAdmission(entry map[string]any) bool {
 	return anyToString(entry["quality_sample_admission"]) == contextPackOutcomeAdmissionSchemaID &&
 		utilitySHA256DigestValid(anyToString(entry["quality_sample_admission_ref"]))
@@ -2537,10 +2976,27 @@ func bindContextPackQualityOutcomeSample(entry, sample map[string]any) (map[stri
 	if len(entry) == 0 || len(sample) == 0 || anyToString(entry["sample_id"]) == "" || anyToString(entry["sample_id"]) != anyToString(sample["sample_id"]) {
 		return nil, errContextPackOutcomeSampleConflict
 	}
+	reporterBinding, reporterBindingOK := recallResponseBindingFromSample(entry)
+	canonicalBinding, canonicalBindingOK := recallResponseBindingFromSample(sample)
+	if !reporterBindingOK || !canonicalBindingOK {
+		return nil, errContextPackOutcomeInvalidResponseBinding
+	}
 	bound := cloneJSONMap(entry)
+	switch {
+	case canonicalBinding != nil && reporterBinding == nil:
+		if !recallResponseCopyBinding(bound, canonicalBinding) {
+			return nil, errContextPackOutcomeInvalidResponseBinding
+		}
+	case canonicalBinding != nil && reporterBinding != nil:
+		if !recallResponseBindingsEqual(reporterBinding, canonicalBinding) {
+			return nil, errContextPackOutcomeInvalidResponseBinding
+		}
+	case canonicalBinding == nil && reporterBinding != nil:
+		return nil, errContextPackOutcomeInvalidResponseBinding
+	}
 	for _, field := range []string{
 		"project", "task_class", "retrieval_intent", "task_id", "session_id",
-		"task_identity_id", "execution_lane_id", "agent_id",
+		"task_identity_id", "execution_lane_id", "agent_id", "workspace_ref",
 	} {
 		reported := strings.TrimSpace(anyToString(bound[field]))
 		canonical := strings.TrimSpace(anyToString(sample[field]))
@@ -2678,20 +3134,63 @@ func (t *contextPackQualityTelemetry) receiptDurableOutcomeRows(limit int) ([]ma
 	rows := t.outcomeSourceRows(limit)
 	accepted := make([]map[string]any, 0, len(rows))
 	missing := 0
-	t.mu.Lock()
-	for _, row := range rows {
-		if !t.candidateOutcomeReceiptDurableLocked(row) {
+	receiptBound := make([]bool, len(rows))
+	durable := make([]bool, len(rows))
+	for index, row := range rows {
+		receiptBound[index] = contextPackOutcomeHasReceiptBoundCandidate(row)
+	}
+	receiptErr := t.withDurableReceiptPairIndex(func(receiptPairs map[string]struct{}) {
+		for index, row := range rows {
+			if !receiptBound[index] {
+				continue
+			}
+			sampleID := strings.TrimSpace(anyToString(row["sample_id"]))
+			expectedDigest := strings.TrimSpace(anyToString(anyMap(row["attribution_binding"])["selection_receipt_digest"]))
+			if sampleID == "" || expectedDigest == "" {
+				continue
+			}
+			_, durable[index] = receiptPairs[sampleID+"\x00"+expectedDigest]
+		}
+	})
+	for index, row := range rows {
+		if !receiptBound[index] {
+			accepted = append(accepted, cloneJSONMap(row))
+			continue
+		}
+		if receiptErr != nil || !durable[index] {
 			missing++
 			continue
 		}
 		accepted = append(accepted, cloneJSONMap(row))
 	}
-	t.mu.Unlock()
 	return accepted, map[string]any{
 		"pass":                          missing == 0,
 		"receipt_bound_outcome_count":   len(rows) - missing,
 		"missing_receipt_outcome_count": missing,
 	}
+}
+
+// withDurableReceiptPairIndex runs use against the exact receipt-pair index
+// under its read lock. Writers hold the ledger mutex before this index lock, so
+// a caller either observes one acknowledged ledger state or fails closed. The
+// index is updated in place after ordinary appends and rebuilt only on retained
+// ledger rewrites; request-time activation never scans the NDJSON ledger.
+func (t *contextPackQualityTelemetry) withDurableReceiptPairIndex(use func(map[string]struct{})) error {
+	if t == nil || t.ledger == nil || use == nil {
+		return errContextPackReceiptLedgerUnavailable
+	}
+	ledger := t.ledger
+	ledger.mu.Lock()
+	if !ledger.enabled || strings.TrimSpace(ledger.path) == "" || !ledger.receiptPairsReady || ledger.durabilityUnacknowledged || strings.TrimSpace(ledger.lastPruneError) != "" {
+		ledger.mu.Unlock()
+		return errContextPackReceiptLedgerUnavailable
+	}
+	ledger.receiptPairIndexMu.RLock()
+	receiptPairs := ledger.receiptPairs
+	ledger.mu.Unlock()
+	defer ledger.receiptPairIndexMu.RUnlock()
+	use(receiptPairs)
+	return nil
 }
 
 func contextPackOutcomeFirstPresent(sample map[string]any, keys ...string) (any, bool) {
@@ -2988,6 +3487,10 @@ func (l *contextPackQualityLedger) readRows() ([]map[string]any, int, error) {
 		if schemaID != contextPackQualitySchemaID && schemaID != contextPackQualityOutcomeSchemaID {
 			continue
 		}
+		if !contextPackQualityRowBindingValid(row) {
+			parseErrors++
+			continue
+		}
 		rows = append(rows, row)
 		if len(rows) > l.maxSamples {
 			rows = append([]map[string]any{}, rows[len(rows)-l.maxSamples:]...)
@@ -3000,6 +3503,14 @@ func (l *contextPackQualityLedger) readRows() ([]map[string]any, int, error) {
 }
 
 func (l *contextPackQualityLedger) append(entry map[string]any) error {
+	return l.appendWithPrunePolicy(entry, false)
+}
+
+func (l *contextPackQualityLedger) appendReceiptBound(entry map[string]any) error {
+	return l.appendWithPrunePolicy(entry, true)
+}
+
+func (l *contextPackQualityLedger) appendWithPrunePolicy(entry map[string]any, strictPrune bool) error {
 	if l == nil {
 		return errContextPackReceiptLedgerUnavailable
 	}
@@ -3007,6 +3518,9 @@ func (l *contextPackQualityLedger) append(entry map[string]any) error {
 	defer l.mu.Unlock()
 	if !l.enabled || strings.TrimSpace(l.path) == "" {
 		return errContextPackReceiptLedgerUnavailable
+	}
+	if !contextPackQualityRowBindingValid(entry) {
+		return errors.New("context-pack quality row contains malformed recall response binding")
 	}
 	if err := l.acknowledgeDurabilityLocked(); err != nil {
 		return err
@@ -3033,35 +3547,44 @@ func (l *contextPackQualityLedger) append(entry map[string]any) error {
 	}
 	l.lastWriteAt = nowUTCISO()
 	l.lastError = ""
+	pruned := false
 	if stat, statErr := os.Stat(l.path); statErr == nil && stat.Size() > l.maxBytes {
 		if pruneErr := l.pruneLocked(); pruneErr != nil {
 			l.pruneErrors++
 			l.lastPruneError = tokenImpactLedgerErrorCode(pruneErr)
+			l.receiptPairsReady = false
 			// A pre-replacement retention failure leaves the fsync-acknowledged
-			// append intact, so it remains telemetry-only. Once replacement has
-			// happened, however, a missing acknowledgement means the candidate
-			// must not enter proof or Utility state.
-			if ownerOnlyAtomicWriteCommitted(pruneErr) {
-				l.durabilityUnacknowledged = true
+			// append intact, but learned receipt proof remains unavailable until
+			// the retention boundary is re-acknowledged successfully.
+			l.durabilityUnacknowledged = true
+			if ownerOnlyAtomicWriteCommitted(pruneErr) || strictPrune {
 				l.lastError = tokenImpactLedgerErrorCode(pruneErr)
 				return pruneErr
 			}
 		} else {
 			l.lastPruneError = ""
+			pruned = true
 		}
+	}
+	if !pruned && !l.durabilityUnacknowledged {
+		l.addReceiptPairLocked(entry)
 	}
 	return nil
 }
 
 func (l *contextPackQualityLedger) pruneLocked() error {
-	rows, _, err := l.readRowsUnlocked()
+	rows, parseErrors, err := l.readRowsUnlocked()
 	if err != nil {
 		return err
+	}
+	if parseErrors > 0 {
+		return errors.New("context-pack quality ledger contains malformed rows")
 	}
 	if len(rows) > l.maxSamples {
 		rows = rows[len(rows)-l.maxSamples:]
 	}
 	encodedRows := make([][]byte, 0, len(rows))
+	retainedRows := make([]map[string]any, 0, len(rows))
 	total := int64(0)
 	for i := len(rows) - 1; i >= 0; i-- {
 		encoded, err := json.Marshal(rows[i])
@@ -3073,10 +3596,12 @@ func (l *contextPackQualityLedger) pruneLocked() error {
 			break
 		}
 		encodedRows = append(encodedRows, encoded)
+		retainedRows = append(retainedRows, rows[i])
 		total += lineBytes
 	}
 	for i, j := 0, len(encodedRows)-1; i < j; i, j = i+1, j-1 {
 		encodedRows[i], encodedRows[j] = encodedRows[j], encodedRows[i]
+		retainedRows[i], retainedRows[j] = retainedRows[j], retainedRows[i]
 	}
 	content := make([]byte, 0, total)
 	for _, row := range encodedRows {
@@ -3084,16 +3609,23 @@ func (l *contextPackQualityLedger) pruneLocked() error {
 		content = append(content, '\n')
 	}
 	dedicatedParent := strings.TrimSpace(os.Getenv("GO_CONTEXT_PACK_QUALITY_LEDGER_PATH")) == ""
-	return l.writeContentDurablyLocked(content, dedicatedParent)
+	if err := l.writeContentDurablyLocked(content, dedicatedParent); err != nil {
+		return err
+	}
+	l.setReceiptPairsFromRowsLocked(retainedRows)
+	return nil
 }
 
 // rewriteCurrentRowsDurablyLocked acknowledges retained bytes without applying
 // a new retention policy. Startup must not erase outcomes merely because its
 // bounded in-memory projection is smaller than the physical ledger history.
 func (l *contextPackQualityLedger) rewriteCurrentRowsDurablyLocked() error {
-	rows, _, err := l.readRowsUnlocked()
+	rows, parseErrors, err := l.readRowsUnlocked()
 	if err != nil {
 		return err
+	}
+	if parseErrors > 0 {
+		return errors.New("context-pack quality ledger contains malformed rows")
 	}
 	content := make([]byte, 0)
 	for _, row := range rows {
@@ -3105,7 +3637,53 @@ func (l *contextPackQualityLedger) rewriteCurrentRowsDurablyLocked() error {
 		content = append(content, '\n')
 	}
 	dedicatedParent := strings.TrimSpace(os.Getenv("GO_CONTEXT_PACK_QUALITY_LEDGER_PATH")) == ""
-	return l.writeContentDurablyLocked(content, dedicatedParent)
+	if err := l.writeContentDurablyLocked(content, dedicatedParent); err != nil {
+		return err
+	}
+	l.setReceiptPairsFromRowsLocked(rows)
+	return nil
+}
+
+func contextPackQualityReceiptPair(entry map[string]any) (string, bool) {
+	if anyToString(entry["schema_id"]) != contextPackQualitySchemaID {
+		return "", false
+	}
+	sampleID := strings.TrimSpace(anyToString(entry["sample_id"]))
+	receipt := contextPackSelectionReceiptFromSample(entry["selection_receipt"])
+	digest := strings.TrimSpace(anyToString(receipt["receipt_digest"]))
+	if sampleID == "" || digest == "" {
+		return "", false
+	}
+	return sampleID + "\x00" + digest, true
+}
+
+func (l *contextPackQualityLedger) setReceiptPairsFromRowsLocked(rows []map[string]any) {
+	pairs := make(map[string]struct{})
+	for _, row := range rows {
+		if pair, ok := contextPackQualityReceiptPair(row); ok {
+			pairs[pair] = struct{}{}
+		}
+	}
+	l.receiptPairIndexMu.Lock()
+	l.receiptPairs = pairs
+	l.receiptPairIndexMu.Unlock()
+	l.receiptPairsReady = true
+}
+
+func (l *contextPackQualityLedger) addReceiptPairLocked(entry map[string]any) {
+	if !l.receiptPairsReady {
+		return
+	}
+	pair, ok := contextPackQualityReceiptPair(entry)
+	if !ok {
+		return
+	}
+	l.receiptPairIndexMu.Lock()
+	defer l.receiptPairIndexMu.Unlock()
+	if l.receiptPairs == nil {
+		l.receiptPairs = make(map[string]struct{})
+	}
+	l.receiptPairs[pair] = struct{}{}
 }
 
 func (l *contextPackQualityLedger) writeContentDurablyLocked(content []byte, dedicatedParent bool) error {
@@ -3149,6 +3727,7 @@ func (l *contextPackQualityLedger) acknowledgeStartupDurability() error {
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			l.durabilityUnacknowledged = false
+			l.setReceiptPairsFromRowsLocked(nil)
 			return nil
 		}
 		return err
@@ -3158,6 +3737,7 @@ func (l *contextPackQualityLedger) acknowledgeStartupDurability() error {
 	}
 	if info.Size() == 0 {
 		l.durabilityUnacknowledged = false
+		l.setReceiptPairsFromRowsLocked(nil)
 		return nil
 	}
 	if err := l.rewriteCurrentRowsDurablyLocked(); err != nil {
@@ -3217,6 +3797,10 @@ func (l *contextPackQualityLedger) readRowsUnlocked() ([]map[string]any, int, er
 		}
 		schemaID := anyToString(row["schema_id"])
 		if schemaID == contextPackQualitySchemaID || schemaID == contextPackQualityOutcomeSchemaID {
+			if !contextPackQualityRowBindingValid(row) {
+				parseErrors++
+				continue
+			}
 			rows = append(rows, row)
 		}
 	}
@@ -3250,6 +3834,9 @@ func (l *contextPackQualityLedger) readRowsForPrivacyMigrationUnlocked() ([]map[
 		if err := json.Unmarshal([]byte(line), &row); err != nil {
 			parseErrors++
 			continue
+		}
+		if !contextPackQualityRowBindingValid(row) {
+			return nil, parseErrors + 1, fmt.Errorf("context-pack quality ledger contains malformed recall response binding")
 		}
 		switch anyToString(row["schema_id"]) {
 		case contextPackQualitySchemaID, contextPackQualityOutcomeSchemaID:
@@ -3301,6 +3888,10 @@ func buildContextPackQualitySample(input contextPackQualitySampleInput) map[stri
 		anyToString(input.TokenImpact["packed_tokens_estimate"]),
 	}, "\x00")
 	ranked := contextPackAnyList(input.RankedEvidence)
+	selectionRankedRefs := contextPackAnyList(input.SelectionReceiptRankedRefs)
+	if len(selectionRankedRefs) == 0 {
+		selectionRankedRefs = ranked
+	}
 	omitted := contextPackAnyList(input.OmittedHighValueRefs)
 	omittedSelectionRefs := contextPackAnyList(input.OmittedSelectionRefs)
 	if len(omittedSelectionRefs) == 0 {
@@ -3371,10 +3962,13 @@ func buildContextPackQualitySample(input contextPackQualitySampleInput) map[stri
 		"raw_retry_probability_estimate":     retryModel.RawRetryProbability,
 		"packed_retry_probability_estimate":  retryModel.PackedRetryProbability,
 		"measurement_limit":                  contextPackQualityMeasurementLimit(false),
-		"selection_receipt":                  contextPackSelectionReceipt(ranked, omittedSelectionRefs),
+		"selection_receipt":                  contextPackSelectionReceiptWithActivation(selectionRankedRefs, omittedSelectionRefs, input.LearnedActivation),
 	}
 	if topicRef := contextPackQualityTopicRef(project, input.TopicPath); topicRef != "" {
 		sample["topic_ref"] = topicRef
+	}
+	if workspaceRef := contextPackLearnedDigestRef(input.WorkspaceRef); workspaceRef != "" {
+		sample["workspace_ref"] = workspaceRef
 	}
 	copyContextPackQualityProofIdentity(sample, map[string]any{
 		"session_id":        input.SessionID,
@@ -3519,24 +4113,27 @@ func contextPackOutcomeAttributionExclusions(exclusions map[string]int) map[stri
 }
 
 type contextPackQualitySampleInput struct {
-	Query                string
-	Project              string
-	TopicPath            string
-	TaskClass            string
-	RetrievalIntent      string
-	SessionID            string
-	TaskID               string
-	TaskIdentityID       string
-	ExecutionLaneID      string
-	AgentID              string
-	TokenImpact          map[string]any
-	Compiled             map[string]any
-	SourceCoverage       map[string]any
-	GraphQuality         map[string]any
-	RankedEvidence       any
-	OmittedHighValueRefs any
-	OmittedSelectionRefs any
-	Warnings             []string
+	Query                      string
+	Project                    string
+	WorkspaceRef               string
+	TopicPath                  string
+	TaskClass                  string
+	RetrievalIntent            string
+	SessionID                  string
+	TaskID                     string
+	TaskIdentityID             string
+	ExecutionLaneID            string
+	AgentID                    string
+	TokenImpact                map[string]any
+	Compiled                   map[string]any
+	SourceCoverage             map[string]any
+	GraphQuality               map[string]any
+	RankedEvidence             any
+	SelectionReceiptRankedRefs any
+	OmittedHighValueRefs       any
+	OmittedSelectionRefs       any
+	LearnedActivation          map[string]any
+	Warnings                   []string
 }
 
 type contextPackQualitySignals struct {
@@ -3657,6 +4254,10 @@ func (s *server) telemetryContextPackQualityOutcomeRoute(w http.ResponseWriter, 
 		return
 	}
 	entry, err := contextPackQualityOutcomeFromSampleChecked(payload)
+	if errors.Is(err, errContextPackOutcomeInvalidResponseBinding) {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": "invalid_outcome_response_binding"})
+		return
+	}
 	if errors.Is(err, errContextPackOutcomeInvalidNumeric) {
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": "invalid outcome numeric claim"})
 		return
@@ -3701,6 +4302,10 @@ func (s *server) telemetryContextPackQualityOutcomeRoute(w http.ResponseWriter, 
 	}
 	entry, err = bindContextPackQualityOutcomeSample(entry, canonicalSample)
 	if err != nil {
+		if errors.Is(err, errContextPackOutcomeInvalidResponseBinding) {
+			writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"ok": false, "error": "invalid_outcome_response_binding"})
+			return
+		}
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"ok": false, "error": "quality_sample_identity_mismatch"})
 		return
 	}

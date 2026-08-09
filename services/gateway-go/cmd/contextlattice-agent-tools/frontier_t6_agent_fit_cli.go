@@ -11,17 +11,20 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
 )
 
 const (
-	frontierT6SteeringPath       = "/memory/agent-fit/steering"
-	frontierT6SteeringEventsPath = "/memory/agent-fit/steering/events"
-	frontierT6SelectionPath      = "/memory/agent-fit/selection"
-	frontierT6ProfilePath        = "/memory/agent-fit/profile"
-	frontierT6ContextPrepPath    = "/memory/agent-fit/context-prep"
+	frontierT6SteeringPath             = "/memory/agent-fit/steering"
+	frontierT6SteeringEventsPath       = "/memory/agent-fit/steering/events"
+	frontierT6SelectionPath            = "/memory/agent-fit/selection"
+	frontierT6ProfilePath              = "/memory/agent-fit/profile"
+	frontierT6ContextPrepPath          = "/memory/agent-fit/context-prep"
+	frontierT6ContextPrepClaimHeader   = "X-ContextLattice-Context-Prep-Claim"
+	frontierT6ContextPrepClaimTokenEnv = "CONTEXTLATTICE_CONTEXT_PREP_CLAIM_TOKEN"
 
 	frontierT6MaxPayloadBytes = 256 << 10
 	frontierT6MaxOutputBytes  = 1 << 20
@@ -46,25 +49,35 @@ var frontierT6CLIOperations = map[string]frontierT6CLIOperation{
 	"profile-resolve":       {path: frontierT6ProfilePath, operation: "resolve", scoped: true},
 	"profile-configure":     {path: frontierT6ProfilePath, operation: "configure", scoped: true},
 	"context-prep-schedule": {path: frontierT6ContextPrepPath, operation: "schedule", scoped: true},
+	"context-prep-claim":    {path: frontierT6ContextPrepPath, operation: "claim", scoped: true},
+	"context-prep-complete": {path: frontierT6ContextPrepPath, operation: "complete", scoped: true},
+	"context-prep-fail":     {path: frontierT6ContextPrepPath, operation: "fail", scoped: true},
 	"context-prep-use":      {path: frontierT6ContextPrepPath, operation: "use", scoped: true},
 }
 
 func frontierT6AgentFitUsage() string {
-	return "contextlattice agent-fit {steering-publish|steering-replay|steering-ack|steering-watch|runner-select|model-select|profile-resolve|profile-configure|context-prep-schedule|context-prep-use} --payload-file request.json [--project p] [--session-id id] [--agent-id id] [--base-url url]"
+	return "contextlattice agent-fit {steering-publish|steering-replay|steering-ack|steering-watch|runner-select|model-select|profile-resolve|profile-configure|context-prep-schedule|context-prep-claim|context-prep-complete|context-prep-fail|context-prep-use} --payload-file request.json [--project p] [--session-id id] [--agent-id id] [--claim-token-file owner-only-file] [--base-url url]"
 }
 
 func (c *cli) cmdAgentFit(args []string) error {
 	parsed := parseArgs(args, mergeStringFlags(commonStringFlags(), map[string]string{
-		"payload-file":  "payload_file",
-		"agent-id":      "agent_id",
-		"session-id":    "session_id",
-		"subscriber-id": "subscriber_id",
-		"cursor":        "cursor",
-		"event-id":      "event_id",
-		"delivery-id":   "delivery_id",
-		"limit":         "limit",
-		"max-seconds":   "max_seconds",
-	}), mergeBoolFlags(commonBoolFlags(), map[string]string{"once": "once"}))
+		"payload-file":             "payload_file",
+		"agent-id":                 "agent_id",
+		"session-id":               "session_id",
+		"subscriber-id":            "subscriber_id",
+		"cursor":                   "cursor",
+		"event-id":                 "event_id",
+		"delivery-id":              "delivery_id",
+		"prep-id":                  "prep_id",
+		"worker-id":                "worker_id",
+		"task-id":                  "task_id",
+		"effective-profile-digest": "effective_profile_digest",
+		"source-generation":        "source_generation",
+		"reason-code":              "reason_code",
+		"claim-token-file":         "claim_token_file",
+		"limit":                    "limit",
+		"max-seconds":              "max_seconds",
+	}), mergeBoolFlags(commonBoolFlags(), map[string]string{"once": "once", "retryable": "retryable"}))
 	if parsed.bool("help") || len(parsed.pos) == 0 {
 		return c.emitUsage(frontierT6AgentFitUsage())
 	}
@@ -90,14 +103,77 @@ func (c *cli) cmdAgentFit(args []string) error {
 		return fmt.Errorf("unknown agent-fit operation %q", operation)
 	}
 	frontierT6PrepareOperationPayload(payload, parsed, spec)
-	result, status, err := c.requestJSON(context.Background(), http.MethodPost, spec.path, payload, parsed.float("timeout", 30))
+	claimTokenFile := strings.TrimSpace(parsed.string("claim_token_file", ""))
+	requestHeaders := http.Header{}
+	if spec.operation == "claim" && claimTokenFile == "" {
+		return errors.New("context-prep-claim requires --claim-token-file so the protected claim is never emitted to stdout")
+	}
+	if spec.operation == "complete" || spec.operation == "fail" {
+		claimToken, tokenErr := frontierT6ReadContextPrepClaimToken(claimTokenFile)
+		if tokenErr != nil {
+			return tokenErr
+		}
+		requestHeaders.Set(frontierT6ContextPrepClaimHeader, claimToken)
+	}
+	result, status, responseHeaders, err := c.requestJSONWithHeaders(context.Background(), http.MethodPost, spec.path, payload, parsed.float("timeout", 30), requestHeaders)
 	if err != nil {
 		if status > 0 {
 			return fmt.Errorf("agent-fit %s request failed with status %d", operation, status)
 		}
 		return fmt.Errorf("agent-fit %s request failed", operation)
 	}
+	if spec.operation == "claim" {
+		claimToken := strings.TrimSpace(responseHeaders.Get(frontierT6ContextPrepClaimHeader))
+		if claimToken != "" {
+			if _, tokenErr := frontierT6NormalizeContextPrepClaimToken(claimToken); tokenErr != nil {
+				return tokenErr
+			}
+			if writeErr := writePrivateArtifact(claimTokenFile, []byte(claimToken+"\n")); writeErr != nil {
+				return errors.New("write context preparation owner-only claim file failed")
+			}
+		} else {
+			claimResult := asMap(result["result"])
+			if claimed, explicit := claimResult["claimed"]; !explicit || asBool(claimed) {
+				return errors.New("context preparation claim response omitted its protected claim header")
+			}
+		}
+	}
 	return c.frontierT6EmitBounded(result, !parsed.bool("raw"))
+}
+
+func frontierT6NormalizeContextPrepClaimToken(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if !strings.HasPrefix(value, "ft6prepclaim_") || len(value) > 96 || strings.ContainsAny(value, "\x00\r\n\t ") {
+		return "", errors.New("context preparation claim token is malformed")
+	}
+	return value, nil
+}
+
+func frontierT6ReadContextPrepClaimToken(path string) (string, error) {
+	if strings.TrimSpace(path) == "" {
+		return frontierT6NormalizeContextPrepClaimToken(os.Getenv(frontierT6ContextPrepClaimTokenEnv))
+	}
+	info, err := os.Lstat(path)
+	if err != nil || info.Mode()&os.ModeSymlink != 0 || !privateConfigFileModeAllowed(info.Mode(), runtime.GOOS) {
+		return "", errors.New("context preparation claim token file must be a regular owner-only file")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return "", errors.New("open context preparation claim token file failed")
+	}
+	defer file.Close()
+	openedInfo, err := file.Stat()
+	if err != nil || !os.SameFile(info, openedInfo) || !privateConfigFileModeAllowed(openedInfo.Mode(), runtime.GOOS) {
+		return "", errors.New("context preparation claim token file must be a regular owner-only file")
+	}
+	raw, err := io.ReadAll(io.LimitReader(file, 97))
+	if err != nil {
+		return "", errors.New("read context preparation claim token file failed")
+	}
+	if len(raw) > 96 {
+		return "", errors.New("context preparation claim token file exceeds its bounded limit")
+	}
+	return frontierT6NormalizeContextPrepClaimToken(string(raw))
 }
 
 func frontierT6PayloadFromFile(path string) (map[string]any, error) {
@@ -149,6 +225,18 @@ func frontierT6PrepareOperationPayload(payload map[string]any, parsed parsedArgs
 	if parsed.has("delivery_id") {
 		payload["delivery_id"] = parsed.string("delivery_id", "")
 	}
+	for flag, field := range map[string]string{
+		"prep_id": "prep_id", "worker_id": "worker_id", "task_id": "task_id",
+		"effective_profile_digest": "effective_profile_digest", "source_generation": "source_generation",
+		"reason_code": "reason_code",
+	} {
+		if parsed.has(flag) {
+			payload[field] = parsed.string(flag, "")
+		}
+	}
+	if parsed.has("retryable") {
+		payload["retryable"] = parsed.bool("retryable")
+	}
 	if parsed.has("limit") {
 		payload["limit"] = parsed.int("limit", 16)
 	}
@@ -180,18 +268,6 @@ func frontierT6ScopeFromArgs(payload map[string]any, parsed parsedArgs) map[stri
 	return scope
 }
 
-func frontierT6BoundedInt(parsed parsedArgs, name string, fallback, minimum, maximum int) (int, error) {
-	raw, ok := parsed.values[name]
-	if !ok {
-		return fallback, nil
-	}
-	value, err := strconv.Atoi(strings.TrimSpace(raw))
-	if err != nil || value < minimum || value > maximum {
-		return 0, fmt.Errorf("--%s must be between %d and %d", strings.ReplaceAll(name, "_", "-"), minimum, maximum)
-	}
-	return value, nil
-}
-
 type frontierT6SSEFrame struct {
 	id        string
 	eventType string
@@ -205,14 +281,14 @@ type frontierT6SSEDelivery struct {
 }
 
 func (c *cli) frontierT6SteeringWatch(parsed parsedArgs, payload map[string]any) error {
-	limit, err := frontierT6BoundedInt(parsed, "limit", 16, 1, frontierT6MaxWatchEvents)
+	limit, err := boundedCLIInt(parsed, "limit", 16, 1, frontierT6MaxWatchEvents)
 	if err != nil {
 		return err
 	}
 	if parsed.bool("once") {
 		limit = 1
 	}
-	maxSeconds, err := frontierT6BoundedInt(parsed, "max_seconds", 30, 1, frontierT6MaxWatchSeconds)
+	maxSeconds, err := boundedCLIInt(parsed, "max_seconds", 30, 1, frontierT6MaxWatchSeconds)
 	if err != nil {
 		return err
 	}

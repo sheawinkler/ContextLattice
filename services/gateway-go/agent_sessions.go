@@ -47,13 +47,32 @@ func readOptionalJSONBody(r *http.Request) (map[string]any, error) {
 	return parseJSONMap(bodyBytes)
 }
 
+func newAgentSessionPublicScopeOwnership(project string) map[string]any {
+	return map[string]any{
+		"schema_id":      "agent_session_scope_ownership.v1",
+		"kind":           "public_unbound",
+		"project":        strings.TrimSpace(project),
+		"established_at": nowUTCISO(),
+	}
+}
+
+type agentSessionProjectVisibility struct{}
+
+func (agentSessionProjectVisibility) allows(map[string]any) bool {
+	return true
+}
+
+func (s *server) agentSessionProjectVisibilityForRequest(*http.Request) agentSessionProjectVisibility {
+	return agentSessionProjectVisibility{}
+}
+
 var errAgentSessionTerminal = errors.New("agent session is terminal")
 var errAgentSessionReuseConflict = errors.New("agent session id or ownership conflicts with the existing session")
 var errAgentSessionOwnershipConflict = errors.New("agent session event conflicts with established ownership")
 var errAgentSessionIDInvalid = errors.New("agent session id must be a bounded machine-safe identifier")
 
 type agentSessionStore struct {
-	mu        sync.Mutex
+	mu        sync.RWMutex
 	path      string
 	maxKeep   int
 	maxEvents int

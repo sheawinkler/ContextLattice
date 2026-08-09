@@ -909,8 +909,10 @@ func TestMemorySearchUsesGoStagedRetrieval(t *testing.T) {
 	if strings.TrimSpace(anyToString(payload["retrieval_mode"])) != "balanced" {
 		t.Fatalf("expected retrieval_mode=balanced default, got %#v", payload["retrieval_mode"])
 	}
-	if !anyToBool(payload["learning_enabled"]) {
-		t.Fatalf("expected learning_enabled=true")
+	if !anyToBool(payload["learning_enabled"]) || !anyToBool(payload["learning_capture_enabled"]) ||
+		anyToString(payload["learning_mode"]) != "shadow_capture_only" || anyToBool(payload["learned_ranking_armed"]) ||
+		anyToBool(payload["learned_ranking_applied"]) {
+		t.Fatalf("raw search did not report literal-control learning semantics: %#v", payload)
 	}
 	searchIntelligence := anyMap(payload["search_intelligence"])
 	if anyToString(searchIntelligence["schema_id"]) != searchIntelligenceContractID || anyToString(searchIntelligence["mode"]) != "shadow" {
@@ -2589,6 +2591,14 @@ func TestMemoryContextPackServedFromGatewayHandler(t *testing.T) {
 	if anyToString(compiler["schema_id"]) != "contextlattice_context_compiler.v1" {
 		t.Fatalf("expected compiler metadata, got %#v", compiler)
 	}
+	activation := anyMap(payload["learned_activation"])
+	reason := anyToString(activation["reason"])
+	if anyToBool(payload["learning_enabled"]) || !anyToBool(payload["learning_capture_enabled"]) ||
+		anyToBool(payload["learned_ranking_armed"]) || anyToBool(payload["learned_ranking_applied"]) ||
+		anyToBool(activation["performed"]) || reason == "" || reason == "kill_switch_disabled" {
+		t.Fatalf("enabled-by-default context-pack learning did not remain native behind authority gates: enabled=%v capture=%v armed=%v applied=%v reason=%q activation=%#v",
+			payload["learning_enabled"], payload["learning_capture_enabled"], payload["learned_ranking_armed"], payload["learned_ranking_applied"], reason, activation)
+	}
 	if prompt := anyToString(payload["reference_prompt"]); !strings.Contains(prompt, "Ranked evidence") || !strings.Contains(prompt, "notes/a.md") {
 		t.Fatalf("expected prompt-ready reference prompt with ranked evidence, got %q", prompt)
 	}
@@ -3021,6 +3031,9 @@ func TestContextPackAgentRoutesClipOversizedBackendPayloads(t *testing.T) {
 			assertNoRawProviderOverflowShape(t, payload)
 			assertBoundaryMetadata(t, payload, "format_contract", true)
 			assertBoundaryMetadataActualUnderLimit(t, contextPackResponseContractID, payload, "format_contract")
+			if !anyToBool(payload["learning_capture_enabled"]) || anyToBool(payload["learned_ranking_armed"]) || anyToBool(payload["learned_ranking_applied"]) {
+				t.Fatalf("context-pack route reported untruthful learning state: %#v", payload)
+			}
 			if path == "/tools/context_pack" && strings.TrimSpace(anyToString(payload["tool"])) != "context_pack" {
 				t.Fatalf("expected tool marker on /tools/context_pack, got %#v", payload["tool"])
 			}

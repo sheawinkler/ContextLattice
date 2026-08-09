@@ -154,7 +154,35 @@ contextlattice finish \
   --success \
   --project contextlattice \
   --pretty
+
+# Project the next bounded move or bind a completed response to durable proof.
+contextlattice_continuous_cognition status "prepare the next verified move" \
+  --project contextlattice --session-id <session-id> --agent-id codex_gpt5 \
+  --task-id <task-id> --objective-id <objective-id> --as-of <rfc3339> --pretty
+contextlattice_continuous_cognition evaluate "verify the completed response" \
+  --project contextlattice --session-id <session-id> --agent-id codex_gpt5 \
+  --task-id <task-id> --task-identity-id <task-identity-id> --as-of <rfc3339> --pretty
+
+# Prepare context for an external worker without exposing its one-shot claim.
+contextlattice agent-fit context-prep-schedule --project contextlattice \
+  --session-id <session-id> --agent-id codex_gpt5 --payload-file prep-request.json --raw
+contextlattice agent-fit context-prep-claim --project contextlattice \
+  --session-id <session-id> --agent-id codex_gpt5 --prep-id <prep-id> \
+  --worker-id <worker-id> --claim-token-file prep.claim --raw
+contextlattice agent-fit context-prep-complete --project contextlattice \
+  --session-id <session-id> --agent-id codex_gpt5 --prep-id <prep-id> \
+  --claim-token-file prep.claim --payload-file prep-artifact.json --raw
+contextlattice agent-fit context-prep-use --project contextlattice \
+  --session-id <session-id> --agent-id codex_gpt5 --prep-id <prep-id> \
+  --task-id <task-id> --effective-profile-digest <sha256-digest> \
+  --source-generation <generation> --raw
 ```
+
+Continuous Cognition is advisory-only: each invocation makes one bounded
+request, returns opaque evidence references, and never dispatches a runner or
+performs an external mutation. Context-preparation claims stay in an owner-only
+file and cross the completion/failure boundary only through the protected
+header; successful explicit use consumes the artifact once.
 
 Find a capability without loading every skill body:
 

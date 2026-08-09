@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -58,9 +59,15 @@ const (
 )
 
 var (
-	errFrontierT6CursorExpired = errors.New("Frontier T6 replay cursor is outside the bounded replay window")
-	errFrontierT6ClaimStale    = errors.New("Frontier T6 delivery claim is stale")
+	errFrontierT6CursorExpired    = errors.New("Frontier T6 replay cursor is outside the bounded replay window")
+	errFrontierT6ClaimStale       = errors.New("Frontier T6 delivery claim is stale")
+	errFrontierT6PrepClaimStale   = errors.New("Frontier T6 context preparation claim is stale")
+	errFrontierT6PrepDeduplicated = errors.New("Frontier T6 context preparation is already scheduled")
+	errFrontierT6PrepUnavailable  = errors.New("Frontier T6 context preparation is unavailable for claim")
+	errFrontierT6PrepUseRejected  = errors.New("Frontier T6 context preparation use was rejected")
 )
+
+const frontierT6ContextPrepClaimHeader = "X-ContextLattice-Context-Prep-Claim"
 
 type frontierT6Scope struct {
 	WorkspaceID string `json:"workspace_id"`
@@ -359,34 +366,46 @@ type frontierT6ContextPrepRecord struct {
 	NextAttemptAt          string                         `json:"next_attempt_at,omitempty"`
 	LastReasonDigest       string                         `json:"last_reason_digest,omitempty"`
 	Artifact               *frontierT6ContextPrepArtifact `json:"artifact,omitempty"`
+	ConsumedAt             string                         `json:"consumed_at,omitempty"`
+	ConsumptionDigest      string                         `json:"consumption_digest,omitempty"`
+	ConsumedScopeDigest    string                         `json:"consumed_scope_digest,omitempty"`
 	CreatedAt              string                         `json:"created_at"`
 	UpdatedAt              string                         `json:"updated_at"`
 	ExpiresAt              string                         `json:"expires_at"`
 }
 
 type frontierT6ContextPrepScheduleResult struct {
-	Decision           string                       `json:"decision"`
-	Reasons            []string                     `json:"reasons"`
-	Deduplicated       bool                         `json:"deduplicated"`
-	Prep               *frontierT6ContextPrepRecord `json:"prep,omitempty"`
-	ExecutionOwner     string                       `json:"execution_owner"`
-	ExecutionPerformed bool                         `json:"execution_performed"`
-	NetworkCalls       int                          `json:"network_calls"`
+	Decision                  string                       `json:"decision"`
+	Reasons                   []string                     `json:"reasons"`
+	Deduplicated              bool                         `json:"deduplicated"`
+	Prep                      *frontierT6ContextPrepRecord `json:"prep,omitempty"`
+	ExecutionOwner            string                       `json:"execution_owner"`
+	ExecutionPerformed        bool                         `json:"execution_performed"`
+	GatewayExecutionPerformed bool                         `json:"gateway_execution_performed"`
+	OneShot                   bool                         `json:"one_shot"`
+	RequiresExplicitCLIUse    bool                         `json:"requires_explicit_cli_use"`
+	NetworkCalls              int                          `json:"network_calls"`
 }
 
 type frontierT6ContextPrepClaim struct {
 	Prep                      frontierT6ContextPrepRecord `json:"prep"`
-	ClaimToken                string                      `json:"claim_token"`
+	ClaimToken                string                      `json:"claim_token,omitempty"`
 	ExecutionOwner            string                      `json:"execution_owner"`
 	GatewayExecutionPerformed bool                        `json:"gateway_execution_performed"`
+	OneShot                   bool                        `json:"one_shot"`
+	RequiresExplicitCLIUse    bool                        `json:"requires_explicit_cli_use"`
 }
 
 type frontierT6ContextPrepUse struct {
-	Eligible               bool                           `json:"eligible"`
-	Reasons                []string                       `json:"reasons"`
-	Artifact               *frontierT6ContextPrepArtifact `json:"artifact,omitempty"`
-	InjectionPerformed     bool                           `json:"injection_performed"`
-	RequiresExplicitCLIUse bool                           `json:"requires_explicit_cli_use"`
+	Eligible                  bool                           `json:"eligible"`
+	Reasons                   []string                       `json:"reasons"`
+	Artifact                  *frontierT6ContextPrepArtifact `json:"artifact,omitempty"`
+	ConsumptionDigest         string                         `json:"consumption_digest,omitempty"`
+	InjectionPerformed        bool                           `json:"injection_performed"`
+	RequiresExplicitCLIUse    bool                           `json:"requires_explicit_cli_use"`
+	OneShot                   bool                           `json:"one_shot"`
+	ExecutionOwner            string                         `json:"execution_owner"`
+	GatewayExecutionPerformed bool                           `json:"gateway_execution_performed"`
 }
 
 type frontierT6AgentFitState struct {
@@ -587,8 +606,57 @@ func frontierT6ValidateState(state frontierT6AgentFitState, limits frontierT6Sto
 		}
 		sequence, previous = event.Sequence, event.EventHash
 	}
+	for prepID, prep := range state.ContextPreps {
+		if err := frontierT6ValidatePersistedContextPrep(prepID, prep); err != nil {
+			return err
+		}
+	}
 	if sequence > state.LastSteeringSequence || frontierT6StateHash(state) != state.StateHash {
 		return errors.New("Frontier T6 state integrity is invalid")
+	}
+	return nil
+}
+
+func frontierT6ValidatePersistedContextPrep(prepID string, prep frontierT6ContextPrepRecord) error {
+	if prep.SchemaID != frontierT6ContextPrepSchemaID || prep.Version != 1 || prep.PrepID != prepID {
+		return errors.New("Frontier T6 context preparation state is invalid")
+	}
+	if _, err := frontierT6NormalizeScope(prep.Scope, false); err != nil {
+		return errors.New("Frontier T6 context preparation scope is invalid")
+	}
+	if !frontierT6ValidDigest(prep.DedupeKey) || !frontierT6ValidDigest(prep.EffectiveProfileDigest) ||
+		!frontierT6ValidDigest(prep.AuthorizationDigest) || !frontierT6ValidDigest(prep.ApprovalDigest) {
+		return errors.New("Frontier T6 context preparation identity is invalid")
+	}
+	if _, ok := frontierT6ParseTime(prep.CreatedAt); !ok {
+		return errors.New("Frontier T6 context preparation created time is invalid")
+	}
+	if _, ok := frontierT6ParseTime(prep.UpdatedAt); !ok {
+		return errors.New("Frontier T6 context preparation updated time is invalid")
+	}
+	if _, ok := frontierT6ParseTime(prep.ExpiresAt); !ok {
+		return errors.New("Frontier T6 context preparation expiry is invalid")
+	}
+	switch prep.Status {
+	case "queued", "retry_pending", "preparing", "ready", "consumed", "failed", "expired", "canceled":
+	default:
+		return errors.New("Frontier T6 context preparation status is invalid")
+	}
+	if prep.Status == "consumed" {
+		scope, err := frontierT6NormalizeContextPrepScope(prep.Scope)
+		if err != nil || frontierT6ScopeDigest(scope) != prep.ConsumedScopeDigest ||
+			!frontierT6ValidDigest(prep.ConsumptionDigest) || prep.Artifact == nil {
+			return errors.New("Frontier T6 consumed context preparation is invalid")
+		}
+		if _, ok := frontierT6ParseTime(prep.ConsumedAt); !ok {
+			return errors.New("Frontier T6 context preparation consumption time is invalid")
+		}
+		if prep.ConsumedAt != prep.UpdatedAt || prep.ClaimDigest != "" || prep.LeaseExpiresAt != "" || prep.NextAttemptAt != "" ||
+			prep.ConsumptionDigest != frontierT6ContextPrepConsumptionDigest(prep, prep.ConsumedScopeDigest, prep.ConsumedAt) {
+			return errors.New("Frontier T6 context preparation consumption receipt is invalid")
+		}
+	} else if prep.ConsumedAt != "" || prep.ConsumptionDigest != "" || prep.ConsumedScopeDigest != "" {
+		return errors.New("Frontier T6 unconsumed context preparation has consumption state")
 	}
 	return nil
 }
@@ -624,6 +692,11 @@ func (s *frontierT6AgentFitStore) mutate(now time.Time, apply func() error) erro
 		return err
 	}
 	if err := apply(); err != nil {
+		if restoreErr := s.restoreLocked(before); restoreErr != nil {
+			s.enabled = false
+			s.lastErrorCode = "rollback_failed"
+			return fmt.Errorf("Frontier T6 mutation failed and rollback failed: %w", restoreErr)
+		}
 		return err
 	}
 	if err := s.saveLocked(now); err != nil {
@@ -632,10 +705,23 @@ func (s *frontierT6AgentFitStore) mutate(now time.Time, apply func() error) erro
 			s.lastErrorCode = "commit_unknown"
 			return fmt.Errorf("Frontier T6 commit outcome is unknown: %w", err)
 		}
-		_ = json.Unmarshal(before, &s.state)
+		if restoreErr := s.restoreLocked(before); restoreErr != nil {
+			s.enabled = false
+			s.lastErrorCode = "rollback_failed"
+			return fmt.Errorf("Frontier T6 storage write failed and rollback failed: %w", restoreErr)
+		}
 		s.lastErrorCode = "storage_unavailable"
 		return err
 	}
+	return nil
+}
+
+func (s *frontierT6AgentFitStore) restoreLocked(raw []byte) error {
+	restored := emptyFrontierT6AgentFitState()
+	if err := json.Unmarshal(raw, &restored); err != nil {
+		return err
+	}
+	s.state = restored
 	return nil
 }
 
@@ -760,6 +846,18 @@ func frontierT6NormalizeScope(scope frontierT6Scope, requireSession bool) (front
 		}
 	}
 	return scope, nil
+}
+
+func frontierT6NormalizeContextPrepScope(scope frontierT6Scope) (frontierT6Scope, error) {
+	normalized, err := frontierT6NormalizeScope(scope, true)
+	if err != nil {
+		return frontierT6Scope{}, err
+	}
+	normalized.AgentID, err = frontierT6NormalizeID(normalized.AgentID, "agent_id", 160)
+	if err != nil {
+		return frontierT6Scope{}, err
+	}
+	return normalized, nil
 }
 
 func frontierT6ScopeDigest(scope frontierT6Scope) string {
@@ -1808,9 +1906,10 @@ func (s *frontierT6AgentFitStore) scheduleContextPrep(request frontierT6ContextP
 	}
 	result := frontierT6ContextPrepScheduleResult{
 		Decision: "abstain", Reasons: []string{}, ExecutionOwner: "external_cli_worker",
-		ExecutionPerformed: false, NetworkCalls: 0,
+		ExecutionPerformed: false, GatewayExecutionPerformed: false,
+		OneShot: true, RequiresExplicitCLIUse: true, NetworkCalls: 0,
 	}
-	scope, err := frontierT6NormalizeScope(request.Scope, false)
+	scope, err := frontierT6NormalizeContextPrepScope(request.Scope)
 	if err != nil {
 		return result, err
 	}
@@ -1877,9 +1976,9 @@ func (s *frontierT6AgentFitStore) scheduleContextPrep(request frontierT6ContextP
 	err = s.mutate(now, func() error {
 		for _, existing := range s.state.ContextPreps {
 			existingExpires, ok := frontierT6ParseTime(existing.ExpiresAt)
-			if existing.DedupeKey == dedupeKey && ok && now.Before(existingExpires) && existing.Status != "failed" && existing.Status != "canceled" && existing.Status != "expired" {
+			if existing.DedupeKey == dedupeKey && ok && now.Before(existingExpires) && existing.Status != "consumed" && existing.Status != "failed" && existing.Status != "canceled" && existing.Status != "expired" {
 				prep, deduplicated = existing, true
-				return nil
+				return errFrontierT6PrepDeduplicated
 			}
 		}
 		frontierT6TrimTerminalPreps(s.state.ContextPreps, s.limits.MaxPreps-1)
@@ -1900,6 +1999,9 @@ func (s *frontierT6AgentFitStore) scheduleContextPrep(request frontierT6ContextP
 		s.state.ContextPreps[prep.PrepID] = prep
 		return nil
 	})
+	if errors.Is(err, errFrontierT6PrepDeduplicated) {
+		err = nil
+	}
 	if err != nil {
 		return result, err
 	}
@@ -1910,25 +2012,34 @@ func (s *frontierT6AgentFitStore) scheduleContextPrep(request frontierT6ContextP
 }
 
 func frontierT6PrepClaimMatches(token, digest string) bool {
-	return token != "" && digest == frontierT6OpaqueDigest("frontier-t6-prep-claim", token)
+	return token != "" && secureTokenEqual(digest, frontierT6OpaqueDigest("frontier-t6-prep-claim", token))
+}
+
+func frontierT6NewPrepClaimToken() (string, error) {
+	var raw [32]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", fmt.Errorf("generate Frontier T6 context preparation claim: %w", err)
+	}
+	return "ft6prepclaim_" + hex.EncodeToString(raw[:]), nil
 }
 
 func (s *frontierT6AgentFitStore) claimContextPrep(scope frontierT6Scope, prepID, workerID string, now time.Time) (frontierT6ContextPrepClaim, bool, error) {
-	normalizedScope, err := frontierT6NormalizeScope(scope, false)
+	normalizedScope, err := frontierT6NormalizeContextPrepScope(scope)
 	if err != nil {
 		return frontierT6ContextPrepClaim{}, false, err
 	}
 	if prepID != "" {
-		if _, err := frontierT6NormalizeID(prepID, "prep_id", 160); err != nil {
+		if prepID, err = frontierT6NormalizeID(prepID, "prep_id", 160); err != nil {
 			return frontierT6ContextPrepClaim{}, false, err
 		}
 	}
-	if _, err := frontierT6NormalizeID(workerID, "worker_id", 160); err != nil {
+	if workerID, err = frontierT6NormalizeID(workerID, "worker_id", 160); err != nil {
 		return frontierT6ContextPrepClaim{}, false, err
 	}
 	var claim frontierT6ContextPrepClaim
 	found := false
 	err = s.mutate(now, func() error {
+		changed := false
 		ids := make([]string, 0, len(s.state.ContextPreps))
 		for id := range s.state.ContextPreps {
 			ids = append(ids, id)
@@ -1945,7 +2056,7 @@ func (s *frontierT6AgentFitStore) claimContextPrep(scope frontierT6Scope, prepID
 			if prepID != "" && prep.PrepID != prepID {
 				continue
 			}
-			if prep.Scope.WorkspaceID != normalizedScope.WorkspaceID || prep.Scope.Project != normalizedScope.Project {
+			if prep.Scope != normalizedScope {
 				continue
 			}
 			expiresAt, expiresOK := frontierT6ParseTime(prep.ExpiresAt)
@@ -1967,22 +2078,35 @@ func (s *frontierT6AgentFitStore) claimContextPrep(scope frontierT6Scope, prepID
 				prep.Status = "failed"
 				prep.UpdatedAt = now.UTC().Format(time.RFC3339Nano)
 				s.state.ContextPreps[id] = prep
+				changed = true
 				continue
+			}
+			token, err := frontierT6NewPrepClaimToken()
+			if err != nil {
+				return err
 			}
 			prep.Attempts++
 			prep.Status = "preparing"
 			prep.WorkerDigest = frontierT6OpaqueDigest("frontier-t6-prep-worker", workerID)
 			prep.LeaseExpiresAt = now.Add(60 * time.Second).UTC().Format(time.RFC3339Nano)
 			prep.UpdatedAt = now.UTC().Format(time.RFC3339Nano)
-			token := "ft6prepclaim_" + strings.TrimPrefix(frontierT6Digest(map[string]any{"prep": prep.PrepID, "attempt": prep.Attempts, "lease": prep.LeaseExpiresAt}), "sha256:")[:32]
 			prep.ClaimDigest = frontierT6OpaqueDigest("frontier-t6-prep-claim", token)
 			s.state.ContextPreps[id] = prep
-			claim = frontierT6ContextPrepClaim{Prep: prep, ClaimToken: token, ExecutionOwner: "external_cli_worker", GatewayExecutionPerformed: false}
+			claim = frontierT6ContextPrepClaim{
+				Prep: prep, ClaimToken: token, ExecutionOwner: "external_cli_worker",
+				GatewayExecutionPerformed: false, OneShot: true, RequiresExplicitCLIUse: true,
+			}
 			found = true
 			break
 		}
+		if !found && !changed {
+			return errFrontierT6PrepUnavailable
+		}
 		return nil
 	})
+	if errors.Is(err, errFrontierT6PrepUnavailable) {
+		return claim, false, nil
+	}
 	return claim, found, err
 }
 
@@ -2042,16 +2166,25 @@ func frontierT6ValidatePrepArtifact(prep frontierT6ContextPrepRecord, artifact f
 	return artifact, nil
 }
 
-func (s *frontierT6AgentFitStore) completeContextPrep(prepID, claimToken string, artifact frontierT6ContextPrepArtifact, now time.Time) (frontierT6ContextPrepRecord, error) {
+func (s *frontierT6AgentFitStore) completeContextPrep(scope frontierT6Scope, prepID, claimToken string, artifact frontierT6ContextPrepArtifact, now time.Time) (frontierT6ContextPrepRecord, error) {
+	normalizedScope, err := frontierT6NormalizeContextPrepScope(scope)
+	if err != nil {
+		return frontierT6ContextPrepRecord{}, err
+	}
+	prepID, err = frontierT6NormalizeID(prepID, "prep_id", 160)
+	if err != nil {
+		return frontierT6ContextPrepRecord{}, err
+	}
+	claimToken = strings.TrimSpace(claimToken)
 	var completed frontierT6ContextPrepRecord
-	err := s.mutate(now, func() error {
+	err = s.mutate(now, func() error {
 		prep, exists := s.state.ContextPreps[prepID]
 		if !exists {
 			return errors.New("Frontier T6 context preparation was not found")
 		}
 		leaseExpires, leaseOK := frontierT6ParseTime(prep.LeaseExpiresAt)
-		if prep.Status != "preparing" || !frontierT6PrepClaimMatches(claimToken, prep.ClaimDigest) || !leaseOK || !now.Before(leaseExpires) {
-			return errFrontierT6ClaimStale
+		if prep.Scope != normalizedScope || prep.Status != "preparing" || !frontierT6PrepClaimMatches(claimToken, prep.ClaimDigest) || !leaseOK || !now.Before(leaseExpires) {
+			return errFrontierT6PrepClaimStale
 		}
 		normalized, err := frontierT6ValidatePrepArtifact(prep, artifact, now)
 		if err != nil {
@@ -2062,14 +2195,23 @@ func (s *frontierT6AgentFitStore) completeContextPrep(prepID, claimToken string,
 		prep.ClaimDigest, prep.LeaseExpiresAt, prep.NextAttemptAt = "", "", ""
 		prep.UpdatedAt = now.UTC().Format(time.RFC3339Nano)
 		s.state.ContextPreps[prepID] = prep
-		completed = prep
+		completed = frontierT6CopyContextPrepRecord(prep)
 		return nil
 	})
 	return completed, err
 }
 
-func (s *frontierT6AgentFitStore) failContextPrep(prepID, claimToken, reasonCode string, retryable bool, now time.Time) error {
-	reasonCode, err := frontierT6NormalizeID(reasonCode, "reason_code", 80)
+func (s *frontierT6AgentFitStore) failContextPrep(scope frontierT6Scope, prepID, claimToken, reasonCode string, retryable bool, now time.Time) error {
+	normalizedScope, err := frontierT6NormalizeContextPrepScope(scope)
+	if err != nil {
+		return err
+	}
+	prepID, err = frontierT6NormalizeID(prepID, "prep_id", 160)
+	if err != nil {
+		return err
+	}
+	claimToken = strings.TrimSpace(claimToken)
+	reasonCode, err = frontierT6NormalizeID(reasonCode, "reason_code", 80)
 	if err != nil {
 		return err
 	}
@@ -2079,8 +2221,8 @@ func (s *frontierT6AgentFitStore) failContextPrep(prepID, claimToken, reasonCode
 			return errors.New("Frontier T6 context preparation was not found")
 		}
 		leaseExpires, leaseOK := frontierT6ParseTime(prep.LeaseExpiresAt)
-		if prep.Status != "preparing" || !frontierT6PrepClaimMatches(claimToken, prep.ClaimDigest) || !leaseOK || !now.Before(leaseExpires) {
-			return errFrontierT6ClaimStale
+		if prep.Scope != normalizedScope || prep.Status != "preparing" || !frontierT6PrepClaimMatches(claimToken, prep.ClaimDigest) || !leaseOK || !now.Before(leaseExpires) {
+			return errFrontierT6PrepClaimStale
 		}
 		prep.ClaimDigest, prep.LeaseExpiresAt = "", ""
 		prep.LastReasonDigest = frontierT6OpaqueDigest("frontier-t6-prep-reason", reasonCode)
@@ -2097,63 +2239,126 @@ func (s *frontierT6AgentFitStore) failContextPrep(prepID, claimToken, reasonCode
 	})
 }
 
-func (s *frontierT6AgentFitStore) useContextPrep(scope frontierT6Scope, prepID, taskID, profileDigest, sourceGeneration, authorizationDigest string, now time.Time) frontierT6ContextPrepUse {
-	result := frontierT6ContextPrepUse{Eligible: false, Reasons: []string{}, InjectionPerformed: false, RequiresExplicitCLIUse: true}
+func frontierT6CopyContextPrepArtifact(artifact *frontierT6ContextPrepArtifact) *frontierT6ContextPrepArtifact {
+	if artifact == nil {
+		return nil
+	}
+	copyArtifact := *artifact
+	copyArtifact.EvidenceRefs = append([]frontierT6ContextPrepEvidenceRef(nil), artifact.EvidenceRefs...)
+	return &copyArtifact
+}
+
+func frontierT6CopyContextPrepRecord(prep frontierT6ContextPrepRecord) frontierT6ContextPrepRecord {
+	prep.Artifact = frontierT6CopyContextPrepArtifact(prep.Artifact)
+	return prep
+}
+
+func frontierT6ContextPrepConsumptionDigest(prep frontierT6ContextPrepRecord, scopeDigest, consumedAt string) string {
+	return frontierT6Digest(map[string]any{
+		"prep_id": prep.PrepID, "scope_digest": scopeDigest, "task_id": prep.TaskID,
+		"effective_profile_digest": prep.EffectiveProfileDigest, "source_generation": prep.SourceGeneration,
+		"authorization_digest": prep.AuthorizationDigest, "artifact_id": prep.Artifact.ArtifactID,
+		"context_pack_digest": prep.Artifact.ContextPackDigest, "consumed_at": consumedAt,
+	})
+}
+
+func (s *frontierT6AgentFitStore) useContextPrep(scope frontierT6Scope, prepID, taskID, profileDigest, sourceGeneration, authorizationDigest string, now time.Time) (frontierT6ContextPrepUse, error) {
+	result := frontierT6ContextPrepUse{
+		Eligible: false, Reasons: []string{}, InjectionPerformed: false, RequiresExplicitCLIUse: true,
+		OneShot: true, ExecutionOwner: "external_cli_worker", GatewayExecutionPerformed: false,
+	}
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
-	normalizedScope, err := frontierT6NormalizeScope(scope, false)
+	normalizedScope, err := frontierT6NormalizeContextPrepScope(scope)
 	if err != nil {
-		result.Reasons = []string{"scope_invalid"}
-		return result
+		return result, err
 	}
-	s.mu.RLock()
-	prep, exists := s.state.ContextPreps[prepID]
-	s.mu.RUnlock()
-	if !exists || prep.Scope.WorkspaceID != normalizedScope.WorkspaceID || prep.Scope.Project != normalizedScope.Project {
-		result.Reasons = []string{"preparation_not_found_in_scope"}
-		return result
+	prepID, err = frontierT6NormalizeID(prepID, "prep_id", 160)
+	if err != nil {
+		return result, err
 	}
-	if prep.Status != "ready" || prep.Artifact == nil {
-		result.Reasons = []string{"preparation_not_ready"}
-		return result
+	taskID, err = frontierT6NormalizeID(taskID, "task_id", 160)
+	if err != nil {
+		return result, err
 	}
-	expiresAt, expiresOK := frontierT6ParseTime(prep.ExpiresAt)
-	if !expiresOK || !now.Before(expiresAt) {
-		result.Reasons = []string{"preparation_expired"}
-		return result
+	profileDigest = strings.ToLower(strings.TrimSpace(profileDigest))
+	authorizationDigest = strings.ToLower(strings.TrimSpace(authorizationDigest))
+	if !frontierT6ValidDigest(profileDigest) || !frontierT6ValidDigest(authorizationDigest) {
+		return result, errors.New("context preparation use requires valid profile and authorization digests")
 	}
-	artifactExpires, artifactExpiresOK := frontierT6ParseTime(prep.Artifact.ExpiresAt)
-	if !artifactExpiresOK || !now.Before(artifactExpires) {
-		result.Reasons = []string{"prepared_artifact_expired"}
-		return result
+	sourceGeneration, err = frontierT6NormalizeID(sourceGeneration, "source_generation", 192)
+	if err != nil {
+		return result, err
 	}
-	if prep.TaskID != taskID {
-		result.Reasons = append(result.Reasons, "task_pivot_detected")
-	}
-	if prep.EffectiveProfileDigest != profileDigest {
-		result.Reasons = append(result.Reasons, "effective_profile_changed")
-	}
-	if prep.SourceGeneration != sourceGeneration {
-		result.Reasons = append(result.Reasons, "source_generation_changed")
-	}
-	if prep.AuthorizationDigest != authorizationDigest {
-		result.Reasons = append(result.Reasons, "authorization_changed")
-	}
-	for _, ref := range prep.Artifact.EvidenceRefs {
-		freshUntil, ok := frontierT6ParseTime(ref.FreshUntil)
-		if !ok || !now.Before(freshUntil) || ref.SourceGeneration != sourceGeneration || ref.AuthorizationDigest != authorizationDigest {
-			result.Reasons = append(result.Reasons, "artifact_contains_stale_or_unauthorized_evidence")
-			break
+
+	err = s.mutate(now, func() error {
+		prep, exists := s.state.ContextPreps[prepID]
+		if !exists || prep.Scope != normalizedScope {
+			result.Reasons = []string{"preparation_not_found_in_scope"}
+			return errFrontierT6PrepUseRejected
 		}
-	}
-	result.Reasons = frontierT6UniqueStrings(result.Reasons)
-	if len(result.Reasons) == 0 {
-		artifact := *prep.Artifact
+		if prep.Status == "consumed" {
+			result.Reasons = []string{"preparation_already_consumed"}
+			return errFrontierT6PrepUseRejected
+		}
+		if prep.Status != "ready" || prep.Artifact == nil {
+			result.Reasons = []string{"preparation_not_ready"}
+			return errFrontierT6PrepUseRejected
+		}
+		expiresAt, expiresOK := frontierT6ParseTime(prep.ExpiresAt)
+		if !expiresOK || !now.Before(expiresAt) {
+			result.Reasons = []string{"preparation_expired"}
+			return errFrontierT6PrepUseRejected
+		}
+		artifactExpires, artifactExpiresOK := frontierT6ParseTime(prep.Artifact.ExpiresAt)
+		if !artifactExpiresOK || !now.Before(artifactExpires) {
+			result.Reasons = []string{"prepared_artifact_expired"}
+			return errFrontierT6PrepUseRejected
+		}
+		if prep.TaskID != taskID {
+			result.Reasons = append(result.Reasons, "task_pivot_detected")
+		}
+		if prep.EffectiveProfileDigest != profileDigest {
+			result.Reasons = append(result.Reasons, "effective_profile_changed")
+		}
+		if prep.SourceGeneration != sourceGeneration {
+			result.Reasons = append(result.Reasons, "source_generation_changed")
+		}
+		if prep.AuthorizationDigest != authorizationDigest {
+			result.Reasons = append(result.Reasons, "authorization_changed")
+		}
+		for _, ref := range prep.Artifact.EvidenceRefs {
+			freshUntil, ok := frontierT6ParseTime(ref.FreshUntil)
+			if !ok || !now.Before(freshUntil) || ref.SourceGeneration != sourceGeneration || ref.AuthorizationDigest != authorizationDigest {
+				result.Reasons = append(result.Reasons, "artifact_contains_stale_or_unauthorized_evidence")
+				break
+			}
+		}
+		result.Reasons = frontierT6UniqueStrings(result.Reasons)
+		if len(result.Reasons) != 0 {
+			return errFrontierT6PrepUseRejected
+		}
+		consumedAt := now.UTC().Format(time.RFC3339Nano)
+		consumedScopeDigest := frontierT6ScopeDigest(normalizedScope)
+		consumptionDigest := frontierT6ContextPrepConsumptionDigest(prep, consumedScopeDigest, consumedAt)
+		artifact := frontierT6CopyContextPrepArtifact(prep.Artifact)
+		prep.Status = "consumed"
+		prep.ConsumedAt = consumedAt
+		prep.ConsumptionDigest = consumptionDigest
+		prep.ConsumedScopeDigest = consumedScopeDigest
+		prep.ClaimDigest, prep.LeaseExpiresAt, prep.NextAttemptAt = "", "", ""
+		prep.UpdatedAt = consumedAt
+		s.state.ContextPreps[prepID] = prep
 		result.Eligible = true
-		result.Artifact = &artifact
+		result.Artifact = artifact
+		result.ConsumptionDigest = consumptionDigest
+		return nil
+	})
+	if errors.Is(err, errFrontierT6PrepUseRejected) {
+		return result, nil
 	}
-	return result
+	return result, err
 }
 
 type frontierT6RequestAuthorization struct {
@@ -2230,6 +2435,8 @@ func frontierT6WriteHandlerError(w http.ResponseWriter, err error) {
 	code := "frontier_t6_operation_rejected"
 	if errors.Is(err, errFrontierT6CursorExpired) {
 		status, code = http.StatusConflict, "replay_cursor_expired"
+	} else if errors.Is(err, errFrontierT6PrepClaimStale) {
+		status, code = http.StatusConflict, "context_prep_claim_stale"
 	} else if errors.Is(err, errFrontierT6ClaimStale) {
 		status, code = http.StatusConflict, "delivery_claim_stale"
 	} else if strings.Contains(strings.ToLower(err.Error()), "store is full") || strings.Contains(strings.ToLower(err.Error()), "disabled") || strings.Contains(strings.ToLower(err.Error()), "commit outcome") {
@@ -2434,13 +2641,28 @@ type frontierT6PrepHTTPRequest struct {
 	Schedule               *frontierT6ContextPrepRequest `json:"schedule,omitempty"`
 	PrepID                 string                        `json:"prep_id,omitempty"`
 	WorkerID               string                        `json:"worker_id,omitempty"`
-	ClaimToken             string                        `json:"claim_token,omitempty"`
 	Artifact               frontierT6ContextPrepArtifact `json:"artifact,omitempty"`
 	ReasonCode             string                        `json:"reason_code,omitempty"`
 	Retryable              bool                          `json:"retryable,omitempty"`
 	TaskID                 string                        `json:"task_id,omitempty"`
 	EffectiveProfileDigest string                        `json:"effective_profile_digest,omitempty"`
 	SourceGeneration       string                        `json:"source_generation,omitempty"`
+}
+
+func frontierT6ContextPrepRecordResponse(record frontierT6ContextPrepRecord) (map[string]any, error) {
+	raw, err := json.Marshal(record)
+	if err != nil {
+		return nil, err
+	}
+	response := map[string]any{}
+	if err := json.Unmarshal(raw, &response); err != nil {
+		return nil, err
+	}
+	response["execution_owner"] = "external_cli_worker"
+	response["gateway_execution_performed"] = false
+	response["one_shot"] = true
+	response["requires_explicit_cli_use"] = true
+	return response, nil
 }
 
 func (h frontierT6AgentFitHandlers) ContextPrep(w http.ResponseWriter, r *http.Request) {
@@ -2477,6 +2699,14 @@ func (h frontierT6AgentFitHandlers) ContextPrep(w http.ResponseWriter, r *http.R
 	}
 	now := h.now()
 	var response any
+	claimToken := ""
+	if operation == "complete" || operation == "fail" {
+		claimToken = strings.TrimSpace(r.Header.Get(frontierT6ContextPrepClaimHeader))
+		if claimToken == "" {
+			writeJSON(w, http.StatusUnauthorized, map[string]any{"ok": false, "error": "context_prep_claim_required"})
+			return
+		}
+	}
 	switch operation {
 	case "schedule":
 		if request.Schedule == nil {
@@ -2489,17 +2719,32 @@ func (h frontierT6AgentFitHandlers) ContextPrep(w http.ResponseWriter, r *http.R
 		response, err = h.Store.scheduleContextPrep(*request.Schedule, now)
 	case "claim":
 		var found bool
-		response, found, err = h.Store.claimContextPrep(scope, request.PrepID, request.WorkerID, now)
+		var claim frontierT6ContextPrepClaim
+		claim, found, err = h.Store.claimContextPrep(scope, request.PrepID, request.WorkerID, now)
 		if err == nil && !found {
-			response = map[string]any{"claimed": false, "execution_owner": "external_cli_worker"}
+			response = map[string]any{
+				"claimed": false, "execution_owner": "external_cli_worker",
+				"gateway_execution_performed": false, "one_shot": true, "requires_explicit_cli_use": true,
+			}
+		} else if err == nil {
+			w.Header().Set(frontierT6ContextPrepClaimHeader, claim.ClaimToken)
+			claim.ClaimToken = ""
+			response = claim
 		}
 	case "complete":
-		response, err = h.Store.completeContextPrep(request.PrepID, request.ClaimToken, request.Artifact, now)
+		var completed frontierT6ContextPrepRecord
+		completed, err = h.Store.completeContextPrep(scope, request.PrepID, claimToken, request.Artifact, now)
+		if err == nil {
+			response, err = frontierT6ContextPrepRecordResponse(completed)
+		}
 	case "fail":
-		err = h.Store.failContextPrep(request.PrepID, request.ClaimToken, request.ReasonCode, request.Retryable, now)
-		response = map[string]any{"failure_recorded": err == nil}
+		err = h.Store.failContextPrep(scope, request.PrepID, claimToken, request.ReasonCode, request.Retryable, now)
+		response = map[string]any{
+			"failure_recorded": err == nil, "execution_owner": "external_cli_worker",
+			"gateway_execution_performed": false, "one_shot": true, "requires_explicit_cli_use": true,
+		}
 	case "use":
-		response = h.Store.useContextPrep(scope, request.PrepID, request.TaskID, request.EffectiveProfileDigest, request.SourceGeneration, auth.AuthorizationDigest, now)
+		response, err = h.Store.useContextPrep(scope, request.PrepID, request.TaskID, request.EffectiveProfileDigest, request.SourceGeneration, auth.AuthorizationDigest, now)
 	default:
 		err = errors.New("unsupported context preparation operation")
 	}

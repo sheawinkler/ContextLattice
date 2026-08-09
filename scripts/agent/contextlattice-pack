@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import subprocess
@@ -27,6 +28,31 @@ CAMEL_TO_SNAKE = {
     "commands": "commands",
     "acceptanceCriteria": "acceptance_criteria",
 }
+
+
+RECALL_RESPONSE_ALLOWED_FIELDS = (
+    "ok",
+    "schema_id",
+    "version",
+    "response_id",
+    "response_digest",
+    "request_scope",
+    "classification",
+    "answer",
+    "state",
+    "evidence",
+    "confidence",
+    "conflicts",
+    "gaps",
+    "inferences",
+    "next_action",
+    "action_boundary",
+    "disclosure",
+    "receipt_refs",
+    "outcome",
+    "writeback_required",
+    "format_contract",
+)
 
 
 def as_list(value: Any) -> list[Any]:
@@ -572,6 +598,187 @@ def record_context_pack_quality_pending(project: str, session_id: str, agent_id:
     write_agent_session_state(project, state)
 
 
+def _recall_response_digest(payload: dict[str, Any]) -> str:
+    semantic = {key: value for key, value in payload.items() if key not in {"format_contract", "response_digest"}}
+    encoded = json.dumps(semantic, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+
+def _recall_response_scope_ref(kind: str, value: str) -> str:
+    encoded = f"{kind}\x00{value}".encode("utf-8")
+    return "ref_" + hashlib.sha256(encoded).hexdigest()[:24]
+
+
+def failure_recall_response() -> dict[str, Any]:
+    """Return the CLI's safe local failure projection, never a context-pack envelope."""
+
+    scope = {
+        "scope_digest": _recall_response_scope_ref("scope", "unavailable"),
+        "query_digest": _recall_response_scope_ref("query", "unavailable"),
+        "workspace_ref": _recall_response_scope_ref("workspace", "unavailable"),
+        "project_ref": _recall_response_scope_ref("project", "unavailable"),
+        "topic_ref": _recall_response_scope_ref("topic", "unavailable"),
+        "agent_ref": _recall_response_scope_ref("agent", "unavailable"),
+        "session_ref": _recall_response_scope_ref("session", "unavailable"),
+        "task_ref": _recall_response_scope_ref("task", "unavailable"),
+        "task_identity_ref": _recall_response_scope_ref("task_identity", "unavailable"),
+        "execution_lane_ref": _recall_response_scope_ref("execution_lane", "unavailable"),
+        "retrieval_intent": "decision",
+    }
+    response: dict[str, Any] = {
+        "ok": True,
+        "schema_id": "recall_response.v1",
+        "version": 1,
+        "request_scope": scope,
+        "classification": {
+            "jobs": ["look_up"],
+            "objects": ["fact"],
+            "temporal_mode": "current",
+            "evidence_state": "degraded",
+            "consequence": "informational",
+            "posture": "abstain",
+        },
+        "answer": {
+            "summary": "Recall response unavailable; retrieve or verify before acting.",
+            "answer_mode": "abstention",
+            "basis": ["bounded_response_projection", "explicit_action_boundary"],
+            "claim_refs": [],
+            "components": [],
+            "progressive_disclosure": {
+                "level": "summary",
+                "available_levels": ["summary", "proof_refs", "next_action"],
+                "next_level_requires": "recover recall response availability",
+            },
+        },
+        "state": {
+            "status": "abstain",
+            "source_complete": False,
+            "evidence_count": 0,
+            "conflict_count": 0,
+            "gap_count": 1,
+            "retrieval_mode": "balanced",
+        },
+        "evidence": [],
+        "confidence": {"label": "abstain", "score": 0.0, "basis": ["unavailable_surface"], "calibrated": False},
+        "conflicts": [],
+        "gaps": [{"code": "unavailable_surface", "material": True, "reason": "Recall response retrieval was unavailable.", "required_for_action": True}],
+        "inferences": [{"inference_id": _recall_response_scope_ref("inference", "unavailable"), "claim_ref": "response_state", "basis_refs": [], "status": "deterministic_metadata_only", "confidence": 0.0, "disclosure": "This is response-state metadata, not a memory fact."}],
+        "next_action": {
+            "kind": "retrieve_or_verify",
+            "label": "Recover recall response availability, then retrieve or verify",
+            "reason": "The response is advisory-only and does not authorize external mutation.",
+            "requires_verification": True,
+            "authority": "advisory_only",
+            "execution_performed": False,
+        },
+        "action_boundary": {
+            "can_act": False,
+            "requires_confirmation": True,
+            "allowed": ["retrieve_missing_sources"],
+            "forbidden": ["external_mutation", "credential_access", "raw_memory_export"],
+            "reason": "Recall responses provide evidence and advice only; an agent must independently authorize and execute any mutation.",
+            "execution_performed": False,
+        },
+        "disclosure": {
+            "bounded": True,
+            "raw_retrieval_included": False,
+            "raw_prompt_included": False,
+            "paths_included": False,
+            "secrets_included": False,
+            "inference_boundary": "Only deterministic response metadata and opaque proof references are returned.",
+            "omission_policy": "Unavailable evidence is disclosed as a gap and never becomes implicit support.",
+        },
+        "receipt_refs": [],
+        "outcome": {"status": "not_attributable", "attributable": False, "receipt_id": "", "execution_performed": False},
+        "writeback_required": True,
+    }
+    response["response_id"] = "rr_" + _recall_response_digest(response).split(":", 1)[1][:24]
+    response["response_digest"] = _recall_response_digest(response)
+    response = attach_format_contract("recall_response.v1", response)
+    response["response_digest"] = _recall_response_digest(response)
+    return response
+
+
+def _recall_response_has_forbidden_key(value: Any) -> bool:
+    forbidden = {
+        "context_pack",
+        "raw_contextlattice_json",
+        "raw_retrieval_payload",
+        "raw_retrieval",
+        "raw_prompt",
+        "prompt",
+        "prompts",
+        "messages",
+        "tool_calls",
+        "function_call",
+        "secret",
+        "secrets",
+        "api_key",
+        "password",
+        "credential",
+        "authorization",
+        "private_key",
+        "file_path",
+        "local_path",
+        "paths",
+        "query",
+        "project",
+        "project_name",
+        "topic_path",
+        "timestamp",
+        "exact_timestamp",
+        "raw_text",
+        "text",
+        "excerpt",
+        "content",
+        "packet",
+        "agent_packet",
+    }
+    if isinstance(value, dict):
+        return any(key in forbidden or _recall_response_has_forbidden_key(item) for key, item in value.items())
+    if isinstance(value, list):
+        return any(_recall_response_has_forbidden_key(item) for item in value)
+    return False
+
+
+def compact_recall_response(raw: Any) -> dict[str, Any]:
+    response = as_dict(raw)
+    if response.get("schema_id") != "recall_response.v1":
+        raise ValueError("gateway did not return recall_response.v1")
+    if _recall_response_has_forbidden_key(response):
+        raise ValueError("gateway recall response contained a forbidden raw field")
+    unknown = set(response) - set(RECALL_RESPONSE_ALLOWED_FIELDS)
+    missing = set(RECALL_RESPONSE_ALLOWED_FIELDS) - set(response)
+    if unknown or missing:
+        raise ValueError("gateway recall response did not match the closed response schema")
+    projected = {key: response[key] for key in RECALL_RESPONSE_ALLOWED_FIELDS if key in response}
+    response_id = str(projected.get("response_id") or "")
+    response_digest = str(projected.get("response_digest") or "")
+    if len(response_id) != 27 or not response_id.startswith("rr_") or any(ch not in "0123456789abcdef" for ch in response_id[3:]):
+        raise ValueError("gateway recall response id was malformed")
+    if len(response_digest) != 71 or not response_digest.startswith("sha256:") or any(ch not in "0123456789abcdef" for ch in response_digest[7:]):
+        raise ValueError("gateway recall response digest was malformed")
+    contract = as_dict(projected.get("format_contract"))
+    if contract.get("schema_id") != "recall_response.v1" or contract.get("contract_valid") is not True:
+        raise ValueError("gateway recall response contract was invalid")
+    return projected
+
+
+def recall_response_from_error(error: str) -> dict[str, Any] | None:
+    """Recover a bounded HTTP-error response body without exposing the error envelope."""
+
+    try:
+        outer = json.loads(error)
+        body = outer.get("error") if isinstance(outer, dict) else None
+        if isinstance(body, str):
+            body = json.loads(body)
+        if isinstance(body, dict) and body.get("schema_id") == "recall_response.v1":
+            return compact_recall_response(body)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    return None
+
+
 def failure_payload(query: str, budget_chars: int, error: str, attempts: int) -> dict[str, Any]:
     payload = {
         "ok": False,
@@ -664,6 +871,7 @@ def main() -> int:
     parser.add_argument("--max-facts", type=int, default=24)
     parser.add_argument("--agent-id", default=os.getenv("CONTEXTLATTICE_AGENT_ID", ""))
     parser.add_argument("--session-id", default=os.getenv("CONTEXTLATTICE_SESSION_ID", ""))
+    parser.add_argument("--response", action="store_true", help="Return an explicit proof-carrying recall_response.v1 projection.")
     parser.add_argument("--auto-session", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--blocking", action="store_true", help="Wait synchronously for slow sources in /memory/context-pack.")
     parser.add_argument("--nonblocking", action="store_true", help="Deprecated compatibility flag; fail-open is the default.")
@@ -702,13 +910,16 @@ def main() -> int:
             payload[key] = int(value)
     session_id = args.session_id
     if not session_id and args.auto_session:
+        session_metadata = {"tool": "contextlattice-pack", "topic_path": args.topic_path, "retrieval_mode": args.mode}
+        if args.response:
+            session_metadata["response_mode"] = True
         ensured = ensure_agent_session(
             project=args.project,
             objective=args.query,
             agent_id=args.agent_id,
             agent="agent-cli",
-            metadata={"tool": "contextlattice-pack", "topic_path": args.topic_path, "retrieval_mode": args.mode},
-            tags=["auto-session", "context-pack"],
+            metadata=session_metadata,
+            tags=["auto-session", "recall-response" if args.response else "context-pack"],
             timeout=min(float(args.timeout), 10.0),
             soft=True,
         )
@@ -717,17 +928,31 @@ def main() -> int:
         payload["agent_id"] = args.agent_id
     if session_id:
         payload["session_id"] = session_id
+    route = "/memory/recall/response" if args.response else "/memory/context-pack"
     raw, error, attempts = request_with_retries(
-        "/memory/context-pack",
+        route,
         payload,
         args.timeout,
         max(0, args.retries),
         args.retry_delay,
     )
     if raw is None:
+        if args.response:
+            bounded = recall_response_from_error(error) or failure_recall_response()
+            emit(bounded, args.pretty)
+            return 0 if args.soft else 1
         trigger_self_heal("context-pack-failure")
         emit(failure_payload(args.query, args.budget_chars, error, attempts), args.pretty)
         return 0 if args.soft else 1
+    if args.response:
+        try:
+            bounded = compact_recall_response(raw)
+        except ValueError:
+            bounded = failure_recall_response()
+            emit(bounded, args.pretty)
+            return 0 if args.soft else 1
+        emit(bounded, args.pretty)
+        return 0
     packed = compact_context_pack(raw, args.query, args.budget_chars)
     record_context_pack_quality_pending(args.project, session_id, args.agent_id, args.query, packed)
     emit(packed, args.pretty)

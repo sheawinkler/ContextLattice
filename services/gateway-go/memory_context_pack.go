@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -29,7 +30,8 @@ func (s *server) memoryContextPack(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json", "detail": err.Error()})
 		return
 	}
-	response, status, execErr := s.buildContextPackResponse(r.Context(), incomingHeaders, payload)
+	requestCtx := s.contextWithContextPackLearnedRequestAuthority(r.Context(), r, payload, bodyBytes)
+	response, status, execErr := s.buildContextPackResponse(requestCtx, incomingHeaders, payload)
 	if execErr != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "context_pack_unavailable", "detail": sanitizeProviderOverflowText(execErr.Error())})
 		return
@@ -46,13 +48,22 @@ func (s *server) toolsContextPack(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	payload, err := readOptionalJSONBody(r)
+	bodyBytes, err := readRequestBody(r)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json", "detail": err.Error()})
 		return
 	}
+	payload := map[string]any{}
+	if strings.TrimSpace(string(bodyBytes)) != "" {
+		payload, err = parseJSONMap(bodyBytes)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json", "detail": err.Error()})
+			return
+		}
+	}
 	payload["_suppress_token_impact_recording"] = true
-	response, status, execErr := s.buildContextPackResponseForSurface(r.Context(), incomingHeaders, payload, "tools_context_pack")
+	requestCtx := s.contextWithContextPackLearnedRequestAuthority(r.Context(), r, payload, bodyBytes)
+	response, status, execErr := s.buildContextPackResponseForSurface(requestCtx, incomingHeaders, payload, "tools_context_pack")
 	if execErr != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]any{"ok": false, "error": "context_pack_unavailable", "detail": sanitizeProviderOverflowText(execErr.Error())})
 		return
@@ -77,13 +88,227 @@ func (s *server) buildContextPackResponse(
 	return s.buildContextPackResponseForSurface(ctx, incomingHeaders, payload, "context_pack")
 }
 
+type contextPackCompilationInput struct {
+	Query               string
+	Project             string
+	WorkspaceRef        string
+	TopicPath           string
+	TaskClass           string
+	RetrievalMode       string
+	RetrievalIntent     string
+	SessionID           string
+	AgentID             string
+	ContextPack         map[string]any
+	SearchResponse      map[string]any
+	RequestPayload      map[string]any
+	SourceCoverage      map[string]any
+	GraphQuality        map[string]any
+	Objective           objectiveContext
+	TokenBudget         contextPackTokenBudget
+	Warnings            []string
+	ActiveContextPolicy map[string]any
+	Learned             contextPackLearnedActivationDecision
+}
+
+type contextPackCompilationArtifacts struct {
+	ContextPack       map[string]any
+	Compiled          map[string]any
+	AgentGuidance     map[string]any
+	TrustAssessment   map[string]any
+	DecisionTrace     map[string]any
+	ReferencePrompt   string
+	TokenImpact       map[string]any
+	RunAdvisor        map[string]any
+	Quality           map[string]any
+	Learned           contextPackLearnedActivationDecision
+	LearnedActivation map[string]any
+	ProofIdentity     map[string]any
+}
+
+// contextPackCompilationHook is an internal pre-persistence seam. It receives
+// the already-retrieved compilation input and artifacts exactly once per
+// persistence attempt, together with the durability intent for that attempt.
+// The default builder path leaves this nil so the established context-pack
+// behavior remains unchanged.
+type contextPackCompilationHook func(
+	contextPackCompilationInput,
+	contextPackCompilationArtifacts,
+	bool,
+) contextPackCompilationArtifacts
+
+type contextPackResponseBuildOptions struct {
+	compilationHook contextPackCompilationHook
+}
+
+func buildContextPackCompilationArtifacts(input contextPackCompilationInput) contextPackCompilationArtifacts {
+	contextPack := input.ContextPack
+	if input.Learned.Eligible {
+		contextPack = cloneJSONMap(input.ContextPack)
+	}
+	compiled, learned := compileContextPackForAgentWithLearning(
+		input.Query, contextPack, input.SourceCoverage, input.Objective, input.TokenBudget, input.Learned,
+	)
+	learnedActivation := anyMap(compiled["learned_activation"])
+	agentGuidance := anyMap(compiled["agent_guidance"])
+	contextPack["rankedEvidence"] = compiled["ranked_evidence"]
+	contextPack["ranked_evidence"] = compiled["ranked_evidence"]
+	contextPack["tokenBudget"] = compiled["token_budget"]
+	contextPack["token_budget"] = compiled["token_budget"]
+	contextPack["omittedHighValueRefs"] = compiled["omitted_high_value_refs"]
+	contextPack["omitted_high_value_refs"] = compiled["omitted_high_value_refs"]
+	contextPack["agentGuidance"] = agentGuidance
+	contextPack["agent_guidance"] = agentGuidance
+	contextPack["promptSections"] = compiled["prompt_sections"]
+	contextPack["prompt_sections"] = compiled["prompt_sections"]
+	contextPack["contextCompiler"] = compiled["context_compiler"]
+	contextPack["context_compiler"] = compiled["context_compiler"]
+	trustAssessment := anyMap(compiled["memory_trust_assessment"])
+	decisionTrace := anyMap(compiled["retrieval_decision_trace"])
+	trustReference := memoryTrustAssessmentReference(trustAssessment)
+	traceReference := retrievalDecisionTraceReference(decisionTrace)
+	contextPack["memoryTrustAssessment"] = trustReference
+	contextPack["memory_trust_assessment"] = trustReference
+	contextPack["retrievalDecisionTrace"] = traceReference
+	contextPack["retrieval_decision_trace"] = traceReference
+	referencePrompt := anyToString(compiled["reference_prompt"])
+	tokenImpact := buildContextPackTokenImpact(input.Query, contextPack, compiled, referencePrompt)
+	contextPack["tokenImpact"] = tokenImpact
+	contextPack["token_impact"] = tokenImpact
+	rankedEvidence := contextPackAnyList(compiled["ranked_evidence"])
+	runAdvisor := buildRunAdvisor(runAdvisorInput{
+		Query: input.Query, Project: input.Project, TopicPath: input.TopicPath,
+		RetrievalMode: input.RetrievalMode, SessionID: input.SessionID, AgentID: input.AgentID,
+		SourceCoverage: input.SourceCoverage, Retrieval: input.SearchResponse, Objective: input.Objective,
+		RankedEvidence: rankedEvidence, ReferencePrompt: referencePrompt, GraphQuality: input.GraphQuality,
+		Surface: "/memory/context-pack",
+	})
+	contextPack["runAdvisor"] = runAdvisor
+	contextPack["run_advisor"] = runAdvisor
+	quality := buildContextPackQualitySample(contextPackQualitySampleInput{
+		Query: input.Query, Project: input.Project, TopicPath: input.TopicPath, TaskClass: input.TaskClass,
+		RetrievalIntent: input.RetrievalIntent, WorkspaceRef: input.WorkspaceRef, SessionID: input.SessionID,
+		TaskID:          strings.TrimSpace(firstNonEmptyStrings(anyToString(input.RequestPayload["task_id"]), anyToString(input.RequestPayload["taskId"]))),
+		TaskIdentityID:  strings.TrimSpace(firstNonEmptyStrings(anyToString(input.RequestPayload["task_identity_id"]), anyToString(input.RequestPayload["taskIdentityId"]))),
+		ExecutionLaneID: strings.TrimSpace(firstNonEmptyStrings(anyToString(input.RequestPayload["execution_lane_id"]), anyToString(input.RequestPayload["executionLaneId"]))),
+		AgentID:         input.AgentID, TokenImpact: tokenImpact, Compiled: compiled, SourceCoverage: input.SourceCoverage,
+		GraphQuality: input.GraphQuality, RankedEvidence: compiled["ranked_evidence"],
+		SelectionReceiptRankedRefs: compiled["selection_receipt_ranked_refs"],
+		OmittedHighValueRefs:       compiled["omitted_high_value_refs"], OmittedSelectionRefs: compiled["selection_receipt_omitted_refs"],
+		LearnedActivation: learnedActivation, Warnings: input.Warnings,
+	})
+	proofIdentity := map[string]any{
+		"sample_id": quality["sample_id"], "session_id": input.SessionID,
+		"task_id":           firstNonEmptyStrings(anyToString(input.RequestPayload["task_id"]), anyToString(input.RequestPayload["taskId"])),
+		"task_identity_id":  firstNonEmptyStrings(anyToString(input.RequestPayload["task_identity_id"]), anyToString(input.RequestPayload["taskIdentityId"])),
+		"execution_lane_id": firstNonEmptyStrings(anyToString(input.RequestPayload["execution_lane_id"]), anyToString(input.RequestPayload["executionLaneId"])),
+		"project":           input.Project, "agent_id": input.AgentID, "workspace_ref": input.WorkspaceRef,
+	}
+	copyProofTimelineIdentity(quality, proofIdentity)
+	copyProofTimelineIdentity(tokenImpact, proofIdentity)
+	if len(input.ActiveContextPolicy) > 0 {
+		quality["policy_id"] = input.ActiveContextPolicy["candidate_id"]
+		quality["policy_arm"] = "canary"
+		quality["policy_phase"] = "promoted"
+	} else if learned.Eligible {
+		quality["policy_id"] = learned.PolicyRef
+		quality["policy_arm"] = learned.Arm
+		quality["policy_phase"] = "canary"
+	}
+	return contextPackCompilationArtifacts{
+		ContextPack: contextPack, Compiled: compiled, AgentGuidance: agentGuidance,
+		TrustAssessment: trustAssessment, DecisionTrace: decisionTrace, ReferencePrompt: referencePrompt,
+		TokenImpact: tokenImpact, RunAdvisor: runAdvisor, Quality: quality,
+		Learned: learned, LearnedActivation: learnedActivation, ProofIdentity: proofIdentity,
+	}
+}
+
+func (s *server) persistContextPackCompilationOrFallback(
+	input contextPackCompilationInput,
+	artifacts contextPackCompilationArtifacts,
+) contextPackCompilationArtifacts {
+	return s.persistContextPackCompilationOrFallbackWithHook(input, artifacts, nil)
+}
+
+func (s *server) persistContextPackCompilationOrFallbackWithHook(
+	input contextPackCompilationInput,
+	artifacts contextPackCompilationArtifacts,
+	hook contextPackCompilationHook,
+) contextPackCompilationArtifacts {
+	// A learned decision is always receipt-bound by contract. Native control is
+	// receipt-bound when its quality sample carries the ordinary selection
+	// receipt. No-receipt, non-learned samples retain the legacy local-only path.
+	receiptBearing := len(contextPackSelectionReceiptFromSample(artifacts.Quality["selection_receipt"])) > 0
+	durableIntent := artifacts.Learned.Eligible || receiptBearing
+	if !durableIntent {
+		artifacts = invokeContextPackCompilationHook(hook, input, artifacts, false)
+		s.recordContextPackQuality(artifacts.Quality)
+		return artifacts
+	}
+
+	// The hook must run before any quality record. On success the exact hooked
+	// artifacts are returned, allowing an internal caller to bind its response
+	// identity to the row that is about to be retained.
+	artifacts = invokeContextPackCompilationHook(hook, input, artifacts, true)
+	if err := s.recordContextPackQualityDurably(artifacts.Quality); err == nil {
+		return artifacts
+	}
+
+	if artifacts.Learned.Eligible {
+		// Learned persistence failure is a governance failure, not a retrieval
+		// failure. Recompile from the same already-retrieved input under native
+		// control, then run the hook once more before recording that fallback.
+		input.Learned = contextPackLearnedForceControl(artifacts.Learned, "receipt_persistence_failed")
+		fallback := buildContextPackCompilationArtifacts(input)
+		fallback = invokeContextPackCompilationHook(hook, input, fallback, false)
+		s.recordContextPackQualityLocallyWithoutReceipt(fallback.Quality)
+		return fallback
+	}
+
+	// Ordinary quality persistence failure must not count the durable attempt
+	// and its local fallback separately. Re-run the hook against the same
+	// artifacts with durable intent disabled, then retain exactly one local row.
+	artifacts = invokeContextPackCompilationHook(hook, input, artifacts, false)
+	s.recordContextPackQualityLocallyWithoutReceipt(artifacts.Quality)
+	return artifacts
+}
+
+func invokeContextPackCompilationHook(
+	hook contextPackCompilationHook,
+	input contextPackCompilationInput,
+	artifacts contextPackCompilationArtifacts,
+	durable bool,
+) contextPackCompilationArtifacts {
+	if hook == nil {
+		return artifacts
+	}
+	return hook(input, artifacts, durable)
+}
+
+func (s *server) recordContextPackQualityLocallyWithoutReceipt(sample map[string]any) {
+	if s == nil || s.contextPackQuality == nil {
+		return
+	}
+	s.contextPackQuality.recordQualityLocallyWithoutReceipt(sample)
+}
+
 func (s *server) buildContextPackResponseForSurface(
 	ctx context.Context,
 	incomingHeaders http.Header,
 	payload map[string]any,
 	packetSurface string,
 ) (map[string]any, int, error) {
+	return s.buildContextPackResponseForSurfaceWithOptions(ctx, incomingHeaders, payload, packetSurface, contextPackResponseBuildOptions{})
+}
+
+func (s *server) buildContextPackResponseForSurfaceWithOptions(
+	ctx context.Context,
+	incomingHeaders http.Header,
+	payload map[string]any,
+	packetSurface string,
+	options contextPackResponseBuildOptions,
+) (map[string]any, int, error) {
 	requestPayload := cloneMap(payload)
+	activeContextPolicy := map[string]any{}
 	query := strings.TrimSpace(anyToString(requestPayload["query"]))
 	if query == "" {
 		return map[string]any{"error": "query is required"}, http.StatusUnprocessableEntity, nil
@@ -159,7 +384,6 @@ func (s *server) buildContextPackResponseForSurface(
 	if trafficClass == "" {
 		trafficClass = "user"
 	}
-	searchResponse["learning_enabled"] = true
 	searchResponse["retrieval_mode"] = retrievalMode
 	searchResponse["retrieval_intent"] = retrievalIntent
 	searchResponse["traffic_class"] = trafficClass
@@ -180,88 +404,57 @@ func (s *server) buildContextPackResponseForSurface(
 	sourceCoverage = contextPackSourceCoverageWithGraph(sourceCoverage, graphQuality)
 	contextPack["sourceCoverage"] = sourceCoverage
 	contextPack["combinedSources"] = combinedSources
-	compiled := compileContextPackForAgent(query, contextPack, sourceCoverage, effectiveObjectiveCtx, tokenBudget)
-	agentGuidance := anyMap(compiled["agent_guidance"])
-	contextPack["rankedEvidence"] = compiled["ranked_evidence"]
-	contextPack["ranked_evidence"] = compiled["ranked_evidence"]
-	contextPack["tokenBudget"] = compiled["token_budget"]
-	contextPack["token_budget"] = compiled["token_budget"]
-	contextPack["omittedHighValueRefs"] = compiled["omitted_high_value_refs"]
-	contextPack["omitted_high_value_refs"] = compiled["omitted_high_value_refs"]
-	contextPack["agentGuidance"] = agentGuidance
-	contextPack["agent_guidance"] = agentGuidance
-	contextPack["promptSections"] = compiled["prompt_sections"]
-	contextPack["prompt_sections"] = compiled["prompt_sections"]
-	contextPack["contextCompiler"] = compiled["context_compiler"]
-	contextPack["context_compiler"] = compiled["context_compiler"]
-	trustAssessment := anyMap(compiled["memory_trust_assessment"])
-	decisionTrace := anyMap(compiled["retrieval_decision_trace"])
-	trustReference := memoryTrustAssessmentReference(trustAssessment)
-	traceReference := retrievalDecisionTraceReference(decisionTrace)
-	contextPack["memoryTrustAssessment"] = trustReference
-	contextPack["memory_trust_assessment"] = trustReference
-	contextPack["retrievalDecisionTrace"] = traceReference
-	contextPack["retrieval_decision_trace"] = traceReference
-	referencePrompt := anyToString(compiled["reference_prompt"])
-	tokenImpact := buildContextPackTokenImpact(query, contextPack, compiled, referencePrompt)
-	contextPack["tokenImpact"] = tokenImpact
-	contextPack["token_impact"] = tokenImpact
-	rankedEvidence := contextPackAnyList(compiled["ranked_evidence"])
+	project := strings.TrimSpace(anyToString(requestPayload["project"]))
+	taskClass := strings.TrimSpace(strings.ToLower(anyToString(requestPayload["task_class"])))
+	learnedDecision := s.contextPackLearnedActivationDecision(
+		ctx, requestPayload, project, taskClass, retrievalIntent, trafficClass, len(activeContextPolicy) > 0,
+	)
 	agentID := strings.TrimSpace(firstNonEmptyStrings(
 		anyToString(searchResponse["agent_id"]),
 		anyToString(requestPayload["agent_id"]),
 		anyToString(requestPayload["agentId"]),
 	))
-	runAdvisor := buildRunAdvisor(runAdvisorInput{
-		Query:           query,
-		Project:         strings.TrimSpace(anyToString(requestPayload["project"])),
-		TopicPath:       strings.TrimSpace(anyToString(requestPayload["topic_path"])),
-		RetrievalMode:   retrievalMode,
-		SessionID:       sessionID,
-		AgentID:         agentID,
-		SourceCoverage:  sourceCoverage,
-		Retrieval:       searchResponse,
-		Objective:       effectiveObjectiveCtx,
-		RankedEvidence:  rankedEvidence,
-		ReferencePrompt: referencePrompt,
-		GraphQuality:    graphQuality,
-		Surface:         "/memory/context-pack",
-	})
-	contextPack["runAdvisor"] = runAdvisor
-	contextPack["run_advisor"] = runAdvisor
 	warnings := parseWarnings(searchResponse["warnings"])
-	contextPackQuality := buildContextPackQualitySample(contextPackQualitySampleInput{
-		Query:                query,
-		Project:              strings.TrimSpace(anyToString(requestPayload["project"])),
-		TopicPath:            strings.TrimSpace(anyToString(requestPayload["topic_path"])),
-		TaskClass:            strings.TrimSpace(anyToString(requestPayload["task_class"])),
-		RetrievalIntent:      retrievalIntent,
-		SessionID:            sessionID,
-		TaskID:               strings.TrimSpace(firstNonEmptyStrings(anyToString(requestPayload["task_id"]), anyToString(requestPayload["taskId"]))),
-		TaskIdentityID:       strings.TrimSpace(firstNonEmptyStrings(anyToString(requestPayload["task_identity_id"]), anyToString(requestPayload["taskIdentityId"]))),
-		ExecutionLaneID:      strings.TrimSpace(firstNonEmptyStrings(anyToString(requestPayload["execution_lane_id"]), anyToString(requestPayload["executionLaneId"]))),
-		AgentID:              agentID,
-		TokenImpact:          tokenImpact,
-		Compiled:             compiled,
-		SourceCoverage:       sourceCoverage,
-		GraphQuality:         graphQuality,
-		RankedEvidence:       compiled["ranked_evidence"],
-		OmittedHighValueRefs: compiled["omitted_high_value_refs"],
-		OmittedSelectionRefs: compiled["selection_receipt_omitted_refs"],
-		Warnings:             warnings,
-	})
-	proofIdentity := map[string]any{
-		"sample_id":         contextPackQuality["sample_id"],
-		"session_id":        sessionID,
-		"task_id":           firstNonEmptyStrings(anyToString(requestPayload["task_id"]), anyToString(requestPayload["taskId"])),
-		"task_identity_id":  firstNonEmptyStrings(anyToString(requestPayload["task_identity_id"]), anyToString(requestPayload["taskIdentityId"])),
-		"execution_lane_id": firstNonEmptyStrings(anyToString(requestPayload["execution_lane_id"]), anyToString(requestPayload["executionLaneId"])),
-		"project":           requestPayload["project"],
-		"agent_id":          agentID,
+	workspaceRef := contextPackLearnedDigestRef(learnedDecision.WorkspaceRef)
+	if workspaceRef == "" {
+		authority := contextPackLearnedAuthorityFromContext(ctx)
+		if authority.Authorized {
+			workspaceRef = contextPackLearnedScopeRef("workspace", authority.WorkspaceID)
+		}
 	}
-	copyProofTimelineIdentity(contextPackQuality, proofIdentity)
-	copyProofTimelineIdentity(tokenImpact, proofIdentity)
-	s.recordContextPackQuality(contextPackQuality)
+	if workspaceRef == "" {
+		if authorization, authorizationErr := s.frontierT6OwnerAuthorization(nil, frontierT6ProactiveContextPrepFeatureID, "status"); authorizationErr == nil && authorization.Authorized {
+			workspaceRef = contextPackLearnedScopeRef("workspace", authorization.WorkspaceID)
+		}
+	}
+	compilationInput := contextPackCompilationInput{
+		Query: query, Project: project, WorkspaceRef: workspaceRef, TopicPath: strings.TrimSpace(anyToString(requestPayload["topic_path"])),
+		TaskClass: taskClass, RetrievalMode: retrievalMode, RetrievalIntent: retrievalIntent,
+		SessionID: sessionID, AgentID: agentID, ContextPack: contextPack, SearchResponse: searchResponse,
+		RequestPayload: requestPayload, SourceCoverage: sourceCoverage, GraphQuality: graphQuality,
+		Objective: effectiveObjectiveCtx, TokenBudget: tokenBudget, Warnings: warnings,
+		ActiveContextPolicy: activeContextPolicy, Learned: learnedDecision,
+	}
+	artifacts := buildContextPackCompilationArtifacts(compilationInput)
+	artifacts = s.persistContextPackCompilationOrFallbackWithHook(compilationInput, artifacts, options.compilationHook)
+	contextPack = artifacts.ContextPack
+	compiled := artifacts.Compiled
+	learnedDecision = artifacts.Learned
+	learnedActivation := artifacts.LearnedActivation
+	agentGuidance := artifacts.AgentGuidance
+	trustAssessment := artifacts.TrustAssessment
+	decisionTrace := artifacts.DecisionTrace
+	referencePrompt := artifacts.ReferencePrompt
+	tokenImpact := artifacts.TokenImpact
+	runAdvisor := artifacts.RunAdvisor
+	contextPackQuality := artifacts.Quality
+	proofIdentity := artifacts.ProofIdentity
+	learningCaptureEnabled := s != nil && s.contextPackQuality != nil
+	searchResponse["learning_enabled"] = learnedDecision.Armed
+	searchResponse["learning_capture_enabled"] = learningCaptureEnabled
+	searchResponse["learned_ranking_armed"] = learnedDecision.Armed
+	searchResponse["learned_ranking_applied"] = learnedDecision.Performed
+	searchResponse["learning_mode"] = anyToString(learnedActivation["arm"])
 	// Selection receipts are durable quality-ledger data, not context-pack
 	// payload data. Keeping them off the response preserves the public packet's
 	// established token boundary while avoiding a second source-content copy.
@@ -281,6 +474,11 @@ func (s *server) buildContextPackResponseForSurface(
 		"run_advisor":              runAdvisor,
 		"memory_trust_assessment":  trustAssessment,
 		"retrieval_decision_trace": decisionTrace,
+		"learned_activation":       learnedActivation,
+		"learning_enabled":         learnedDecision.Armed,
+		"learning_capture_enabled": learningCaptureEnabled,
+		"learned_ranking_armed":    learnedDecision.Armed,
+		"learned_ranking_applied":  learnedDecision.Performed,
 		"token_budget":             compiled["token_budget"],
 		"omitted_high_value_refs":  compiled["omitted_high_value_refs"],
 		"warnings":                 warnings,
@@ -368,6 +566,9 @@ func (s *server) buildContextPackResponseForSurface(
 		"context_pack_transport",
 		"serialized_context_pack_response_json",
 	)
+	responseImpact := anyMap(response["token_impact"])
+	copyProofTimelineIdentity(responseImpact, proofIdentity)
+	response["token_impact"] = responseImpact
 	if !anyToBool(requestPayload["_suppress_token_impact_recording"]) {
 		s.recordTokenImpact(anyMap(response["token_impact"]))
 	}
@@ -675,36 +876,45 @@ type contextPackEvidenceAllocation struct {
 	CompressionLevel     string
 	TrustAssessment      map[string]any
 	DecisionTrace        map[string]any
+	LearnedActivation    contextPackLearnedActivationDecision
+	// Internal evaluator fields preserve the exact candidate and allocation
+	// boundaries without exposing raw evidence through the public response.
+	EligibleItems []contextPackEvidenceItem
+	SelectedItems []contextPackEvidenceItem
+	OmittedItems  []contextPackEvidenceItem
 }
 
 type contextPackEvidenceItem struct {
-	CandidateID      string
-	ContentDigest    string
-	Occurrence       int
-	Rank             int
-	Kind             string
-	Score            float64
-	ImpactScore      float64
-	ValueDensity     float64
-	Reason           string
-	Text             string
-	Project          string
-	File             string
-	Source           string
-	SourceOwner      string
-	MemoryID         string
-	TopicPath        string
-	Timestamp        string
-	Status           string
-	Freshness        string
-	QueryRelevance   float64
-	Confidence       float64
-	EstimatedTokens  int
-	WhySelected      []any
-	WhyNow           []string
-	DiversityKey     string
-	DisplayTruncated bool
-	TrustAssessment  map[string]any
+	CandidateID             string
+	ContentDigest           string
+	Occurrence              int
+	Rank                    int
+	Kind                    string
+	Score                   float64
+	ImpactScore             float64
+	ValueDensity            float64
+	Reason                  string
+	Text                    string
+	Project                 string
+	File                    string
+	Source                  string
+	SourceOwner             string
+	MemoryID                string
+	TopicPath               string
+	Timestamp               string
+	Status                  string
+	Freshness               string
+	QueryRelevance          float64
+	Confidence              float64
+	EstimatedTokens         int
+	WhySelected             []any
+	WhyNow                  []string
+	DiversityKey            string
+	DisplayTruncated        bool
+	TrustAssessment         map[string]any
+	LearnedBaseScore        float64
+	LearnedMultiplier       float64
+	LearnedInfluenceApplied bool
 }
 
 func contextPackTokenBudgetFromRequest(payload map[string]any) contextPackTokenBudget {
@@ -753,7 +963,19 @@ func contextPackTokenBudgetFromRequest(payload map[string]any) contextPackTokenB
 }
 
 func compileContextPackForAgent(query string, contextPack map[string]any, sourceCoverage map[string]any, objectiveCtx objectiveContext, tokenBudget contextPackTokenBudget) map[string]any {
-	allocation := contextPackRankedEvidence(query, contextPack, tokenBudget)
+	compiled, _ := compileContextPackForAgentWithLearning(query, contextPack, sourceCoverage, objectiveCtx, tokenBudget, contextPackLearnedActivationDecision{})
+	return compiled
+}
+
+func compileContextPackForAgentWithLearning(
+	query string,
+	contextPack map[string]any,
+	sourceCoverage map[string]any,
+	objectiveCtx objectiveContext,
+	tokenBudget contextPackTokenBudget,
+	learned contextPackLearnedActivationDecision,
+) (map[string]any, contextPackLearnedActivationDecision) {
+	allocation := contextPackRankedEvidenceWithLearning(query, contextPack, tokenBudget, learned)
 	rankedEvidence := allocation.RankedEvidence
 	agentGuidance := buildAgentEvidenceGuidance(agentEvidenceGuidanceInput{
 		Query:          query,
@@ -771,6 +993,9 @@ func compileContextPackForAgent(query string, contextPack map[string]any, source
 	strategy := "ranked_evidence_prompt_packet"
 	if tokenBudget.Active {
 		strategy = "impact_per_token_prompt_packet"
+	}
+	if allocation.LearnedActivation.Performed {
+		strategy = "outcome_calibrated_impact_per_token_prompt_packet"
 	}
 	compiler := map[string]any{
 		"schema_id":           "contextlattice_context_compiler.v1",
@@ -801,9 +1026,10 @@ func compileContextPackForAgent(query string, contextPack map[string]any, source
 			"quarantined_content_has_zero_prompt_influence",
 		},
 	}
-	return map[string]any{
+	result := map[string]any{
 		"context_compiler":               compiler,
 		"ranked_evidence":                rankedEvidence,
+		"selection_receipt_ranked_refs":  renderSelectionReceiptRankedRefs(allocation.SelectedItems),
 		"token_budget":                   allocation.TokenBudget,
 		"omitted_high_value_refs":        allocation.OmittedHighValueRefs,
 		"selection_receipt_omitted_refs": allocation.OmittedSelectionRefs,
@@ -813,9 +1039,35 @@ func compileContextPackForAgent(query string, contextPack map[string]any, source
 		"memory_trust_assessment":        allocation.TrustAssessment,
 		"retrieval_decision_trace":       allocation.DecisionTrace,
 	}
+	if allocation.LearnedActivation.Reason != "" {
+		result["learned_activation"] = contextPackLearnedActivationReceipt(allocation.LearnedActivation)
+	}
+	return result, allocation.LearnedActivation
 }
 
 func contextPackRankedEvidence(query string, contextPack map[string]any, tokenBudget contextPackTokenBudget) contextPackEvidenceAllocation {
+	return contextPackRankedEvidenceWithLearning(query, contextPack, tokenBudget, contextPackLearnedActivationDecision{})
+}
+
+func contextPackRankedEvidenceWithLearning(
+	query string,
+	contextPack map[string]any,
+	tokenBudget contextPackTokenBudget,
+	learned contextPackLearnedActivationDecision,
+) contextPackEvidenceAllocation {
+	return contextPackRankedEvidenceWithLearningAt(query, contextPack, tokenBudget, learned, time.Now().UTC())
+}
+
+func contextPackRankedEvidenceWithLearningAt(
+	query string,
+	contextPack map[string]any,
+	tokenBudget contextPackTokenBudget,
+	learned contextPackLearnedActivationDecision,
+	evaluatedAt time.Time,
+) contextPackEvidenceAllocation {
+	if evaluatedAt.IsZero() {
+		evaluatedAt = time.Now().UTC()
+	}
 	out := []contextPackEvidenceItem{}
 	queryTerms := synthesisPackQueryTokens(query)
 	impactSignals := func(kind string, text string, source map[string]any) []any {
@@ -876,7 +1128,7 @@ func contextPackRankedEvidence(query string, contextPack map[string]any, tokenBu
 			freshness = "superseded"
 			signals = append(signals, "superseded_or_retracted")
 		} else if timestamp, ok := parseISOTime(anyToString(source["timestamp"])); ok {
-			age := time.Since(timestamp).Hours() / 24
+			age := evaluatedAt.Sub(timestamp).Hours() / 24
 			switch {
 			case age <= 7:
 				score += 10
@@ -974,7 +1226,23 @@ func contextPackRankedEvidence(query string, contextPack map[string]any, tokenBu
 		add("memory", 64, "retrieved memory result matched the task", anyToString(source["summary"]), source)
 	}
 	trust := retrievalReceiptMergeInputBoundary(applyMemoryTrustPolicy(out), contextPack["retrieval_input_boundary"])
-	selected, omitted, usedTokens, compressionLevel := allocateContextPackEvidence(trust.Eligible, tokenBudget)
+	nativeEligible := trust.Eligible
+	eligible, learned := applyContextPackLearnedRanking(trust.Eligible, learned)
+	selected, omitted, usedTokens, compressionLevel := allocateContextPackEvidence(eligible, tokenBudget)
+	if learned.Performed {
+		nativeSelected, nativeOmitted, nativeUsedTokens, nativeCompressionLevel := allocateContextPackEvidence(nativeEligible, tokenBudget)
+		fallbackReason := ""
+		if !contextPackLearnedProtectedSelectionPreserved(nativeSelected, selected) {
+			fallbackReason = "protected_evidence_invariant_failed"
+		} else if !contextPackLearnedSelectionReceiptCaptureComplete(learned, selected, omitted) {
+			fallbackReason = "candidate_receipt_capture_incomplete"
+		}
+		if fallbackReason != "" {
+			learned = contextPackLearnedForceControl(learned, fallbackReason)
+			eligible = nativeEligible
+			selected, omitted, usedTokens, compressionLevel = nativeSelected, nativeOmitted, nativeUsedTokens, nativeCompressionLevel
+		}
+	}
 	trust.TrustEnvelope = attachPayloadFormatContract(
 		memoryTrustAssessmentContractID,
 		trust.TrustEnvelope,
@@ -1015,6 +1283,11 @@ func contextPackRankedEvidence(query string, contextPack map[string]any, tokenBu
 				"quarantined": anyToBool(anyMap(item.TrustAssessment["quarantine"])["quarantined"]),
 			},
 		}
+		if item.LearnedInfluenceApplied {
+			renderedItem["learned_influence_applied"] = true
+			renderedItem["learned_base_score"] = item.LearnedBaseScore
+			renderedItem["learned_multiplier"] = item.LearnedMultiplier
+		}
 		if item.Project != "" {
 			renderedItem["project"] = item.Project
 		}
@@ -1045,7 +1318,76 @@ func contextPackRankedEvidence(query string, contextPack map[string]any, tokenBu
 		CompressionLevel:     compressionLevel,
 		TrustAssessment:      trust.TrustEnvelope,
 		DecisionTrace:        decisionTrace,
+		LearnedActivation:    learned,
+		EligibleItems:        append([]contextPackEvidenceItem(nil), eligible...),
+		SelectedItems:        append([]contextPackEvidenceItem(nil), selected...),
+		OmittedItems:         append([]contextPackEvidenceItem(nil), omitted...),
 	}
+}
+
+func contextPackLearnedProtectedSelectionPreserved(native, treatment []contextPackEvidenceItem) bool {
+	treatmentRanks := make(map[string]int, len(treatment))
+	for index, item := range treatment {
+		treatmentRanks[contextPackLearnedEvidenceOccurrenceKey(item)] = index
+	}
+	for nativeRank, item := range native {
+		if !contextPackLearnedProtectedEvidence(item) {
+			continue
+		}
+		treatmentRank, present := treatmentRanks[contextPackLearnedEvidenceOccurrenceKey(item)]
+		if !present || treatmentRank > nativeRank {
+			return false
+		}
+	}
+	return true
+}
+
+func contextPackLearnedEvidenceOccurrenceKey(item contextPackEvidenceItem) string {
+	return item.CandidateID + "\x00" + strconv.Itoa(item.Occurrence)
+}
+
+// contextPackLearnedSelectionReceiptCaptureComplete proves the bounded
+// compiler view can carry every occurrence changed by the actuator. The V2
+// receipt has a hard 24-row boundary, so treatment is unsafe when an applied
+// occurrence falls outside the 16 rendered rows plus the eight opaque omitted
+// rows that are eligible for receipt capture.
+func contextPackLearnedSelectionReceiptCaptureComplete(
+	decision contextPackLearnedActivationDecision,
+	selected, omitted []contextPackEvidenceItem,
+) bool {
+	if !decision.Performed {
+		return true
+	}
+	if decision.AppliedCandidateCount < 1 || decision.AppliedCandidateCount > contextPackSelectionReceiptLimit {
+		return false
+	}
+	affected := make(map[string]struct{}, decision.AppliedCandidateCount)
+	for _, item := range append(append([]contextPackEvidenceItem{}, selected...), omitted...) {
+		if !item.LearnedInfluenceApplied {
+			continue
+		}
+		key := contextPackLearnedEvidenceOccurrenceKey(item)
+		if _, duplicate := affected[key]; duplicate {
+			return false
+		}
+		affected[key] = struct{}{}
+	}
+	if len(affected) != decision.AppliedCandidateCount {
+		return false
+	}
+	captured := make(map[string]struct{}, contextPackSelectionReceiptLimit)
+	for _, item := range selected[:minInt(len(selected), 16)] {
+		captured[contextPackLearnedEvidenceOccurrenceKey(item)] = struct{}{}
+	}
+	for _, item := range contextPackBoundedOmittedHighValueItems(omitted, 8) {
+		captured[contextPackLearnedEvidenceOccurrenceKey(item)] = struct{}{}
+	}
+	for key := range affected {
+		if _, present := captured[key]; !present {
+			return false
+		}
+	}
+	return true
 }
 
 func allocateContextPackEvidence(items []contextPackEvidenceItem, tokenBudget contextPackTokenBudget) ([]contextPackEvidenceItem, []contextPackEvidenceItem, int, string) {
@@ -1229,10 +1571,43 @@ func renderOmittedHighValueRefs(items []contextPackEvidenceItem) []any {
 func renderOmittedSelectionReceiptRefs(items []contextPackEvidenceItem) []any {
 	out := make([]any, 0, len(items))
 	for _, item := range items {
-		out = append(out, map[string]any{
+		row := map[string]any{
 			"candidate_id": item.CandidateID,
 			"kind":         item.Kind,
-		})
+			"occurrence":   item.Occurrence,
+		}
+		if item.LearnedInfluenceApplied {
+			row["learned_influence_applied"] = true
+			row["learned_base_score"] = item.LearnedBaseScore
+			row["learned_multiplier"] = item.LearnedMultiplier
+			row["score"] = item.Score
+		}
+		out = append(out, row)
+	}
+	return out
+}
+
+// renderSelectionReceiptRankedRefs keeps the durable receipt source opaque and
+// internal. It is deliberately limited to the same 16 rows as public ranked
+// evidence while preserving occurrence identity for V2 actuation proof.
+func renderSelectionReceiptRankedRefs(items []contextPackEvidenceItem) []any {
+	limit := minInt(len(items), 16)
+	out := make([]any, 0, limit)
+	for index := 0; index < limit; index++ {
+		item := items[index]
+		row := map[string]any{
+			"candidate_id": item.CandidateID,
+			"kind":         item.Kind,
+			"ordinal":      index + 1,
+			"occurrence":   item.Occurrence,
+		}
+		if item.LearnedInfluenceApplied {
+			row["learned_influence_applied"] = true
+			row["learned_base_score"] = item.LearnedBaseScore
+			row["learned_multiplier"] = item.LearnedMultiplier
+			row["score"] = item.Score
+		}
+		out = append(out, row)
 	}
 	return out
 }

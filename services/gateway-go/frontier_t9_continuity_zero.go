@@ -419,10 +419,7 @@ func (s *server) frontierT9PreparationReference(session map[string]any, profileD
 	defer s.frontierT6.mu.RUnlock()
 	var selected *frontierT6ContextPrepRecord
 	for _, candidate := range s.frontierT6.state.ContextPreps {
-		if candidate.Status != "ready" || candidate.Artifact == nil || candidate.Scope.Project != scope.Project || candidate.Scope.WorkspaceID != scope.WorkspaceID {
-			continue
-		}
-		if candidate.Scope.SessionID != "" && candidate.Scope.SessionID != scope.SessionID {
+		if candidate.Status != "ready" || candidate.Artifact == nil || candidate.Scope != scope {
 			continue
 		}
 		if taskID != "" && candidate.TaskID != "" && candidate.TaskID != taskID {
@@ -446,10 +443,12 @@ func (s *server) frontierT9PreparationReference(session map[string]any, profileD
 	}
 	return map[string]any{
 		"state": "ready", "prep_id": selected.PrepID, "artifact_id": selected.Artifact.ArtifactID,
-		"artifact_digest":          frontierT6Digest(selected.Artifact),
-		"context_pack_digest":      selected.Artifact.ContextPackDigest,
-		"retrieval_receipt_digest": selected.Artifact.RetrievalReceiptDigest,
-		"expires_at":               selected.Artifact.ExpiresAt,
+		"artifact_digest":           frontierT6Digest(selected.Artifact),
+		"context_pack_digest":       selected.Artifact.ContextPackDigest,
+		"retrieval_receipt_digest":  selected.Artifact.RetrievalReceiptDigest,
+		"expires_at":                selected.Artifact.ExpiresAt,
+		"consumption_state":         "not_consumed",
+		"requires_explicit_cli_use": true,
 	}, ""
 }
 

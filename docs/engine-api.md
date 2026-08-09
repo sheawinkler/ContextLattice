@@ -69,6 +69,52 @@ The compiler preserves the same output boundary guarantees as other agent
 contracts: no raw provider overflow shapes, no secrets fields, no unbounded
 lists, and no log-level/volatile artifacts promoted into graph-backed evidence.
 
+### Continuous Cognition
+
+`POST /memory/continuous-cognition` and its agent-tool twin
+`POST /tools/continuous_cognition` return `continuous_cognition.v1`. The
+allowlisted operations are `observe`, `investigate`, `status`, `outcome`,
+`evaluate`, `rollback`, and `retire`.
+
+- `observe` and `status` project the fixed-boundary objective, session, proof,
+  retrieval-plan, Utility cohort, and one-shot preparation state without
+  retrieval or mutation.
+- `investigate` performs exactly one bounded read-only scan of the current
+  authoritative local memory index. It never invokes a model, compiler,
+  adapter, network source, runner, or filesystem write.
+- `outcome` and `evaluate` join only the exact response-bound durable quality
+  admission, authoritative outcome, persisted Utility observation, and
+  independent verification evidence. Missing, conflicting, future, legacy
+  unbound, or cross-scope evidence remains unavailable. Causal eligibility is
+  true only when the existing leakage-free exact matched-control projector
+  accepts the pair.
+- `rollback` and `retire` return bounded advice over existing one-shot or
+  terminal objective state. They do not mutate, delete, or manufacture a
+  lifecycle record.
+
+All operations replace caller-supplied workspace hints with the authenticated
+owner workspace, accept an optional RFC3339 `as_of`, return only opaque refs
+and digests, and carry a three-round loop guard. Context preparation remains a
+separate explicit CLI-worker lifecycle: scheduling does not execute a model,
+and `context-prep-use` atomically consumes an eligible artifact once.
+
+The canonical local agent surface is one request per invocation:
+
+```bash
+contextlattice_continuous_cognition status "prepare the next verified move" \
+  --project contextlattice --session-id <session-id> --agent-id <agent-id> \
+  --task-id <task-id> --objective-id <objective-id> --as-of <rfc3339> --pretty
+```
+
+Continuous Cognition intentionally does not return a raw preparation ID,
+profile digest, source generation, claim token, or context artifact. The worker
+that scheduled and claimed preparation retains those owner-scoped values and
+hands them directly to `contextlattice agent-fit context-prep-use`. Cognition
+can prove that a current-authorization preparation is ready or consumed; it is
+not a credential-recovery or implicit-use path. A preparation created under a
+different authorization digest projects `authorization_changed`, never
+`ready`.
+
 ### Verified Utility Ledger
 
 The CLI is the prescribed interface:

@@ -1,0 +1,1119 @@
+#!/usr/bin/env python3
+"""Run a bounded, deterministic, public-safe recall-response evaluation offline."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import math
+import re
+import sys
+from pathlib import Path
+from typing import Any
+
+
+ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_BASELINE = ROOT / "docs" / "evals" / "fixtures" / "recall-response-advisory-baseline.v1.json"
+DEFAULT_HOLDOUT = ROOT / "docs" / "evals" / "fixtures" / "recall-response-advisory-holdout.v1.json"
+DEFAULT_LEDGER = ROOT / "docs" / "evals" / "recall-response-advisory.v1.json"
+
+sys.path.insert(0, str(ROOT / "scripts"))
+from agent_contracts import (  # noqa: E402
+    attach_format_contract,
+    load_agent_contracts_registry,
+    validate_agent_contract_payload,
+)
+
+EVAL_SCHEMA_ID = "recall_response_offline_eval.v1"
+FIXTURE_SCHEMA_ID = "recall_response_eval_fixture.v1"
+CONTRACT_SCHEMA_ID = "recall_response.v1"
+CONTINUOUS_COGNITION_SCHEMA_ID = "continuous_cognition.v1"
+CONTINUOUS_COGNITION_OPERATIONS = (
+    "observe", "investigate", "status", "outcome", "evaluate", "rollback", "retire",
+)
+CONDITIONS = ("no_recall", "retrieval_only", "static_recall_response", "continuous_cognition")
+METRICS = (
+    "contract_validity",
+    "evidence_precision",
+    "evidence_recall",
+    "citation_proof_integrity",
+    "correctness",
+    "currentness",
+    "conflict_handling",
+    "abstention",
+    "next_action",
+    "decision_impact",
+    "rank",
+    "numeric",
+    "diversity",
+    "latency_ms",
+    "tokens_in",
+    "tokens_out",
+    "tool_calls",
+    "failures",
+    "privacy",
+    "determinism",
+)
+RECALL_RESPONSE_FIELDS = (
+    "ok",
+    "schema_id",
+    "version",
+    "response_id",
+    "response_digest",
+    "request_scope",
+    "classification",
+    "answer",
+    "state",
+    "evidence",
+    "confidence",
+    "conflicts",
+    "gaps",
+    "inferences",
+    "next_action",
+    "action_boundary",
+    "disclosure",
+    "receipt_refs",
+    "outcome",
+    "writeback_required",
+    "format_contract",
+)
+FORBIDDEN_KEYS = {
+    "agent_packet",
+    "api_key",
+    "authorization",
+    "context_pack",
+    "content",
+    "credential",
+    "file_path",
+    "function_call",
+    "local_path",
+    "messages",
+    "password",
+    "path",
+    "paths",
+    "private_key",
+    "project",
+    "prompt",
+    "prompts",
+    "query",
+    "raw",
+    "raw_prompt",
+    "raw_retrieval",
+    "secret",
+    "secrets",
+    "text",
+    "timestamp",
+    "tool_calls",
+}
+PRIVATE_VALUE_RE = re.compile(r"/(?:Users|Volumes|private)/|secret-token|(?:^|[^a-z])(?:sk|ghp)_[a-z0-9_-]{8,}", re.IGNORECASE)
+REQUEST_FIELDS = {"scope_ref", "request_ref", "session_ref", "intent"}
+EVIDENCE_FIELDS = {
+    "evidence_ref",
+    "source_ref",
+    "citation_ref",
+    "rank",
+    "support",
+    "currentness",
+    "conflict_group",
+    "numeric_value",
+}
+EXPECTED_FIELDS = {
+    "required_evidence_refs",
+    "acceptable_evidence_refs",
+    "citation_refs",
+    "status",
+    "correctness",
+    "currentness",
+    "conflict_handling",
+    "abstain",
+    "next_action",
+    "decision_impact",
+    "ranked_evidence_refs",
+    "numeric_values",
+    "minimum_source_diversity",
+}
+
+
+def _canonical(value: Any) -> bytes:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+
+
+def _digest(value: Any) -> str:
+    return "sha256:" + hashlib.sha256(_canonical(value)).hexdigest()
+
+
+def _file_digest(path: Path) -> str:
+    return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _opaque(kind: str, value: str) -> str:
+    return "ref_" + hashlib.sha256(f"{kind}\x00{value}".encode("utf-8")).hexdigest()[:24]
+
+
+def _walk_public(value: Any) -> list[str]:
+    violations: list[str] = []
+
+    def visit(node: Any, location: str) -> None:
+        if isinstance(node, dict):
+            for key, child in node.items():
+                key_text = str(key)
+                if key_text.lower() in FORBIDDEN_KEYS:
+                    violations.append(f"forbidden_key:{location}.{key_text}")
+                visit(child, f"{location}.{key_text}")
+        elif isinstance(node, list):
+            for index, child in enumerate(node):
+                visit(child, f"{location}[{index}]")
+        elif isinstance(node, str) and PRIVATE_VALUE_RE.search(node):
+            violations.append(f"private_value:{location}")
+
+    visit(value, "$")
+    return violations
+
+
+def load_fixture(path: Path) -> dict[str, Any]:
+    raw = path.read_bytes()
+    if len(raw) > 256 * 1024:
+        raise ValueError("fixture exceeds bounded offline evaluation size")
+    fixture = json.loads(raw.decode("utf-8"))
+    if not isinstance(fixture, dict):
+        raise ValueError("fixture must be a JSON object")
+    if fixture.get("schema_id") != FIXTURE_SCHEMA_ID:
+        raise ValueError("fixture schema_id is not recall_response_eval_fixture.v1")
+    if fixture.get("split") not in {"baseline", "holdout"}:
+        raise ValueError("fixture split must be baseline or holdout")
+    if fixture.get("synthetic") is not True:
+        raise ValueError("offline fixture must declare synthetic=true")
+    cases = fixture.get("cases")
+    if not isinstance(cases, list) or not cases or len(cases) > 64:
+        raise ValueError("fixture case count is outside the bounded range")
+    violations = _walk_public(fixture)
+    if violations:
+        raise ValueError("fixture failed public-safe validation: " + ", ".join(violations[:4]))
+    ids: set[str] = set()
+    for case in cases:
+        if not isinstance(case, dict) or not isinstance(case.get("case_id"), str):
+            raise ValueError("fixture case is missing case_id")
+        case_id = case["case_id"].strip()
+        if not case_id or len(case_id.encode("utf-8")) > 160 or "\x00" in case_id:
+            raise ValueError("fixture case_id is outside the bounded range")
+        if case_id in ids:
+            raise ValueError(f"fixture contains duplicate case_id: {case_id}")
+        ids.add(case_id)
+        request = case.get("request")
+        evidence = case.get("evidence")
+        expected = case.get("expected")
+        if not isinstance(request, dict) or not isinstance(evidence, list) or not isinstance(expected, dict):
+            raise ValueError(f"fixture case is incomplete: {case_id}")
+        if set(request) != REQUEST_FIELDS or set(expected) != EXPECTED_FIELDS:
+            raise ValueError(f"fixture case has an unknown or missing field: {case_id}")
+        if any(
+            not isinstance(request[field], str)
+            or not request[field].strip()
+            or len(request[field].encode("utf-8")) > 160
+            or "\x00" in request[field]
+            for field in REQUEST_FIELDS
+        ):
+            raise ValueError(f"fixture request is outside the bounded range: {case_id}")
+        refs: set[str] = set()
+        for row in evidence:
+            if not isinstance(row, dict) or set(row) != EVIDENCE_FIELDS:
+                raise ValueError(f"evidence row is incomplete: {case_id}")
+            for field in ("evidence_ref", "source_ref", "citation_ref", "support", "currentness", "conflict_group"):
+                value = row[field]
+                if not isinstance(value, str) or len(value.encode("utf-8")) > 160 or "\x00" in value:
+                    raise ValueError(f"evidence row is outside the bounded range: {case_id}")
+            if not row["evidence_ref"] or not row["source_ref"] or not row["citation_ref"]:
+                raise ValueError(f"evidence identity is missing: {case_id}")
+            if isinstance(row["rank"], bool) or not isinstance(row["rank"], int) or not 1 <= row["rank"] <= 64:
+                raise ValueError(f"evidence rank is invalid: {case_id}")
+            if row["support"] not in {"direct", "context", "distractor"}:
+                raise ValueError(f"evidence support is invalid: {case_id}")
+            if row["currentness"] not in {"current", "stale", "superseded", "unknown"}:
+                raise ValueError(f"evidence currentness is invalid: {case_id}")
+            numeric_value = row["numeric_value"]
+            if numeric_value is not None and (
+                isinstance(numeric_value, bool)
+                or not isinstance(numeric_value, (int, float))
+                or not math.isfinite(float(numeric_value))
+            ):
+                raise ValueError(f"evidence numeric_value is invalid: {case_id}")
+            if row["evidence_ref"] in refs:
+                raise ValueError(f"fixture contains duplicate evidence_ref: {case_id}")
+            refs.add(row["evidence_ref"])
+        for field in ("required_evidence_refs", "acceptable_evidence_refs", "citation_refs", "ranked_evidence_refs", "numeric_values"):
+            if not isinstance(expected[field], list):
+                raise ValueError(f"fixture expected list is invalid: {case_id}")
+        for field in ("required_evidence_refs", "acceptable_evidence_refs", "ranked_evidence_refs"):
+            if not all(isinstance(value, str) and value in refs for value in expected[field]):
+                raise ValueError(f"fixture expected evidence reference is invalid: {case_id}")
+        citation_refs = {row["citation_ref"] for row in evidence}
+        if not all(isinstance(value, str) and value in citation_refs for value in expected["citation_refs"]):
+            raise ValueError(f"fixture expected citation reference is invalid: {case_id}")
+        if any(
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+            for value in expected["numeric_values"]
+        ):
+            raise ValueError(f"fixture expected numeric value is invalid: {case_id}")
+        if not isinstance(expected["abstain"], bool):
+            raise ValueError(f"fixture abstention label is invalid: {case_id}")
+        if isinstance(expected["minimum_source_diversity"], bool) or not isinstance(expected["minimum_source_diversity"], int):
+            raise ValueError(f"fixture diversity label is invalid: {case_id}")
+        for field in ("status", "correctness", "currentness", "conflict_handling", "next_action", "decision_impact"):
+            value = expected[field]
+            if not isinstance(value, str) or not value or len(value.encode("utf-8")) > 160 or "\x00" in value:
+                raise ValueError(f"fixture expected scalar is invalid: {case_id}")
+    return fixture
+
+
+def _split_cases(baseline: dict[str, Any], holdout: dict[str, Any]) -> list[dict[str, Any]]:
+    if baseline.get("split") != "baseline" or holdout.get("split") != "holdout":
+        raise ValueError("baseline and holdout files must retain their declared split")
+    baseline_ids = {case["case_id"] for case in baseline["cases"]}
+    holdout_ids = {case["case_id"] for case in holdout["cases"]}
+    if baseline_ids.intersection(holdout_ids):
+        raise ValueError("baseline and holdout cases overlap")
+    cases: list[dict[str, Any]] = []
+    for split, fixture in (("baseline", baseline), ("holdout", holdout)):
+        for case in fixture["cases"]:
+            copied = dict(case)
+            copied["_split"] = split
+            cases.append(copied)
+    return cases
+
+
+def _evidence_rows(case: dict[str, Any]) -> list[dict[str, Any]]:
+    return sorted(case["evidence"], key=lambda row: (int(row.get("rank", 999)), str(row["evidence_ref"])))
+
+
+def _static_policy(case: dict[str, Any]) -> dict[str, Any]:
+    """Select bounded evidence from request/evidence attributes only.
+
+    Expected labels belong exclusively to scoring. Changing a fixture label
+    must not change this projection.
+    """
+
+    rows = _evidence_rows(case)
+    eligible = [row for row in rows if str(row.get("support")) != "distractor"]
+    if not eligible:
+        return {
+            "rows": [],
+            "status": "abstain",
+            "abstain": True,
+            "next_action": "retrieve_or_verify",
+            "decision_impact": "none",
+            "conflict_groups": [],
+        }
+
+    conflict_groups = sorted({str(row.get("conflict_group")) for row in eligible if row.get("conflict_group")})
+    if conflict_groups:
+        selected = [row for row in eligible if str(row.get("conflict_group")) in conflict_groups]
+        return {
+            "rows": selected,
+            "status": "verify",
+            "abstain": True,
+            "next_action": "verify_conflict",
+            "decision_impact": "high",
+            "conflict_groups": conflict_groups,
+        }
+
+    current_direct = [
+        row for row in eligible if str(row.get("support")) == "direct" and str(row.get("currentness")) == "current"
+    ]
+    if not current_direct:
+        return {
+            "rows": eligible[:2],
+            "status": "verify",
+            "abstain": True,
+            "next_action": "verify_currentness",
+            "decision_impact": "medium",
+            "conflict_groups": [],
+        }
+
+    intent = str(case.get("request", {}).get("intent") or "")
+    source_count = len({str(row.get("source_ref")) for row in current_direct[:2]})
+    return {
+        "rows": current_direct[:2],
+        "status": "answer",
+        "abstain": False,
+        "next_action": "verify_before_action",
+        "decision_impact": "high" if intent == "numeric" or (intent == "decision" and source_count <= 1) else "medium",
+        "conflict_groups": [],
+    }
+
+
+def _response_digest_material(response: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in response.items() if key not in {"format_contract", "response_digest"}}
+
+
+def _component_digest(component: dict[str, Any]) -> str:
+    return _digest({key: value for key, value in component.items() if key != "component_digest"})
+
+
+def _build_static_response(case: dict[str, Any], policy: dict[str, Any]) -> dict[str, Any]:
+    rows = policy["rows"]
+    request = case["request"]
+    selected_refs = [row["evidence_ref"] for row in rows]
+    conflict_groups = list(policy["conflict_groups"])
+    abstain = bool(policy["abstain"])
+    status = str(policy["status"])
+    posture = "abstain" if abstain else "advisory"
+    components: list[dict[str, Any]] = []
+    for ordinal, row in enumerate(rows, start=1):
+        component = {
+            "component_ref": row["evidence_ref"],
+            "kind": "evidence",
+            "ordinal": ordinal,
+        }
+        component["component_digest"] = _component_digest(component)
+        components.append(component)
+    evidence = [
+        {
+            "evidence_ref": row["evidence_ref"],
+            "source_ref": row["source_ref"],
+            "citation_ref": row["citation_ref"],
+            "rank": int(row["rank"]),
+            "support_status": row["support"],
+            "freshness": row["currentness"],
+        }
+        for row in rows
+    ]
+    response: dict[str, Any] = {
+        "ok": True,
+        "schema_id": CONTRACT_SCHEMA_ID,
+        "version": 1,
+        "request_scope": {
+            "scope_digest": _opaque("scope", str(request["scope_ref"])),
+            "query_digest": _opaque("request", str(request["request_ref"])),
+            "workspace_ref": _opaque("workspace", case["case_id"]),
+            "project_ref": _opaque("project", case["case_id"]),
+            "topic_ref": _opaque("topic", case["case_id"]),
+            "agent_ref": _opaque("agent", case["case_id"]),
+            "session_ref": _opaque("session", str(request["session_ref"])),
+            "task_ref": _opaque("task", case["case_id"]),
+            "task_identity_ref": _opaque("task_identity", case["case_id"]),
+            "execution_lane_ref": _opaque("execution_lane", "offline_fixture"),
+            "retrieval_intent": str(request["intent"]),
+        },
+        "classification": {
+            "jobs": ["look_up"],
+            "objects": ["fact"],
+            "temporal_mode": str(request["intent"]),
+            "evidence_state": "contested" if conflict_groups else ("degraded" if abstain else "clean"),
+            "consequence": "informational",
+            "posture": posture,
+        },
+        "answer": {
+            "summary": "Synthetic bounded evidence response.",
+            "answer_mode": "abstention" if abstain else "bounded_evidence",
+            "basis": ["synthetic_fixture", "opaque_proof_refs"],
+            "claim_refs": selected_refs,
+            "components": components,
+            "progressive_disclosure": {
+                "level": "summary",
+                "available_levels": ["summary", "proof_refs", "next_action"],
+                "next_level_requires": "independent verification",
+            },
+        },
+        "state": {
+            "status": status,
+            "source_complete": bool(rows),
+            "evidence_count": len(rows),
+            "conflict_count": len(conflict_groups),
+            "gap_count": 1 if abstain else 0,
+            "retrieval_mode": "offline_fixture",
+        },
+        "evidence": evidence,
+        "confidence": {
+            "label": "abstain" if abstain else "advisory",
+            "score": 0.0 if abstain else 0.8,
+            "basis": ["synthetic_evidence_refs"],
+            "calibrated": False,
+        },
+        "conflicts": [
+            {
+                "conflict_ref": _opaque("conflict", group),
+                "evidence_refs": [row["evidence_ref"] for row in rows if row.get("conflict_group") == group],
+                "status": "contested",
+            }
+            for group in conflict_groups
+        ],
+        "gaps": (
+            [{"code": "verification_required", "material": True, "reason": "Independent verification is required before action."}]
+            if abstain
+            else []
+        ),
+        "inferences": [
+            {
+                "inference_id": _opaque("inference", case["case_id"]),
+                "claim_ref": "response_state",
+                "basis_refs": selected_refs,
+                "status": "deterministic_metadata_only",
+                "confidence": 0.0,
+                "disclosure": "This is response-state metadata, not an independent fact.",
+            }
+        ],
+        "next_action": {
+            "kind": "verify" if abstain else "review",
+            "label": str(policy["next_action"]),
+            "reason": "The response is advisory-only and does not authorize external mutation.",
+            "requires_verification": True,
+            "authority": "advisory_only",
+            "execution_performed": False,
+        },
+        "action_boundary": {
+            "can_act": False,
+            "requires_confirmation": True,
+            "allowed": ["retrieve_missing_sources", "verify_evidence"],
+            "forbidden": ["external_mutation", "credential_access", "raw_memory_export"],
+            "reason": "Advisory recall responses never authorize mutation.",
+            "execution_performed": False,
+        },
+        "disclosure": {
+            "bounded": True,
+            "raw_retrieval_included": False,
+            "raw_prompt_included": False,
+            "paths_included": False,
+            "secrets_included": False,
+            "inference_boundary": "Only opaque references and deterministic metadata are returned.",
+            "omission_policy": "Unverified or omitted evidence never becomes implicit support.",
+        },
+        "receipt_refs": [row["citation_ref"] for row in rows],
+        "outcome": {
+            "status": "not_attributable",
+            "attributable": False,
+            "receipt_id": "",
+            "execution_performed": False,
+        },
+        "writeback_required": True,
+    }
+    response["response_id"] = "rr_" + _digest(response).split(":", 1)[1][:24]
+    response["response_digest"] = _digest(_response_digest_material(response))
+    return attach_format_contract(CONTRACT_SCHEMA_ID, response, load_agent_contracts_registry())
+
+
+def validate_recall_response(response: Any) -> bool:
+    if not isinstance(response, dict) or set(response) != set(RECALL_RESPONSE_FIELDS):
+        return False
+    if response.get("ok") is not True or response.get("schema_id") != CONTRACT_SCHEMA_ID or response.get("version") != 1:
+        return False
+    response_id = response.get("response_id")
+    digest = response.get("response_digest")
+    if not isinstance(response_id, str) or not re.fullmatch(r"rr_[0-9a-f]{24}", response_id):
+        return False
+    if not isinstance(digest, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+        return False
+    if _digest(_response_digest_material(response)) != digest:
+        return False
+    registry = load_agent_contracts_registry()
+    if validate_agent_contract_payload(CONTRACT_SCHEMA_ID, response, registry):
+        return False
+    contract = response.get("format_contract")
+    if not isinstance(contract, dict) or contract.get("schema_id") != CONTRACT_SCHEMA_ID or contract.get("contract_valid") is not True:
+        return False
+    if response.get("action_boundary", {}).get("can_act") is not False:
+        return False
+    disclosure = response.get("disclosure", {})
+    if any(disclosure.get(key) is not False for key in ("raw_retrieval_included", "raw_prompt_included", "paths_included", "secrets_included")):
+        return False
+    if response.get("disclosure", {}).get("bounded") is not True:
+        return False
+    if _walk_public(response):
+        return False
+    max_bytes = int(registry["contracts"][CONTRACT_SCHEMA_ID].get("max_total_json_bytes") or 0)
+    return max_bytes > 0 and len(_canonical(response)) <= max_bytes
+
+
+def _continuous_cognition_digest_material(response: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in response.items()
+        if key not in {"cognition_digest", "format_contract"}
+    }
+
+
+def _build_continuous_cognition_response(
+    case: dict[str, Any],
+    policy: dict[str, Any],
+    operation: str = "observe",
+) -> dict[str, Any]:
+    if operation not in CONTINUOUS_COGNITION_OPERATIONS:
+        raise ValueError(f"unsupported continuous cognition operation: {operation}")
+    request = case["request"]
+    rows = policy["rows"]
+    request_scope = {
+        "scope_digest": _digest({"request": request, "operation": operation}),
+        "query_digest": _digest({"request_ref": request["request_ref"], "intent": request["intent"]}),
+        "workspace_ref": _opaque("workspace", request["scope_ref"]),
+        "project_ref": _opaque("project", request["scope_ref"]),
+        "topic_ref": _opaque("topic", request["intent"]),
+        "agent_ref": _opaque("agent", request["session_ref"]),
+        "session_ref": _opaque("session", request["session_ref"]),
+        "task_ref": _opaque("task", request["request_ref"]),
+        "task_identity_ref": _opaque("task_identity", request["request_ref"]),
+        "execution_lane_ref": _opaque("execution_lane", request["scope_ref"]),
+        "retrieval_intent": "decision",
+        "cycle_ref": _opaque("cycle", case["case_id"]),
+    }
+    source_anchor_digest = _digest({
+        "selected_evidence_refs": _selected_refs(rows),
+        "conflict_groups": policy["conflict_groups"],
+        "status": policy["status"],
+    })
+    material_gap = bool(policy["abstain"])
+    gaps = []
+    if material_gap:
+        gaps.append({
+            "code": "synthetic_evidence_gap",
+            "source": "offline_fixture",
+            "material": True,
+            "detail_ref": _opaque("gap", case["case_id"]),
+        })
+    decision = "continue"
+    if policy["status"] == "verify":
+        decision = "investigate"
+    elif policy["abstain"]:
+        decision = "abstain"
+    proof_timeline_ref = _opaque("proof_timeline", source_anchor_digest)
+    phase_by_operation = {
+        "observe": "frontier", "investigate": "investigation", "status": "status",
+        "outcome": "outcome", "evaluate": "evaluation", "rollback": "rollback",
+        "retire": "retirement",
+    }
+    progress_by_operation = {
+        "observe": "observed", "investigate": "investigated", "status": "status",
+        "outcome": "outcome_projected", "evaluate": "evaluation_projected",
+        "rollback": "rollback_advisory", "retire": "retirement_advisory",
+    }
+    response: dict[str, Any] = {
+        "ok": True,
+        "schema_id": CONTINUOUS_COGNITION_SCHEMA_ID,
+        "version": 1,
+        "cognition_id": _opaque("cognition", request_scope["scope_digest"]),
+        "operation": operation,
+        "phase": phase_by_operation[operation],
+        "decision": decision,
+        "request_scope": request_scope,
+        "observation": {
+            "objective_graph_ref": _opaque("objective_graph", request["request_ref"]),
+            "session_rollup_ref": _opaque("session_rollup", request["session_ref"]),
+            "continuity_zero_ref": _opaque("continuity_zero", request["session_ref"]),
+            "proof_timeline_ref": proof_timeline_ref,
+            "retrieval_plan_ref": _opaque("retrieval_plan", request["request_ref"]),
+            "utility_snapshot_ref": "ref_utility_snapshot_unavailable",
+            "lifecycle_proof_ref": "ref_lifecycle_proof_unavailable",
+            "source_anchor_digest": source_anchor_digest,
+            "source_complete": not material_gap,
+            "gaps": gaps,
+        },
+        "frontier": {
+            "frontier_id": _opaque("frontier", source_anchor_digest),
+            "objective_state": "active",
+            "uncertainty": 1.0 if material_gap else 0.25,
+            "next_action_class": str(policy["next_action"]),
+            "utility_score": 0.0,
+            "expected_utility": {
+                "action_change_probability": 0.0,
+                "consequence_if_wrong": 0.0,
+                "evidence_reliability": 0.0,
+                "acquisition_cost": 0.0,
+                "score": 0.0,
+            },
+            "stop_reason": "source_gap" if material_gap else "bounded_frontier",
+        },
+        "investigation": {
+            "state": "not_executed" if operation == "investigate" else "not_requested",
+            "mode": "read_only_investigation" if operation == "investigate" else "read_only",
+            "context_pack_ref": "ref_context_pack_unavailable",
+            "retrieval_receipt_ref": "ref_retrieval_receipt_unavailable",
+            "source_coverage": {
+                "retrieval_count": 0,
+                "compiler_count": 0,
+                "evidence_ref_count": 0,
+                "scanned_count": 0,
+                "truncated": False,
+            },
+            "mutations_suppressed": True,
+            "execution_performed": False,
+            "network_calls": 0,
+        },
+        "activation": {
+            "state": "inactive",
+            "prep_id": "ref_context_prep_unavailable",
+            "approval_ref": "ref_approval_unavailable",
+            "authorization_ref": "ref_authorization_unavailable",
+            "execution_owner": "external_cli_worker",
+            "one_shot": True,
+            "gateway_execution_performed": False,
+        },
+        "outcome": {
+            "state": "absent" if operation in {"outcome", "evaluate"} else "not_requested",
+            "outcome_ref": "ref_outcome_unavailable",
+            "proof_ref": "ref_proof_unavailable",
+            "utility_observation_ref": "ref_utility_observation_unavailable",
+            "independently_verified": False,
+            "causal_eligible": False,
+        },
+        "evaluation": {
+            "state": "unavailable" if operation == "evaluate" else "not_requested",
+            "utility_status": "not_evaluated",
+            "verified": False,
+            "causal_eligible": False,
+            "reason": "outcome_evaluation_not_requested",
+        },
+        "rollback": {
+            "state": "not_recommended" if operation == "rollback" else "not_requested",
+            "reason_ref": "ref_rollback_reason_unavailable",
+            "target_ref": "ref_rollback_target_unavailable",
+        },
+        "retirement": {
+            "state": "not_recommended" if operation == "retire" else "not_requested",
+            "reason_ref": "ref_retirement_reason_unavailable",
+            "target_ref": "ref_retirement_target_unavailable",
+        },
+        "progress": {
+            "status": progress_by_operation[operation],
+            "stage": phase_by_operation[operation],
+            "round": 0,
+            "max_rounds": 3,
+            "proof_timeline_ref": proof_timeline_ref,
+            "loop_guard": {
+                "cycle_ref": request_scope["cycle_ref"],
+                "source_anchor_digest": source_anchor_digest,
+                "round": 0,
+                "max_rounds": 3,
+                "dedupe_decision": "not_persisted",
+                "persisted": False,
+            },
+        },
+        "safety": {
+            "advisory_only": True,
+            "automatic_model_execution": False,
+            "automatic_external_mutation": False,
+            "runner_dispatch": False,
+            "filesystem_mutation": False,
+            "gateway_execution_performed": False,
+            "requires_explicit_authorization": True,
+            "requires_external_worker": True,
+            "network_calls": 0,
+        },
+        "gaps": gaps,
+        "writeback_required": True,
+    }
+    response["cognition_digest"] = _digest(_continuous_cognition_digest_material(response))
+    return attach_format_contract(CONTINUOUS_COGNITION_SCHEMA_ID, response, load_agent_contracts_registry())
+
+
+def validate_continuous_cognition_response(response: Any) -> bool:
+    if not isinstance(response, dict):
+        return False
+    if response.get("ok") is not True or response.get("schema_id") != CONTINUOUS_COGNITION_SCHEMA_ID or response.get("version") != 1:
+        return False
+    digest = response.get("cognition_digest")
+    if not isinstance(digest, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+        return False
+    if _digest(_continuous_cognition_digest_material(response)) != digest:
+        return False
+    registry = load_agent_contracts_registry()
+    if validate_agent_contract_payload(CONTINUOUS_COGNITION_SCHEMA_ID, response, registry):
+        return False
+    contract = response.get("format_contract")
+    if not isinstance(contract, dict) or contract.get("schema_id") != CONTINUOUS_COGNITION_SCHEMA_ID or contract.get("contract_valid") is not True:
+        return False
+    safety = response.get("safety", {})
+    if safety.get("advisory_only") is not True or any(
+        safety.get(key) is not False
+        for key in (
+            "automatic_model_execution", "automatic_external_mutation", "runner_dispatch",
+            "filesystem_mutation", "gateway_execution_performed",
+        )
+    ):
+        return False
+    if _walk_public(response):
+        return False
+    max_bytes = int(registry["contracts"][CONTINUOUS_COGNITION_SCHEMA_ID].get("max_total_json_bytes") or 0)
+    return max_bytes > 0 and len(_canonical(response)) <= max_bytes
+
+
+def _continuous_cognition_operation_matrix(case: dict[str, Any]) -> dict[str, Any]:
+    policy = _static_policy(case)
+    responses = {
+        operation: _build_continuous_cognition_response(case, policy, operation)
+        for operation in CONTINUOUS_COGNITION_OPERATIONS
+    }
+    return {
+        "operations": list(CONTINUOUS_COGNITION_OPERATIONS),
+        "all_valid": all(validate_continuous_cognition_response(response) for response in responses.values()),
+        "all_deterministic": all(
+            _canonical(response) == _canonical(_build_continuous_cognition_response(case, policy, operation))
+            for operation, response in responses.items()
+        ),
+        "operation_digests": {
+            operation: response["cognition_digest"]
+            for operation, response in responses.items()
+        },
+        "external_execution_claimed": any(
+            bool(response["safety"]["gateway_execution_performed"])
+            for response in responses.values()
+        ),
+    }
+
+
+def _selected_refs(rows: list[dict[str, Any]]) -> list[str]:
+    return [str(row["evidence_ref"]) for row in rows]
+
+
+def _case_metrics(case: dict[str, Any], condition: str, projection: dict[str, Any]) -> dict[str, Any]:
+    expected = case["expected"]
+    rows = projection["rows"]
+    selected = _selected_refs(rows)
+    selected_set = set(selected)
+    required = set(expected.get("required_evidence_refs", []))
+    acceptable = set(expected.get("acceptable_evidence_refs", []))
+    expected_citations = set(expected.get("citation_refs", []))
+    citations = {str(row.get("citation_ref")) for row in rows if row.get("citation_ref")}
+    precision = (len(selected_set.intersection(acceptable)) / len(selected_set)) if selected_set else (1.0 if not acceptable else 0.0)
+    recall = (len(selected_set.intersection(required)) / len(required)) if required else (1.0 if not selected_set else 0.0)
+    if expected_citations:
+        citation = 1.0 if expected_citations.issubset(citations) and all(row.get("citation_ref") for row in rows if row["evidence_ref"] in required) else 0.0
+    else:
+        citation = 1.0 if not citations else 0.0
+    response = projection.get("response")
+    valid = (
+        validate_continuous_cognition_response(response)
+        if condition == "continuous_cognition"
+        else validate_recall_response(response)
+    )
+    predicted_status = str(projection.get("status") or "")
+    predicted_abstain = bool(projection.get("abstain"))
+    if expected.get("status") == "answer":
+        correctness = 1.0 if required.issubset(selected_set) and predicted_status == "answer" else 0.0
+    else:
+        correctness = 1.0 if predicted_abstain and predicted_status in {"abstain", "verify"} else 0.0
+    expected_currentness = str(expected.get("currentness") or "unknown")
+    selected_required_rows = [row for row in rows if row["evidence_ref"] in required]
+    currentness_values = {str(row.get("currentness")) for row in selected_required_rows}
+    currentness = 1.0 if (not required and expected_currentness == "unknown" and not selected) or (expected_currentness in currentness_values and len(currentness_values) == 1) or (expected_currentness == "contested" and predicted_status == "verify") else 0.0
+    conflict_rows = [row for row in case["evidence"] if row.get("conflict_group")]
+    conflict_refs = {row["evidence_ref"] for row in conflict_rows}
+    if conflict_refs:
+        conflict = 1.0 if conflict_refs.issubset(selected_set) and predicted_status in {"verify", "abstain"} else 0.0
+    else:
+        conflict = 1.0 if not projection.get("conflict_groups") else 0.0
+    abstention = 1.0 if predicted_abstain == bool(expected.get("abstain")) else 0.0
+    next_action = 1.0 if projection.get("next_action") == expected.get("next_action") else 0.0
+    decision_impact = 1.0 if projection.get("decision_impact") == expected.get("decision_impact") else 0.0
+    ranked = list(expected.get("ranked_evidence_refs", []))
+    if ranked and selected:
+        positions = [selected.index(ref) + 1 for ref in ranked if ref in selected]
+        rank = 1.0 / min(positions) if positions else 0.0
+    else:
+        rank = 1.0 if not ranked and not selected else 0.0
+    expected_numeric = list(expected.get("numeric_values", []))
+    numeric = [row.get("numeric_value") for row in rows if row.get("numeric_value") is not None and not projection.get("abstain")]
+    numeric_score = 1.0 if numeric == expected_numeric else 0.0
+    minimum_diversity = int(expected.get("minimum_source_diversity", 0) or 0)
+    source_count = len({str(row.get("source_ref")) for row in rows})
+    if minimum_diversity == 0:
+        diversity = 1.0 if source_count == 0 else 0.0
+    else:
+        diversity = min(1.0, source_count / minimum_diversity)
+    public_value = rows if response is None else response
+    privacy = 1.0 if not _walk_public(public_value) else 0.0
+    determinism = 1.0 if projection.get("deterministic") else 0.0
+    return {
+        "contract_validity": 1.0 if valid else 0.0,
+        "evidence_precision": round(precision, 6),
+        "evidence_recall": round(recall, 6),
+        "citation_proof_integrity": citation,
+        "correctness": correctness,
+        "currentness": currentness,
+        "conflict_handling": conflict,
+        "abstention": abstention,
+        "next_action": next_action,
+        "decision_impact": decision_impact,
+        "rank": round(rank, 6),
+        "numeric": numeric_score,
+        "diversity": round(diversity, 6),
+        "latency_ms": None,
+        "tokens_in": None,
+        "tokens_out": None,
+        "tool_calls": 0,
+        "failures": 0,
+        "privacy": privacy,
+        "determinism": determinism,
+        "split": case["_split"],
+        "condition": condition,
+    }
+
+
+def _project_case(case: dict[str, Any], condition: str) -> dict[str, Any]:
+    if condition == "continuous_cognition":
+        policy = _static_policy(case)
+        rows = policy["rows"]
+        response = _build_continuous_cognition_response(case, policy)
+        repeat = _build_continuous_cognition_response(case, policy)
+        return {
+            "available": True,
+            "implemented": True,
+            "rows": rows,
+            "response": response,
+            "status": policy["status"],
+            "abstain": policy["abstain"],
+            "next_action": policy["next_action"],
+            "decision_impact": policy["decision_impact"],
+            "conflict_groups": policy["conflict_groups"],
+            "deterministic": _canonical(response) == _canonical(repeat),
+        }
+    if condition == "no_recall":
+        return {
+            "available": True,
+            "implemented": True,
+            "rows": [],
+            "response": None,
+            "status": "abstain",
+            "abstain": True,
+            "next_action": None,
+            "decision_impact": "none",
+            "conflict_groups": [],
+            "deterministic": True,
+        }
+    if condition == "retrieval_only":
+        rows = _evidence_rows(case)
+        return {
+            "available": True,
+            "implemented": True,
+            "rows": rows,
+            "response": None,
+            "status": "retrieved",
+            "abstain": False,
+            "next_action": None,
+            "decision_impact": "none",
+            "conflict_groups": sorted({str(row.get("conflict_group")) for row in rows if row.get("conflict_group")}),
+            "deterministic": _canonical(rows) == _canonical(_evidence_rows(case)),
+        }
+    if condition == "static_recall_response":
+        policy = _static_policy(case)
+        rows = policy["rows"]
+        response = _build_static_response(case, policy)
+        repeat = _build_static_response(case, policy)
+        return {
+            "available": True,
+            "implemented": True,
+            "rows": rows,
+            "response": response,
+            "status": policy["status"],
+            "abstain": policy["abstain"],
+            "next_action": policy["next_action"],
+            "decision_impact": policy["decision_impact"],
+            "conflict_groups": policy["conflict_groups"],
+            "deterministic": _canonical(response) == _canonical(repeat),
+        }
+    raise ValueError(f"unsupported offline condition: {condition}")
+
+
+def _aggregate(case_metrics: dict[str, dict[str, Any]], available: bool) -> tuple[dict[str, float | None], dict[str, int]]:
+    metrics: dict[str, float | None] = {}
+    denominators: dict[str, int] = {}
+    for metric in METRICS:
+        values = [float(item[metric]) for item in case_metrics.values() if item.get(metric) is not None]
+        denominators[metric] = len(values)
+        metrics[metric] = round(sum(values) / len(values), 6) if values and available else None
+    return metrics, denominators
+
+
+def _evaluate_condition(cases: list[dict[str, Any]], condition: str) -> dict[str, Any]:
+    case_results: dict[str, dict[str, Any]] = {}
+    projections: dict[str, dict[str, Any]] = {}
+    for case in cases:
+        projection = _project_case(case, condition)
+        response = projection.get("response")
+        projections[case["case_id"]] = {
+            "selected_evidence_refs": _selected_refs(projection["rows"]),
+            "status": projection.get("status"),
+            "abstain": projection.get("abstain"),
+            "next_action": projection.get("next_action"),
+            "decision_impact": projection.get("decision_impact"),
+            "response_digest": (
+                response.get("response_digest") or response.get("cognition_digest")
+                if isinstance(response, dict)
+                else None
+            ),
+        }
+        case_results[case["case_id"]] = _case_metrics(case, condition, projection)
+    available = True
+    metrics, denominators = _aggregate(case_results, available)
+    split_counts = {
+        split: sum(1 for case in cases if case["_split"] == split)
+        for split in ("baseline", "holdout")
+    }
+    predicted_abstention = [
+        1.0 if bool(projections[case["case_id"]].get("abstain")) else 0.0
+        for case in cases
+    ]
+    result = {
+        "condition": condition,
+        "availability": "available",
+        "implemented": True,
+        "contract_status": {
+            "no_recall": "no_response",
+            "retrieval_only": "not_a_response_contract",
+            "static_recall_response": CONTRACT_SCHEMA_ID,
+            "continuous_cognition": CONTINUOUS_COGNITION_SCHEMA_ID,
+        }[condition],
+        "case_count": len(cases),
+        "split_counts": split_counts,
+        "case_metrics": case_results,
+        "projections": projections,
+        "metrics": metrics,
+        "metric_denominators": denominators,
+        "abstention_summary": {
+            "posture": "advisory",
+            "rate": round(sum(predicted_abstention) / len(predicted_abstention), 6) if predicted_abstention else 0.0,
+        },
+        "notes": [
+            "Offline projections are synthetic and do not establish production utility.",
+            "Response conditions are deterministic contract projections, not model quality or causal utility claims.",
+        ],
+    }
+    if condition == "continuous_cognition":
+        result["operation_contract_matrix"] = _continuous_cognition_operation_matrix(cases[0])
+    return result
+
+
+def validate_ledger(
+    ledger: dict[str, Any],
+    baseline: dict[str, Any],
+    holdout: dict[str, Any],
+    result: dict[str, Any] | None = None,
+    fixture_hashes: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    errors: list[str] = []
+    if ledger.get("schema_id") != "contextlattice_eval_ledger.v1":
+        errors.append("schema_id")
+    if ledger.get("ledger_version") != "recall_response_advisory.v1":
+        errors.append("ledger_version")
+    if ledger.get("advisory_status", {}).get("posture") != "abstention":
+        errors.append("advisory_status.posture")
+    utility = ledger.get("advisory_status", {}).get("independent_utility", {})
+    if utility.get("status") != "unproven" or utility.get("independently_verified_observations") != 0 or utility.get("causal_pairs") != 0:
+        errors.append("independent_utility")
+    if ledger.get("activation", {}).get("enabled") is not False:
+        errors.append("activation.enabled")
+    fixture = ledger.get("fixture_contract", {})
+    if fixture.get("baseline_id") != baseline.get("fixture_id") or fixture.get("holdout_id") != holdout.get("fixture_id"):
+        errors.append("fixture_contract.ids")
+    if fixture.get("synthetic") is not True or fixture.get("raw_local_data") is not False:
+        errors.append("fixture_contract.public_safe")
+    if ledger.get("conditions") != list(CONDITIONS):
+        errors.append("conditions")
+    evaluation = ledger.get("evaluation", {})
+    if evaluation.get("baseline_cases") != len(baseline.get("cases", [])) or evaluation.get("holdout_cases") != len(holdout.get("cases", [])):
+        errors.append("evaluation.case_counts")
+    if fixture_hashes is not None and ledger.get("fixture_hashes") != fixture_hashes:
+        errors.append("fixture_hashes")
+    recorded_operation_matrix = evaluation.get("continuous_cognition_operation_contract_matrix", {})
+    if recorded_operation_matrix.get("operations") != list(CONTINUOUS_COGNITION_OPERATIONS):
+        errors.append("evaluation.continuous_cognition_operations")
+    if any(
+        recorded_operation_matrix.get(key) is not expected
+        for key, expected in (
+            ("all_valid", True),
+            ("all_deterministic", True),
+            ("external_execution_claimed", False),
+        )
+    ):
+        errors.append("evaluation.continuous_cognition_operation_contract_matrix")
+    if result is not None:
+        recorded = evaluation.get("static_recall_response_metrics")
+        actual = result.get("results", {}).get("static_recall_response", {}).get("metrics")
+        if recorded != actual:
+            errors.append("evaluation.static_recall_response_metrics")
+        recorded_cognition = evaluation.get("continuous_cognition_metrics")
+        actual_cognition = result.get("results", {}).get("continuous_cognition", {}).get("metrics")
+        if recorded_cognition != actual_cognition:
+            errors.append("evaluation.continuous_cognition_metrics")
+        actual_operation_matrix = result.get("results", {}).get("continuous_cognition", {}).get("operation_contract_matrix", {})
+        for key in ("operations", "all_valid", "all_deterministic", "external_execution_claimed"):
+            if recorded_operation_matrix.get(key) != actual_operation_matrix.get(key):
+                errors.append("evaluation.continuous_cognition_operation_contract_matrix")
+                break
+    if ledger.get("limitations") in (None, [], ""):
+        errors.append("limitations")
+    public_violations = [violation for violation in _walk_public(ledger) if not violation.endswith(".tool_calls")]
+    if public_violations:
+        errors.extend(public_violations[:4])
+    return {"status": "pass" if not errors else "fail", "errors": errors}
+
+
+def _evaluate_loaded(baseline: dict[str, Any], holdout: dict[str, Any]) -> dict[str, Any]:
+    cases = _split_cases(baseline, holdout)
+    results = {condition: _evaluate_condition(cases, condition) for condition in CONDITIONS}
+    registry = load_agent_contracts_registry()
+    return {
+        "schema_id": EVAL_SCHEMA_ID,
+        "eval_version": "1.2.0",
+        "fixture_schema_id": FIXTURE_SCHEMA_ID,
+        "contract_registry": {
+            "registry_id": str(registry.get("registry_id") or "contextlattice_agent_output_contracts"),
+            "registry_version": int(registry.get("registry_version") or 0),
+        },
+        "fixture_metadata": {
+            "baseline_id": baseline["fixture_id"],
+            "holdout_id": holdout["fixture_id"],
+            "baseline_cases": len(baseline["cases"]),
+            "holdout_cases": len(holdout["cases"]),
+            "synthetic": True,
+            "raw_local_data": False,
+        },
+        "conditions": list(CONDITIONS),
+        "results": results,
+    }
+
+
+def evaluate_files(baseline_path: Path = DEFAULT_BASELINE, holdout_path: Path = DEFAULT_HOLDOUT, ledger_path: Path | None = DEFAULT_LEDGER) -> dict[str, Any]:
+    baseline_path = Path(baseline_path)
+    holdout_path = Path(holdout_path)
+    baseline = load_fixture(baseline_path)
+    holdout = load_fixture(holdout_path)
+    fixture_hashes = {"baseline": _file_digest(baseline_path), "holdout": _file_digest(holdout_path)}
+    first = _evaluate_loaded(baseline, holdout)
+    second = _evaluate_loaded(baseline, holdout)
+    first["deterministic"] = _canonical(first) == _canonical(second)
+    first["fixture_metadata"]["fixture_hashes"] = fixture_hashes
+    if ledger_path is None:
+        first["ledger_check"] = {"status": "not_requested", "errors": []}
+    else:
+        ledger = json.loads(Path(ledger_path).read_text(encoding="utf-8"))
+        first["ledger_check"] = validate_ledger(ledger, baseline, holdout, first, fixture_hashes)
+    return first
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--baseline", type=Path, default=DEFAULT_BASELINE)
+    parser.add_argument("--holdout", type=Path, default=DEFAULT_HOLDOUT)
+    parser.add_argument("--ledger", type=Path, default=DEFAULT_LEDGER)
+    parser.add_argument("--check", action="store_true", help="Require the checked-in public ledger to pass validation.")
+    parser.add_argument("--pretty", action="store_true")
+    args = parser.parse_args()
+    try:
+        payload = evaluate_files(args.baseline, args.holdout, args.ledger)
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
+        print(
+            json.dumps(
+                {"schema_id": EVAL_SCHEMA_ID, "ok": False, "error": "offline evaluation input validation failed", "error_type": type(exc).__name__},
+                sort_keys=True,
+            )
+        )
+        return 1
+    print(json.dumps(payload, indent=2 if args.pretty else None, sort_keys=True))
+    if args.check and (not payload.get("deterministic") or payload.get("ledger_check", {}).get("status") != "pass"):
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

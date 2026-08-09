@@ -147,7 +147,7 @@ func frontierT6HoldoutProfile(t *testing.T, scenario string, now time.Time) fron
 func frontierT6HoldoutReadyPrep(t *testing.T, now time.Time) (*frontierT6AgentFitStore, frontierT6Scope, frontierT6ContextPrepRecord) {
 	t.Helper()
 	store, _ := frontierT6TestStore(t, frontierT6StoreLimits{MaxPreps: 8})
-	scope := frontierT6Scope{WorkspaceID: "holdout_workspace", Project: "holdout_project"}
+	scope := frontierT6Scope{WorkspaceID: "holdout_workspace", Project: "holdout_project", SessionID: "holdout_session", AgentID: "holdout_agent"}
 	request := frontierT6TestPrepRequest(scope, now, "task_holdout", "run_tests", true)
 	scheduled, err := store.scheduleContextPrep(request, now)
 	if err != nil || scheduled.Decision != "scheduled" || scheduled.Prep == nil {
@@ -158,6 +158,7 @@ func frontierT6HoldoutReadyPrep(t *testing.T, now time.Time) (*frontierT6AgentFi
 		t.Fatalf("claim Frontier T6 holdout prep: claim=%#v found=%v err=%v", claim, found, err)
 	}
 	completed, err := store.completeContextPrep(
+		scope,
 		claim.Prep.PrepID,
 		claim.ClaimToken,
 		frontierT6TestPrepArtifact(claim.Prep, now.Add(2*time.Second)),
@@ -173,7 +174,7 @@ func frontierT6HoldoutPrep(t *testing.T, scenario string, now time.Time) frontie
 	t.Helper()
 	if scenario == "unapproved" || scenario == "low_confidence" {
 		store, _ := frontierT6TestStore(t, frontierT6StoreLimits{MaxPreps: 8})
-		scope := frontierT6Scope{WorkspaceID: "holdout_workspace", Project: "holdout_project"}
+		scope := frontierT6Scope{WorkspaceID: "holdout_workspace", Project: "holdout_project", SessionID: "holdout_session", AgentID: "holdout_agent"}
 		request := frontierT6TestPrepRequest(scope, now, "task_holdout", "run_tests", scenario != "unapproved")
 		if scenario == "low_confidence" {
 			request.PredictionConfidence = 0.5
@@ -204,7 +205,10 @@ func frontierT6HoldoutPrep(t *testing.T, scenario string, now time.Time) frontie
 	default:
 		t.Fatalf("unsupported Frontier T6 preparation scenario %q", scenario)
 	}
-	use := store.useContextPrep(scope, prep.PrepID, taskID, profileDigest, sourceGeneration, authorizationDigest, now.Add(3*time.Second))
+	use, err := store.useContextPrep(scope, prep.PrepID, taskID, profileDigest, sourceGeneration, authorizationDigest, now.Add(3*time.Second))
+	if err != nil {
+		t.Fatalf("use Frontier T6 holdout preparation: %v", err)
+	}
 	if use.Eligible || use.InjectionPerformed || !use.RequiresExplicitCLIUse || !frontierT6Contains(use.Reasons, expectedReason) {
 		t.Fatalf("stale Frontier T6 preparation was not rejected: scenario=%s result=%#v", scenario, use)
 	}
