@@ -16,6 +16,7 @@ const objectiveRuntimeStateContractID = "objective_runtime_state.v1"
 const antiSchemingContractID = "anti_scheming_protocol.v1"
 const agentPreflightResponseContractID = "agent_preflight_response.v1"
 const contextPackResponseContractID = "context_pack_response.v1"
+const recallResponseContractID = "recall_response.v1"
 const synthesisPackContractID = "synthesis_pack.v1"
 const dreamModeResponseContractID = "dream_mode_response.v1"
 const reviewModeResponseContractID = "review_mode_response.v1"
@@ -32,6 +33,7 @@ const agentRunTraceContractID = "agent_run_trace.v1"
 const agentProofTimelineContractID = "agent_proof_timeline.v1"
 const agentPacketDeltaOutputContractID = "agent_packet_delta.v1"
 const agentPacketReconstructionOutputContractID = "agent_packet_reconstruction.v1"
+const continuousCognitionContractID = "continuous_cognition.v1"
 const runAdvisorContractID = "run_advisor.v1"
 const retrievalProgressContractID = "retrieval_progress.v1"
 const steeringCommentContractID = "steering_comment.v1"
@@ -282,6 +284,7 @@ func preflightContractsSummary(findings []map[string]any, stats agentBoundarySta
 		objectiveRuntimeStateContractID,
 		antiSchemingContractID,
 		contextPackResponseContractID,
+		recallResponseContractID,
 		dreamModeResponseContractID,
 		reviewModeResponseContractID,
 		writebackResultContractID,
@@ -295,6 +298,7 @@ func preflightContractsSummary(findings []map[string]any, stats agentBoundarySta
 		agentPromptContextPackageContractID,
 		agentRunTraceContractID,
 		agentProofTimelineContractID,
+		continuousCognitionContractID,
 		runAdvisorContractID,
 		retrievalProgressContractID,
 		steeringCommentContractID,

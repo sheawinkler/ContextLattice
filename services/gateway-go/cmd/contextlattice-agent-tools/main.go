@@ -91,6 +91,7 @@ var nativeToolNames = map[string]string{
 	"contextlattice_skills_index":                    "skills-index",
 	"contextlattice_async_inbox_drain":               "async-inbox-drain",
 	"contextlattice_agent_fit":                       "agent-fit",
+	"contextlattice_continuous_cognition":            "continuous-cognition",
 	"contextlattice_continuity_zero":                 "continuity-zero",
 	"contextlattice_aggregate_signal":                "aggregate-signal",
 }
@@ -383,6 +384,8 @@ func (c *cli) run(argv []string) error {
 		return c.cmdAsyncInboxDrain(args)
 	case "agent-fit":
 		return c.cmdAgentFit(args)
+	case "continuous-cognition":
+		return c.cmdContinuousCognition(args)
 	case "continuity-zero":
 		return c.cmdContinuityZero(args)
 	case "aggregate-signal":
@@ -465,9 +468,10 @@ Advanced/compatibility commands:
   memory-graph-repair            audit or apply bounded identity-first hot-corpus edges
   memory-graph-efficacy          refresh graph holdouts and prove measured graph contribution
   skills-index                   active search plus quarantine-first source management
-  async-inbox-drain              bounded async continuation inbox drain for any agent
-  agent-fit                      steering, advisory selection, profiles, and context preparation
-  continuity-zero               restore one unambiguous active objective with bounded proof and next move
+	  async-inbox-drain              bounded async continuation inbox drain for any agent
+	  agent-fit                      steering, advisory selection, profiles, and context preparation
+	  continuous-cognition           bounded cognition observation, investigation, outcome, and lifecycle advice
+	  continuity-zero               restore one unambiguous active objective with bounded proof and next move
   aggregate-signal              preview, opt in, queue, release, inspect, or revoke bounded aggregate statistics
   portable-continuation          portable grants, imports, manifests, and continuation status
   skill-evolution                usage receipts, efficacy review, and skill lifecycle candidates
@@ -479,7 +483,7 @@ contextlattice_retrieval_plan, contextlattice_claim_write, contextlattice_claim_
 contextlattice_continuity_reconcile, contextlattice_objective_transition,
 contextlattice_objective_graph, contextlattice_decision_change,
 contextlattice_policy_candidate, contextlattice_policy_evaluate, contextlattice_skill_draft,
-contextlattice_passport_export, contextlattice_mesh_export, contextlattice_agent_fit, contextlattice_continuity_zero,
+contextlattice_passport_export, contextlattice_mesh_export, contextlattice_agent_fit, contextlattice_continuous_cognition, contextlattice_continuity_zero,
 contextlattice_aggregate_signal,
 contextlattice_write, contextlattice_agent_session, and other contextlattice_* commands.`)
 	return err
@@ -1019,6 +1023,18 @@ func (a parsedArgs) has(name string) bool {
 	return false
 }
 
+func boundedCLIInt(parsed parsedArgs, name string, fallback, minimum, maximum int) (int, error) {
+	raw, ok := parsed.values[name]
+	if !ok {
+		return fallback, nil
+	}
+	value, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || value < minimum || value > maximum {
+		return 0, fmt.Errorf("--%s must be between %d and %d", strings.ReplaceAll(name, "_", "-"), minimum, maximum)
+	}
+	return value, nil
+}
+
 func (a parsedArgs) boolString(name string) (bool, bool, error) {
 	raw, ok := a.values[name]
 	if !ok {
@@ -1099,14 +1115,26 @@ func currentGitRoot() string {
 	return ""
 }
 
+func privateConfigFileModeAllowed(mode os.FileMode, operatingSystem string) bool {
+	if !mode.IsRegular() {
+		return false
+	}
+	return operatingSystem == "windows" || mode.Perm() == 0o600
+}
+
 func (c *cli) requestJSON(ctx context.Context, method, path string, payload any, timeout float64) (map[string]any, int, error) {
+	parsed, status, _, err := c.requestJSONWithHeaders(ctx, method, path, payload, timeout, nil)
+	return parsed, status, err
+}
+
+func (c *cli) requestJSONWithHeaders(ctx context.Context, method, path string, payload any, timeout float64, requestHeaders http.Header) (map[string]any, int, http.Header, error) {
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(maxFloat(timeout, 1))*time.Second)
 	defer cancel()
 	var body io.Reader
 	if payload != nil {
 		raw, err := json.Marshal(payload)
 		if err != nil {
-			return nil, 0, err
+			return nil, 0, nil, err
 		}
 		body = bytes.NewReader(raw)
 	}
@@ -1116,7 +1144,7 @@ func (c *cli) requestJSON(ctx context.Context, method, path string, payload any,
 	}
 	req, err := http.NewRequestWithContext(ctx, method, target, body)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, nil, err
 	}
 	if payload != nil {
 		req.Header.Set("content-type", "application/json")
@@ -1124,25 +1152,32 @@ func (c *cli) requestJSON(ctx context.Context, method, path string, payload any,
 	if c.apiKey != "" {
 		req.Header.Set("x-api-key", c.apiKey)
 	}
+	for header, values := range requestHeaders {
+		for _, value := range values {
+			if strings.TrimSpace(value) != "" {
+				req.Header.Add(header, value)
+			}
+		}
+	}
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, nil, err
 	}
 	defer resp.Body.Close()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	if err != nil {
-		return nil, resp.StatusCode, err
+		return nil, resp.StatusCode, resp.Header.Clone(), err
 	}
 	parsed := map[string]any{}
 	if len(bytes.TrimSpace(raw)) > 0 {
 		if err := json.Unmarshal(raw, &parsed); err != nil {
-			return nil, resp.StatusCode, fmt.Errorf("decode %s: %w: %s", path, err, string(raw[:minInt(len(raw), 1000)]))
+			return nil, resp.StatusCode, resp.Header.Clone(), fmt.Errorf("decode %s: %w: %s", path, err, string(raw[:minInt(len(raw), 1000)]))
 		}
 	}
 	if resp.StatusCode >= 400 {
-		return parsed, resp.StatusCode, fmt.Errorf("%s %s returned status=%d payload=%s", method, path, resp.StatusCode, compactJSON(parsed))
+		return parsed, resp.StatusCode, resp.Header.Clone(), fmt.Errorf("%s %s returned status=%d payload=%s", method, path, resp.StatusCode, compactJSON(parsed))
 	}
-	return parsed, resp.StatusCode, nil
+	return parsed, resp.StatusCode, resp.Header.Clone(), nil
 }
 
 func (c *cli) emit(payload any, pretty bool) error {
@@ -1347,7 +1382,7 @@ func resolveContent(parsed parsedArgs) (string, error) {
 }
 
 func (c *cli) cmdPack(args []string) error {
-	return c.cmdPackWithRoute(args, "contextlattice_pack", "/memory/context-pack", "context-pack")
+	return c.cmdPackWithRouteMode(args, "contextlattice_pack", "/memory/context-pack", "context-pack", true)
 }
 
 func readBoundedJSONObject(path, expectedSchema string) (map[string]any, error) {
@@ -2708,7 +2743,11 @@ func (c *cli) cmdMeshStatus(args []string) error {
 }
 
 func (c *cli) cmdPackWithRoute(args []string, commandName string, route string, sessionTag string) error {
-	parsed := parseArgs(args, mergeStringFlags(commonStringFlags(), contextPackTokenBudgetStringFlags(), map[string]string{
+	return c.cmdPackWithRouteMode(args, commandName, route, sessionTag, false)
+}
+
+func (c *cli) cmdPackWithRouteMode(args []string, commandName string, route string, sessionTag string, allowResponse bool) error {
+	stringFlags := mergeStringFlags(commonStringFlags(), contextPackTokenBudgetStringFlags(), map[string]string{
 		"budget-chars":         "budget_chars",
 		"limit":                "limit",
 		"max-facts":            "max_facts",
@@ -2721,7 +2760,8 @@ func (c *cli) cmdPackWithRoute(args []string, commandName string, route string, 
 		"retrieval-intent":     "retrieval_intent",
 		"evidence-obligations": "evidence_obligations",
 		"base-packet-file":     "base_packet_file",
-	}), mergeBoolFlags(commonBoolFlags(), map[string]string{
+	})
+	boolFlags := mergeBoolFlags(commonBoolFlags(), map[string]string{
 		"blocking":        "blocking",
 		"nonblocking":     "nonblocking",
 		"compact":         "compact",
@@ -2731,9 +2771,25 @@ func (c *cli) cmdPackWithRoute(args []string, commandName string, route string, 
 		"strict":          "strict",
 		"auto-session":    "auto_session",
 		"no-auto-session": "no_auto_session",
-	}))
+	})
+	if allowResponse {
+		boolFlags["response"] = "response"
+	}
+	parsed := parseArgs(args, stringFlags, boolFlags)
+	responseMode := allowResponse && parsed.bool("response")
 	if parsed.bool("help") {
-		return c.emitUsage(commandName + " '<task>' [--project p] [--task-id id] [--topic-path t] [--mode balanced] [--base-packet-file trusted.json] [--full|--debug] [--pretty]")
+		usage := commandName + " '<task>' [--project p] [--task-id id] [--topic-path t] [--mode balanced] [--base-packet-file trusted.json] [--full|--debug] [--pretty]"
+		if allowResponse {
+			usage += " [--response]"
+		}
+		return c.emitUsage(usage)
+	}
+	if responseMode {
+		if parsed.bool("full") || parsed.bool("debug") || parsed.string("base_packet_file", "") != "" {
+			return errors.New("--response cannot be combined with Agent Packet or debug output options")
+		}
+		route = "/memory/recall/response"
+		sessionTag = "recall-response"
 	}
 	c.applyBaseURL(parsed)
 	query := strings.TrimSpace(strings.Join(parsed.pos, " "))
@@ -2745,7 +2801,11 @@ func (c *cli) cmdPackWithRoute(args []string, commandName string, route string, 
 	agentID := parsed.string("agent_id", envString("CONTEXTLATTICE_AGENT_ID", envString("MEMMCP_AGENT_ID", "")))
 	taskID := parsed.string("task_id", envString("CONTEXTLATTICE_TASK_ID", derivedAgentTaskID(project, query)))
 	if sessionID == "" && !parsed.bool("no_auto_session") && !autoSessionDisabled() {
-		sessionID = c.ensureSession(project, query, taskID, agentID, parsed.float("timeout", 30))
+		if responseMode {
+			sessionID = c.ensureRecallResponseSession(project, query, taskID, agentID, parsed.float("timeout", 30))
+		} else {
+			sessionID = c.ensureSession(project, query, taskID, agentID, parsed.float("timeout", 30))
+		}
 	}
 	blocking := parsed.bool("blocking") && !parsed.bool("nonblocking")
 	fullOutput := parsed.bool("full") || parsed.bool("debug")
@@ -2804,12 +2864,45 @@ func (c *cli) cmdPackWithRoute(args []string, commandName string, route string, 
 	if value := parsed.string("evidence_obligations", ""); value != "" {
 		payload["evidence_obligations"] = splitCSV(value)
 	}
-	raw, err := c.requestWithRetries(route, payload, parsed.float("timeout", 30), parsed.int("retries", 2), parsed.float("retry_delay", 1))
+	var raw map[string]any
+	var err error
+	if responseMode {
+		raw, err = c.requestRecallResponseWithRetries(route, payload, parsed.float("timeout", 30), parsed.int("retries", 2), parsed.float("retry_delay", 1))
+	} else {
+		raw, err = c.requestWithRetries(route, payload, parsed.float("timeout", 30), parsed.int("retries", 2), parsed.float("retry_delay", 1))
+	}
 	if err != nil {
+		if responseMode {
+			if emitErr := c.emit(failureRecallResponse(), parsed.bool("pretty") || !parsed.bool("raw")); emitErr != nil {
+				return emitErr
+			}
+			if parsed.bool("soft") {
+				return nil
+			}
+			return err
+		}
 		if parsed.bool("soft") {
 			return c.emit(failurePack(query, parsed.int("budget_chars", 10000), err), !parsed.bool("raw"))
 		}
 		return err
+	}
+	if responseMode {
+		out, responseErr := compactRecallResponse(raw)
+		if responseErr != nil {
+			out = failureRecallResponse()
+			if emitErr := c.emit(out, parsed.bool("pretty") || !parsed.bool("raw")); emitErr != nil {
+				return emitErr
+			}
+			if parsed.bool("soft") {
+				return nil
+			}
+			return responseErr
+		}
+		if err := c.emit(out, parsed.bool("pretty") || !parsed.bool("raw")); err != nil {
+			return err
+		}
+		c.autoDrainAsyncInbox(sessionID, project, agentID)
+		return nil
 	}
 	out := normalizePackOutput(raw, query, parsed.int("budget_chars", 10000))
 	qualitySample := contextPackQualitySample(out)
@@ -2847,6 +2940,31 @@ func (c *cli) requestWithRetries(path string, payload any, timeout float64, retr
 	return nil, last
 }
 
+func (c *cli) requestRecallResponseWithRetries(path string, payload any, timeout float64, retries int, delay float64) (map[string]any, error) {
+	var last map[string]any
+	var lastErr error
+	for attempt := 0; attempt <= maxInt(retries, 0); attempt++ {
+		result, _, err := c.requestJSON(context.Background(), http.MethodPost, path, payload, timeout)
+		if len(result) > 0 {
+			last = result
+		}
+		if err == nil {
+			return result, nil
+		}
+		lastErr = err
+		// The native route deliberately returns recall_response.v1 even when
+		// retrieval failed. Preserve that bounded abstention instead of turning
+		// it into the context-pack failure envelope.
+		if firstString(result["schema_id"]) == "recall_response.v1" {
+			return result, nil
+		}
+		if attempt < retries {
+			time.Sleep(time.Duration(delay*float64(attempt+1)) * time.Second)
+		}
+	}
+	return last, lastErr
+}
+
 func derivedAgentTaskID(project, objective string) string {
 	normalizedProject := strings.ToLower(strings.TrimSpace(project))
 	normalizedObjective := strings.ToLower(strings.Join(strings.Fields(objective), " "))
@@ -2857,6 +2975,13 @@ func derivedAgentTaskID(project, objective string) string {
 func (c *cli) ensureSession(project, objective, taskID, agentID string, timeout float64) string {
 	ownership := adapterOwnership(parsedArgs{})
 	ownership["task_id"] = taskID
+	return c.ensureSessionForAgent(project, objective, envString("CONTEXTLATTICE_AGENT", "agent-cli"), agentID, ownership, adapterProfile{}, timeout)
+}
+
+func (c *cli) ensureRecallResponseSession(project, objective, taskID, agentID string, timeout float64) string {
+	ownership := adapterOwnership(parsedArgs{})
+	ownership["task_id"] = taskID
+	ownership["session_surface"] = "recall-response"
 	return c.ensureSessionForAgent(project, objective, envString("CONTEXTLATTICE_AGENT", "agent-cli"), agentID, ownership, adapterProfile{}, timeout)
 }
 
@@ -2913,6 +3038,10 @@ func (c *cli) ensureSessionForAgent(project, objective, agent, agentID string, o
 		}
 	}
 	state := buildAgentLifecycleState(parsedArgs{}, profile, "working")
+	tags := []string{"auto-session", "one-task-one-session", "context-pack", "go-native-cli"}
+	if surface := firstString(ownership["session_surface"]); surface != "" {
+		tags[2] = surface
+	}
 	payload := map[string]any{
 		"ensure":            true,
 		"reuse_key":         reuseKey,
@@ -2927,7 +3056,7 @@ func (c *cli) ensureSessionForAgent(project, objective, agent, agentID string, o
 		"task_id":           ownership["task_id"],
 		"native_session_id": ownership["native_session_id"],
 		"agent_state":       state,
-		"tags":              []string{"auto-session", "one-task-one-session", "context-pack", "go-native-cli"},
+		"tags":              tags,
 		"metadata": map[string]any{
 			"tool":            "contextlattice_pack",
 			"ownership":       ownership,
@@ -2972,6 +3101,171 @@ func normalizePackOutput(raw map[string]any, query string, budget int) map[strin
 	raw["context_budget_chars"] = budget
 	raw["writeback_required"] = true
 	return raw
+}
+
+var recallResponseCLIAllowedFields = map[string]bool{
+	"ok": true, "schema_id": true, "version": true, "response_id": true, "response_digest": true,
+	"request_scope": true, "classification": true, "answer": true, "state": true, "evidence": true,
+	"confidence": true, "conflicts": true, "gaps": true, "inferences": true, "next_action": true,
+	"action_boundary": true, "disclosure": true, "receipt_refs": true, "outcome": true,
+	"writeback_required": true, "format_contract": true,
+}
+
+var recallResponseCLIForbiddenFields = map[string]bool{
+	"context_pack": true, "raw_contextlattice_json": true, "raw_retrieval_payload": true, "raw_retrieval": true,
+	"raw_prompt": true, "prompt": true, "prompts": true, "messages": true, "tool_calls": true,
+	"function_call": true, "secret": true, "secrets": true, "api_key": true, "password": true,
+	"credential": true, "authorization": true, "private_key": true, "file_path": true, "local_path": true,
+	"paths": true, "query": true, "project": true, "project_name": true, "topic_path": true,
+	"timestamp": true, "exact_timestamp": true, "raw_text": true, "text": true, "excerpt": true,
+	"content": true, "packet": true, "agent_packet": true,
+}
+
+func recallResponseCLIHasForbiddenField(value any) bool {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, nested := range typed {
+			if recallResponseCLIForbiddenFields[key] || recallResponseCLIHasForbiddenField(nested) {
+				return true
+			}
+		}
+	case []any:
+		for _, nested := range typed {
+			if recallResponseCLIHasForbiddenField(nested) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func compactRecallResponse(raw map[string]any) (map[string]any, error) {
+	if firstString(raw["schema_id"]) != "recall_response.v1" {
+		return nil, errors.New("gateway did not return recall_response.v1")
+	}
+	if recallResponseCLIHasForbiddenField(raw) {
+		return nil, errors.New("gateway recall response contained a forbidden raw field")
+	}
+	for key := range raw {
+		if !recallResponseCLIAllowedFields[key] {
+			return nil, errors.New("gateway recall response contained an unexpected field")
+		}
+	}
+	projected := map[string]any{}
+	for key := range recallResponseCLIAllowedFields {
+		value, exists := raw[key]
+		if !exists {
+			return nil, errors.New("gateway recall response omitted a required field")
+		}
+		projected[key] = value
+	}
+	if !asBool(projected["ok"]) || asInt(projected["version"]) != 1 ||
+		!recallResponseCLIExactID(firstString(projected["response_id"]), "rr_") ||
+		!recallResponseCLIValidDigest(firstString(projected["response_digest"])) ||
+		firstString(projected["response_id"]) != cliRecallResponseID(projected) ||
+		firstString(projected["response_digest"]) != cliRecallResponseDigest(projected) {
+		return nil, errors.New("gateway recall response identity was malformed")
+	}
+	format := asMap(projected["format_contract"])
+	validation := asMap(format["validation"])
+	if firstString(format["registry_id"]) != generatedAgentContractRegistryID ||
+		asInt(format["registry_version"]) != generatedAgentContractRegistryVersion ||
+		firstString(format["schema_id"]) != "recall_response.v1" ||
+		!asBool(format["contract_valid"]) || firstString(validation["status"]) != "passed" {
+		return nil, errors.New("gateway recall response contract was invalid")
+	}
+	return projected, nil
+}
+
+func recallResponseCLIExactID(value, prefix string) bool {
+	if !strings.HasPrefix(value, prefix) || len(value) != len(prefix)+24 {
+		return false
+	}
+	for _, ch := range value[len(prefix):] {
+		if !((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f')) {
+			return false
+		}
+	}
+	return true
+}
+
+func recallResponseCLIValidDigest(value string) bool {
+	if !strings.HasPrefix(value, "sha256:") || len(value) != len("sha256:")+64 {
+		return false
+	}
+	for _, ch := range value[len("sha256:"):] {
+		if !((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f')) {
+			return false
+		}
+	}
+	return true
+}
+
+func cliRecallResponseDigest(payload map[string]any) string {
+	semantic := map[string]any{}
+	for key, value := range payload {
+		if key != "format_contract" && key != "response_digest" {
+			semantic[key] = value
+		}
+	}
+	raw, _ := json.Marshal(semantic)
+	return "sha256:" + hex.EncodeToString(sha256Sum(raw))
+}
+
+func cliRecallResponseID(payload map[string]any) string {
+	semantic := map[string]any{}
+	for key, value := range payload {
+		if key != "response_id" && key != "response_digest" && key != "format_contract" {
+			semantic[key] = value
+		}
+	}
+	raw, _ := json.Marshal(semantic)
+	return "rr_" + hex.EncodeToString(sha256Sum(raw))[:24]
+}
+
+func failureRecallResponse() map[string]any {
+	scopeRef := func(kind string) string {
+		return "ref_" + hex.EncodeToString(sha256Sum([]byte("recall-response-cli-unavailable\x00" + kind)))[:24]
+	}
+	response := map[string]any{
+		"ok": true, "schema_id": "recall_response.v1", "version": 1,
+		"request_scope": map[string]any{
+			"scope_digest": scopeRef("scope"), "query_digest": scopeRef("query"), "workspace_ref": scopeRef("workspace"),
+			"project_ref": scopeRef("project"), "topic_ref": scopeRef("topic"), "agent_ref": scopeRef("agent"),
+			"session_ref": scopeRef("session"), "task_ref": scopeRef("task"), "task_identity_ref": scopeRef("task_identity"),
+			"execution_lane_ref": scopeRef("execution_lane"), "retrieval_intent": "decision",
+		},
+		"classification": map[string]any{"jobs": []any{"look_up"}, "objects": []any{"fact"}, "temporal_mode": "current", "evidence_state": "degraded", "consequence": "informational", "posture": "abstain"},
+		"answer": map[string]any{
+			"summary": "Recall response unavailable; retrieve or verify before acting.", "answer_mode": "abstention",
+			"basis": []any{"bounded_response_projection", "explicit_action_boundary"}, "claim_refs": []any{}, "components": []any{},
+			"progressive_disclosure": map[string]any{"level": "summary", "available_levels": []any{"summary", "proof_refs", "next_action"}, "next_level_requires": "recover recall response availability"},
+		},
+		"state":    map[string]any{"status": "abstain", "source_complete": false, "evidence_count": 0, "conflict_count": 0, "gap_count": 1, "retrieval_mode": "balanced"},
+		"evidence": []any{}, "confidence": map[string]any{"label": "abstain", "score": 0.0, "basis": []any{"unavailable_surface"}, "calibrated": false},
+		"conflicts": []any{}, "gaps": []any{map[string]any{"code": "unavailable_surface", "material": true, "reason": "Recall response retrieval was unavailable.", "required_for_action": true}},
+		"inferences":      []any{map[string]any{"inference_id": "inf_" + hex.EncodeToString(sha256Sum([]byte("unavailable")))[:24], "claim_ref": "response_state", "basis_refs": []any{}, "status": "deterministic_metadata_only", "confidence": 0.0, "disclosure": "This is response-state metadata, not a memory fact."}},
+		"next_action":     map[string]any{"kind": "retrieve_or_verify", "label": "Recover recall response availability, then retrieve or verify", "reason": "The response is advisory-only and does not authorize external mutation.", "requires_verification": true, "authority": "advisory_only", "execution_performed": false},
+		"action_boundary": map[string]any{"can_act": false, "requires_confirmation": true, "allowed": []any{"retrieve_missing_sources"}, "forbidden": []any{"external_mutation", "credential_access", "raw_memory_export"}, "reason": "Recall responses provide evidence and advice only; an agent must independently authorize and execute any mutation.", "execution_performed": false},
+		"disclosure":      map[string]any{"bounded": true, "raw_retrieval_included": false, "raw_prompt_included": false, "paths_included": false, "secrets_included": false, "inference_boundary": "Only deterministic response metadata and opaque proof references are returned.", "omission_policy": "Unavailable evidence is disclosed as a gap and never becomes implicit support."},
+		"receipt_refs":    []any{}, "outcome": map[string]any{"status": "not_attributable", "attributable": false, "receipt_id": "", "execution_performed": false}, "writeback_required": true,
+	}
+	response["response_id"] = cliRecallResponseID(response)
+	response["response_digest"] = cliRecallResponseDigest(response)
+	response["format_contract"] = map[string]any{
+		"registry_id": generatedAgentContractRegistryID, "registry_version": generatedAgentContractRegistryVersion, "schema_id": "recall_response.v1", "contract_version": 1,
+		"required_output_mode": "json_object", "validator": "contextlattice.boundary.v1", "contract_valid": true, "truncated": false,
+		"omitted_counts":    map[string]any{"strings_clipped": 0, "lists_clipped": 0, "optional_fields_compacted": 0, "boundary_passes": 0, "json_bytes_reduced": 0},
+		"actual_json_bytes": 0, "max_total_json_bytes": 64000, "max_string_bytes": 2400, "max_list_items": 32,
+		"validation": map[string]any{"status": "passed", "errors": []any{}},
+	}
+	encoded, _ := json.Marshal(response)
+	for previous := -1; previous != len(encoded); {
+		previous = len(encoded)
+		response["format_contract"].(map[string]any)["actual_json_bytes"] = previous
+		encoded, _ = json.Marshal(response)
+	}
+	return response
 }
 
 func isAgentPacketWireSchema(schemaID string) bool {
@@ -3807,6 +4101,7 @@ func runtimeAuditFreshnessFinding(payload map[string]any, now time.Time) map[str
 func auditContextBoundary(payload map[string]any) map[string]any {
 	required := []string{
 		"/memory/context-pack", "/tools/context_pack", "/v1/agents/preflight", "/v1/codex/preflight",
+		"/memory/continuous-cognition", "/tools/continuous_cognition",
 		"/memory/agent-packet/reconstruct", "/v1/agents/sessions/{session_id}/proof-timeline",
 		"/memory/synthesis-pack/v2", "/tools/synthesis_pack_v2", "/memory/retrieval/plan", "/tools/retrieval_plan",
 		"/memory/claims", "/memory/claims/query", "/tools/claim_write", "/tools/claim_query",
@@ -3815,7 +4110,7 @@ func auditContextBoundary(payload map[string]any) map[string]any {
 		"policy_context_package", "scripts/agent/contextlattice-pack", "scripts/agent/compaction-handoff-payload",
 		"contextlattice_synthesis_pack_v2", "contextlattice_retrieval_plan", "contextlattice_claim_write", "contextlattice_claim_query",
 		"contextlattice_continuity_reconcile", "contextlattice_objective_transition", "contextlattice_objective_graph", "contextlattice_decision_change", "contextlattice_decision_change list", "contextlattice_retrieval_governance",
-		"contextlattice_async_inbox_drain",
+		"contextlattice_async_inbox_drain", "contextlattice_continuous_cognition",
 		"scripts/agent_hooks/contextlattice_pre_compaction_write.sh", "scripts/agent_hooks/contextlattice_post_compaction_read.sh",
 	}
 	requiredFields := []string{"contract_valid", "truncated", "omitted_counts", "actual_json_bytes", "max_total_json_bytes", "max_string_bytes", "max_list_items"}
@@ -3836,12 +4131,15 @@ func auditContextBoundary(payload map[string]any) map[string]any {
 		{"/memory/evidence-reputation/activation", retrievalGovernanceContractID},
 		{"/memory/recall/regressions/operations", retrievalGovernanceContractID},
 		{"/memory/trust/defense/operations", retrievalGovernanceContractID},
+		{"/memory/continuous-cognition", continuousCognitionCLIContractID},
+		{"/tools/continuous_cognition", continuousCognitionCLIContractID},
 		{"contextlattice_continuity_reconcile", "task_identity_reconciliation.v1"},
 		{"contextlattice_objective_transition", "objective_transition.v1"},
 		{"contextlattice_objective_graph", "objective_graph.v1"},
 		{"contextlattice_decision_change", "decision_change.v1"},
 		{"contextlattice_decision_change list", "decision_change_query.v1"},
 		{"contextlattice_retrieval_governance", retrievalGovernanceContractID},
+		{"contextlattice_continuous_cognition", continuousCognitionCLIContractID},
 	}
 	findings := []map[string]any{}
 	if firstString(payload["schema_id"]) != "contextlattice_context_boundary.v1" {
@@ -3929,7 +4227,7 @@ func auditContextBoundary(payload map[string]any) map[string]any {
 }
 
 func auditNativeOwnership(payload map[string]any) map[string]any {
-	required := []string{"/health", "/status", "/migration/runtime", "/ops/context-boundary", "/ops/native-ownership", "/memory/context-pack", "/memory/agent-packet/reconstruct", "/memory/retrieval/receipts/governance", "/memory/causal-bridges/governance", "/memory/retrieval/ablation/operations", "/memory/evidence-reputation/activation", "/memory/recall/regressions/operations", "/memory/trust/defense/operations", "/tools/context_pack", "/memory/continuity/reconcile", "/memory/objectives/transition", "/memory/objectives/graph", "/memory/decision-changes", "/memory/synthesis-pack", "/tools/synthesis_pack", "/memory/synthesis-pack/v2", "/tools/synthesis_pack_v2", "/memory/retrieval/plan", "/tools/retrieval_plan", "/memory/claims", "/memory/claims/query", "/tools/claim_write", "/tools/claim_query", "/telemetry/claim-graph", "/v1/agents/preflight", "/v1/codex/preflight", "/telemetry/sidecar-health", "/telemetry/strategies", "/telemetry/strategies/history"}
+	required := []string{"/health", "/status", "/migration/runtime", "/ops/context-boundary", "/ops/native-ownership", "/memory/context-pack", "/memory/continuous-cognition", "/memory/agent-packet/reconstruct", "/memory/retrieval/receipts/governance", "/memory/causal-bridges/governance", "/memory/retrieval/ablation/operations", "/memory/evidence-reputation/activation", "/memory/recall/regressions/operations", "/memory/trust/defense/operations", "/tools/context_pack", "/tools/continuous_cognition", "/memory/continuity/reconcile", "/memory/objectives/transition", "/memory/objectives/graph", "/memory/decision-changes", "/memory/synthesis-pack", "/tools/synthesis_pack", "/memory/synthesis-pack/v2", "/tools/synthesis_pack_v2", "/memory/retrieval/plan", "/tools/retrieval_plan", "/memory/claims", "/memory/claims/query", "/tools/claim_write", "/tools/claim_query", "/telemetry/claim-graph", "/v1/agents/preflight", "/v1/codex/preflight", "/telemetry/sidecar-health", "/telemetry/strategies", "/telemetry/strategies/history"}
 	findings := []map[string]any{}
 	if firstString(payload["schema_id"]) != "strict_runtime_native_ownership.v1" {
 		findings = append(findings, map[string]any{"reason": "schema_id_mismatch", "actual": payload["schema_id"]})

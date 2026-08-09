@@ -57,6 +57,13 @@ func (s *server) handleRetrievalPlan(w http.ResponseWriter, r *http.Request, too
 }
 
 func (s *server) buildAdaptiveRetrievalPlan(payload map[string]any) map[string]any {
+	return s.buildAdaptiveRetrievalPlanAt(payload, nowUTCISO())
+}
+
+// buildAdaptiveRetrievalPlanAt keeps the planner projection deterministic for
+// callers that already own an as-of boundary. The public route continues to
+// stamp its ordinary wall-clock generated_at value through the wrapper above.
+func (s *server) buildAdaptiveRetrievalPlanAt(payload map[string]any, generatedAt string) map[string]any {
 	query := strings.TrimSpace(anyToString(payload["query"]))
 	project := strings.TrimSpace(firstNonEmptyStrings(anyToString(payload["project"]), anyToString(payload["projectName"])))
 	taskPhase := normalizeRetrievalTaskPhase(firstNonEmptyStrings(anyToString(payload["task_phase"]), anyToString(payload["phase"])), query)
@@ -176,7 +183,7 @@ func (s *server) buildAdaptiveRetrievalPlan(payload map[string]any) map[string]a
 	return map[string]any{
 		"schema_id":            retrievalPlanContractID,
 		"version":              1,
-		"generated_at":         nowUTCISO(),
+		"generated_at":         generatedAt,
 		"mode":                 "advisor",
 		"activation_state":     "shadow_only",
 		"project":              project,

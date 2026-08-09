@@ -29,6 +29,7 @@ Installs Go-native ContextLattice agent helpers to ~/.contextlattice and creates
   contextlattice_retrieval_governance
   contextlattice_policy_lab
   contextlattice_agent_fit
+  contextlattice_continuous_cognition
   contextlattice_continuity_zero
   contextlattice_aggregate_signal
   contextlattice_claim_write
@@ -726,6 +727,7 @@ GO_NATIVE_COMMANDS=(
   contextlattice_retrieval_governance
   contextlattice_policy_lab
   contextlattice_agent_fit
+  contextlattice_continuous_cognition
   contextlattice_continuity_zero
   contextlattice_aggregate_signal
   contextlattice_claim_write

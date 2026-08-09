@@ -334,6 +334,8 @@ type server struct {
 	telemetryMetricsState           map[string]any
 	impactComparatorMu              sync.Mutex
 	impactComparatorUnavailable     bool
+	recallMonitorShadowMu           sync.RWMutex
+	recallMonitorShadowIndex        recallMonitorShadowIndex
 	memoryTelemetryMu               sync.Mutex
 	memoryTelemetryLastWriteAt      string
 	memoryTelemetryLastWriteLatency float64
@@ -1396,6 +1398,9 @@ func newServer() *server {
 		driftLast:                       make(map[string]any),
 		lettaAgentBySession:             make(map[string]string),
 		lettaAgentVerifiedAt:            make(map[string]time.Time),
+	}
+	if err := s.loadRecallMonitorShadowIndex(); err != nil {
+		log.Printf("gateway-go recall monitor shadow index unavailable; learned activation will fail closed: %v", err)
 	}
 	if err := s.loadTradingHistoryFromDisk(); err != nil {
 		log.Printf("gateway-go trading history load failed: %v", err)
@@ -7110,7 +7115,14 @@ func (s *server) memorySearch(w http.ResponseWriter, r *http.Request) {
 	if trafficClass == "" {
 		trafficClass = "user"
 	}
+	// Raw search is the literal control surface. It still captures bounded
+	// learning telemetry, but only the governed context-pack compiler can apply
+	// learned ranking influence.
 	response["learning_enabled"] = true
+	response["learning_capture_enabled"] = true
+	response["learning_mode"] = "shadow_capture_only"
+	response["learned_ranking_armed"] = false
+	response["learned_ranking_applied"] = false
 	response["retrieval_mode"] = retrievalMode
 	response["retrieval_intent"] = retrievalIntent
 	response["traffic_class"] = trafficClass
@@ -7263,6 +7275,8 @@ func buildNativeMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/memory/browser-context", s.memoryBrowserContext)
 	mux.HandleFunc("/preferences", s.preferencesRoute)
 	mux.HandleFunc("/memory/context-pack", s.memoryContextPack)
+	mux.HandleFunc("/memory/recall/response", s.memoryRecallResponse)
+	mux.HandleFunc(memoryContinuousCognitionPath, s.memoryContinuousCognition)
 	mux.HandleFunc(agentPacketReconstructionRoute, s.memoryAgentPacketReconstruct)
 	mux.HandleFunc(frontierT4RetrievalReceiptGovernancePath, func(w http.ResponseWriter, r *http.Request) {
 		frontierT4RetrievalReceiptGovernanceRoute(s, w, r)
@@ -7376,6 +7390,8 @@ func buildNativeMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/tools/capability_map", s.toolsCapabilityMap)
 	mux.HandleFunc("/tools/ops_queue_status", s.toolsOpsQueueStatus)
 	mux.HandleFunc("/tools/context_pack", s.toolsContextPack)
+	mux.HandleFunc("/tools/recall_response", s.toolsRecallResponse)
+	mux.HandleFunc(toolsContinuousCognitionPath, s.toolsContinuousCognition)
 	mux.HandleFunc("/tools/synthesis_pack", s.toolsSynthesisPack)
 	mux.HandleFunc("/tools/synthesis_pack_v2", s.toolsSynthesisPackV2)
 	mux.HandleFunc("/tools/claim_write", s.toolsClaimWrite)

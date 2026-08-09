@@ -10,7 +10,7 @@ type GeneratedAgentContractRef struct {
 }
 
 const GeneratedAgentContractRegistryID = "contextlattice_agent_output_contracts"
-const GeneratedAgentContractRegistryVersion = 54
+const GeneratedAgentContractRegistryVersion = 58
 
 const GeneratedAgentContractA2aReadinessProfileV1 = "a2a_readiness_profile.v1"
 const GeneratedAgentContractAgentContextProfileV1 = "agent_context_profile.v1"
@@ -58,6 +58,7 @@ const GeneratedAgentContractContextPrepV1 = "context_prep.v1"
 const GeneratedAgentContractContextPrepArtifactV1 = "context_prep_artifact.v1"
 const GeneratedAgentContractContextlatticeLifecycleReceiptV1 = "contextlattice_lifecycle_receipt.v1"
 const GeneratedAgentContractContinuityZeroV1 = "continuity_zero.v1"
+const GeneratedAgentContractContinuousCognitionV1 = "continuous_cognition.v1"
 const GeneratedAgentContractContractAcknowledgementV1 = "contract_acknowledgement.v1"
 const GeneratedAgentContractContradictionResolutionV1 = "contradiction_resolution.v1"
 const GeneratedAgentContractDecisionChangeV1 = "decision_change.v1"
@@ -87,6 +88,7 @@ const GeneratedAgentContractPortableContinuationStateV1 = "portable_continuation
 const GeneratedAgentContractPortableContinuationStatusV1 = "portable_continuation_status.v1"
 const GeneratedAgentContractPrivacyAccountantV1 = "privacy_accountant.v1"
 const GeneratedAgentContractProvenanceV1 = "provenance.v1"
+const GeneratedAgentContractRecallResponseV1 = "recall_response.v1"
 const GeneratedAgentContractRetrievalAblationV1 = "retrieval_ablation.v1"
 const GeneratedAgentContractRetrievalAblationReportV1 = "retrieval_ablation_report.v1"
 const GeneratedAgentContractRetrievalDecisionTraceV1 = "retrieval_decision_trace.v1"
@@ -169,6 +171,7 @@ var GeneratedAgentContractIDs = []string{
 	GeneratedAgentContractContextPrepArtifactV1,
 	GeneratedAgentContractContextlatticeLifecycleReceiptV1,
 	GeneratedAgentContractContinuityZeroV1,
+	GeneratedAgentContractContinuousCognitionV1,
 	GeneratedAgentContractContractAcknowledgementV1,
 	GeneratedAgentContractContradictionResolutionV1,
 	GeneratedAgentContractDecisionChangeV1,
@@ -198,6 +201,7 @@ var GeneratedAgentContractIDs = []string{
 	GeneratedAgentContractPortableContinuationStatusV1,
 	GeneratedAgentContractPrivacyAccountantV1,
 	GeneratedAgentContractProvenanceV1,
+	GeneratedAgentContractRecallResponseV1,
 	GeneratedAgentContractRetrievalAblationV1,
 	GeneratedAgentContractRetrievalAblationReportV1,
 	GeneratedAgentContractRetrievalDecisionTraceV1,
@@ -512,6 +516,12 @@ var GeneratedAgentContracts = []GeneratedAgentContractRef{
 		RequiredOutputMode: "json_object",
 	},
 	{
+		SchemaID:           GeneratedAgentContractContinuousCognitionV1,
+		PayloadKind:        "governed_continuous_cognition_frontier_projection",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
 		SchemaID:           GeneratedAgentContractContractAcknowledgementV1,
 		PayloadKind:        "contract_acknowledgement",
 		ContractVersion:    1,
@@ -682,6 +692,12 @@ var GeneratedAgentContracts = []GeneratedAgentContractRef{
 	{
 		SchemaID:           GeneratedAgentContractProvenanceV1,
 		PayloadKind:        "bounded_redacted_digest_only_external_import_provenance",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractRecallResponseV1,
+		PayloadKind:        "bounded_proof_carrying_recall_response",
 		ContractVersion:    1,
 		RequiredOutputMode: "json_object",
 	},

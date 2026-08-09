@@ -50,6 +50,23 @@ var optionalFrontierT1ProjectBoundary = func(*server, http.ResponseWriter, *http
 	return true
 }
 
+func (s *server) lockOptionalFrontierT1ProjectBoundary() func() {
+	return func() {}
+}
+
+// Public builds retain outcome and impact intelligence but cannot apply paid
+// learned influence. Entitled source installs credential and governed-policy
+// resolvers without moving paid identity into the public core.
+var optionalContextPackLearnedRequestAuthority = func(_ *server, _ *http.Request) contextPackLearnedActivationAuthority {
+	return contextPackLearnedActivationAuthority{Reason: "paid_activation_unavailable"}
+}
+
+var optionalContextPackLearnedPolicyAuthority = func(_ *server, authority contextPackLearnedActivationAuthority, _, _, _ string) contextPackLearnedActivationAuthority {
+	authority.Authorized = false
+	authority.Reason = "paid_activation_unavailable"
+	return authority
+}
+
 var optionalFrontierT3UtilityAnalyticsRoute = func(_ *server, w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusNotFound, map[string]any{
 		"ok": false, "error": "premium_utility_analytics_unavailable",

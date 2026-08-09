@@ -44,13 +44,15 @@ var utilityExactMatchingMethods = map[string]struct{}{
 var errUtilityOutcomeConflict = errors.New("utility outcome id conflicts with an existing source claim")
 var errUtilityPersistenceUnavailable = errors.New("utility ledger persistence is unavailable")
 var errUtilityObservationUnavailable = errors.New("utility observation is unavailable for reconciliation")
+var errUtilityInvalidResponseBinding = errors.New("utility observation has an invalid recall response binding")
 
 type utilityTelemetry struct {
-	mu           sync.Mutex
-	limit        int
-	store        *utilityLedgerStore
-	observations []map[string]any
-	byOutcome    map[string]int
+	mu                 sync.Mutex
+	limit              int
+	store              *utilityLedgerStore
+	observations       []map[string]any
+	byOutcome          map[string]int
+	byOpaqueControlRef map[string]int
 }
 
 type utilityLedgerStore struct {
@@ -72,12 +74,14 @@ type utilityLedgerStore struct {
 }
 
 type utilityQuery struct {
-	Project     string
-	TaskClass   string
-	UtilityUnit string
-	From        time.Time
-	To          time.Time
-	Limit       int
+	Project         string
+	TaskClass       string
+	RetrievalIntent string
+	WorkspaceRef    string
+	UtilityUnit     string
+	From            time.Time
+	To              time.Time
+	Limit           int
 }
 
 type utilityPairMetric struct {
@@ -97,10 +101,11 @@ func newUtilityTelemetry(limit int) *utilityTelemetry {
 		limit = 500
 	}
 	t := &utilityTelemetry{
-		limit:        limit,
-		store:        newUtilityLedgerStoreFromEnv(),
-		observations: make([]map[string]any, 0, limit),
-		byOutcome:    map[string]int{},
+		limit:              limit,
+		store:              newUtilityLedgerStoreFromEnv(),
+		observations:       make([]map[string]any, 0, limit),
+		byOutcome:          map[string]int{},
+		byOpaqueControlRef: map[string]int{},
 	}
 	t.loadPersistedRows()
 	return t
@@ -164,6 +169,7 @@ func (t *utilityTelemetry) applyLocked(row map[string]any) bool {
 	if t == nil || len(row) == 0 || anyToString(row["schema_id"]) != utilityObservationContractID {
 		return false
 	}
+	t.ensureIndexesLocked()
 	outcomeID := strings.TrimSpace(anyToString(row["outcome_id"]))
 	if outcomeID == "" {
 		return false
@@ -173,11 +179,12 @@ func (t *utilityTelemetry) applyLocked(row map[string]any) bool {
 		if anyToInt(row["revision"], 1) < anyToInt(t.observations[index]["revision"], 1) {
 			return false
 		}
-		t.observations[index] = row
+		t.replaceObservationLocked(index, row)
 		return false
 	}
-	t.byOutcome[outcomeID] = len(t.observations)
+	index := len(t.observations)
 	t.observations = append(t.observations, row)
+	t.indexObservationLocked(index, row)
 	if len(t.observations) > t.limit {
 		t.observations = append([]map[string]any{}, t.observations[len(t.observations)-t.limit:]...)
 		t.reindexLocked()
@@ -185,12 +192,55 @@ func (t *utilityTelemetry) applyLocked(row map[string]any) bool {
 	return true
 }
 
+func utilityOpaqueControlRef(row map[string]any) string {
+	outcomeID := strings.TrimSpace(anyToString(row["outcome_id"]))
+	if outcomeID == "" {
+		return ""
+	}
+	return contextPackQualityOpaqueReporterRef(anyToString(row["project"]), "matched_control_outcome_id", outcomeID, 200)
+}
+
+func (t *utilityTelemetry) ensureIndexesLocked() {
+	if t.byOutcome == nil {
+		t.byOutcome = map[string]int{}
+	}
+	if t.byOpaqueControlRef == nil {
+		t.byOpaqueControlRef = map[string]int{}
+	}
+}
+
+func (t *utilityTelemetry) indexObservationLocked(index int, row map[string]any) {
+	t.ensureIndexesLocked()
+	if outcomeID := strings.TrimSpace(anyToString(row["outcome_id"])); outcomeID != "" {
+		t.byOutcome[outcomeID] = index
+	}
+	if opaqueRef := utilityOpaqueControlRef(row); opaqueRef != "" {
+		t.byOpaqueControlRef[opaqueRef] = index
+	}
+}
+
+func (t *utilityTelemetry) replaceObservationLocked(index int, row map[string]any) {
+	t.ensureIndexesLocked()
+	previous := t.observations[index]
+	previousOutcomeID := strings.TrimSpace(anyToString(previous["outcome_id"]))
+	nextOutcomeID := strings.TrimSpace(anyToString(row["outcome_id"]))
+	if previousOutcomeID != nextOutcomeID && t.byOutcome[previousOutcomeID] == index {
+		delete(t.byOutcome, previousOutcomeID)
+	}
+	previousOpaqueRef := utilityOpaqueControlRef(previous)
+	nextOpaqueRef := utilityOpaqueControlRef(row)
+	if previousOpaqueRef != nextOpaqueRef && t.byOpaqueControlRef[previousOpaqueRef] == index {
+		delete(t.byOpaqueControlRef, previousOpaqueRef)
+	}
+	t.observations[index] = row
+	t.indexObservationLocked(index, row)
+}
+
 func (t *utilityTelemetry) reindexLocked() {
 	t.byOutcome = make(map[string]int, len(t.observations))
+	t.byOpaqueControlRef = make(map[string]int, len(t.observations))
 	for index, row := range t.observations {
-		if outcomeID := strings.TrimSpace(anyToString(row["outcome_id"])); outcomeID != "" {
-			t.byOutcome[outcomeID] = index
-		}
+		t.indexObservationLocked(index, row)
 	}
 }
 
@@ -210,11 +260,12 @@ func (t *utilityTelemetry) record(row map[string]any) (map[string]any, bool, err
 	outcomeID := strings.TrimSpace(anyToString(row["outcome_id"]))
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	t.ensureIndexesLocked()
 	if index, exists := t.byOutcome[outcomeID]; exists && index >= 0 && index < len(t.observations) {
 		existing := cloneAnyMap(t.observations[index])
 		existingDigest := strings.TrimSpace(anyToString(existing["source_claim_digest"]))
 		candidateDigest := strings.TrimSpace(anyToString(row["source_claim_digest"]))
-		if !utilitySHA256DigestValid(existingDigest) || !utilitySHA256DigestValid(candidateDigest) || existingDigest != candidateDigest {
+		if !utilitySHA256DigestValid(existingDigest) || !utilitySHA256DigestValid(candidateDigest) || existingDigest != candidateDigest || !utilityDurableResponseBindingsEqual(existing, row) {
 			return existing, false, errUtilityOutcomeConflict
 		}
 		return existing, false, nil
@@ -223,7 +274,7 @@ func (t *utilityTelemetry) record(row map[string]any) (map[string]any, bool, err
 		if existing, exists := t.store.observation(outcomeID); exists {
 			existingDigest := strings.TrimSpace(anyToString(existing["source_claim_digest"]))
 			candidateDigest := strings.TrimSpace(anyToString(row["source_claim_digest"]))
-			if !utilitySHA256DigestValid(existingDigest) || !utilitySHA256DigestValid(candidateDigest) || existingDigest != candidateDigest {
+			if !utilitySHA256DigestValid(existingDigest) || !utilitySHA256DigestValid(candidateDigest) || existingDigest != candidateDigest || !utilityDurableResponseBindingsEqual(existing, row) {
 				return existing, false, errUtilityOutcomeConflict
 			}
 			return existing, false, nil
@@ -253,6 +304,7 @@ func (t *utilityTelemetry) update(row map[string]any) (map[string]any, error) {
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	t.ensureIndexesLocked()
 	outcomeID := strings.TrimSpace(anyToString(row["outcome_id"]))
 	index := -1
 	storedIndex, exists := t.byOutcome[outcomeID]
@@ -286,7 +338,7 @@ func (t *utilityTelemetry) update(row map[string]any) (map[string]any, error) {
 		row = persisted
 	}
 	if index >= 0 && index < len(t.observations) {
-		t.observations[index] = row
+		t.replaceObservationLocked(index, row)
 	} else {
 		t.applyLocked(row)
 	}
@@ -298,6 +350,7 @@ func (t *utilityTelemetry) observation(outcomeID string) (map[string]any, bool) 
 		return nil, false
 	}
 	t.mu.Lock()
+	t.ensureIndexesLocked()
 	index, ok := t.byOutcome[strings.TrimSpace(outcomeID)]
 	if ok && index >= 0 && index < len(t.observations) {
 		row := cloneAnyMap(t.observations[index])
@@ -437,6 +490,92 @@ func utilitySHA256DigestValid(value string) bool {
 	return err == nil
 }
 
+// utilityResponseBindingValidation is the Utility boundary for the canonical
+// quality/outcome join. An entirely unbound pair is legacy-compatible; once
+// either source carries response identity, both sources must carry the same
+// complete validated binding. Token-impact evidence is intentionally absent
+// from this check until it has a response-aware producer.
+func utilityResponseBindingValidation(outcome, quality map[string]any) (map[string]any, []string) {
+	outcomeBinding, outcomeValid := recallResponseBindingFromSample(outcome)
+	qualityBinding, qualityValid := recallResponseBindingFromSample(quality)
+	if !outcomeValid || !qualityValid {
+		return outcomeBinding, []string{"response_binding_invalid"}
+	}
+	if outcomeBinding == nil && qualityBinding == nil {
+		return nil, nil
+	}
+	if outcomeBinding == nil || qualityBinding == nil {
+		return outcomeBinding, []string{"response_binding_missing"}
+	}
+	if !recallResponseBindingsEqual(outcomeBinding, qualityBinding) {
+		return outcomeBinding, []string{"response_binding_mismatch"}
+	}
+	return outcomeBinding, nil
+}
+
+// utilityCopyOutcomeResponseBinding copies only the canonical admitted
+// outcome binding. Invalid fields are retained as a private fail-closed
+// marker so a malformed observation cannot be downgraded to an unbound legacy
+// row by durable persistence or restart.
+func utilityCopyOutcomeResponseBinding(row, outcome, binding map[string]any) {
+	if row == nil || outcome == nil {
+		return
+	}
+	if binding != nil {
+		_ = recallResponseCopyBinding(row, binding)
+		return
+	}
+	if !recallResponseBindingHasAnyFields(outcome) {
+		return
+	}
+	for _, key := range []string{"recall_response_id", "recall_response_digest", "response_component_refs"} {
+		if value, present := outcome[key]; present {
+			row[key] = cloneJSONValue(value)
+		}
+	}
+}
+
+// utilityDurableObservationBindingValid deliberately leaves rows with no
+// response fields loadable for backward compatibility while rejecting any
+// partial or malformed attempted binding.
+func utilityDurableObservationBindingValid(row map[string]any) bool {
+	if !recallResponseBindingHasAnyFields(row) {
+		return true
+	}
+	_, ok := recallResponseBindingFromSample(row)
+	return ok
+}
+
+func utilityDurableResponseBindingsEqual(left, right map[string]any) bool {
+	leftBinding, leftValid := recallResponseBindingFromSample(left)
+	rightBinding, rightValid := recallResponseBindingFromSample(right)
+	if !leftValid || !rightValid {
+		return false
+	}
+	if leftBinding == nil || rightBinding == nil {
+		return leftBinding == nil && rightBinding == nil
+	}
+	return recallResponseBindingsEqual(leftBinding, rightBinding)
+}
+
+func utilityPairResponseBindingExclusions(treatment, control map[string]any) []string {
+	treatmentBinding, treatmentValid := recallResponseBindingFromSample(treatment)
+	controlBinding, controlValid := recallResponseBindingFromSample(control)
+	if !treatmentValid || !controlValid {
+		return []string{"response_binding_invalid"}
+	}
+	if treatmentBinding == nil && controlBinding == nil {
+		return nil
+	}
+	if treatmentBinding == nil || controlBinding == nil {
+		return []string{"response_binding_missing"}
+	}
+	if recallResponseBindingKey(treatmentBinding) == recallResponseBindingKey(controlBinding) {
+		return []string{"response_binding_reused_across_pair"}
+	}
+	return nil
+}
+
 func utilityObservationDigest(row map[string]any) string {
 	copyRow := cloneAnyMap(row)
 	delete(copyRow, "observation_digest")
@@ -463,7 +602,7 @@ func utilitySourceClaimDigest(outcome map[string]any) string {
 }
 
 func utilityIdentityMismatch(source, candidate map[string]any) bool {
-	for _, key := range []string{"sample_id", "session_id", "task_id", "task_identity_id", "execution_lane_id", "project", "agent_id"} {
+	for _, key := range []string{"sample_id", "session_id", "task_id", "task_identity_id", "execution_lane_id", "project", "agent_id", "workspace_ref"} {
 		left := strings.TrimSpace(anyToString(source[key]))
 		right := strings.TrimSpace(anyToString(candidate[key]))
 		if left == "" || right == "" {
@@ -637,13 +776,17 @@ func utilityRefreshEligibility(row map[string]any, exclusions []string) map[stri
 	exclusions = utilityUniqueStrings(exclusions)
 	modelVisible := anyToInt(denominator["model_visible_context_tokens"], 0)
 	observedEligible := len(exclusions) == 0 && modelVisible > 0
+	causalExclusions := []string{"matched_control_not_evaluated"}
+	for _, reason := range exclusions {
+		if strings.HasPrefix(reason, "response_binding_") {
+			causalExclusions = append(causalExclusions, reason)
+		}
+	}
 	eligibility := map[string]any{
-		"observed_yield_eligible": observedEligible,
-		"causal_gain_eligible":    false,
-		"exclusion_reasons":       utilityStringsToAny(exclusions),
-		"causal_exclusion_reasons": []any{
-			"matched_control_not_evaluated",
-		},
+		"observed_yield_eligible":  observedEligible,
+		"causal_gain_eligible":     false,
+		"exclusion_reasons":        utilityStringsToAny(exclusions),
+		"causal_exclusion_reasons": utilityStringsToAny(utilityUniqueStrings(causalExclusions)),
 	}
 	row["eligibility"] = eligibility
 	if observedEligible {
@@ -689,6 +832,8 @@ func buildUtilityObservation(outcome, quality, impact map[string]any, events []m
 	identity := proofTimelineIdentityFromMaps(quality, impact, outcome)
 	identity["sample_id"] = sampleID
 	exclusions := []string{}
+	outcomeBinding, responseBindingExclusions := utilityResponseBindingValidation(outcome, quality)
+	exclusions = append(exclusions, responseBindingExclusions...)
 	if len(quality) == 0 {
 		exclusions = append(exclusions, "quality_sample_missing")
 	}
@@ -733,6 +878,7 @@ func buildUtilityObservation(outcome, quality, impact map[string]any, events []m
 		"captured_at":         firstNonEmptyStrings(anyToString(outcome["capturedAt"]), anyToString(outcome["captured_at"]), now),
 		"updated_at":          now,
 		"task_class":          firstNonEmptyStrings(clipText(anyToString(outcome["task_class"]), 80), "unclassified"),
+		"retrieval_intent":    firstNonEmptyStrings(clipText(anyToString(outcome["retrieval_intent"]), 80), clipText(anyToString(quality["retrieval_intent"]), 80)),
 		"policy_id":           clipText(anyToString(outcome["policy_id"]), 160),
 		"policy_arm":          clipText(anyToString(outcome["policy_arm"]), 40),
 		"policy_phase":        clipText(anyToString(outcome["policy_phase"]), 40),
@@ -746,6 +892,14 @@ func buildUtilityObservation(outcome, quality, impact map[string]any, events []m
 		"economics":         normalizeUtilityEconomics(outcome),
 		"pairing":           normalizeUtilityPairing(outcome),
 		"measurement_limit": "Observed yield requires independently verified utility and exact model-visible ContextLattice tokens. Causal gain is computed only from leakage-free exact matched controls.",
+	}
+	utilityCopyOutcomeResponseBinding(row, outcome, outcomeBinding)
+	workspaceRef := contextPackLearnedDigestRef(anyToString(outcome["workspace_ref"]))
+	if workspaceRef == "" {
+		workspaceRef = contextPackLearnedDigestRef(anyToString(quality["workspace_ref"]))
+	}
+	if workspaceRef != "" {
+		row["workspace_ref"] = workspaceRef
 	}
 	copyProofTimelineIdentity(row, identity)
 	row = utilityRefreshEligibility(row, exclusions)
@@ -823,18 +977,50 @@ func (s *server) recordUtilitySessionEvent(session, event map[string]any) map[st
 	}
 }
 
+func utilityRowMatchesQueryTime(row map[string]any, query utilityQuery) bool {
+	if query.From.IsZero() && query.To.IsZero() {
+		return true
+	}
+	capturedAt, err := time.Parse(time.RFC3339Nano, anyToString(row["captured_at"]))
+	if err != nil || (!query.From.IsZero() && capturedAt.Before(query.From)) || (!query.To.IsZero() && capturedAt.After(query.To)) {
+		return false
+	}
+	if query.To.IsZero() {
+		return true
+	}
+	if updatedAtRaw := strings.TrimSpace(anyToString(row["updated_at"])); updatedAtRaw != "" {
+		updatedAt, updatedErr := time.Parse(time.RFC3339Nano, updatedAtRaw)
+		if updatedErr != nil || updatedAt.After(query.To) {
+			return false
+		}
+	}
+	utility := anyMap(row["utility"])
+	if anyToBool(utility["independently_verified"]) || strings.EqualFold(anyToString(utility["verification_status"]), "verified") {
+		verifiedAt, verifiedErr := time.Parse(time.RFC3339Nano, strings.TrimSpace(anyToString(utility["verified_at"])))
+		if verifiedErr != nil || verifiedAt.After(query.To) {
+			return false
+		}
+	}
+	return true
+}
+
 func (t *utilityTelemetry) rows(query utilityQuery) []map[string]any {
 	if t == nil {
 		return nil
 	}
 	t.mu.Lock()
-	defer t.mu.Unlock()
-	rows := make([]map[string]any, 0, len(t.observations))
+	selected := make([]map[string]any, 0, len(t.observations))
 	for _, row := range t.observations {
 		if query.Project != "" && !strings.EqualFold(anyToString(row["project"]), query.Project) {
 			continue
 		}
 		if query.TaskClass != "" && !strings.EqualFold(anyToString(row["task_class"]), query.TaskClass) {
+			continue
+		}
+		if query.RetrievalIntent != "" && !strings.EqualFold(anyToString(row["retrieval_intent"]), query.RetrievalIntent) {
+			continue
+		}
+		if query.WorkspaceRef != "" && contextPackLearnedDigestRef(anyToString(row["workspace_ref"])) != contextPackLearnedDigestRef(query.WorkspaceRef) {
 			continue
 		}
 		if query.UtilityUnit != "" {
@@ -843,16 +1029,120 @@ func (t *utilityTelemetry) rows(query utilityQuery) []map[string]any {
 				continue
 			}
 		}
-		captured, err := time.Parse(time.RFC3339Nano, anyToString(row["captured_at"]))
-		if err == nil {
-			if !query.From.IsZero() && captured.Before(query.From) {
-				continue
+		if !utilityRowMatchesQueryTime(row, query) {
+			continue
+		}
+		selected = append(selected, row)
+	}
+	t.mu.Unlock()
+	if query.Limit > 0 && len(selected) > query.Limit {
+		sort.SliceStable(selected, func(i, j int) bool {
+			left, right := anyToString(selected[i]["captured_at"]), anyToString(selected[j]["captured_at"])
+			if left == right {
+				return anyToString(selected[i]["outcome_id"]) < anyToString(selected[j]["outcome_id"])
 			}
-			if !query.To.IsZero() && captured.After(query.To) {
-				continue
+			return left < right
+		})
+		selected = selected[len(selected)-query.Limit:]
+	}
+	rows := make([]map[string]any, 0, len(selected))
+	for _, row := range selected {
+		rows = append(rows, cloneAnyMap(row))
+	}
+	return rows
+}
+
+// rowsForOutcomeIDs bounds activation-time work to the exact receipt-bound
+// candidate outcomes and their matched controls. Writers replace top-level
+// observation maps under the mutex. That lets the short lock collect only
+// indexed row references while sorting and cloning happen after release.
+func (t *utilityTelemetry) rowsForOutcomeIDs(query utilityQuery, outcomeIDs map[string]struct{}) []map[string]any {
+	if t == nil || len(outcomeIDs) == 0 {
+		return nil
+	}
+	limit := query.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	limit = clampInt(limit, 1, searchImpactOutcomeSourceLimit)
+	matchesScope := func(row map[string]any) bool {
+		if !((query.Project == "" || strings.EqualFold(anyToString(row["project"]), query.Project)) &&
+			(query.TaskClass == "" || strings.EqualFold(anyToString(row["task_class"]), query.TaskClass)) &&
+			(query.RetrievalIntent == "" || strings.EqualFold(anyToString(row["retrieval_intent"]), query.RetrievalIntent)) &&
+			(query.WorkspaceRef == "" || contextPackLearnedDigestRef(anyToString(row["workspace_ref"])) == contextPackLearnedDigestRef(query.WorkspaceRef))) {
+			return false
+		}
+		return utilityRowMatchesQueryTime(row, query)
+	}
+
+	t.mu.Lock()
+	t.ensureIndexesLocked()
+	selected := make([]map[string]any, 0, minInt(len(outcomeIDs), len(t.observations)))
+	controlsByRef := make(map[string]map[string]any, minInt(len(outcomeIDs), limit))
+	for outcomeID := range outcomeIDs {
+		index, exists := t.byOutcome[outcomeID]
+		if !exists || index < 0 || index >= len(t.observations) {
+			continue
+		}
+		row := t.observations[index]
+		if matchesScope(row) {
+			selected = append(selected, row)
+		}
+		controlRef := strings.TrimSpace(anyToString(anyMap(row["pairing"])["matched_control_outcome_id"]))
+		if controlRef == "" {
+			continue
+		}
+		matchedIndex := -1
+		if index, exists := t.byOutcome[controlRef]; exists && index >= 0 && index < len(t.observations) && matchesScope(t.observations[index]) {
+			matchedIndex = index
+		}
+		if index, exists := t.byOpaqueControlRef[controlRef]; exists && index >= 0 && index < len(t.observations) &&
+			matchesScope(t.observations[index]) && index > matchedIndex {
+			matchedIndex = index
+		}
+		if matchedIndex >= 0 {
+			controlsByRef[controlRef] = t.observations[matchedIndex]
+		}
+	}
+	t.mu.Unlock()
+
+	sort.SliceStable(selected, func(i, j int) bool {
+		left, right := anyToString(selected[i]["captured_at"]), anyToString(selected[j]["captured_at"])
+		if left == right {
+			return anyToString(selected[i]["outcome_id"]) < anyToString(selected[j]["outcome_id"])
+		}
+		return left < right
+	})
+	if len(selected) > limit {
+		selected = selected[len(selected)-limit:]
+	}
+
+	controls := make(map[string]map[string]any, len(selected))
+	for _, row := range selected {
+		if controlRef := strings.TrimSpace(anyToString(anyMap(row["pairing"])["matched_control_outcome_id"])); controlRef != "" {
+			if control, exists := controlsByRef[controlRef]; exists {
+				controls[controlRef] = control
 			}
 		}
+	}
+	rows := make([]map[string]any, 0, len(selected)+len(controls))
+	seen := make(map[string]struct{}, len(selected)+len(controls))
+	appendRow := func(row map[string]any) {
+		outcomeID := strings.TrimSpace(anyToString(row["outcome_id"]))
+		if outcomeID == "" {
+			return
+		}
+		if _, duplicate := seen[outcomeID]; duplicate {
+			return
+		}
+		seen[outcomeID] = struct{}{}
 		rows = append(rows, cloneAnyMap(row))
+	}
+	for _, row := range selected {
+		appendRow(row)
+	}
+	for _, row := range controls {
+		appendRow(row)
 	}
 	return rows
 }
@@ -864,7 +1154,7 @@ func utilityPairProjection(rows []map[string]any) ([]map[string]any, []utilityPa
 		projected[index] = cloneAnyMap(row)
 		outcomeID := anyToString(row["outcome_id"])
 		byOutcome[outcomeID] = projected[index]
-		if opaqueControlRef := contextPackQualityOpaqueReporterRef(anyToString(row["project"]), "matched_control_outcome_id", outcomeID, 200); opaqueControlRef != "" {
+		if opaqueControlRef := utilityOpaqueControlRef(row); opaqueControlRef != "" {
 			byOutcome[opaqueControlRef] = projected[index]
 		}
 	}
@@ -893,6 +1183,7 @@ func utilityPairProjection(rows []map[string]any) ([]map[string]any, []utilityPa
 		}
 		if len(control) > 0 {
 			controlPairing := anyMap(control["pairing"])
+			reasons = append(reasons, utilityPairResponseBindingExclusions(treatment, control)...)
 			if anyToString(controlPairing["arm"]) != "control" {
 				reasons = append(reasons, "matched_row_not_control")
 			}
@@ -930,6 +1221,9 @@ func utilityPairProjection(rows []map[string]any) ([]map[string]any, []utilityPa
 			}
 			if anyToString(treatment["project"]) != anyToString(control["project"]) {
 				reasons = append(reasons, "project_mismatch")
+			}
+			if anyToString(treatment["workspace_ref"]) != anyToString(control["workspace_ref"]) {
+				reasons = append(reasons, "workspace_mismatch")
 			}
 			if anyToString(treatment["session_id"]) == "" || anyToString(treatment["session_id"]) == anyToString(control["session_id"]) {
 				reasons = append(reasons, "session_separation_missing")
@@ -1404,6 +1698,10 @@ func (l *utilityLedgerStore) append(row map[string]any) (map[string]any, bool, e
 	if !l.enabled || l.path == "" {
 		return nil, false, errUtilityPersistenceUnavailable
 	}
+	if !utilityDurableObservationBindingValid(row) {
+		l.writeErrors++
+		return nil, false, errUtilityInvalidResponseBinding
+	}
 	raw, err := json.Marshal(row)
 	if err != nil {
 		l.writeErrors++
@@ -1420,7 +1718,7 @@ func (l *utilityLedgerStore) append(row map[string]any) (map[string]any, bool, e
 		return nil, false, errors.New("utility observation has invalid durable identity")
 	}
 	if existing, exists := l.latest[outcomeID]; exists {
-		if anyToString(existing["source_claim_digest"]) != claimDigest {
+		if anyToString(existing["source_claim_digest"]) != claimDigest || !utilityDurableResponseBindingsEqual(existing, row) {
 			l.writeErrors++
 			return cloneAnyMap(existing), false, errUtilityOutcomeConflict
 		}
@@ -1438,7 +1736,7 @@ func (l *utilityLedgerStore) append(row map[string]any) (map[string]any, bool, e
 	l.parseErrors += parseErrors
 	l.setLatestRowsLocked(rows)
 	if existing, exists := l.latest[outcomeID]; exists {
-		if anyToString(existing["source_claim_digest"]) != claimDigest {
+		if anyToString(existing["source_claim_digest"]) != claimDigest || !utilityDurableResponseBindingsEqual(existing, row) {
 			l.writeErrors++
 			return cloneAnyMap(existing), false, errUtilityOutcomeConflict
 		}
@@ -1489,7 +1787,7 @@ func utilityUpsertLedgerRow(rows []map[string]any, row map[string]any) ([]map[st
 	outcomeID := strings.TrimSpace(anyToString(row["outcome_id"]))
 	for index := range rows {
 		if anyToString(rows[index]["outcome_id"]) == outcomeID {
-			if anyToString(rows[index]["source_claim_digest"]) != anyToString(row["source_claim_digest"]) {
+			if anyToString(rows[index]["source_claim_digest"]) != anyToString(row["source_claim_digest"]) || !utilityDurableResponseBindingsEqual(rows[index], row) {
 				return rows, errUtilityOutcomeConflict
 			}
 			if anyToInt(row["revision"], 1) <= anyToInt(rows[index]["revision"], 1) {
@@ -1513,6 +1811,9 @@ func (l *utilityLedgerStore) writeBoundedRowsLocked(rows []map[string]any) ([]ma
 	encoded := make([]encodedLedgerRow, 0, len(rows))
 	total := int64(0)
 	for index := len(rows) - 1; index >= 0; index-- {
+		if !utilityDurableObservationBindingValid(rows[index]) {
+			return nil, errUtilityInvalidResponseBinding
+		}
 		raw, err := json.Marshal(rows[index])
 		if err != nil {
 			continue
@@ -1580,6 +1881,10 @@ func (l *utilityLedgerStore) readRowsUnlocked() ([]map[string]any, int, int, err
 		if anyToString(row["schema_id"]) != utilityObservationContractID {
 			continue
 		}
+		if !utilityDurableObservationBindingValid(row) {
+			parseErrors++
+			continue
+		}
 		outcomeID := strings.TrimSpace(anyToString(row["outcome_id"]))
 		if outcomeID == "" {
 			parseErrors++
@@ -1593,7 +1898,7 @@ func (l *utilityLedgerStore) readRowsUnlocked() ([]map[string]any, int, int, err
 		if existing, exists := latest[outcomeID]; !exists {
 			order = append(order, outcomeID)
 		} else {
-			if anyToString(existing["source_claim_digest"]) != claimDigest {
+			if anyToString(existing["source_claim_digest"]) != claimDigest || !utilityDurableResponseBindingsEqual(existing, row) {
 				parseErrors++
 				continue
 			}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -65,6 +66,7 @@ func (s *server) memoryRecallEvaluateSavedNative(w http.ResponseWriter, r *http.
 		}
 		payload = parsed
 	}
+	comparatorAuthority := contextPackLearnedComparatorAuthorityForRequest(s, r, payload)
 	mode := strings.ToLower(strings.TrimSpace(anyToString(payload["mode"])))
 	if mode == "derive" {
 		maxRows := clampInt(anyToInt(payload["max_rows"], derivedRegressionDefaultMaxRows), 1, derivedRegressionMaxRows)
@@ -107,7 +109,14 @@ func (s *server) memoryRecallEvaluateSavedNative(w http.ResponseWriter, r *http.
 		s.writeRecallEvalCaseSetInvalid(w, cfg, caseSetHealth)
 		return
 	}
-	impactComparison := newSavedRecallImpactComparison(cfg)
+	actuatorRows := []map[string]any{}
+	if s != nil && s.contextPackQuality != nil {
+		actuatorRows, _ = s.contextPackQuality.receiptDurableOutcomeRows(evidenceReputationMaxRows)
+	}
+	actuatorRows = reconcileCandidateUtilityVerification(actuatorRows, utilityFromServer(s))
+	impactComparison := newSavedRecallImpactComparisonWithOutcomeRowsAndAuthority(
+		cfg, actuatorRows, time.Now().UTC(), comparatorAuthority,
+	)
 
 	k := clampInt(cfg.K, 1, 20)
 	if raw, exists := payload["k"]; exists {
@@ -127,6 +136,13 @@ func (s *server) memoryRecallEvaluateSavedNative(w http.ResponseWriter, r *http.
 	includeRetrievalDebug := anyToBool(payload["include_retrieval_debug"])
 	includePreferences := anyToBool(payload["include_preferences"])
 	userID := strings.TrimSpace(anyToString(payload["user_id"]))
+	if comparatorAuthority.Authorized {
+		// The authority artifact is evaluated only through the fixed, server-owned
+		// profile. Preserve the caller's diagnostic options on every other run.
+		incomingHeaders = comparatorAuthority.Headers
+		includePreferences = false
+		userID = ""
+	}
 
 	evaluationStartedAt := time.Now()
 	recallHits := 0
@@ -375,6 +391,7 @@ func (s *server) memoryRecallEvaluateSavedNative(w http.ResponseWriter, r *http.
 			ablationReports = append(ablationReports, ablation)
 		}
 		impactComparison.addCase(idx, rawCase, results, anyMap(searchResp["search_intelligence"]), expectedNumeric, latencyMs)
+		impactComparison.addActuatorCase(idx, rawCase, searchResp)
 		caseReports = append(caseReports, report)
 	}
 
@@ -522,6 +539,11 @@ func (s *server) memoryRecallEvaluateSavedNative(w http.ResponseWriter, r *http.
 			"version":     cfg.Version,
 			"updatedAt":   cfg.UpdatedAt,
 			"count":       len(cfg.Cases),
+		},
+		"activation_authority": map[string]any{
+			"requested":  contextPackLearnedComparatorAuthorityRequested(payload),
+			"authorized": comparatorAuthority.Authorized,
+			"reason":     comparatorAuthority.Reason,
 		},
 	}
 	if includeAblation {
@@ -810,6 +832,384 @@ func resolveRecallEvalCasesPath() string {
 	return resolveStoragePath("ORCH_RECALL_EVAL_CASES_PATH", defaultRecallEvalCasesRelativePath)
 }
 
+const (
+	// The activation path previously reread this many monitor rows for every
+	// eligible request. Keep the same bounded historical window, but materialize
+	// only the newest exact-scope artifact for each scope at startup and after a
+	// successful durable append.
+	recallMonitorShadowIndexHistoryLimit = 512
+	recallMonitorShadowIndexMaxScopes    = savedRecallImpactMaxCohorts
+)
+
+type recallMonitorFileFingerprint struct {
+	path       string
+	exists     bool
+	size       int64
+	modifiedAt time.Time
+	fileInfo   os.FileInfo
+}
+
+func (fingerprint recallMonitorFileFingerprint) matches(other recallMonitorFileFingerprint) bool {
+	if fingerprint.path != other.path ||
+		fingerprint.exists != other.exists ||
+		fingerprint.size != other.size ||
+		!fingerprint.modifiedAt.Equal(other.modifiedAt) {
+		return false
+	}
+	if !fingerprint.exists {
+		return true
+	}
+	return fingerprint.fileInfo != nil && other.fileInfo != nil && os.SameFile(fingerprint.fileInfo, other.fileInfo)
+}
+
+type recallMonitorShadowIndex struct {
+	ready         bool
+	stale         bool
+	fingerprint   recallMonitorFileFingerprint
+	artifactSeen  bool
+	latestByScope map[string]map[string]any
+}
+
+func recallMonitorPath() string {
+	return resolveStoragePath(
+		"RECALL_MONITOR_PATH",
+		filepath.Join("services", "orchestrator", "data", "recall_monitor.ndjson"),
+	)
+}
+
+func recallMonitorFileFingerprintForPath(path string) (recallMonitorFileFingerprint, error) {
+	path = strings.TrimSpace(path)
+	fingerprint := recallMonitorFileFingerprint{path: path}
+	if path == "" {
+		return fingerprint, nil
+	}
+	info, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return fingerprint, nil
+	}
+	if err != nil {
+		return fingerprint, err
+	}
+	if !info.Mode().IsRegular() {
+		return fingerprint, fmt.Errorf("recall monitor path is not a regular file")
+	}
+	fingerprint.exists = true
+	fingerprint.size = info.Size()
+	fingerprint.modifiedAt = info.ModTime()
+	fingerprint.fileInfo = info
+	return fingerprint, nil
+}
+
+func recallMonitorShadowScopeKey(project, taskClass string) (string, bool) {
+	return recallMonitorShadowScopeKeyForWorkspace(project, taskClass, "")
+}
+
+func recallMonitorShadowScopeKeyForWorkspace(project, taskClass, workspaceRef string) (string, bool) {
+	project = strings.TrimSpace(strings.ToLower(project))
+	taskClass = strings.TrimSpace(strings.ToLower(taskClass))
+	if project == "" || taskClass == "" {
+		return "", false
+	}
+	key := savedRecallImpactOpaqueScopeRef("project", project) + "\x00" +
+		savedRecallImpactOpaqueScopeRef("task_class", taskClass)
+	if workspaceRef = contextPackLearnedDigestRef(workspaceRef); workspaceRef != "" {
+		key += "\x00" + workspaceRef
+	}
+	return key, true
+}
+
+func recallMonitorShadowArtifactScopeKey(artifact map[string]any) (string, bool) {
+	projectRef, taskClassRef, valid := searchImpactShadowScopeRefs(artifact)
+	if !valid {
+		return "", false
+	}
+	key := projectRef + "\x00" + taskClassRef
+	if rawWorkspace, present := artifact["workspace_ref"]; present {
+		workspaceText, ok := rawWorkspace.(string)
+		if !ok {
+			return "", false
+		}
+		if strings.TrimSpace(workspaceText) != "" {
+			workspaceRef := contextPackLearnedDigestRef(workspaceText)
+			if workspaceRef == "" {
+				return "", false
+			}
+			key += "\x00" + workspaceRef
+		}
+	}
+	return key, true
+}
+
+func recallMonitorShadowScopeMismatchArtifact() map[string]any {
+	return map[string]any{
+		"schema_id":         savedRecallImpactShadowEvalSchemaID,
+		"comparison_valid":  false,
+		"comparison_reason": "scope_mismatch",
+	}
+}
+
+func (index *recallMonitorShadowIndex) recordArtifact(scopeKey string, artifact map[string]any) error {
+	if index.latestByScope == nil {
+		index.latestByScope = make(map[string]map[string]any)
+	}
+	if _, present := index.latestByScope[scopeKey]; !present && len(index.latestByScope) >= recallMonitorShadowIndexMaxScopes {
+		return fmt.Errorf("recall monitor shadow index exceeds %d exact scopes", recallMonitorShadowIndexMaxScopes)
+	}
+	index.latestByScope[scopeKey] = cloneJSONMap(artifact)
+	return nil
+}
+
+func (index *recallMonitorShadowIndex) recordNestedArtifacts(artifacts []map[string]any) error {
+	byScope := make(map[string][]map[string]any)
+	for _, artifact := range artifacts {
+		scopeKey, valid := recallMonitorShadowArtifactScopeKey(artifact)
+		if !valid {
+			continue
+		}
+		byScope[scopeKey] = append(byScope[scopeKey], artifact)
+	}
+	for scopeKey, matches := range byScope {
+		if len(matches) > 1 {
+			if err := index.recordArtifact(scopeKey, recallMonitorShadowScopeMismatchArtifact()); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := index.recordArtifact(scopeKey, matches[0]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func buildRecallMonitorShadowIndex(fingerprint recallMonitorFileFingerprint, rows []map[string]any) (recallMonitorShadowIndex, error) {
+	index := recallMonitorShadowIndex{
+		ready:         true,
+		fingerprint:   fingerprint,
+		latestByScope: make(map[string]map[string]any),
+	}
+	for _, row := range rows {
+		if artifacts, nested := searchImpactNestedShadowEvaluations(row); nested {
+			index.artifactSeen = true
+			if err := index.recordNestedArtifacts(artifacts); err != nil {
+				return recallMonitorShadowIndex{}, err
+			}
+			continue
+		}
+		if anyToString(row["schema_id"]) != savedRecallImpactShadowEvalSchemaID {
+			continue
+		}
+		index.artifactSeen = true
+		scopeKey, valid := recallMonitorShadowArtifactScopeKey(row)
+		if !valid {
+			continue
+		}
+		if err := index.recordArtifact(scopeKey, row); err != nil {
+			return recallMonitorShadowIndex{}, err
+		}
+	}
+	return index, nil
+}
+
+// readRecallMonitorHistoryForActivationIndex deliberately differs from the
+// telemetry reader: a comparator cache cannot skip a malformed newest row and
+// retain an older pass. It reads the same bounded tail window, but every
+// complete record in that window must be a bounded JSON object, and a trailing
+// partial record is treated as crash residue rather than ignored.
+func readRecallMonitorHistoryForActivationIndex(path string, limit int) ([]map[string]any, error) {
+	if limit < 1 {
+		return []map[string]any{}, nil
+	}
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return []map[string]any{}, nil
+	}
+	file, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return []map[string]any{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if info.Size() < 1 {
+		return []map[string]any{}, nil
+	}
+	lastByte := []byte{0}
+	if _, err := file.ReadAt(lastByte, info.Size()-1); err != nil {
+		return nil, err
+	}
+	if lastByte[0] != '\n' {
+		return nil, errors.New("recall monitor has a trailing partial row")
+	}
+	end, complete := recallMonitorLastCompleteLineEnd(file, info.Size())
+	if !complete {
+		return nil, errors.New("recall monitor has no readable complete rows")
+	}
+	rows := make([]map[string]any, 0, limit)
+	for scanned := 0; end >= 0 && scanned < limit; scanned++ {
+		line, start, oversized, ok := recallMonitorTailLine(file, end)
+		if !ok {
+			return nil, errors.New("read recall monitor row for activation index")
+		}
+		if oversized || len(line) > recallMonitorHistoryMaxLineBytes {
+			return nil, fmt.Errorf("recall monitor row exceeds %d byte activation-index limit", recallMonitorHistoryMaxLineBytes)
+		}
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 {
+			return nil, errors.New("recall monitor has an empty complete row")
+		}
+		row := map[string]any{}
+		if err := json.Unmarshal(line, &row); err != nil || row == nil {
+			return nil, errors.New("recall monitor has a malformed complete row")
+		}
+		rows = append(rows, row)
+		if start == 0 {
+			break
+		}
+		end = start - 1 // the preceding newline terminates the next older line
+	}
+	for left, right := 0, len(rows)-1; left < right; left, right = left+1, right-1 {
+		rows[left], rows[right] = rows[right], rows[left]
+	}
+	return rows, nil
+}
+
+func (s *server) setRecallMonitorShadowIndexUnavailable(path string) {
+	if s == nil {
+		return
+	}
+	fingerprint, _ := recallMonitorFileFingerprintForPath(path)
+	s.recallMonitorShadowMu.Lock()
+	s.recallMonitorShadowIndex = recallMonitorShadowIndex{
+		stale:       true,
+		fingerprint: fingerprint,
+	}
+	s.recallMonitorShadowMu.Unlock()
+}
+
+// loadRecallMonitorShadowIndex builds a bounded snapshot only at startup and
+// after a durable local monitor append. A changing or unreadable source never
+// leaves a prior comparator pass eligible.
+func (s *server) loadRecallMonitorShadowIndex() error {
+	if s == nil {
+		return errors.New("recall monitor shadow index has no server")
+	}
+	path := recallMonitorPath()
+	before, err := recallMonitorFileFingerprintForPath(path)
+	if err != nil {
+		s.setRecallMonitorShadowIndexUnavailable(path)
+		return fmt.Errorf("stat recall monitor before index load: %w", err)
+	}
+	rows, err := readRecallMonitorHistoryForActivationIndex(path, recallMonitorShadowIndexHistoryLimit)
+	if err != nil {
+		s.setRecallMonitorShadowIndexUnavailable(path)
+		return fmt.Errorf("read recall monitor for activation index: %w", err)
+	}
+	if currentPath := recallMonitorPath(); currentPath != path {
+		s.setRecallMonitorShadowIndexUnavailable(path)
+		return errors.New("recall monitor path changed during index load")
+	}
+	after, err := recallMonitorFileFingerprintForPath(path)
+	if err != nil {
+		s.setRecallMonitorShadowIndexUnavailable(path)
+		return fmt.Errorf("stat recall monitor after index load: %w", err)
+	}
+	if !before.matches(after) {
+		s.setRecallMonitorShadowIndexUnavailable(path)
+		return errors.New("recall monitor changed during index load")
+	}
+	if after.exists && after.size > 0 && len(rows) == 0 {
+		s.setRecallMonitorShadowIndexUnavailable(path)
+		return errors.New("recall monitor index has no readable complete rows")
+	}
+	index, err := buildRecallMonitorShadowIndex(after, rows)
+	if err != nil {
+		s.setRecallMonitorShadowIndexUnavailable(path)
+		return err
+	}
+	s.recallMonitorShadowMu.Lock()
+	s.recallMonitorShadowIndex = index
+	s.recallMonitorShadowMu.Unlock()
+	return nil
+}
+
+func (s *server) markRecallMonitorShadowIndexStale(expected recallMonitorFileFingerprint) {
+	if s == nil {
+		return
+	}
+	s.recallMonitorShadowMu.Lock()
+	if s.recallMonitorShadowIndex.fingerprint.matches(expected) {
+		s.recallMonitorShadowIndex.stale = true
+	}
+	s.recallMonitorShadowMu.Unlock()
+}
+
+func recallMonitorShadowIndexFailure(reason string) map[string]any {
+	return map[string]any{
+		"schema_id":         savedRecallImpactShadowEvalSchemaID,
+		"comparison_valid":  false,
+		"comparison_reason": reason,
+	}
+}
+
+// latestRecallMonitorShadowEvaluation never tails the monitor history. It
+// performs only a metadata check so an append by another process invalidates
+// the in-memory snapshot instead of silently reusing an older comparator.
+func (s *server) latestRecallMonitorShadowEvaluation(project, taskClass string) map[string]any {
+	return s.latestRecallMonitorShadowEvaluationForWorkspace(project, taskClass, "")
+}
+
+func (s *server) latestRecallMonitorShadowEvaluationForWorkspace(project, taskClass, workspaceRef string) map[string]any {
+	if s == nil {
+		return recallMonitorShadowIndexFailure("comparator_index_unavailable")
+	}
+	s.recallMonitorShadowMu.RLock()
+	index := s.recallMonitorShadowIndex
+	if !index.ready {
+		s.recallMonitorShadowMu.RUnlock()
+		return recallMonitorShadowIndexFailure("comparator_index_unavailable")
+	}
+	if index.stale {
+		s.recallMonitorShadowMu.RUnlock()
+		return recallMonitorShadowIndexFailure("comparator_index_stale")
+	}
+	if currentPath := recallMonitorPath(); currentPath != index.fingerprint.path {
+		s.recallMonitorShadowMu.RUnlock()
+		s.markRecallMonitorShadowIndexStale(index.fingerprint)
+		return recallMonitorShadowIndexFailure("comparator_index_stale")
+	}
+	current, err := recallMonitorFileFingerprintForPath(index.fingerprint.path)
+	if err != nil {
+		s.recallMonitorShadowMu.RUnlock()
+		s.markRecallMonitorShadowIndexStale(index.fingerprint)
+		return recallMonitorShadowIndexFailure("comparator_index_unavailable")
+	}
+	if !index.fingerprint.matches(current) {
+		s.recallMonitorShadowMu.RUnlock()
+		s.markRecallMonitorShadowIndexStale(index.fingerprint)
+		return recallMonitorShadowIndexFailure("comparator_index_stale")
+	}
+	scopeKey, exactScope := recallMonitorShadowScopeKeyForWorkspace(project, taskClass, workspaceRef)
+	if exactScope {
+		if artifact, present := index.latestByScope[scopeKey]; present {
+			selected := cloneJSONMap(artifact)
+			s.recallMonitorShadowMu.RUnlock()
+			return selected
+		}
+	}
+	artifactSeen := index.artifactSeen
+	s.recallMonitorShadowMu.RUnlock()
+	if !artifactSeen {
+		return nil
+	}
+	return recallMonitorShadowScopeMismatchArtifact()
+}
+
 type recallMonitorPersistenceHooks struct {
 	syncFile      func(*os.File) error
 	syncDirectory func(string) error
@@ -891,11 +1291,12 @@ func recallMonitorAppendDurabilityPlan(path string) (bool, []string, error) {
 }
 
 func (s *server) appendRecallMonitorSample(sample map[string]any) error {
-	path := resolveStoragePath(
-		"RECALL_MONITOR_PATH",
-		filepath.Join("services", "orchestrator", "data", "recall_monitor.ndjson"),
-	)
+	path := recallMonitorPath()
 	if strings.TrimSpace(path) == "" {
+		if err := s.loadRecallMonitorShadowIndex(); err != nil {
+			s.recordSearchImpactComparatorPersistence(false)
+			return err
+		}
 		s.recordSearchImpactComparatorPersistence(true)
 		return nil
 	}
@@ -936,6 +1337,10 @@ func (s *server) appendRecallMonitorSample(sample map[string]any) error {
 				return err
 			}
 		}
+	}
+	if err := s.loadRecallMonitorShadowIndex(); err != nil {
+		s.recordSearchImpactComparatorPersistence(false)
+		return fmt.Errorf("refresh recall monitor shadow index after durable append: %w", err)
 	}
 	s.recordSearchImpactComparatorPersistence(true)
 	return nil
@@ -1459,17 +1864,23 @@ const (
 )
 
 type savedRecallImpactPlan struct {
-	grades          map[int]int
-	projectRef      string
-	taskClassRef    string
-	caseCount       int
-	numericExpected int
-	safetyCases     int
+	grades              map[int]int
+	project             string
+	taskClass           string
+	retrievalIntent     string
+	projectRef          string
+	taskClassRef        string
+	workspaceRef        string
+	retrievalIntentRefs map[string]struct{}
+	caseCount           int
+	numericExpected     int
+	safetyCases         int
 }
 
 type savedRecallImpactScope struct {
-	project   string
-	taskClass string
+	project      string
+	taskClass    string
+	workspaceRef string
 }
 
 type savedRecallImpactCandidate struct {
@@ -1499,9 +1910,10 @@ type savedRecallImpactMetrics struct {
 }
 
 type savedRecallImpactComparison struct {
-	caseSetRef string
-	cohorts    map[savedRecallImpactScope]*savedRecallImpactCohort
-	overflow   bool
+	caseSetRef  string
+	evaluatedAt string
+	cohorts     map[savedRecallImpactScope]*savedRecallImpactCohort
+	overflow    bool
 }
 
 type savedRecallImpactCohort struct {
@@ -1510,24 +1922,50 @@ type savedRecallImpactCohort struct {
 	reason   string
 	baseline savedRecallImpactMetrics
 	shadow   savedRecallImpactMetrics
+	actuator *contextPackLearnedActuatorComparison
 }
 
 const savedRecallImpactMaxCohorts = 64
 
 func newSavedRecallImpactComparison(cfg recallEvalSavedConfig) *savedRecallImpactComparison {
+	return newSavedRecallImpactComparisonWithOutcomeRows(cfg, nil, time.Now().UTC())
+}
+
+func newSavedRecallImpactComparisonWithOutcomeRows(cfg recallEvalSavedConfig, outcomeRows []map[string]any, asOf time.Time) *savedRecallImpactComparison {
+	return newSavedRecallImpactComparisonWithOutcomeRowsAndAuthority(cfg, outcomeRows, asOf, contextPackLearnedComparatorAuthority{})
+}
+
+func newSavedRecallImpactComparisonWithOutcomeRowsAndAuthority(
+	cfg recallEvalSavedConfig,
+	outcomeRows []map[string]any,
+	asOf time.Time,
+	authority contextPackLearnedComparatorAuthority,
+) *savedRecallImpactComparison {
+	if asOf.IsZero() {
+		asOf = time.Now().UTC()
+	}
+	workspaceRef := ""
+	if authority.Authorized {
+		workspaceRef = contextPackLearnedDigestRef(authority.Workspace)
+	}
 	comparison := &savedRecallImpactComparison{
-		caseSetRef: savedRecallImpactCaseSetRef(cfg),
-		cohorts:    map[savedRecallImpactScope]*savedRecallImpactCohort{},
+		caseSetRef:  savedRecallImpactCaseSetRefForWorkspace(cfg, workspaceRef),
+		evaluatedAt: asOf.UTC().Format(time.RFC3339Nano),
+		cohorts:     map[savedRecallImpactScope]*savedRecallImpactCohort{},
 	}
 	for idx, rawCase := range cfg.Cases {
-		scope := savedRecallImpactScopeForCase(rawCase)
+		scope := savedRecallImpactScopeForCaseWithWorkspace(rawCase, workspaceRef)
 		cohort := comparison.cohorts[scope]
 		if cohort == nil {
 			cohort = &savedRecallImpactCohort{
 				plan: savedRecallImpactPlan{
-					grades:       map[int]int{},
-					projectRef:   savedRecallImpactOpaqueScopeRef("project", scope.project),
-					taskClassRef: savedRecallImpactOpaqueScopeRef("task_class", scope.taskClass),
+					grades:              map[int]int{},
+					project:             scope.project,
+					taskClass:           scope.taskClass,
+					projectRef:          savedRecallImpactOpaqueScopeRef("project", scope.project),
+					taskClassRef:        savedRecallImpactOpaqueScopeRef("task_class", scope.taskClass),
+					workspaceRef:        scope.workspaceRef,
+					retrievalIntentRefs: map[string]struct{}{},
 				},
 				valid: true,
 				baseline: savedRecallImpactMetrics{
@@ -1540,6 +1978,16 @@ func newSavedRecallImpactComparison(cfg recallEvalSavedConfig) *savedRecallImpac
 			comparison.cohorts[scope] = cohort
 		}
 		cohort.plan.caseCount++
+		retrievalIntent := strings.TrimSpace(strings.ToLower(anyToString(rawCase["retrieval_intent"])))
+		if retrievalIntent == "" {
+			retrievalIntent = "decision"
+		}
+		cohort.plan.retrievalIntentRefs[savedRecallImpactOpaqueScopeRef("retrieval_intent", retrievalIntent)] = struct{}{}
+		if cohort.plan.retrievalIntent == "" {
+			cohort.plan.retrievalIntent = retrievalIntent
+		} else if cohort.plan.retrievalIntent != retrievalIntent {
+			cohort.plan.retrievalIntent = "__mixed__"
+		}
 		if grade, ok := savedRecallImpactDecisionGrade(rawCase["decision_impact_grade"]); ok {
 			cohort.plan.grades[idx] = grade
 		} else {
@@ -1557,9 +2005,65 @@ func newSavedRecallImpactComparison(cfg recallEvalSavedConfig) *savedRecallImpac
 		if cohort.plan.safetyCases == 0 {
 			cohort.invalidate("safety_cases_missing")
 		}
+		actuatorReason := ""
+		multipliers := map[string]float64{}
+		reputationVectorRef := ""
+		if !cohort.valid {
+			actuatorReason = "case_set_invalid"
+		} else if cohort.plan.retrievalIntent == "__mixed__" || len(cohort.plan.retrievalIntentRefs) != 1 {
+			actuatorReason = "mixed_retrieval_intent"
+		} else if len(outcomeRows) == 0 {
+			actuatorReason = "reputation_candidate_influence_unavailable"
+		} else {
+			var reputation map[string]any
+			if workspaceRef != "" {
+				reputation = evidenceReputationSnapshotFromReconciledRowsForWorkspace(
+					outcomeRows, cohort.plan.project, cohort.plan.taskClass, cohort.plan.retrievalIntent,
+					workspaceRef, contextPackLearnedMinimumSamples, evidenceReputationMaxEntries, asOf,
+				)
+			} else {
+				reputation = evidenceReputationSnapshotFromReconciledRows(
+					outcomeRows, cohort.plan.project, cohort.plan.taskClass, cohort.plan.retrievalIntent,
+					contextPackLearnedMinimumSamples, evidenceReputationMaxEntries, asOf,
+				)
+			}
+			var reason string
+			multipliers, reason = contextPackLearnedReputationMultipliers(
+				reputation, cohort.plan.project, cohort.plan.taskClass, cohort.plan.retrievalIntent, asOf,
+			)
+			actuatorReason = reason
+			if reason == "" {
+				reputationVectorRef = contextPackLearnedReputationVectorRef(multipliers)
+				if reputationVectorRef == "" {
+					actuatorReason = "reputation_vector_unavailable"
+				}
+			}
+		}
+		cohort.actuator = newContextPackLearnedActuatorComparison(
+			comparison.caseSetRef, cohort.plan.caseCount, multipliers, actuatorReason,
+		)
+		if authority.Authorized && workspaceRef != "" {
+			cohort.actuator.setAuthorityEnvelope(authority.Envelope)
+		}
 	}
 	comparison.overflow = len(comparison.cohorts) > savedRecallImpactMaxCohorts
 	return comparison
+}
+
+func (c *savedRecallImpactComparison) addActuatorCase(caseIndex int, rawCase, searchResponse map[string]any) {
+	if c == nil {
+		return
+	}
+	cohort := c.cohorts[savedRecallImpactScopeForCaseWithWorkspace(rawCase, c.workspaceRef())]
+	if cohort == nil || cohort.actuator == nil {
+		return
+	}
+	grade, exists := cohort.plan.grades[caseIndex]
+	if !exists {
+		cohort.actuator.invalidate("decision_impact_grade_missing_or_invalid")
+		return
+	}
+	cohort.actuator.addCase(rawCase, searchResponse, grade)
 }
 
 // savedRecallImpactCaseSetRef binds a comparator artifact to the versioned
@@ -1567,11 +2071,19 @@ func newSavedRecallImpactComparison(cfg recallEvalSavedConfig) *savedRecallImpac
 // json.Marshal orders map keys deterministically, while case order remains an
 // intentional part of the evaluated case-set content.
 func savedRecallImpactCaseSetRef(cfg recallEvalSavedConfig) string {
-	raw, err := json.Marshal(map[string]any{
+	return savedRecallImpactCaseSetRefForWorkspace(cfg, "")
+}
+
+func savedRecallImpactCaseSetRefForWorkspace(cfg recallEvalSavedConfig, workspaceRef string) string {
+	payload := map[string]any{
 		"schema_id": "saved_recall_eval_case_set_ref.v1",
 		"version":   cfg.Version,
 		"cases":     cfg.Cases,
-	})
+	}
+	if workspaceRef = contextPackLearnedDigestRef(workspaceRef); workspaceRef != "" {
+		payload["workspace_ref"] = workspaceRef
+	}
+	raw, err := json.Marshal(payload)
 	if err != nil {
 		return ""
 	}
@@ -1579,6 +2091,10 @@ func savedRecallImpactCaseSetRef(cfg recallEvalSavedConfig) string {
 }
 
 func savedRecallImpactScopeForCase(rawCase map[string]any) savedRecallImpactScope {
+	return savedRecallImpactScopeForCaseWithWorkspace(rawCase, "")
+}
+
+func savedRecallImpactScopeForCaseWithWorkspace(rawCase map[string]any, workspaceRef string) savedRecallImpactScope {
 	project := strings.TrimSpace(strings.ToLower(anyToString(rawCase["project"])))
 	if project == "" {
 		project = "unscoped"
@@ -1587,7 +2103,17 @@ func savedRecallImpactScopeForCase(rawCase map[string]any) savedRecallImpactScop
 	if taskClass == "" {
 		taskClass = "unclassified"
 	}
-	return savedRecallImpactScope{project: project, taskClass: taskClass}
+	return savedRecallImpactScope{project: project, taskClass: taskClass, workspaceRef: contextPackLearnedDigestRef(workspaceRef)}
+}
+
+func (c *savedRecallImpactComparison) workspaceRef() string {
+	if c == nil {
+		return ""
+	}
+	for _, cohort := range c.cohorts {
+		return cohort.plan.workspaceRef
+	}
+	return ""
 }
 
 func savedRecallImpactDecisionGrade(raw any) (int, bool) {
@@ -1633,7 +2159,7 @@ func (c *savedRecallImpactComparison) invalidateCase(rawCase map[string]any, rea
 	if c == nil {
 		return
 	}
-	cohort := c.cohorts[savedRecallImpactScopeForCase(rawCase)]
+	cohort := c.cohorts[savedRecallImpactScopeForCaseWithWorkspace(rawCase, c.workspaceRef())]
 	if cohort == nil {
 		c.invalidate(reason)
 		return
@@ -1662,7 +2188,7 @@ func (c *savedRecallImpactComparison) addCase(
 	if c == nil {
 		return
 	}
-	cohort := c.cohorts[savedRecallImpactScopeForCase(rawCase)]
+	cohort := c.cohorts[savedRecallImpactScopeForCaseWithWorkspace(rawCase, c.workspaceRef())]
 	if cohort == nil {
 		c.invalidate("cohort_missing")
 		return
@@ -1977,7 +2503,7 @@ func savedRecallImpactUnavailableMetrics() map[string]any {
 	}
 }
 
-func (c *savedRecallImpactCohort) monitorFields(caseSetRef string) map[string]any {
+func (c *savedRecallImpactCohort) monitorFields(caseSetRef, evaluatedAt string) map[string]any {
 	if c == nil {
 		return map[string]any{}
 	}
@@ -1998,26 +2524,38 @@ func (c *savedRecallImpactCohort) monitorFields(caseSetRef string) map[string]an
 	if comparisonValid {
 		reason = "valid"
 	}
-	return map[string]any{
-		"schema_id":             savedRecallImpactShadowEvalSchemaID,
-		"version":               1,
-		"comparison_scope":      savedRecallImpactComparisonScope,
-		"comparison_fixed_k":    savedRecallImpactK,
-		"comparison_valid":      comparisonValid,
-		"comparison_reason":     reason,
-		"case_count":            c.plan.caseCount,
-		"case_set_ref":          caseSetRef,
-		"project_scope_refs":    []string{c.plan.projectRef},
-		"task_class_scope_refs": []string{c.plan.taskClassRef},
-		"latency_basis":         "shared_synthetic_retrieval_replay_ms",
-		"baseline":              baseline,
-		"shadow":                shadow,
+	retrievalIntentRefs := make([]string, 0, len(c.plan.retrievalIntentRefs))
+	for ref := range c.plan.retrievalIntentRefs {
+		retrievalIntentRefs = append(retrievalIntentRefs, ref)
+	}
+	sort.Strings(retrievalIntentRefs)
+	fields := map[string]any{
+		"schema_id":                   savedRecallImpactShadowEvalSchemaID,
+		"version":                     1,
+		"comparison_scope":            savedRecallImpactComparisonScope,
+		"comparison_fixed_k":          savedRecallImpactK,
+		"comparison_valid":            comparisonValid,
+		"comparison_reason":           reason,
+		"case_count":                  c.plan.caseCount,
+		"case_set_ref":                caseSetRef,
+		"project_scope_refs":          []string{c.plan.projectRef},
+		"task_class_scope_refs":       []string{c.plan.taskClassRef},
+		"workspace_ref":               c.plan.workspaceRef,
+		"retrieval_intent_scope_refs": retrievalIntentRefs,
+		"evaluated_at":                evaluatedAt,
+		"latency_basis":               "shared_synthetic_retrieval_replay_ms",
+		"baseline":                    baseline,
+		"shadow":                      shadow,
 		"privacy": map[string]any{
 			"raw_content_or_path_persisted": false,
 			"opaque_scope_refs_only":        true,
 			"candidate_refs_persisted":      false,
 		},
 	}
+	if c.actuator != nil {
+		fields["learned_actuator_comparator"] = c.actuator.monitorFields()
+	}
+	return fields
 }
 
 func (c *savedRecallImpactComparison) monitorFields(caseCount int) map[string]any {
@@ -2030,7 +2568,7 @@ func (c *savedRecallImpactComparison) monitorFields(caseCount int) map[string]an
 	}
 	artifacts := make([]any, 0, len(cohorts))
 	for _, cohort := range cohorts {
-		artifacts = append(artifacts, cohort.monitorFields(c.caseSetRef))
+		artifacts = append(artifacts, cohort.monitorFields(c.caseSetRef, c.evaluatedAt))
 	}
 	if len(cohorts) == 1 && !c.overflow {
 		topLevel := cloneJSONMap(anyMap(artifacts[0]))
@@ -2055,6 +2593,9 @@ func (c *savedRecallImpactComparison) monitorFields(caseCount int) map[string]an
 		"case_set_ref":                     c.caseSetRef,
 		"project_scope_refs":               []string{},
 		"task_class_scope_refs":            []string{},
+		"workspace_ref":                    "",
+		"retrieval_intent_scope_refs":      []string{},
+		"evaluated_at":                     c.evaluatedAt,
 		"latency_basis":                    "shared_synthetic_retrieval_replay_ms",
 		"baseline":                         savedRecallImpactUnavailableMetrics(),
 		"shadow":                           savedRecallImpactUnavailableMetrics(),

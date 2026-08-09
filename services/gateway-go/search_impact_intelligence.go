@@ -9,14 +9,194 @@ import (
 )
 
 const (
-	searchImpactIntelligenceContractID  = "search_impact_intelligence.v1"
-	searchImpactIntelligencePath        = "/telemetry/search-impact"
-	searchImpactOutcomeSourceLimit      = 1000
-	searchImpactMinTrainOutcomes        = 8
-	searchImpactMinHoldoutOutcomes      = 2
-	searchImpactMinNegativeOutcomes     = 1
-	searchImpactMinIndependentVerifiers = 2
+	searchImpactIntelligenceContractID             = "search_impact_intelligence.v1"
+	contextPackLearnedActuatorComparatorContractID = "context_pack_learned_actuator_comparator.v1"
+	searchImpactIntelligencePath                   = "/telemetry/search-impact"
+	searchImpactOutcomeSourceLimit                 = 1000
+	searchImpactMinTrainOutcomes                   = 8
+	searchImpactMinHoldoutOutcomes                 = 2
+	searchImpactMinNegativeOutcomes                = 1
+	searchImpactMinIndependentVerifiers            = 2
 )
+
+func contextPackLearnedActuatorComparatorProof(shadow map[string]any) (map[string]any, string, bool) {
+	raw := anyMap(shadow["learned_actuator_comparator"])
+	if len(raw) == 0 || anyToString(raw["schema_id"]) != contextPackLearnedActuatorComparatorContractID ||
+		anyToInt(raw["version"], 0) != 1 || !anyToBool(raw["comparison_valid"]) ||
+		anyToString(raw["comparison_reason"]) != "valid" ||
+		anyToString(raw["comparison_scope"]) != contextPackLearnedActuatorComparisonScope ||
+		anyToInt(raw["comparison_fixed_k"], 0) != contextPackLearnedActuatorFixedK ||
+		anyToString(raw["ranking_contract_id"]) != contextPackLearnedActivationContractID ||
+		anyToString(raw["allocation_contract_id"]) != "context_pack_evidence_allocation.v1" ||
+		anyToString(raw["latency_basis"]) != "measured_context_pack_rank_and_allocate_ms" ||
+		!anyToBool(raw["same_returned_candidate_pool"]) || !anyToBool(raw["same_token_budget"]) ||
+		!anyToBool(raw["protected_selection_preserved"]) ||
+		anyToString(raw["case_set_ref"]) != anyToString(shadow["case_set_ref"]) {
+		return nil, "", false
+	}
+	caseCount, caseCountOK := searchImpactStrictInteger(raw, "case_count")
+	if !caseCountOK || caseCount <= 0 || caseCount != anyToInt(shadow["case_count"], 0) {
+		return nil, "", false
+	}
+	influencedCaseCount, influencedCaseCountOK := searchImpactStrictInteger(raw, "influenced_case_count")
+	if !influencedCaseCountOK || influencedCaseCount <= 0 || influencedCaseCount > caseCount {
+		return nil, "", false
+	}
+	allowed := map[string]struct{}{}
+	for _, field := range []string{
+		"schema_id", "version", "comparison_scope", "comparison_fixed_k", "comparison_valid", "comparison_reason",
+		"case_count", "influenced_case_count", "ranking_contract_id", "allocation_contract_id", "latency_basis",
+		"same_returned_candidate_pool", "same_token_budget", "protected_selection_preserved", "case_set_ref",
+		"candidate_pool_ref", "token_budget_ref", "protected_partition_ref", "ranking_vector_ref",
+		"control_selection_ref", "treatment_selection_ref", "reputation_vector_ref", "baseline", "treatment",
+		"authority",
+	} {
+		allowed[field] = struct{}{}
+	}
+	for field := range raw {
+		if _, ok := allowed[field]; !ok {
+			return nil, "", false
+		}
+	}
+	baseline, baselineOK := contextPackLearnedActuatorNormalizedMetrics(anyMap(raw["baseline"]))
+	treatment, treatmentOK := contextPackLearnedActuatorNormalizedMetrics(anyMap(raw["treatment"]))
+	if !baselineOK || !treatmentOK {
+		return nil, "", false
+	}
+	if _, pass := contextPackLearnedActuatorMetricsGate(baseline, treatment, caseCount); !pass {
+		return nil, "", false
+	}
+	normalized := map[string]any{
+		"schema_id": contextPackLearnedActuatorComparatorContractID, "version": 1,
+		"comparison_scope":   contextPackLearnedActuatorComparisonScope,
+		"comparison_fixed_k": contextPackLearnedActuatorFixedK,
+		"comparison_valid":   true, "comparison_reason": "valid", "case_count": caseCount,
+		"influenced_case_count":        influencedCaseCount,
+		"ranking_contract_id":          contextPackLearnedActivationContractID,
+		"allocation_contract_id":       "context_pack_evidence_allocation.v1",
+		"latency_basis":                "measured_context_pack_rank_and_allocate_ms",
+		"same_returned_candidate_pool": true, "same_token_budget": true,
+		"protected_selection_preserved": true, "case_set_ref": raw["case_set_ref"],
+		"baseline": baseline, "treatment": treatment,
+	}
+	for _, field := range []string{
+		"candidate_pool_ref", "token_budget_ref", "protected_partition_ref", "ranking_vector_ref",
+		"control_selection_ref", "treatment_selection_ref", "reputation_vector_ref",
+	} {
+		ref := contextPackLearnedDigestRef(anyToString(raw[field]))
+		if ref == "" {
+			return nil, "", false
+		}
+		normalized[field] = ref
+	}
+	if authority := anyMap(raw["authority"]); len(authority) > 0 {
+		normalized["authority"] = cloneJSONMap(authority)
+	}
+	ref := contextPackLearnedCanonicalDigest(normalized)
+	return normalized, ref, ref != ""
+}
+
+// contextPackLearnedActuatorComparatorProofForWorkspace is the activation
+// boundary. Diagnostic comparator artifacts remain useful without authority,
+// but only a canonical server-signed profile for the exact workspace can
+// authorize live influence.
+func contextPackLearnedActuatorComparatorProofForWorkspace(
+	s *server,
+	shadow map[string]any,
+	workspaceRef string,
+) (map[string]any, string, bool) {
+	workspaceRef = contextPackLearnedDigestRef(workspaceRef)
+	if workspaceRef == "" || contextPackLearnedDigestRef(anyToString(shadow["workspace_ref"])) != workspaceRef {
+		return nil, "", false
+	}
+	normalized, proofRef, ok := contextPackLearnedActuatorComparatorProof(shadow)
+	if !ok || !contextPackLearnedComparatorAuthorityEnvelopeValid(s, anyMap(normalized["authority"]), workspaceRef) {
+		return nil, "", false
+	}
+	return normalized, proofRef, true
+}
+
+func contextPackLearnedActuatorNormalizedMetrics(raw map[string]any) (map[string]any, bool) {
+	if len(raw) == 0 {
+		return nil, false
+	}
+	floatFields := []string{
+		"decision_impact_recall_at_5", "decision_impact_ndcg_at_5", "mrr", "numeric_exactness",
+		"citation_coverage", "citation_exactness", "safety_failure_rate", "p95_latency_ms",
+	}
+	integerFields := []string{
+		"safety_case_count", "safety_failure_count", "effective_k_min", "effective_k_max",
+		"sparse_candidate_case_count", "numeric_expected_count", "citation_expected_count", "citation_candidate_count",
+	}
+	allowed := make(map[string]struct{}, len(floatFields)+len(integerFields))
+	for _, field := range floatFields {
+		allowed[field] = struct{}{}
+	}
+	for _, field := range integerFields {
+		allowed[field] = struct{}{}
+	}
+	for field := range raw {
+		if _, ok := allowed[field]; !ok {
+			return nil, false
+		}
+	}
+	normalized := make(map[string]any, len(allowed))
+	for _, field := range floatFields {
+		value, ok := searchImpactStrictFiniteNumber(raw, field)
+		if !ok || !searchImpactComparatorMetricValueValid(field, value) {
+			return nil, false
+		}
+		normalized[field] = value
+	}
+	for _, field := range integerFields {
+		value, ok := searchImpactStrictInteger(raw, field)
+		if !ok {
+			return nil, false
+		}
+		normalized[field] = value
+	}
+	return normalized, true
+}
+
+func contextPackLearnedActuatorMetricsGate(baseline, treatment map[string]any, caseCount int) (string, bool) {
+	if caseCount <= 0 {
+		return "actuator_case_count_invalid", false
+	}
+	baselinePool, baselinePoolOK := searchImpactEffectivePoolMetadata(baseline, caseCount, contextPackLearnedActuatorFixedK)
+	treatmentPool, treatmentPoolOK := searchImpactEffectivePoolMetadata(treatment, caseCount, contextPackLearnedActuatorFixedK)
+	if !baselinePoolOK || !treatmentPoolOK || baselinePool.Minimum < 1 || treatmentPool.Minimum < 1 {
+		return "actuator_effective_pool_invalid", false
+	}
+	for _, field := range []string{"numeric_expected_count", "citation_expected_count", "citation_candidate_count", "safety_case_count"} {
+		baselineCount, baselineOK := searchImpactStrictInteger(baseline, field)
+		treatmentCount, treatmentOK := searchImpactStrictInteger(treatment, field)
+		if !baselineOK || !treatmentOK || baselineCount <= 0 || treatmentCount != baselineCount {
+			return "actuator_denominator_mismatch", false
+		}
+	}
+	if !searchImpactSafetyMetricsValid(baseline) || !searchImpactSafetyMetricsValid(treatment) {
+		return "actuator_safety_denominator_invalid", false
+	}
+	metric := func(values map[string]any, field string) float64 {
+		value, _ := searchImpactStrictFiniteNumber(values, field)
+		return value
+	}
+	improved := metric(treatment, "decision_impact_recall_at_5") > metric(baseline, "decision_impact_recall_at_5") &&
+		metric(treatment, "decision_impact_ndcg_at_5") > metric(baseline, "decision_impact_ndcg_at_5")
+	if !improved {
+		return "actuator_decision_impact_not_improved", false
+	}
+	noRegression := metric(treatment, "mrr") >= metric(baseline, "mrr") &&
+		metric(treatment, "numeric_exactness") >= metric(baseline, "numeric_exactness") &&
+		metric(treatment, "citation_coverage") >= metric(baseline, "citation_coverage") &&
+		metric(treatment, "citation_exactness") >= metric(baseline, "citation_exactness") &&
+		metric(treatment, "safety_failure_rate") <= metric(baseline, "safety_failure_rate") &&
+		metric(treatment, "p95_latency_ms") <= metric(baseline, "p95_latency_ms")+5.0
+	if !noRegression {
+		return "actuator_metric_regression", false
+	}
+	return "valid", true
+}
 
 // searchImpactIntelligenceInput contains aggregate-safe, receipt-bound input.
 // Comparative shadow evidence is deliberately optional: until an evaluator
@@ -35,6 +215,7 @@ type searchImpactOutcome struct {
 	OutcomeID                      string
 	CapturedAt                     string
 	CapturedAtTime                 time.Time
+	ResponseBindingKey             string
 	FirstPassSuccess               bool
 	RepairRequired                 bool
 	VerifierID                     string
@@ -44,35 +225,89 @@ type searchImpactOutcome struct {
 }
 
 func (s *server) searchImpactIntelligenceSnapshot(project, taskClass string) map[string]any {
+	return s.searchImpactIntelligenceSnapshotForScope(project, taskClass, "", false)
+}
+
+func (s *server) searchImpactIntelligenceSnapshotExact(project, taskClass, retrievalIntent string) map[string]any {
+	return s.searchImpactIntelligenceSnapshotForScope(project, taskClass, retrievalIntent, true)
+}
+
+func (s *server) searchImpactIntelligenceSnapshotForScope(project, taskClass, retrievalIntent string, exact bool) map[string]any {
 	rows := []map[string]any{}
 	receiptBinding := map[string]any{"pass": false, "missing_receipt_outcome_count": 0}
 	if s != nil && s.contextPackQuality != nil {
 		rows, receiptBinding = s.contextPackQuality.receiptDurableOutcomeRows(searchImpactOutcomeSourceLimit)
 	}
 	rows = reconcileCandidateUtilityVerification(rows, utilityFromServer(s))
+	return s.searchImpactIntelligenceSnapshotFromReconciledRows(
+		project, taskClass, retrievalIntent, exact, rows, receiptBinding,
+	)
+}
 
+func (s *server) searchImpactIntelligenceSnapshotFromReconciledRows(
+	project, taskClass, retrievalIntent string,
+	exact bool,
+	rows []map[string]any,
+	receiptBinding map[string]any,
+) map[string]any {
+	return s.searchImpactIntelligenceSnapshotFromReconciledRowsForScope(
+		project, taskClass, retrievalIntent, "", exact, rows, receiptBinding,
+	)
+}
+
+func (s *server) searchImpactIntelligenceSnapshotFromReconciledRowsForWorkspace(
+	project, taskClass, retrievalIntent, workspaceRef string,
+	rows []map[string]any,
+	receiptBinding map[string]any,
+) map[string]any {
+	return s.searchImpactIntelligenceSnapshotFromReconciledRowsForScope(
+		project, taskClass, retrievalIntent, contextPackLearnedDigestRef(workspaceRef), true, rows, receiptBinding,
+	)
+}
+
+func (s *server) searchImpactIntelligenceSnapshotFromReconciledRowsForScope(
+	project, taskClass, retrievalIntent, workspaceRef string,
+	exact bool,
+	rows []map[string]any,
+	receiptBinding map[string]any,
+) map[string]any {
+	reconciled := searchImpactReconciledCandidateOutcomesForWorkspace(rows, project, taskClass, retrievalIntent, workspaceRef)
 	utilitySummary := map[string]any{}
 	utilityRows := []map[string]any{}
 	if s != nil && s.utility != nil {
 		scopedUtilityQuery := utilityQuery{
-			Project: project, TaskClass: taskClass, Limit: searchImpactOutcomeSourceLimit,
+			Project: project, TaskClass: taskClass, WorkspaceRef: workspaceRef, Limit: searchImpactOutcomeSourceLimit,
 		}
-		utilitySnapshot := s.utility.snapshot(scopedUtilityQuery)
-		utilitySummary = searchImpactUtilitySummary(anyMap(utilitySnapshot["summary"]))
-		// The scoped summary remains useful context, but the causal canary gate
-		// below receives the underlying rows and filters them to the exact
-		// receipt-bound candidate outcome IDs after identity reconciliation.
-		utilityRows = s.utility.rows(scopedUtilityQuery)
+		if exact {
+			outcomeIDs := make(map[string]struct{}, len(reconciled))
+			for _, row := range reconciled {
+				if outcomeID := strings.TrimSpace(anyToString(row["outcome_id"])); outcomeID != "" {
+					outcomeIDs[outcomeID] = struct{}{}
+				}
+			}
+			utilityRows = s.utility.rowsForOutcomeIDs(scopedUtilityQuery, outcomeIDs)
+		} else {
+			utilityRows = s.utility.rows(scopedUtilityQuery)
+		}
+		projected, pairs, exclusions := utilityPairProjection(utilityRows)
+		utilitySummary = searchImpactUtilitySummary(utilityAggregate(projected, pairs, exclusions))
 	}
-	return buildSearchImpactIntelligence(searchImpactIntelligenceInput{
-		CandidateOutcomes:  searchImpactReconciledCandidateOutcomes(rows, project, taskClass),
+	shadow := s.latestSearchImpactShadowEvaluationForWorkspace(project, taskClass, workspaceRef)
+	impact := buildSearchImpactIntelligence(searchImpactIntelligenceInput{
+		CandidateOutcomes:  reconciled,
 		UtilitySummary:     utilitySummary,
 		UtilityRows:        utilityRows,
 		TokenImpactSummary: searchImpactTokenImpactSummary(s.tokenImpactTelemetrySnapshot()),
-		ComparativeShadow:  s.latestSearchImpactShadowEvaluation(project, taskClass),
+		ComparativeShadow:  shadow,
 		ReceiptLedger:      searchImpactReceiptLedgerStatus(s),
 		ReceiptBinding:     receiptBinding,
 	})
+	if exact && workspaceRef != "" {
+		attachSearchImpactActivationEvidenceForWorkspace(s, impact, project, taskClass, retrievalIntent, workspaceRef, shadow, reconciled)
+	} else if exact {
+		attachSearchImpactActivationEvidence(impact, project, taskClass, retrievalIntent, shadow, reconciled)
+	}
+	return impact
 }
 
 func searchImpactReceiptLedgerStatus(s *server) map[string]any {
@@ -83,11 +318,17 @@ func searchImpactReceiptLedgerStatus(s *server) map[string]any {
 }
 
 // latestSearchImpactShadowEvaluation selects the newest artifact in the exact
-// requested scope. A newer invalid artifact wins over an older valid artifact;
-// ordinary recall-monitor rows are never treated as comparative evidence.
+// requested scope from the bounded recall-monitor index. A newer invalid
+// artifact wins over an older valid artifact; ordinary monitor rows are never
+// treated as comparative evidence.
 func (s *server) latestSearchImpactShadowEvaluation(project, taskClass string) map[string]any {
+	return s.latestSearchImpactShadowEvaluationForWorkspace(project, taskClass, "")
+}
+
+func (s *server) latestSearchImpactShadowEvaluationForWorkspace(project, taskClass, workspaceRef string) map[string]any {
 	project = strings.TrimSpace(strings.ToLower(project))
 	taskClass = strings.TrimSpace(strings.ToLower(taskClass))
+	workspaceRef = contextPackLearnedDigestRef(workspaceRef)
 	// A failed comparator append means a previously persisted pass is stale
 	// relative to the current evaluation stream. Do not reuse it for a canary.
 	if s != nil && s.searchImpactComparatorPersistenceUnavailable() {
@@ -97,49 +338,7 @@ func (s *server) latestSearchImpactShadowEvaluation(project, taskClass string) m
 			"comparison_reason": "comparator_persistence_unavailable",
 		}
 	}
-	rows := s.readRecallMonitorHistory(512)
-	artifactSeen := false
-	for index := len(rows) - 1; index >= 0; index-- {
-		row := rows[index]
-		if artifacts, nested := searchImpactNestedShadowEvaluations(row); nested {
-			artifactSeen = true
-			matches := make([]map[string]any, 0, 1)
-			for _, artifact := range artifacts {
-				if searchImpactShadowScopeMatches(artifact, project, taskClass) {
-					matches = append(matches, artifact)
-				}
-			}
-			if len(matches) > 1 {
-				return map[string]any{
-					"schema_id":         savedRecallImpactShadowEvalSchemaID,
-					"comparison_valid":  false,
-					"comparison_reason": "scope_mismatch",
-				}
-			}
-			if len(matches) == 1 {
-				// Newest exact-cohort artifacts win even when invalid. Falling
-				// through to an older pass would hide a current failed comparator.
-				return cloneJSONMap(matches[0])
-			}
-			continue
-		}
-		if anyToString(row["schema_id"]) != savedRecallImpactShadowEvalSchemaID {
-			continue
-		}
-		artifactSeen = true
-		if !searchImpactShadowScopeMatches(row, project, taskClass) {
-			continue
-		}
-		return cloneJSONMap(row)
-	}
-	if !artifactSeen {
-		return nil
-	}
-	return map[string]any{
-		"schema_id":         savedRecallImpactShadowEvalSchemaID,
-		"comparison_valid":  false,
-		"comparison_reason": "scope_mismatch",
-	}
+	return s.latestRecallMonitorShadowEvaluationForWorkspace(project, taskClass, workspaceRef)
 }
 
 func searchImpactNestedShadowEvaluations(row map[string]any) ([]map[string]any, bool) {
@@ -194,13 +393,133 @@ func searchImpactShadowScopeRefs(row map[string]any) (string, string, bool) {
 	return projectRef, taskClassRef, isSearchIntelligenceFullSHA256Ref(projectRef) && isSearchIntelligenceFullSHA256Ref(taskClassRef)
 }
 
+func searchImpactShadowIntentScopeMatches(row map[string]any, retrievalIntent string) bool {
+	retrievalIntent = strings.TrimSpace(strings.ToLower(retrievalIntent))
+	refs := anyToStringSlice(row["retrieval_intent_scope_refs"])
+	return retrievalIntent != "" && len(refs) == 1 &&
+		refs[0] == savedRecallImpactOpaqueScopeRef("retrieval_intent", retrievalIntent)
+}
+
+func searchImpactShadowWorkspaceMatches(row map[string]any, workspaceRef string) bool {
+	workspaceRef = contextPackLearnedDigestRef(workspaceRef)
+	return workspaceRef != "" && contextPackLearnedDigestRef(anyToString(row["workspace_ref"])) == workspaceRef
+}
+
+// attachSearchImpactActivationEvidence adds only an opaque, exact-scope proof
+// envelope. Advisory snapshots remain useful without it, but runtime ranking
+// cannot activate from mixed-intent or undated comparison evidence.
+func attachSearchImpactActivationEvidence(
+	impact map[string]any,
+	project, taskClass, retrievalIntent string,
+	shadow map[string]any,
+	outcomes []map[string]any,
+) {
+	attachSearchImpactActivationEvidenceForWorkspace(nil, impact, project, taskClass, retrievalIntent, "", shadow, outcomes)
+}
+
+func attachSearchImpactActivationEvidenceForWorkspace(
+	s *server,
+	impact map[string]any,
+	project, taskClass, retrievalIntent, workspaceRef string,
+	shadow map[string]any,
+	outcomes []map[string]any,
+) {
+	delete(impact, "activation_evidence")
+	if !anyToBool(impact["canary_eligible"]) ||
+		!searchImpactShadowScopeMatches(shadow, strings.ToLower(strings.TrimSpace(project)), strings.ToLower(strings.TrimSpace(taskClass))) ||
+		!searchImpactShadowIntentScopeMatches(shadow, retrievalIntent) ||
+		(workspaceRef != "" && !searchImpactShadowWorkspaceMatches(shadow, workspaceRef)) {
+		return
+	}
+	var actuatorComparator map[string]any
+	var actuatorComparatorRef string
+	var actuatorComparatorOK bool
+	if workspaceRef != "" {
+		actuatorComparator, actuatorComparatorRef, actuatorComparatorOK = contextPackLearnedActuatorComparatorProofForWorkspace(s, shadow, workspaceRef)
+	} else {
+		actuatorComparator, actuatorComparatorRef, actuatorComparatorOK = contextPackLearnedActuatorComparatorProof(shadow)
+	}
+	if !actuatorComparatorOK {
+		return
+	}
+	comparatorEvaluatedAt, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(anyToString(shadow["evaluated_at"])))
+	if err != nil || !isSearchIntelligenceFullSHA256Ref(strings.TrimSpace(anyToString(shadow["case_set_ref"]))) {
+		return
+	}
+	latestOutcome := time.Time{}
+	for _, outcome := range outcomes {
+		observed, parseErr := time.Parse(time.RFC3339Nano, strings.TrimSpace(anyToString(outcome["captured_at"])))
+		if parseErr == nil && observed.After(latestOutcome) {
+			latestOutcome = observed.UTC()
+		}
+	}
+	if latestOutcome.IsZero() {
+		return
+	}
+	evidence := map[string]any{
+		"project_scope_ref":           contextPackLearnedScopeRef("project", project),
+		"task_class_scope_ref":        contextPackLearnedScopeRef("task_class", taskClass),
+		"retrieval_intent_scope_ref":  contextPackLearnedScopeRef("retrieval_intent", retrievalIntent),
+		"case_set_ref":                shadow["case_set_ref"],
+		"comparator_evaluated_at":     comparatorEvaluatedAt.UTC().Format(time.RFC3339Nano),
+		"latest_candidate_outcome_at": latestOutcome.Format(time.RFC3339Nano),
+		"actuator_comparator_ref":     actuatorComparatorRef,
+		"reputation_vector_ref":       actuatorComparator["reputation_vector_ref"],
+	}
+	if workspaceRef != "" {
+		evidence["workspace_ref"] = workspaceRef
+	}
+	proof := map[string]any{
+		"schema_id":                   contextPackLearnedActivationContractID,
+		"project_scope_ref":           evidence["project_scope_ref"],
+		"task_class_scope_ref":        evidence["task_class_scope_ref"],
+		"retrieval_intent_scope_ref":  evidence["retrieval_intent_scope_ref"],
+		"case_set_ref":                evidence["case_set_ref"],
+		"comparator_evaluated_at":     evidence["comparator_evaluated_at"],
+		"latest_candidate_outcome_at": evidence["latest_candidate_outcome_at"],
+		"actuator_comparator":         actuatorComparator,
+		"proof_gates":                 impact["proof_gates"],
+		"comparative_shadow":          shadow,
+	}
+	if workspaceRef != "" {
+		proof["workspace_ref"] = workspaceRef
+	}
+	evidence["proof_digest"] = contextPackLearnedCanonicalDigest(proof)
+	if !isSearchIntelligenceFullSHA256Ref(anyToString(evidence["proof_digest"])) {
+		return
+	}
+	impact["activation_evidence"] = evidence
+}
+
 func searchImpactReconciledCandidateOutcomes(rows []map[string]any, project, taskClass string) []map[string]any {
+	return searchImpactReconciledCandidateOutcomesForScope(rows, project, taskClass, "")
+}
+
+func searchImpactReconciledCandidateOutcomesForScope(rows []map[string]any, project, taskClass, retrievalIntent string) []map[string]any {
+	return searchImpactReconciledCandidateOutcomesForWorkspace(rows, project, taskClass, retrievalIntent, "")
+}
+
+func searchImpactReconciledCandidateOutcomesForWorkspace(rows []map[string]any, project, taskClass, retrievalIntent, workspaceRef string) []map[string]any {
+	workspaceRef = contextPackLearnedDigestRef(workspaceRef)
 	outcomes := make([]map[string]any, 0, len(rows))
 	for _, row := range rows {
+		// Only the canonical durable outcome row may supply response identity.
+		// Caller/request scope decorations are deliberately ignored; malformed
+		// or partial binding attempts are not eligible for causal attribution.
+		responseBinding, responseBindingKey, responseBindingValid := canonicalTelemetryResponseBinding(row)
+		if !responseBindingValid || (responseBindingKey != "" && responseBinding == nil) {
+			continue
+		}
 		if project != "" && !strings.EqualFold(anyToString(row["project"]), project) {
 			continue
 		}
 		if taskClass != "" && !strings.EqualFold(anyToString(row["task_class"]), taskClass) {
+			continue
+		}
+		if retrievalIntent != "" && !strings.EqualFold(anyToString(row["retrieval_intent"]), retrievalIntent) {
+			continue
+		}
+		if workspaceRef != "" && contextPackLearnedDigestRef(anyToString(row["workspace_ref"])) != workspaceRef {
 			continue
 		}
 		verified := false
@@ -229,7 +548,7 @@ func searchImpactReconciledCandidateOutcomes(rows []map[string]any, project, tas
 		if outcomeID == "" || err != nil {
 			continue
 		}
-		outcomes = append(outcomes, map[string]any{
+		outcome := map[string]any{
 			"outcome_id":                         outcomeID,
 			"captured_at":                        gatewayReceivedAtTime.UTC().Format(time.RFC3339Nano),
 			"gateway_received_at":                gatewayReceivedAtTime.UTC().Format(time.RFC3339Nano),
@@ -239,7 +558,15 @@ func searchImpactReconciledCandidateOutcomes(rows []map[string]any, project, tas
 			"observed_yield_eligible":            anyToBool(verification["observed_yield_eligible"]),
 			"wire_tokens_exact":                  anyToInt(verification["wire_tokens_exact"], 0),
 			"model_visible_context_tokens_exact": anyToInt(verification["model_visible_context_tokens_exact"], 0),
-		})
+			"retrieval_intent":                   strings.TrimSpace(strings.ToLower(anyToString(row["retrieval_intent"]))),
+			"workspace_ref":                      contextPackLearnedDigestRef(anyToString(row["workspace_ref"])),
+		}
+		if responseBindingKey != "" {
+			// Carry only the opaque canonical digest/key. Raw response/query/path
+			// material is outside the search-impact contract.
+			outcome["response_binding_key"] = responseBindingKey
+		}
+		outcomes = append(outcomes, outcome)
 	}
 	return outcomes
 }
@@ -441,17 +768,32 @@ func searchImpactCandidateCausalSummary(outcomes []searchImpactOutcome, utilityR
 	if len(outcomes) == 0 || len(utilityRows) == 0 {
 		return searchImpactUtilitySummary(utilityAggregate(nil, nil, map[string]int{}))
 	}
-	candidateIDs := make(map[string]struct{}, len(outcomes))
+	candidateBindings := make(map[string]string, len(outcomes))
 	for _, outcome := range outcomes {
 		if outcomeID := strings.TrimSpace(outcome.OutcomeID); outcomeID != "" {
-			candidateIDs[outcomeID] = struct{}{}
+			bindingKey := strings.TrimSpace(outcome.ResponseBindingKey)
+			if bindingKey != "" && !utilitySHA256DigestValid(bindingKey) {
+				continue
+			}
+			candidateBindings[outcomeID] = bindingKey
 		}
 	}
-	matchedRows := make([]map[string]any, 0, len(candidateIDs))
+	matchedRows := make([]map[string]any, 0, len(candidateBindings))
 	for _, row := range utilityRows {
-		if _, matched := candidateIDs[strings.TrimSpace(anyToString(row["outcome_id"]))]; matched {
-			matchedRows = append(matchedRows, cloneAnyMap(row))
+		outcomeID := strings.TrimSpace(anyToString(row["outcome_id"]))
+		candidateBindingKey, matched := candidateBindings[outcomeID]
+		if !matched {
+			continue
 		}
+		utilityBinding, utilityBindingKey, utilityBindingValid := canonicalTelemetryResponseBinding(row)
+		if !utilityBindingValid || candidateBindingKey != utilityBindingKey ||
+			(candidateBindingKey != "" && utilityBinding == nil) {
+			// A bound candidate requires the exact Utility binding; legacy
+			// candidates require a legacy Utility row. One-sided and malformed
+			// rows cannot contribute causal evidence.
+			continue
+		}
+		matchedRows = append(matchedRows, cloneAnyMap(row))
 	}
 	projected, pairs, exclusions := utilityPairProjection(matchedRows)
 	return searchImpactUtilitySummary(utilityAggregate(projected, pairs, exclusions))
@@ -511,7 +853,24 @@ func searchImpactExactOutcomeDenominators(outcomes []searchImpactOutcome) map[st
 func searchImpactDeduplicateOutcomes(rows []map[string]any) ([]searchImpactOutcome, int, int) {
 	byID := make(map[string]searchImpactOutcome)
 	conflicted := make(map[string]struct{})
+	bindingOwner := make(map[string]string)
+	bindingConflicted := make(map[string]struct{})
 	replayCount, conflictCount := 0, 0
+	markConflicted := func(outcomeID string) {
+		if outcomeID == "" {
+			return
+		}
+		if existing, found := byID[outcomeID]; found {
+			if existing.ResponseBindingKey != "" && bindingOwner[existing.ResponseBindingKey] == outcomeID {
+				delete(bindingOwner, existing.ResponseBindingKey)
+			}
+			if existing.ResponseBindingKey != "" {
+				bindingConflicted[existing.ResponseBindingKey] = struct{}{}
+			}
+			delete(byID, outcomeID)
+		}
+		conflicted[outcomeID] = struct{}{}
+	}
 	for _, row := range rows {
 		outcomeID := strings.TrimSpace(anyToString(row["outcome_id"]))
 		gatewayReceivedAt := strings.TrimSpace(anyToString(row["gateway_received_at"]))
@@ -519,9 +878,20 @@ func searchImpactDeduplicateOutcomes(rows []map[string]any) ([]searchImpactOutco
 		if outcomeID == "" || err != nil {
 			continue
 		}
+		_, responseBindingKey, responseBindingValid := canonicalTelemetryResponseBinding(row)
+		if !responseBindingValid {
+			// A malformed binding may never become the winner. If a valid row
+			// already exists for this identity, discard it as a conflict too.
+			if _, blocked := conflicted[outcomeID]; !blocked {
+				conflictCount++
+				markConflicted(outcomeID)
+			}
+			continue
+		}
 		candidate := searchImpactOutcome{
 			OutcomeID: outcomeID, CapturedAt: gatewayReceivedAtTime.UTC().Format(time.RFC3339Nano), CapturedAtTime: gatewayReceivedAtTime.UTC(),
-			FirstPassSuccess: anyToBool(row["first_pass_success"]), RepairRequired: anyToBool(row["repair_required"]),
+			ResponseBindingKey: responseBindingKey,
+			FirstPassSuccess:   anyToBool(row["first_pass_success"]), RepairRequired: anyToBool(row["repair_required"]),
 			VerifierID:                     strings.TrimSpace(anyToString(row["verifier_id"])),
 			ObservedYieldEligible:          anyToBool(row["observed_yield_eligible"]),
 			WireTokensExact:                anyToInt(row["wire_tokens_exact"], 0),
@@ -537,11 +907,31 @@ func searchImpactDeduplicateOutcomes(rows []map[string]any) ([]searchImpactOutco
 				conflictCount++
 				// Do not pick an earlier conflicting reporter-controlled time (or
 				// any arbitrary winner) for the train/holdout split.
-				delete(byID, outcomeID)
-				conflicted[outcomeID] = struct{}{}
+				if candidate.ResponseBindingKey != "" {
+					bindingConflicted[candidate.ResponseBindingKey] = struct{}{}
+				}
+				markConflicted(outcomeID)
 			}
 		} else {
+			if responseBindingKey != "" {
+				if _, blocked := bindingConflicted[responseBindingKey]; blocked {
+					conflictCount++
+					markConflicted(outcomeID)
+					continue
+				}
+				if owner, found := bindingOwner[responseBindingKey]; found && owner != outcomeID {
+					conflictCount++
+					markConflicted(owner)
+					markConflicted(outcomeID)
+					bindingConflicted[responseBindingKey] = struct{}{}
+					delete(bindingOwner, responseBindingKey)
+					continue
+				}
+			}
 			byID[outcomeID] = candidate
+			if responseBindingKey != "" {
+				bindingOwner[responseBindingKey] = outcomeID
+			}
 		}
 	}
 	outcomes := make([]searchImpactOutcome, 0, len(byID))
@@ -559,6 +949,7 @@ func searchImpactDeduplicateOutcomes(rows []map[string]any) ([]searchImpactOutco
 
 func searchImpactOutcomeIdentityMatches(left, right searchImpactOutcome) bool {
 	return left.CapturedAt == right.CapturedAt &&
+		left.ResponseBindingKey == right.ResponseBindingKey &&
 		left.FirstPassSuccess == right.FirstPassSuccess &&
 		left.RepairRequired == right.RepairRequired &&
 		left.VerifierID == right.VerifierID &&
@@ -791,6 +1182,10 @@ func searchImpactShadowInvalidStatus(reason string) string {
 		return "shadow_eval_safety_cases_missing"
 	case "comparator_persistence_unavailable":
 		return "shadow_eval_comparator_persistence_unavailable"
+	case "comparator_index_unavailable":
+		return "shadow_eval_comparator_index_unavailable"
+	case "comparator_index_stale":
+		return "shadow_eval_comparator_index_stale"
 	case "shadow_top_k_unmappable", "shadow_returned_pool_incomplete":
 		return "shadow_eval_returned_pool_incomplete"
 	default:

@@ -3,5 +3,5 @@
 package main
 
 const generatedAgentContractRegistryID = "contextlattice_agent_output_contracts"
-const generatedAgentContractRegistryVersion = 54
+const generatedAgentContractRegistryVersion = 58
 const generatedLifecycleReceiptContractID = "contextlattice_lifecycle_receipt.v1"

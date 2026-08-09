@@ -47,6 +47,163 @@ func outcomeIntelligenceLargeScalarQualitySample(sampleID string) map[string]any
 	}
 }
 
+func outcomeIntelligenceReceiptIndexSample(sampleID string) map[string]any {
+	return map[string]any{
+		"sample_id": sampleID, "project": "contextlattice", "quality_score": 1,
+		"selection_receipt": map[string]any{"candidates": []any{map[string]any{
+			"candidate_ref":   outcomeIntelligenceCandidateRef("receipt-index-" + sampleID),
+			"selection_state": "selected", "ordinal": 1, "evidence_kind": "decision",
+		}}},
+	}
+}
+
+func outcomeIntelligenceReceiptIndexPair(t *testing.T, sample map[string]any) string {
+	t.Helper()
+	pair, ok := contextPackQualityReceiptPair(contextPackQualityEntryFromSample(sample))
+	if !ok {
+		t.Fatalf("quality sample did not produce a receipt pair: %#v", sample)
+	}
+	return pair
+}
+
+func TestContextPackQualityLedgerReceiptPairIndexAppendsInPlace(t *testing.T) {
+	ledgerPath := filepath.Join(t.TempDir(), "context-pack-quality.ndjson")
+	t.Setenv("GO_CONTEXT_PACK_QUALITY_LEDGER_ENABLED", "true")
+	t.Setenv("GO_CONTEXT_PACK_QUALITY_LEDGER_PATH", ledgerPath)
+	telemetry := newContextPackQualityTelemetry(20)
+
+	first := outcomeIntelligenceReceiptIndexSample("cpq_receipt_index_first")
+	if err := telemetry.recordQualityDurably(first); err != nil {
+		t.Fatalf("record first durable receipt: %v", err)
+	}
+	ledger := telemetry.ledger
+	ledger.mu.Lock()
+	if !ledger.receiptPairsReady || ledger.receiptPairs == nil {
+		ledger.mu.Unlock()
+		t.Fatalf("durable append did not initialize receipt index: %#v", ledger)
+	}
+	pairsBeforeAppend := ledger.receiptPairs
+	ledger.mu.Unlock()
+
+	second := outcomeIntelligenceReceiptIndexSample("cpq_receipt_index_second")
+	secondPair := outcomeIntelligenceReceiptIndexPair(t, second)
+	if err := telemetry.recordQualityDurably(second); err != nil {
+		t.Fatalf("record second durable receipt: %v", err)
+	}
+	ledger.receiptPairIndexMu.RLock()
+	_, insertedIntoOriginalMap := pairsBeforeAppend[secondPair]
+	ledger.receiptPairIndexMu.RUnlock()
+	if !insertedIntoOriginalMap {
+		t.Fatal("ordinary receipt append replaced the index map instead of inserting in place")
+	}
+
+	var indexed bool
+	if err := telemetry.withDurableReceiptPairIndex(func(pairs map[string]struct{}) {
+		_, indexed = pairs[secondPair]
+	}); err != nil {
+		t.Fatalf("read durable receipt index: %v", err)
+	}
+	if !indexed {
+		t.Fatal("in-place receipt append was not available to durable proof lookup")
+	}
+}
+
+func TestContextPackQualityLedgerReceiptPairIndexConcurrentCompactionAndLookup(t *testing.T) {
+	ledgerPath := filepath.Join(t.TempDir(), "context-pack-quality.ndjson")
+	t.Setenv("GO_CONTEXT_PACK_QUALITY_LEDGER_ENABLED", "true")
+	t.Setenv("GO_CONTEXT_PACK_QUALITY_LEDGER_PATH", ledgerPath)
+	telemetry := newContextPackQualityTelemetry(20)
+
+	const writes = 24
+	samples := make([]map[string]any, 0, writes)
+	for index := 0; index < writes; index++ {
+		samples = append(samples, outcomeIntelligenceReceiptIndexSample("cpq_receipt_index_concurrent_"+strconv.Itoa(index)))
+	}
+	entry, err := json.Marshal(contextPackQualityEntryFromSample(samples[0]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledger := telemetry.ledger
+	ledger.mu.Lock()
+	// Retain one newest quality row so every append after the first rebuilds the
+	// index through compaction while concurrent readers perform exact lookups.
+	ledger.maxBytes = int64(len(entry) + 32)
+	ledger.mu.Unlock()
+	lastPair := outcomeIntelligenceReceiptIndexPair(t, samples[len(samples)-1])
+
+	firstAppendDone := make(chan struct{})
+	readerStarted := make(chan struct{})
+	errs := make(chan error, 5)
+	var readersStarted sync.Once
+	var wait sync.WaitGroup
+	wait.Add(1)
+	go func() {
+		defer wait.Done()
+		if err := telemetry.recordQualityDurably(samples[0]); err != nil {
+			errs <- err
+			close(firstAppendDone)
+			return
+		}
+		close(firstAppendDone)
+		<-readerStarted
+		for index := 1; index < len(samples); index++ {
+			if err := telemetry.recordQualityDurably(samples[index]); err != nil {
+				errs <- err
+				return
+			}
+		}
+	}()
+
+	const readers = 4
+	const lookupsPerReader = 256
+	for reader := 0; reader < readers; reader++ {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			<-firstAppendDone
+			for lookup := 0; lookup < lookupsPerReader; lookup++ {
+				malformed := false
+				err := telemetry.withDurableReceiptPairIndex(func(pairs map[string]struct{}) {
+					for pair := range pairs {
+						left, right, found := strings.Cut(pair, "\x00")
+						if !found || left == "" || right == "" {
+							malformed = true
+							return
+						}
+					}
+				})
+				readersStarted.Do(func() { close(readerStarted) })
+				if err != nil {
+					errs <- err
+					return
+				}
+				if malformed {
+					errs <- errors.New("receipt index exposed a malformed pair")
+					return
+				}
+			}
+		}()
+	}
+	wait.Wait()
+	close(errs)
+	for err := range errs {
+		t.Error(err)
+	}
+	if t.Failed() {
+		return
+	}
+
+	var retained bool
+	if err := telemetry.withDurableReceiptPairIndex(func(pairs map[string]struct{}) {
+		_, retained = pairs[lastPair]
+	}); err != nil {
+		t.Fatalf("read compacted receipt index: %v", err)
+	}
+	if !retained {
+		t.Fatalf("compaction did not rebuild the receipt index with the latest durable pair %q", lastPair)
+	}
+}
+
 func TestContextPackQualitySelectionReceiptIsOpaqueBoundedAndDurable(t *testing.T) {
 	ledgerPath := filepath.Join(t.TempDir(), "context-pack-quality.ndjson")
 	t.Setenv("GO_CONTEXT_PACK_QUALITY_LEDGER_PATH", ledgerPath)

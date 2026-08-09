@@ -9,7 +9,7 @@ pub struct AgentContractRef {
 }
 
 pub const AGENT_CONTRACT_REGISTRY_ID: &str = "contextlattice_agent_output_contracts";
-pub const AGENT_CONTRACT_REGISTRY_VERSION: u32 = 54;
+pub const AGENT_CONTRACT_REGISTRY_VERSION: u32 = 58;
 
 pub const A2A_READINESS_PROFILE_V1: &str = "a2a_readiness_profile.v1";
 pub const AGENT_CONTEXT_PROFILE_V1: &str = "agent_context_profile.v1";
@@ -58,6 +58,7 @@ pub const CONTEXT_PREP_V1: &str = "context_prep.v1";
 pub const CONTEXT_PREP_ARTIFACT_V1: &str = "context_prep_artifact.v1";
 pub const CONTEXTLATTICE_LIFECYCLE_RECEIPT_V1: &str = "contextlattice_lifecycle_receipt.v1";
 pub const CONTINUITY_ZERO_V1: &str = "continuity_zero.v1";
+pub const CONTINUOUS_COGNITION_V1: &str = "continuous_cognition.v1";
 pub const CONTRACT_ACKNOWLEDGEMENT_V1: &str = "contract_acknowledgement.v1";
 pub const CONTRADICTION_RESOLUTION_V1: &str = "contradiction_resolution.v1";
 pub const DECISION_CHANGE_V1: &str = "decision_change.v1";
@@ -88,6 +89,7 @@ pub const PORTABLE_CONTINUATION_STATE_V1: &str = "portable_continuation_state.v1
 pub const PORTABLE_CONTINUATION_STATUS_V1: &str = "portable_continuation_status.v1";
 pub const PRIVACY_ACCOUNTANT_V1: &str = "privacy_accountant.v1";
 pub const PROVENANCE_V1: &str = "provenance.v1";
+pub const RECALL_RESPONSE_V1: &str = "recall_response.v1";
 pub const RETRIEVAL_ABLATION_V1: &str = "retrieval_ablation.v1";
 pub const RETRIEVAL_ABLATION_REPORT_V1: &str = "retrieval_ablation_report.v1";
 pub const RETRIEVAL_DECISION_TRACE_V1: &str = "retrieval_decision_trace.v1";
@@ -170,6 +172,7 @@ pub const AGENT_CONTRACT_IDS: &[&str] = &[
     CONTEXT_PREP_ARTIFACT_V1,
     CONTEXTLATTICE_LIFECYCLE_RECEIPT_V1,
     CONTINUITY_ZERO_V1,
+    CONTINUOUS_COGNITION_V1,
     CONTRACT_ACKNOWLEDGEMENT_V1,
     CONTRADICTION_RESOLUTION_V1,
     DECISION_CHANGE_V1,
@@ -199,6 +202,7 @@ pub const AGENT_CONTRACT_IDS: &[&str] = &[
     PORTABLE_CONTINUATION_STATUS_V1,
     PRIVACY_ACCOUNTANT_V1,
     PROVENANCE_V1,
+    RECALL_RESPONSE_V1,
     RETRIEVAL_ABLATION_V1,
     RETRIEVAL_ABLATION_REPORT_V1,
     RETRIEVAL_DECISION_TRACE_V1,
@@ -513,6 +517,12 @@ pub const AGENT_CONTRACTS: &[AgentContractRef] = &[
         required_output_mode: "json_object",
     },
     AgentContractRef {
+        schema_id: CONTINUOUS_COGNITION_V1,
+        payload_kind: "governed_continuous_cognition_frontier_projection",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
         schema_id: CONTRACT_ACKNOWLEDGEMENT_V1,
         payload_kind: "contract_acknowledgement",
         contract_version: 1,
@@ -683,6 +693,12 @@ pub const AGENT_CONTRACTS: &[AgentContractRef] = &[
     AgentContractRef {
         schema_id: PROVENANCE_V1,
         payload_kind: "bounded_redacted_digest_only_external_import_provenance",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: RECALL_RESPONSE_V1,
+        payload_kind: "bounded_proof_carrying_recall_response",
         contract_version: 1,
         required_output_mode: "json_object",
     },

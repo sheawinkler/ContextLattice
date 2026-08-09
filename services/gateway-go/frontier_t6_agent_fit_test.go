@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -38,6 +39,33 @@ func frontierT6TestStore(t *testing.T, limits frontierT6StoreLimits) (*frontierT
 
 func frontierT6TestScope() frontierT6Scope {
 	return frontierT6Scope{WorkspaceID: "workspace_t6", Project: "project_t6", SessionID: "session_t6", AgentID: "agent_t6"}
+}
+
+func TestFrontierT6MutationRollsBackApplyErrors(t *testing.T) {
+	store, path := frontierT6TestStore(t, frontierT6StoreLimits{MaxPreps: 8})
+	beforeFile, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeHash := store.state.StateHash
+	wantErr := errors.New("synthetic apply failure")
+	err = store.mutate(time.Date(2026, time.July, 18, 14, 0, 0, 0, time.UTC), func() error {
+		store.state.ContextPreps["must_rollback"] = frontierT6ContextPrepRecord{PrepID: "must_rollback"}
+		return wantErr
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("mutation error=%v", err)
+	}
+	afterFile, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(beforeFile, afterFile) || store.state.StateHash != beforeHash {
+		t.Fatal("failed mutation changed durable or in-memory state")
+	}
+	if _, exists := store.state.ContextPreps["must_rollback"]; exists {
+		t.Fatal("failed mutation remained visible in memory")
+	}
 }
 
 func frontierT6TestPublish(scope frontierT6Scope, now time.Time, key string) frontierT6SteeringPublishRequest {
@@ -306,10 +334,30 @@ func frontierT6TestPrepArtifact(prep frontierT6ContextPrepRecord, now time.Time)
 	}
 }
 
+func frontierT6TestReadyPrepStore(t *testing.T, now time.Time, limits frontierT6StoreLimits) (*frontierT6AgentFitStore, string, frontierT6Scope, frontierT6ContextPrepRequest, frontierT6ContextPrepRecord) {
+	t.Helper()
+	store, path := frontierT6TestStore(t, limits)
+	scope := frontierT6Scope{WorkspaceID: "workspace_t6", Project: "project_t6", SessionID: "session_prep", AgentID: "agent_prep"}
+	request := frontierT6TestPrepRequest(scope, now, "task_one", "run_tests", true)
+	scheduled, err := store.scheduleContextPrep(request, now)
+	if err != nil || scheduled.Prep == nil {
+		t.Fatalf("schedule ready context prep: result=%#v err=%v", scheduled, err)
+	}
+	claim, found, err := store.claimContextPrep(scope, scheduled.Prep.PrepID, "cli_worker_1", now.Add(time.Second))
+	if err != nil || !found {
+		t.Fatalf("claim ready context prep: claim=%#v found=%v err=%v", claim, found, err)
+	}
+	ready, err := store.completeContextPrep(scope, claim.Prep.PrepID, claim.ClaimToken, frontierT6TestPrepArtifact(claim.Prep, now.Add(2*time.Second)), now.Add(2*time.Second))
+	if err != nil || ready.Status != "ready" || ready.Artifact == nil {
+		t.Fatalf("complete ready context prep: prep=%#v err=%v", ready, err)
+	}
+	return store, path, scope, request, ready
+}
+
 func TestFrontierT6ContextPrepIsOptInDeduplicatedExternalAndFresh(t *testing.T) {
 	now := time.Date(2026, time.July, 18, 18, 0, 0, 0, time.UTC)
-	store, _ := frontierT6TestStore(t, frontierT6StoreLimits{MaxPreps: 8})
-	scope := frontierT6Scope{WorkspaceID: "workspace_t6", Project: "project_t6"}
+	store, path := frontierT6TestStore(t, frontierT6StoreLimits{MaxPreps: 8})
+	scope := frontierT6Scope{WorkspaceID: "workspace_t6", Project: "project_t6", SessionID: "session_prep", AgentID: "agent_prep"}
 
 	unapproved := frontierT6TestPrepRequest(scope, now, "task_one", "run_tests", false)
 	result, err := store.scheduleContextPrep(unapproved, now)
@@ -319,45 +367,69 @@ func TestFrontierT6ContextPrepIsOptInDeduplicatedExternalAndFresh(t *testing.T) 
 
 	request := frontierT6TestPrepRequest(scope, now, "task_one", "run_tests", true)
 	result, err = store.scheduleContextPrep(request, now)
-	if err != nil || result.Decision != "scheduled" || result.Prep == nil || result.ExecutionOwner != "external_cli_worker" || result.ExecutionPerformed {
+	if err != nil || result.Decision != "scheduled" || result.Prep == nil || result.ExecutionOwner != "external_cli_worker" || result.ExecutionPerformed || result.GatewayExecutionPerformed || !result.OneShot || !result.RequiresExplicitCLIUse {
 		t.Fatalf("schedule approved context prep: result=%#v err=%v", result, err)
 	}
 	prep := *result.Prep
+	beforeDuplicate, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
 	duplicate, err := store.scheduleContextPrep(request, now.Add(time.Second))
 	if err != nil || !duplicate.Deduplicated || duplicate.Prep == nil || duplicate.Prep.PrepID != prep.PrepID || len(store.state.ContextPreps) != 1 {
 		t.Fatalf("context prep was not deterministically deduplicated: result=%#v err=%v", duplicate, err)
+	}
+	afterDuplicate, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(beforeDuplicate, afterDuplicate) {
+		t.Fatal("context preparation deduplication rewrote durable state")
 	}
 
 	claim, found, err := store.claimContextPrep(scope, prep.PrepID, "cli_worker_1", now.Add(2*time.Second))
 	if err != nil || !found || claim.ClaimToken == "" || claim.GatewayExecutionPerformed || claim.ExecutionOwner != "external_cli_worker" {
 		t.Fatalf("external worker claim failed: claim=%#v found=%v err=%v", claim, found, err)
 	}
-	completed, err := store.completeContextPrep(prep.PrepID, claim.ClaimToken, frontierT6TestPrepArtifact(claim.Prep, now.Add(3*time.Second)), now.Add(3*time.Second))
+	completed, err := store.completeContextPrep(scope, prep.PrepID, claim.ClaimToken, frontierT6TestPrepArtifact(claim.Prep, now.Add(3*time.Second)), now.Add(3*time.Second))
 	if err != nil || completed.Status != "ready" || completed.Artifact == nil {
 		t.Fatalf("complete context prep: prep=%#v err=%v", completed, err)
 	}
-	use := store.useContextPrep(scope, prep.PrepID, prep.TaskID, prep.EffectiveProfileDigest, prep.SourceGeneration, prep.AuthorizationDigest, now.Add(4*time.Second))
-	if !use.Eligible || use.Artifact == nil || use.InjectionPerformed || !use.RequiresExplicitCLIUse {
-		t.Fatalf("fresh context prep was not exposed as explicit-use-only: %#v", use)
+	stale, err := store.useContextPrep(scope, prep.PrepID, prep.TaskID, prep.EffectiveProfileDigest, "source_generation_2", prep.AuthorizationDigest, now.Add(4*time.Second))
+	if err != nil {
+		t.Fatalf("stale source check: %v", err)
 	}
-	stale := store.useContextPrep(scope, prep.PrepID, prep.TaskID, prep.EffectiveProfileDigest, "source_generation_2", prep.AuthorizationDigest, now.Add(4*time.Second))
 	if stale.Eligible || stale.Artifact != nil || !frontierT6Contains(stale.Reasons, "source_generation_changed") {
 		t.Fatalf("stale source generation exposed prepared context: %#v", stale)
 	}
-	unauthorized := store.useContextPrep(scope, prep.PrepID, prep.TaskID, prep.EffectiveProfileDigest, prep.SourceGeneration, frontierT6TestDigest("new-authorization"), now.Add(4*time.Second))
+	unauthorized, err := store.useContextPrep(scope, prep.PrepID, prep.TaskID, prep.EffectiveProfileDigest, prep.SourceGeneration, frontierT6TestDigest("new-authorization"), now.Add(4*time.Second))
+	if err != nil {
+		t.Fatalf("authorization drift check: %v", err)
+	}
 	if unauthorized.Eligible || unauthorized.Artifact != nil || !frontierT6Contains(unauthorized.Reasons, "authorization_changed") {
 		t.Fatalf("authorization drift exposed prepared context: %#v", unauthorized)
 	}
-	pivoted := store.useContextPrep(scope, prep.PrepID, "task_two", prep.EffectiveProfileDigest, prep.SourceGeneration, prep.AuthorizationDigest, now.Add(4*time.Second))
+	pivoted, err := store.useContextPrep(scope, prep.PrepID, "task_two", prep.EffectiveProfileDigest, prep.SourceGeneration, prep.AuthorizationDigest, now.Add(4*time.Second))
+	if err != nil {
+		t.Fatalf("task pivot check: %v", err)
+	}
 	if pivoted.Eligible || pivoted.Artifact != nil || !frontierT6Contains(pivoted.Reasons, "task_pivot_detected") {
 		t.Fatalf("task pivot exposed prepared context: %#v", pivoted)
+	}
+	use, err := store.useContextPrep(scope, prep.PrepID, prep.TaskID, prep.EffectiveProfileDigest, prep.SourceGeneration, prep.AuthorizationDigest, now.Add(4*time.Second))
+	if err != nil || !use.Eligible || use.Artifact == nil || use.InjectionPerformed || !use.RequiresExplicitCLIUse || !use.OneShot || use.ConsumptionDigest == "" || use.ExecutionOwner != "external_cli_worker" || use.GatewayExecutionPerformed {
+		t.Fatalf("fresh context prep was not atomically exposed as explicit one-shot use: result=%#v err=%v", use, err)
+	}
+	replay, err := store.useContextPrep(scope, prep.PrepID, prep.TaskID, prep.EffectiveProfileDigest, prep.SourceGeneration, prep.AuthorizationDigest, now.Add(5*time.Second))
+	if err != nil || replay.Eligible || replay.Artifact != nil || !frontierT6Contains(replay.Reasons, "preparation_already_consumed") {
+		t.Fatalf("consumed preparation replay was not rejected: result=%#v err=%v", replay, err)
 	}
 }
 
 func TestFrontierT6ContextPrepRetryIsDurableAndBounded(t *testing.T) {
 	now := time.Date(2026, time.July, 18, 18, 30, 0, 0, time.UTC)
 	store, path := frontierT6TestStore(t, frontierT6StoreLimits{MaxPreps: 2})
-	scope := frontierT6Scope{WorkspaceID: "workspace_t6", Project: "project_t6"}
+	scope := frontierT6Scope{WorkspaceID: "workspace_t6", Project: "project_t6", SessionID: "session_retry", AgentID: "agent_retry"}
 	result, err := store.scheduleContextPrep(frontierT6TestPrepRequest(scope, now, "task_retry", "compile", true), now)
 	if err != nil || result.Prep == nil {
 		t.Fatalf("schedule retry prep: result=%#v err=%v", result, err)
@@ -366,7 +438,7 @@ func TestFrontierT6ContextPrepRetryIsDurableAndBounded(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("claim retry prep: claim=%#v found=%v err=%v", claim, found, err)
 	}
-	if err := store.failContextPrep(claim.Prep.PrepID, claim.ClaimToken, "resource_pressure", true, now.Add(2*time.Second)); err != nil {
+	if err := store.failContextPrep(scope, claim.Prep.PrepID, claim.ClaimToken, "resource_pressure", true, now.Add(2*time.Second)); err != nil {
 		t.Fatalf("record prep retry: %v", err)
 	}
 	if _, found, err := store.claimContextPrep(scope, claim.Prep.PrepID, "worker_retry", now.Add(3*time.Second)); err != nil || found {
@@ -379,13 +451,267 @@ func TestFrontierT6ContextPrepRetryIsDurableAndBounded(t *testing.T) {
 	}
 	t.Cleanup(reopened.close)
 	retry, found, err := reopened.claimContextPrep(scope, claim.Prep.PrepID, "worker_retry", now.Add(8*time.Second))
-	if err != nil || !found || retry.Prep.Attempts != 2 {
+	if err != nil || !found || retry.Prep.Attempts != 2 || retry.ClaimToken == claim.ClaimToken {
 		t.Fatalf("prep retry did not survive restart: claim=%#v found=%v err=%v", retry, found, err)
 	}
 	badArtifact := frontierT6TestPrepArtifact(retry.Prep, now.Add(9*time.Second))
 	badArtifact.EvidenceRefs[0].AuthorizationDigest = frontierT6TestDigest("wrong-authorization")
-	if _, err := reopened.completeContextPrep(retry.Prep.PrepID, retry.ClaimToken, badArtifact, now.Add(9*time.Second)); err == nil {
+	if _, err := reopened.completeContextPrep(scope, retry.Prep.PrepID, retry.ClaimToken, badArtifact, now.Add(9*time.Second)); err == nil {
 		t.Fatal("unauthorized artifact evidence was accepted")
+	}
+}
+
+func TestFrontierT6ContextPrepRequiresExactFullScopeWithoutMutation(t *testing.T) {
+	now := time.Date(2026, time.July, 18, 18, 45, 0, 0, time.UTC)
+	for name, scope := range map[string]frontierT6Scope{
+		"missing session": {WorkspaceID: "workspace_t6", Project: "project_t6", AgentID: "agent_prep"},
+		"missing agent":   {WorkspaceID: "workspace_t6", Project: "project_t6", SessionID: "session_prep"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			isolated, _ := frontierT6TestStore(t, frontierT6StoreLimits{MaxPreps: 8})
+			request := frontierT6TestPrepRequest(scope, now, "task_partial", "compile", true)
+			if result, err := isolated.scheduleContextPrep(request, now); err == nil || result.Prep != nil || len(isolated.state.ContextPreps) != 0 {
+				t.Fatalf("partial context preparation scope was accepted: result=%#v err=%v", result, err)
+			}
+		})
+	}
+	store, path, scope, _, prep := frontierT6TestReadyPrepStore(t, now, frontierT6StoreLimits{MaxPreps: 8})
+	beforeFile, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read context prep state before rejection: %v", err)
+	}
+	beforeHash, beforeUpdatedAt := store.state.StateHash, store.state.UpdatedAt
+
+	changedSession := scope
+	changedSession.SessionID = "session_other"
+	rejected, err := store.useContextPrep(changedSession, prep.PrepID, prep.TaskID, prep.EffectiveProfileDigest, prep.SourceGeneration, prep.AuthorizationDigest, now.Add(3*time.Second))
+	if err != nil || rejected.Eligible || !frontierT6Contains(rejected.Reasons, "preparation_not_found_in_scope") {
+		t.Fatalf("changed session was not rejected: result=%#v err=%v", rejected, err)
+	}
+	changedAgent := scope
+	changedAgent.AgentID = "agent_other"
+	if claim, found, err := store.claimContextPrep(changedAgent, prep.PrepID, "worker_other", now.Add(3*time.Second)); err != nil || found {
+		t.Fatalf("changed agent claimed preparation: claim=%#v found=%v err=%v", claim, found, err)
+	}
+	afterFile, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read context prep state after rejection: %v", err)
+	}
+	if !bytes.Equal(beforeFile, afterFile) || store.state.StateHash != beforeHash || store.state.UpdatedAt != beforeUpdatedAt {
+		t.Fatal("scope rejection mutated durable context preparation state")
+	}
+}
+
+func TestFrontierT6ContextPrepUseIsAtomicOneShotDurableAndDetached(t *testing.T) {
+	now := time.Date(2026, time.July, 18, 19, 0, 0, 0, time.UTC)
+	store, path, scope, request, prep := frontierT6TestReadyPrepStore(t, now, frontierT6StoreLimits{MaxPreps: 8})
+	start := make(chan struct{})
+	results := make(chan frontierT6ContextPrepUse, 2)
+	errorsByCall := make(chan error, 2)
+	var workers sync.WaitGroup
+	for range 2 {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			<-start
+			result, err := store.useContextPrep(scope, prep.PrepID, prep.TaskID, prep.EffectiveProfileDigest, prep.SourceGeneration, prep.AuthorizationDigest, now.Add(3*time.Second))
+			results <- result
+			errorsByCall <- err
+		}()
+	}
+	close(start)
+	workers.Wait()
+	close(results)
+	close(errorsByCall)
+	for err := range errorsByCall {
+		if err != nil {
+			t.Fatalf("atomic context prep use: %v", err)
+		}
+	}
+	eligible, replayed := 0, 0
+	var consumed frontierT6ContextPrepUse
+	for result := range results {
+		if result.Eligible {
+			eligible++
+			consumed = result
+		} else if frontierT6Contains(result.Reasons, "preparation_already_consumed") {
+			replayed++
+		}
+	}
+	if eligible != 1 || replayed != 1 || consumed.Artifact == nil || consumed.ConsumptionDigest == "" {
+		t.Fatalf("one-shot consumption result was not exact: eligible=%d replayed=%d consumed=%#v", eligible, replayed, consumed)
+	}
+	consumed.Artifact.EvidenceRefs[0].SourceID = "mutated_by_caller"
+	store.mu.RLock()
+	stored := frontierT6CopyContextPrepRecord(store.state.ContextPreps[prep.PrepID])
+	store.mu.RUnlock()
+	if stored.Status != "consumed" || stored.Artifact == nil || stored.Artifact.EvidenceRefs[0].SourceID == "mutated_by_caller" || stored.ConsumptionDigest != consumed.ConsumptionDigest {
+		t.Fatalf("returned artifact aliased or consumption was not durable: %#v", stored)
+	}
+
+	store.close()
+	reopened, err := newFrontierT6AgentFitStore(path, frontierT6StoreLimits{MaxPreps: 8})
+	if err != nil {
+		t.Fatalf("reopen consumed context prep store: %v", err)
+	}
+	t.Cleanup(reopened.close)
+	replay, err := reopened.useContextPrep(scope, prep.PrepID, prep.TaskID, prep.EffectiveProfileDigest, prep.SourceGeneration, prep.AuthorizationDigest, now.Add(4*time.Second))
+	if err != nil || replay.Eligible || !frontierT6Contains(replay.Reasons, "preparation_already_consumed") {
+		t.Fatalf("consumed preparation replayed after restart: result=%#v err=%v", replay, err)
+	}
+	fresh, err := reopened.scheduleContextPrep(request, now.Add(5*time.Second))
+	if err != nil || fresh.Prep == nil || fresh.Deduplicated || fresh.Prep.PrepID == prep.PrepID {
+		t.Fatalf("consumed preparation blocked a fresh schedule: result=%#v err=%v", fresh, err)
+	}
+}
+
+func TestFrontierT6ContextPrepClaimAndCompletionAreExactScoped(t *testing.T) {
+	now := time.Date(2026, time.July, 18, 19, 15, 0, 0, time.UTC)
+	store, path := frontierT6TestStore(t, frontierT6StoreLimits{MaxPreps: 8})
+	scope := frontierT6Scope{WorkspaceID: "workspace_t6", Project: "project_t6", SessionID: "session_exact", AgentID: "agent_exact"}
+	request := frontierT6TestPrepRequest(scope, now, "task_exact", "compile", true)
+	scheduled, err := store.scheduleContextPrep(request, now)
+	if err != nil || scheduled.Prep == nil {
+		t.Fatalf("schedule exact-scoped preparation: result=%#v err=%v", scheduled, err)
+	}
+	wrongScope := scope
+	wrongScope.SessionID = "session_wrong"
+	if claim, found, err := store.claimContextPrep(wrongScope, scheduled.Prep.PrepID, "worker_exact", now.Add(time.Second)); err != nil || found {
+		t.Fatalf("wrong scope claimed preparation: claim=%#v found=%v err=%v", claim, found, err)
+	}
+	claim, found, err := store.claimContextPrep(scope, scheduled.Prep.PrepID, "worker_exact", now.Add(time.Second))
+	if err != nil || !found {
+		t.Fatalf("claim exact-scoped preparation: claim=%#v found=%v err=%v", claim, found, err)
+	}
+	beforeFile, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact := frontierT6TestPrepArtifact(claim.Prep, now.Add(2*time.Second))
+	if _, err := store.completeContextPrep(wrongScope, claim.Prep.PrepID, claim.ClaimToken, artifact, now.Add(2*time.Second)); !errors.Is(err, errFrontierT6PrepClaimStale) {
+		t.Fatalf("wrong scope completion error=%v", err)
+	}
+	if err := store.failContextPrep(wrongScope, claim.Prep.PrepID, claim.ClaimToken, "scope_mismatch", false, now.Add(2*time.Second)); !errors.Is(err, errFrontierT6PrepClaimStale) {
+		t.Fatalf("wrong scope failure error=%v", err)
+	}
+	afterFile, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(beforeFile, afterFile) {
+		t.Fatal("wrong-scope claim completion mutated durable state")
+	}
+	if _, err := store.completeContextPrep(scope, claim.Prep.PrepID, claim.ClaimToken, artifact, now.Add(2*time.Second)); err != nil {
+		t.Fatalf("exact-scoped completion failed: %v", err)
+	}
+}
+
+func TestFrontierT6ContextPrepPersistedConsumptionValidation(t *testing.T) {
+	now := time.Date(2026, time.July, 18, 19, 30, 0, 0, time.UTC)
+	store, _, scope, _, prep := frontierT6TestReadyPrepStore(t, now, frontierT6StoreLimits{MaxPreps: 8})
+	if result, err := store.useContextPrep(scope, prep.PrepID, prep.TaskID, prep.EffectiveProfileDigest, prep.SourceGeneration, prep.AuthorizationDigest, now.Add(3*time.Second)); err != nil || !result.Eligible {
+		t.Fatalf("consume preparation before validation test: result=%#v err=%v", result, err)
+	}
+	raw, err := json.Marshal(store.state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	corrupt := frontierT6AgentFitState{}
+	if err := json.Unmarshal(raw, &corrupt); err != nil {
+		t.Fatal(err)
+	}
+	record := corrupt.ContextPreps[prep.PrepID]
+	record.ConsumptionDigest = ""
+	corrupt.ContextPreps[prep.PrepID] = record
+	corrupt.StateHash = frontierT6StateHash(corrupt)
+	if err := frontierT6ValidateState(corrupt, store.limits); err == nil || !strings.Contains(err.Error(), "consumed context preparation") {
+		t.Fatalf("inconsistent consumed preparation passed validation: %v", err)
+	}
+}
+
+func TestFrontierT6ContextPrepHandlerKeepsClaimsOutOfJSONAndFailsClosed(t *testing.T) {
+	now := time.Date(2026, time.July, 18, 19, 45, 0, 0, time.UTC)
+	store, _ := frontierT6TestStore(t, frontierT6StoreLimits{MaxPreps: 8})
+	scope := frontierT6Scope{WorkspaceID: "workspace_t6", Project: "project_t6", SessionID: "session_http", AgentID: "agent_http"}
+	request := frontierT6TestPrepRequest(scope, now, "task_http", "compile", true)
+	scheduled, err := store.scheduleContextPrep(request, now)
+	if err != nil || scheduled.Prep == nil {
+		t.Fatalf("schedule handler preparation: result=%#v err=%v", scheduled, err)
+	}
+	handlers := frontierT6AgentFitHandlers{
+		Store: store,
+		Now:   func() time.Time { return now.Add(time.Second) },
+		Authorize: func(_ *http.Request, featureID, _ string) (frontierT6RequestAuthorization, error) {
+			if featureID != frontierT6ProactiveContextPrepFeatureID {
+				t.Fatalf("unexpected feature authorization: %s", featureID)
+			}
+			return frontierT6RequestAuthorization{
+				Authorized: true, WorkspaceID: scope.WorkspaceID, AuthorizationDigest: request.Approval.AuthorizationDigest,
+				AllowActivation: true, AllowWorker: true,
+			}, nil
+		},
+	}
+	call := func(payload any, header string) *httptest.ResponseRecorder {
+		t.Helper()
+		raw, marshalErr := json.Marshal(payload)
+		if marshalErr != nil {
+			t.Fatal(marshalErr)
+		}
+		httpRequest := httptest.NewRequest(http.MethodPost, "/memory/agent-fit/context-prep", bytes.NewReader(raw))
+		if header != "" {
+			httpRequest.Header.Set(frontierT6ContextPrepClaimHeader, header)
+		}
+		recorder := httptest.NewRecorder()
+		handlers.ContextPrep(recorder, httpRequest)
+		return recorder
+	}
+
+	unknownClaimBody := httptest.NewRecorder()
+	handlers.ContextPrep(unknownClaimBody, httptest.NewRequest(http.MethodPost, "/memory/agent-fit/context-prep", strings.NewReader(`{"operation":"complete","scope":{"workspace_id":"workspace_t6","project":"project_t6","session_id":"session_http","agent_id":"agent_http"},"prep_id":"prep","claim_token":"must_not_be_in_json"}`)))
+	if unknownClaimBody.Code != http.StatusBadRequest || !strings.Contains(unknownClaimBody.Body.String(), "invalid_json") {
+		t.Fatalf("JSON claim credential was accepted: status=%d body=%s", unknownClaimBody.Code, unknownClaimBody.Body.String())
+	}
+
+	claimResponse := call(frontierT6PrepHTTPRequest{Operation: "claim", Scope: scope, PrepID: scheduled.Prep.PrepID, WorkerID: "worker_http"}, "")
+	claimToken := claimResponse.Header().Get(frontierT6ContextPrepClaimHeader)
+	if claimResponse.Code != http.StatusOK || claimToken == "" || strings.Contains(claimResponse.Body.String(), "claim_token") || strings.Contains(claimResponse.Body.String(), claimToken) {
+		t.Fatalf("claim credential crossed JSON boundary: status=%d header=%q body=%s", claimResponse.Code, claimToken, claimResponse.Body.String())
+	}
+	claimPayload := map[string]any{}
+	if err := json.Unmarshal(claimResponse.Body.Bytes(), &claimPayload); err != nil {
+		t.Fatal(err)
+	}
+	claimResult := anyMap(claimPayload["result"])
+	if anyToString(claimResult["execution_owner"]) != "external_cli_worker" || !anyToBool(claimResult["one_shot"]) || !anyToBool(claimResult["requires_explicit_cli_use"]) || anyToBool(claimResult["gateway_execution_performed"]) {
+		t.Fatalf("claim ownership boundary is incomplete: %#v", claimResult)
+	}
+	artifact := frontierT6TestPrepArtifact(store.state.ContextPreps[scheduled.Prep.PrepID], now.Add(2*time.Second))
+	complete := frontierT6PrepHTTPRequest{Operation: "complete", Scope: scope, PrepID: scheduled.Prep.PrepID, Artifact: artifact}
+	missing := call(complete, "")
+	if missing.Code != http.StatusUnauthorized || !strings.Contains(missing.Body.String(), "context_prep_claim_required") {
+		t.Fatalf("missing claim header did not fail closed: status=%d body=%s", missing.Code, missing.Body.String())
+	}
+	wrong := call(complete, "ft6prepclaim_0000000000000000000000000000000000000000000000000000000000000000")
+	if wrong.Code != http.StatusConflict || !strings.Contains(wrong.Body.String(), "context_prep_claim_stale") {
+		t.Fatalf("wrong claim header did not fail closed: status=%d body=%s", wrong.Code, wrong.Body.String())
+	}
+	wrongScope := complete
+	wrongScope.Scope.AgentID = "agent_other"
+	mismatch := call(wrongScope, claimToken)
+	if mismatch.Code != http.StatusConflict || !strings.Contains(mismatch.Body.String(), "context_prep_claim_stale") {
+		t.Fatalf("wrong claim scope did not fail closed: status=%d body=%s", mismatch.Code, mismatch.Body.String())
+	}
+	accepted := call(complete, claimToken)
+	if accepted.Code != http.StatusOK || strings.Contains(accepted.Body.String(), claimToken) {
+		t.Fatalf("valid header claim did not complete safely: status=%d body=%s", accepted.Code, accepted.Body.String())
+	}
+	completedPayload := map[string]any{}
+	if err := json.Unmarshal(accepted.Body.Bytes(), &completedPayload); err != nil {
+		t.Fatal(err)
+	}
+	completedResult := anyMap(completedPayload["result"])
+	if anyToString(completedResult["execution_owner"]) != "external_cli_worker" || !anyToBool(completedResult["one_shot"]) || !anyToBool(completedResult["requires_explicit_cli_use"]) || anyToBool(completedResult["gateway_execution_performed"]) {
+		t.Fatalf("completion ownership boundary is incomplete: %#v", completedResult)
 	}
 }
 

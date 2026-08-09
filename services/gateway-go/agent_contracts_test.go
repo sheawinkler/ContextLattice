@@ -21,6 +21,9 @@ func TestAgentContractsRegistryLoadsSharedProtocol(t *testing.T) {
 	if agentContract(registry, policyContextPackageContractID) == nil {
 		t.Fatalf("missing %s contract", policyContextPackageContractID)
 	}
+	if agentContract(registry, continuousCognitionContractID) == nil {
+		t.Fatalf("missing %s contract", continuousCognitionContractID)
+	}
 	protocol := antiSchemingProtocol()
 	if !strings.Contains(anyToString(protocol["law"]), "Change conclusions to match evidence") {
 		t.Fatalf("unexpected anti-scheming law: %#v", protocol["law"])
@@ -50,6 +53,9 @@ func TestGeneratedAgentContractsMatchRegistry(t *testing.T) {
 	sort.Strings(generated)
 	if !reflect.DeepEqual(generated, ids) {
 		t.Fatalf("generated contract ids drift:\ngenerated=%#v\nregistry=%#v", generated, ids)
+	}
+	if !stringSliceContains(GeneratedAgentContractIDs, continuousCognitionContractID) {
+		t.Fatalf("generated contract ids missing %s", continuousCognitionContractID)
 	}
 }
 
@@ -371,8 +377,11 @@ func TestAgentPreflightFormatContractValidationPassesAndFails(t *testing.T) {
 		t.Fatalf("expected preflight validation passed, got %#v", validation)
 	}
 	listed := contextPackAnyList(contracts["contracts"])
-	if len(listed) != 21 {
-		t.Fatalf("expected 21 preflight-relevant contracts, got %d: %#v", len(listed), listed)
+	if len(listed) != 23 {
+		t.Fatalf("expected 23 preflight-relevant contracts, got %d: %#v", len(listed), listed)
+	}
+	if !containsString(anyToStringList(listed, 32), recallResponseContractID) {
+		t.Fatalf("preflight contract summary omitted recall response contract: %#v", listed)
 	}
 	registry, err := loadAgentContractsRegistry()
 	if err != nil {
@@ -954,6 +963,8 @@ func TestContextBoundaryPayloadCoversAgentSurfaces(t *testing.T) {
 		"/v1/codex/preflight",
 		"policy_context_package",
 		"scripts/agent/contextlattice-pack",
+		"scripts/agent/contextlattice-pack --response",
+		"contextlattice_pack --response",
 		"contextlattice_continuity_reconcile",
 		"contextlattice_objective_transition",
 		"contextlattice_objective_graph",

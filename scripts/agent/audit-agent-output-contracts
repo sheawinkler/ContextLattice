@@ -43,6 +43,8 @@ REQUIRED_CONTRACTS = (
     "runner_quality_sample.v1",
     "a2a_readiness_profile.v1",
     "context_pack_response.v1",
+    "recall_response.v1",
+    "continuous_cognition.v1",
     "agent_packet.v1",
     "agent_packet_delta.v1",
     "agent_packet_reconstruction.v1",
@@ -736,6 +738,99 @@ def sample_context_pack() -> dict[str, Any]:
     )
 
 
+def sample_recall_response() -> dict[str, Any]:
+    digest = "sha256:" + ("0" * 64)
+    response = {
+        "ok": True,
+        "schema_id": "recall_response.v1",
+        "version": 1,
+        "response_id": "rr_" + ("1" * 24),
+        "response_digest": digest,
+        "request_scope": {
+            "scope_digest": digest,
+            "query_digest": digest,
+            "workspace_ref": digest,
+            "project_ref": digest,
+            "topic_ref": "ref_topic_" + ("2" * 24),
+            "agent_ref": "ref_agent_" + ("3" * 24),
+            "session_ref": "ref_session_" + ("4" * 24),
+            "task_ref": "ref_task_" + ("5" * 24),
+            "task_identity_ref": "ref_task_identity_" + ("6" * 24),
+            "execution_lane_ref": "ref_execution_lane_" + ("7" * 24),
+            "retrieval_intent": "decision",
+        },
+        "classification": {
+            "jobs": ["verify", "explain"],
+            "objects": ["decision", "proof_receipt"],
+            "temporal_mode": "current",
+            "evidence_state": "absent",
+            "consequence": "decision_supporting",
+            "posture": "abstain",
+        },
+        "answer": {
+            "summary": "No bounded evidence supports a reliable answer; retrieve or verify before acting.",
+            "answer_mode": "abstention",
+            "basis": ["bounded_response_projection"],
+            "claim_refs": [],
+            "components": [
+                {
+                    "component_ref": "rrc_" + ("8" * 24),
+                    "kind": "negative_abstention",
+                    "status": "included",
+                    "basis": "deterministic_faceted_taxonomy",
+                }
+            ],
+            "progressive_disclosure": {
+                "level": "summary",
+                "available_levels": ["summary", "proof_refs", "next_action"],
+                "next_level_requires": "explicit_request_for_bounded_proof_references",
+            },
+        },
+        "state": {
+            "status": "abstain",
+            "source_complete": True,
+            "evidence_count": 0,
+            "conflict_count": 0,
+            "gap_count": 1,
+            "retrieval_mode": "balanced",
+        },
+        "evidence": [],
+        "confidence": {"label": "abstain", "score": 0, "basis": ["bounded_evidence_confidence"], "calibrated": False},
+        "conflicts": [],
+        "gaps": [{"code": "no_bounded_evidence", "material": True, "reason": "No bounded evidence reference survived projection.", "required_for_action": True}],
+        "inferences": [],
+        "next_action": {
+            "kind": "retrieve_or_verify",
+            "label": "Retrieve or verify the remaining proof",
+            "reason": "The response is advisory-only and does not authorize mutation.",
+            "requires_verification": True,
+            "authority": "advisory_only",
+            "execution_performed": False,
+        },
+        "action_boundary": {
+            "can_act": False,
+            "requires_confirmation": True,
+            "allowed": ["inspect_proof_refs"],
+            "forbidden": ["external_mutation"],
+            "reason": "Recall is evidence, not execution authority.",
+            "execution_performed": False,
+        },
+        "disclosure": {
+            "bounded": True,
+            "raw_retrieval_included": False,
+            "raw_prompt_included": False,
+            "paths_included": False,
+            "secrets_included": False,
+            "inference_boundary": "Only deterministic response metadata is returned.",
+            "omission_policy": "Excluded evidence never becomes implicit support.",
+        },
+        "receipt_refs": [],
+        "outcome": {"status": "not_attributable", "attributable": False, "receipt_id": "", "execution_performed": False},
+        "writeback_required": True,
+    }
+    return attach_format_contract("recall_response.v1", response)
+
+
 def sample_agent_packet() -> dict[str, Any]:
     digest = "sha256:" + ("0" * 64)
     return attach_format_contract(
@@ -1068,6 +1163,129 @@ def sample_retrieval_plan() -> dict[str, Any]:
             "stop_conditions": {"max_rounds": 3, "stop_on_no_new_supported_claims": True},
             "calibration": {"outcome_samples": 1, "grade": "outcome_seeded", "activation_eligible": False, "minimum_outcomes_for_candidate": 20, "reason": "advisor-only"},
             "proof": {"inputs": ["source policy"], "llm_used": False, "deterministic": True},
+        },
+    )
+
+
+def sample_continuous_cognition() -> dict[str, Any]:
+    digest = "sha256:" + ("0" * 64)
+    ref = "ref_unavailable"
+    return attach_format_contract(
+        "continuous_cognition.v1",
+        {
+            "ok": True,
+            "schema_id": "continuous_cognition.v1",
+            "version": 1,
+            "cognition_id": "cc_audit_fixture",
+            "cognition_digest": digest,
+            "operation": "observe",
+            "phase": "frontier",
+            "decision": "abstain",
+            "request_scope": {
+                "scope_digest": digest,
+                "query_digest": digest,
+                "workspace_ref": ref,
+                "project_ref": ref,
+                "topic_ref": ref,
+                "agent_ref": ref,
+                "session_ref": ref,
+                "task_ref": ref,
+                "task_identity_ref": ref,
+                "execution_lane_ref": ref,
+                "retrieval_intent": "decision",
+                "cycle_ref": "cycle_audit_fixture",
+            },
+            "observation": {
+                "objective_graph_ref": ref,
+                "session_rollup_ref": ref,
+                "continuity_zero_ref": ref,
+                "proof_timeline_ref": ref,
+                "retrieval_plan_ref": ref,
+                "utility_snapshot_ref": ref,
+                "lifecycle_proof_ref": ref,
+                "source_anchor_digest": digest,
+                "source_complete": False,
+                "gaps": [],
+            },
+            "frontier": {
+                "frontier_id": "frontier_audit_fixture",
+                "objective_state": "unknown",
+                "uncertainty": 1.0,
+                "next_action_class": "request_explicit_identity",
+                "utility_score": 0.0,
+                "expected_utility": {
+                    "action_change_probability": 0.0,
+                    "consequence_if_wrong": 0.0,
+                    "evidence_reliability": 0.0,
+                    "acquisition_cost": 0.0,
+                    "score": 0.0,
+                },
+                "stop_reason": "explicit_identity_required",
+            },
+            "investigation": {
+                "state": "not_requested",
+                "mode": "read_only",
+                "context_pack_ref": ref,
+                "retrieval_receipt_ref": ref,
+                "source_coverage": {"complete": False},
+                "mutations_suppressed": True,
+                "execution_performed": False,
+                "network_calls": 0,
+            },
+            "activation": {
+                "state": "not_requested",
+                "prep_id": ref,
+                "approval_ref": ref,
+                "authorization_ref": ref,
+                "execution_owner": "external_cli_worker",
+                "one_shot": True,
+                "gateway_execution_performed": False,
+            },
+            "outcome": {
+                "state": "not_requested",
+                "outcome_ref": ref,
+                "proof_ref": ref,
+                "utility_observation_ref": ref,
+                "independently_verified": False,
+                "causal_eligible": False,
+            },
+            "evaluation": {
+                "state": "not_requested",
+                "utility_status": "not_evaluated",
+                "verified": False,
+                "causal_eligible": False,
+                "reason": "no outcome was requested",
+            },
+            "rollback": {"state": "not_requested", "reason_ref": ref, "target_ref": ref},
+            "retirement": {"state": "not_requested", "reason_ref": ref, "target_ref": ref},
+            "progress": {
+                "status": "observed",
+                "stage": "frontier",
+                "round": 0,
+                "max_rounds": 3,
+                "proof_timeline_ref": ref,
+                "loop_guard": {
+                    "cycle_ref": "cycle_audit_fixture",
+                    "source_anchor_digest": digest,
+                    "round": 0,
+                    "max_rounds": 3,
+                    "dedupe_decision": "not_persisted",
+                    "persisted": False,
+                },
+            },
+            "safety": {
+                "advisory_only": True,
+                "automatic_model_execution": False,
+                "automatic_external_mutation": False,
+                "runner_dispatch": False,
+                "filesystem_mutation": False,
+                "gateway_execution_performed": False,
+                "requires_explicit_authorization": True,
+                "requires_external_worker": True,
+                "network_calls": 0,
+            },
+            "gaps": [],
+            "writeback_required": True,
         },
     )
 
@@ -2881,6 +3099,15 @@ def run_audit() -> list[dict[str, Any]]:
     context_pack = sample_context_pack()
     for item in validate_agent_contract_payload("context_pack_response.v1", context_pack, registry):
         findings.append({"severity": "error", **item})
+    recall_response = sample_recall_response()
+    for item in validate_agent_contract_payload("recall_response.v1", recall_response, registry):
+        findings.append({"severity": "error", **item})
+    continuous_cognition = sample_continuous_cognition()
+    for item in validate_agent_contract_payload("continuous_cognition.v1", continuous_cognition, registry):
+        findings.append({"severity": "error", **item})
+    continuous_validation = ((continuous_cognition.get("format_contract") or {}).get("validation") or {})
+    if continuous_validation.get("status") != "passed":
+        findings.append({"severity": "error", "reason": "sample_continuous_cognition_validation_not_passed", "validation": continuous_validation})
     for item in validate_agent_contract_payload("run_advisor.v1", context_pack.get("run_advisor"), registry):
         findings.append({"severity": "error", **item})
     synthesis_pack = sample_synthesis_pack()
@@ -3005,6 +3232,27 @@ def run_audit() -> list[dict[str, Any]]:
     if failure:
         findings.append(failure)
     failure = validate_expected_failure("policy_context_package.v1", bad_policy, "forbidden_field_present")
+    if failure:
+        findings.append(failure)
+
+    bad_continuous_cognition = sample_continuous_cognition()
+    bad_continuous_cognition["observation"]["query"] = "raw query must never be returned"
+    failure = validate_expected_failure("continuous_cognition.v1", bad_continuous_cognition, "forbidden_field_present")
+    if failure:
+        findings.append(failure)
+    bad_continuous_cognition["observation"].pop("query", None)
+    bad_continuous_cognition["safety"]["automatic_external_mutation"] = True
+    failure = validate_expected_failure("continuous_cognition.v1", bad_continuous_cognition, "required_false_path_not_false")
+    if failure:
+        findings.append(failure)
+    bad_continuous_cognition["safety"]["automatic_external_mutation"] = False
+    bad_continuous_cognition["frontier"].pop("stop_reason", None)
+    failure = validate_expected_failure("continuous_cognition.v1", bad_continuous_cognition, "missing_required_nested_field")
+    if failure:
+        findings.append(failure)
+    bad_continuous_cognition = sample_continuous_cognition()
+    bad_continuous_cognition["activation"]["one_shot"] = False
+    failure = validate_expected_failure("continuous_cognition.v1", bad_continuous_cognition, "required_true_path_not_true")
     if failure:
         findings.append(failure)
 

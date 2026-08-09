@@ -1,0 +1,157 @@
+{
+  "schema_id": "contextlattice_eval_ledger.v1",
+  "ledger_version": "recall_response_advisory.v1",
+  "feature": "recall_response_advisory_quality",
+  "lane": "shared_public_safe",
+  "release_train": "unreleased",
+  "objective": "Measure the bounded recall-response and Continuous Cognition contracts on synthetic baseline and holdout cases without treating contract quality as independently verified Utility.",
+  "fixture_contract": {
+    "schema_id": "recall_response_eval_fixture.v1",
+    "baseline_id": "recall_response_advisory_baseline_v1",
+    "holdout_id": "recall_response_advisory_holdout_v1",
+    "split_policy": "disjoint synthetic baseline and holdout; not preregistered before the production response implementation",
+    "synthetic": true,
+    "raw_local_data": false,
+    "maximum_cases_per_split": 64
+  },
+  "fixture_hashes": {
+    "baseline": "sha256:0f2e719186ba08d5fe192b988554697f4fbc589e8679bad073261f4e65d76df7",
+    "holdout": "sha256:f633cf59cf96d9b7decb03da7abd0ef76e0e9515c4984d6921d169578d5b9d83"
+  },
+  "conditions": [
+    "no_recall",
+    "retrieval_only",
+    "static_recall_response",
+    "continuous_cognition"
+  ],
+  "evaluation": {
+    "evaluator": "scripts/agent/recall-response-offline-eval",
+    "eval_schema_id": "recall_response_offline_eval.v1",
+    "eval_version": "1.2.0",
+    "baseline_cases": 5,
+    "holdout_cases": 6,
+    "contract_registry": {
+      "registry_id": "contextlattice_agent_output_contracts",
+      "registry_version": "derived_at_runtime_from_config"
+    },
+    "static_response_contract": "recall_response.v1",
+    "static_response_status": "bounded_contract_projection_only",
+    "continuous_cognition_contract": "continuous_cognition.v1",
+    "continuous_cognition_status": "bounded_contract_projection_only",
+    "continuous_cognition_operation_contract_matrix": {
+      "operations": [
+        "observe",
+        "investigate",
+        "status",
+        "outcome",
+        "evaluate",
+        "rollback",
+        "retire"
+      ],
+      "all_valid": true,
+      "all_deterministic": true,
+      "external_execution_claimed": false,
+      "runtime_proof": "Go route and native CLI tests exercise every operation; this offline matrix proves deterministic contract shape without claiming external execution."
+    },
+    "static_recall_response_metrics": {
+      "contract_validity": 1.0,
+      "evidence_precision": 0.954545,
+      "evidence_recall": 1.0,
+      "citation_proof_integrity": 1.0,
+      "correctness": 1.0,
+      "currentness": 1.0,
+      "conflict_handling": 1.0,
+      "abstention": 1.0,
+      "next_action": 1.0,
+      "decision_impact": 1.0,
+      "rank": 1.0,
+      "numeric": 1.0,
+      "diversity": 1.0,
+      "latency_ms": null,
+      "tokens_in": null,
+      "tokens_out": null,
+      "tool_calls": 0.0,
+      "failures": 0.0,
+      "privacy": 1.0,
+      "determinism": 1.0
+    },
+    "continuous_cognition_metrics": {
+      "contract_validity": 1.0,
+      "evidence_precision": 0.954545,
+      "evidence_recall": 1.0,
+      "citation_proof_integrity": 1.0,
+      "correctness": 1.0,
+      "currentness": 1.0,
+      "conflict_handling": 1.0,
+      "abstention": 1.0,
+      "next_action": 1.0,
+      "decision_impact": 1.0,
+      "rank": 1.0,
+      "numeric": 1.0,
+      "diversity": 1.0,
+      "latency_ms": null,
+      "tokens_in": null,
+      "tokens_out": null,
+      "tool_calls": 0.0,
+      "failures": 0.0,
+      "privacy": 1.0,
+      "determinism": 1.0
+    },
+    "continuous_cognition": {
+      "implemented": true,
+      "availability": "available",
+      "contract_status": "continuous_cognition.v1",
+      "evidence_basis": "synthetic contract-regression projection plus deterministic Go lifecycle tests",
+      "utility_claim": "unproven"
+    }
+  },
+  "advisory_status": {
+    "posture": "abstention",
+    "action_boundary": "advisory_only",
+    "can_act": false,
+    "response_contract": "recall_response.v1",
+    "independent_utility": {
+      "status": "unproven",
+      "quality_samples": 1002,
+      "utility_observations": 16,
+      "independently_verified_observations": 0,
+      "causal_pairs": 0,
+      "reason": "Offline response quality and observed utility are not independently reconciled proof of causal benefit."
+    }
+  },
+  "activation": {
+    "learned": false,
+    "calibrated": false,
+    "canary": false,
+    "enabled": false,
+    "ranking_influence": false
+  },
+  "cost": {
+    "provider_calls": 0,
+    "external_network_calls": 0,
+    "new_dependencies": 0,
+    "runtime_mutations": 0,
+    "offline_evaluator_tool_calls": 0
+  },
+  "reproduction": [
+    "python3 -m unittest scripts.tests.test_recall_response_offline_eval",
+    "scripts/agent/recall-response-offline-eval --check --pretty",
+    "cd services/gateway-go && go test ./... -run 'TestContinuousCognitionLifecycle|TestContinuousCognitionProofSnapshotAt|TestUtilityRowsForOutcomeIDsHonorsHistoricalBounds' -count=1",
+    "git diff --check"
+  ],
+  "failures": [
+    {
+      "condition": "independent_utility",
+      "status": "unproven",
+      "meaning": "The implementation and synthetic contract evaluation do not manufacture an independently verified or causal product-effect claim."
+    }
+  ],
+  "limitations": [
+    "Fixtures contain synthetic opaque references only; they do not measure live retrieval or model-generated answer quality.",
+    "The holdout is structurally disjoint but was not preregistered before the production response implementation, so it is contract-regression evidence rather than an unbiased product-effect estimate.",
+    "The static response condition is a deterministic contract projection and does not prove production correctness, currentness, or utility.",
+    "Advisory abstention remains the safe action posture until exact independent verification and causal Utility evidence exist.",
+    "Latency and token counts are unmeasured in this offline harness (null); tool calls and failures are exact harness counts, while privacy and determinism are contract checks, not production telemetry.",
+    "Continuous Cognition is implemented and contract-tested here, but this synthetic projection does not establish live model quality, latency, token cost, independent Utility, or causal product lift."
+  ]
+}

@@ -827,6 +827,7 @@ def preflight_contracts_summary(
             "agent_prompt_context_package.v1",
             "agent_run_trace.v1",
             "agent_proof_timeline.v1",
+            "continuous_cognition.v1",
             "run_advisor.v1",
             "retrieval_progress.v1",
             "steering_comment.v1",
