@@ -280,8 +280,25 @@ func frontierT2StrictLatencyGateEnabled() bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv(frontierT2StrictLatencyGateEnv))) {
 	case "0", "false", "no":
 		return false
-	default:
+	case "1", "true", "yes":
 		return true
+	default:
+		return !contextLatticeRaceEnabled
+	}
+}
+
+func TestFrontierT2StrictLatencyGateMode(t *testing.T) {
+	t.Setenv(frontierT2StrictLatencyGateEnv, "")
+	if got, want := frontierT2StrictLatencyGateEnabled(), !contextLatticeRaceEnabled; got != want {
+		t.Fatalf("default strict latency gate=%v want=%v race=%v", got, want, contextLatticeRaceEnabled)
+	}
+	t.Setenv(frontierT2StrictLatencyGateEnv, "true")
+	if !frontierT2StrictLatencyGateEnabled() {
+		t.Fatal("explicit strict latency gate enable was ignored")
+	}
+	t.Setenv(frontierT2StrictLatencyGateEnv, "false")
+	if frontierT2StrictLatencyGateEnabled() {
+		t.Fatal("explicit strict latency gate disable was ignored")
 	}
 }
 

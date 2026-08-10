@@ -278,7 +278,28 @@ func recallResponseModulePayload(kind string, response map[string]any, refs []st
 		for _, raw := range contextPackAnyList(anyMap(response["answer"])["components"]) {
 			module := anyMap(raw)
 			if anyToString(module["kind"]) == kind {
-				return cloneJSONMap(anyMap(module["payload"]))
+				// Transport recomposition may have compressed the proof spine
+				// since this module was sealed. Reusing a payload whose previous
+				// component refs are no longer in the current module witness would
+				// create a structurally stale candidate (for example, a conflict
+				// payload retaining an optional action ref that was just clipped).
+				// Rebuild from the current bounded refs in that case; the source
+				// snapshot is intentionally unavailable on this post-clip path.
+				previousRefs := anyToStringList(module["proof_refs"], recallResponseMaxProofRefs)
+				currentRefs := map[string]bool{}
+				for _, ref := range refs {
+					currentRefs[ref] = true
+				}
+				reusable := true
+				for _, ref := range previousRefs {
+					if !currentRefs[ref] {
+						reusable = false
+						break
+					}
+				}
+				if reusable {
+					return cloneJSONMap(anyMap(module["payload"]))
+				}
 			}
 		}
 	}

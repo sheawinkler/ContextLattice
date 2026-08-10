@@ -18,6 +18,16 @@ func gatewayStateInventoryEntryByID(t *testing.T, id string) gatewaystate.EntryI
 	return gatewaystate.EntryInput{}
 }
 
+func TestGatewayStateInventoryEntryIDsAreUnique(t *testing.T) {
+	seen := map[string]struct{}{}
+	for _, entry := range gatewayStateInventoryEntries() {
+		if _, exists := seen[entry.ID]; exists {
+			t.Fatalf("gateway state inventory contains duplicate id %q", entry.ID)
+		}
+		seen[entry.ID] = struct{}{}
+	}
+}
+
 func TestContextPackRegressionFixtureInventoryUsesExplicitPath(t *testing.T) {
 	stateRoot := filepath.Join(t.TempDir(), "state")
 	fixturePath := filepath.Join(t.TempDir(), "fixture", "regressions.ndjson")

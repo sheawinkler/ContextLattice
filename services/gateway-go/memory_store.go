@@ -19,6 +19,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 )
@@ -146,37 +147,45 @@ type topicRollupSignal struct {
 }
 
 type memoryStore struct {
-	policy               memoryStorePolicy
-	ready                atomic.Bool
-	migration            *ownerOnlyMigrationRuntime
-	migrationOnce        sync.Once
-	initializeOnce       sync.Once
-	initializeErr        error
-	mu                   sync.RWMutex
-	recent               []memoryStoreEntry
-	currentState         map[string]memoryCurrentState
-	latestTopic          map[string]string
-	latestHash           map[string]string
-	latestHorizon        map[string]int
-	latestLifecycle      map[string]string
-	latestStorageTier    map[string]string
-	lastAccess           map[string]time.Time
-	confidence           map[string]confidenceState
-	rollupCache          map[string]topicRollupCacheEntry
-	edges                map[string]memoryEdgeEntry
-	edgeOrder            []string
-	edgeOrdinal          map[string]int64
-	nextEdgeOrdinal      int64
-	edgeAdjacency        map[string]map[string]struct{}
-	agentEdges           map[string]AgentEventEdge
-	agentEdgeOrder       []string
-	exactStatePaths      map[string]struct{}
-	exactStateCount      atomic.Int64
-	pathLocksMu          sync.Mutex
-	pathLocks            map[string]*memoryPathLock
-	beforeInitialize     func()
-	beforeOrdinaryCommit func()
-	beforeEdgeCommit     func()
+	policy         memoryStorePolicy
+	ready          atomic.Bool
+	migration      *ownerOnlyMigrationRuntime
+	migrationOnce  sync.Once
+	initializeOnce sync.Once
+	initializeErr  error
+	mu             sync.RWMutex
+	recent         []memoryStoreEntry
+	currentState   map[string]memoryCurrentState
+	// currentKeysByProject is the bounded lookup index for active semantic
+	// history keys. It avoids cloning unrelated projects for scoped rollups.
+	currentKeysByProject           map[string]map[string]struct{}
+	currentKeyCountsByProject      map[string]int
+	currentKeysByProjectTopic      map[string]map[string]map[string]struct{}
+	currentTopicKeyCountsByProject map[string]int
+	currentKeyIndexGeneration      map[string]uint64
+	currentTopicIndexGeneration    map[string]uint64
+	latestTopic                    map[string]string
+	latestHash                     map[string]string
+	latestHorizon                  map[string]int
+	latestLifecycle                map[string]string
+	latestStorageTier              map[string]string
+	lastAccess                     map[string]time.Time
+	confidence                     map[string]confidenceState
+	rollupCache                    map[string]topicRollupCacheEntry
+	edges                          map[string]memoryEdgeEntry
+	edgeOrder                      []string
+	edgeOrdinal                    map[string]int64
+	nextEdgeOrdinal                int64
+	edgeAdjacency                  map[string]map[string]struct{}
+	agentEdges                     map[string]AgentEventEdge
+	agentEdgeOrder                 []string
+	exactStatePaths                map[string]struct{}
+	exactStateCount                atomic.Int64
+	pathLocksMu                    sync.Mutex
+	pathLocks                      map[string]*memoryPathLock
+	beforeInitialize               func()
+	beforeOrdinaryCommit           func()
+	beforeEdgeCommit               func()
 }
 
 type memoryPathLock struct {
@@ -341,25 +350,31 @@ func loadMemoryStorePolicy() memoryStorePolicy {
 func newMemoryStoreFromEnv() (*memoryStore, error) {
 	policy := loadMemoryStorePolicy()
 	store := &memoryStore{
-		policy:            policy,
-		recent:            make([]memoryStoreEntry, 0, policy.maxRecent),
-		currentState:      map[string]memoryCurrentState{},
-		latestTopic:       map[string]string{},
-		latestHash:        map[string]string{},
-		latestHorizon:     map[string]int{},
-		latestLifecycle:   map[string]string{},
-		latestStorageTier: map[string]string{},
-		lastAccess:        map[string]time.Time{},
-		confidence:        map[string]confidenceState{},
-		rollupCache:       map[string]topicRollupCacheEntry{},
-		edges:             map[string]memoryEdgeEntry{},
-		edgeOrder:         []string{},
-		edgeOrdinal:       map[string]int64{},
-		edgeAdjacency:     map[string]map[string]struct{}{},
-		agentEdges:        map[string]AgentEventEdge{},
-		agentEdgeOrder:    []string{},
-		exactStatePaths:   map[string]struct{}{},
-		pathLocks:         map[string]*memoryPathLock{},
+		policy:                         policy,
+		recent:                         make([]memoryStoreEntry, 0, policy.maxRecent),
+		currentState:                   map[string]memoryCurrentState{},
+		currentKeysByProject:           map[string]map[string]struct{}{},
+		currentKeyCountsByProject:      map[string]int{},
+		currentKeysByProjectTopic:      map[string]map[string]map[string]struct{}{},
+		currentTopicKeyCountsByProject: map[string]int{},
+		currentKeyIndexGeneration:      map[string]uint64{},
+		currentTopicIndexGeneration:    map[string]uint64{},
+		latestTopic:                    map[string]string{},
+		latestHash:                     map[string]string{},
+		latestHorizon:                  map[string]int{},
+		latestLifecycle:                map[string]string{},
+		latestStorageTier:              map[string]string{},
+		lastAccess:                     map[string]time.Time{},
+		confidence:                     map[string]confidenceState{},
+		rollupCache:                    map[string]topicRollupCacheEntry{},
+		edges:                          map[string]memoryEdgeEntry{},
+		edgeOrder:                      []string{},
+		edgeOrdinal:                    map[string]int64{},
+		edgeAdjacency:                  map[string]map[string]struct{}{},
+		agentEdges:                     map[string]AgentEventEdge{},
+		agentEdgeOrder:                 []string{},
+		exactStatePaths:                map[string]struct{}{},
+		pathLocks:                      map[string]*memoryPathLock{},
 	}
 	store.migration = newOwnerOnlyMigrationRuntime(policy.rootPath, policy.enabled)
 	if !policy.enabled {
@@ -994,6 +1009,7 @@ func (m *memoryStore) recordEntry(entry memoryStoreEntry) {
 	becameCurrent := m.applyCurrentStateEntryLocked(entry)
 	if isMemoryTombstone(entry) {
 		if becameCurrent && key != "::" {
+			m.removeCurrentKeyLocked(entry.Project, key)
 			delete(m.latestTopic, key)
 			delete(m.latestHash, key)
 			delete(m.latestHorizon, key)
@@ -1013,6 +1029,7 @@ func (m *memoryStore) recordEntry(entry memoryStoreEntry) {
 		return
 	}
 	if becameCurrent && key != "::" {
+		m.addCurrentKeyLocked(entry.Project, key, entry.TopicPath)
 		m.latestTopic[key] = entry.TopicPath
 		m.latestLifecycle[key] = normalizeMemoryLifecycle(entry.Lifecycle)
 		m.latestStorageTier[key] = normalizeMemoryStorageTier(entry.StorageTier)
@@ -1594,6 +1611,79 @@ func (m *memoryStore) readFileUntracked(project string, fileName string) (string
 	return string(bytes), info, cleanProject, cleanFile, nil
 }
 
+func (m *memoryStore) readVerifiedEvidencePreview(
+	ctx context.Context,
+	project string,
+	fileName string,
+	expectedContentHash string,
+	maxFileBytes int64,
+	maxPreviewBytes int,
+) (string, string, error) {
+	if m == nil || !m.isEnabled() {
+		return "", "", errors.New("go memory store is disabled")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	cleanProject, err := sanitizeMemoryProject(project)
+	if err != nil {
+		return "", "", err
+	}
+	cleanFile, err := sanitizeMemoryFile(fileName)
+	if err != nil {
+		return "", "", err
+	}
+	expectedContentHash = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(expectedContentHash)), "sha256:")
+	if len(expectedContentHash) != 64 {
+		return "", "", errors.New("verified evidence requires a sha256 content hash")
+	}
+	maxFileBytes = maxInt64(32*1024, minInt64(maxFileBytes, 1024*1024))
+	maxPreviewBytes = clampInt(maxPreviewBytes, 4096, 64*1024)
+
+	relative := filepath.Join(cleanProject, filepath.FromSlash(cleanFile))
+	abs := filepath.Join(m.policy.rootPath, relative)
+	current := filepath.Clean(m.policy.rootPath)
+	for _, component := range strings.Split(filepath.ToSlash(relative), "/") {
+		if component == "" || component == "." {
+			continue
+		}
+		current = filepath.Join(current, component)
+		info, statErr := os.Lstat(current)
+		if statErr != nil {
+			return "", "", statErr
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return "", "", errors.New("verified evidence path contains a symlink")
+		}
+	}
+	before, err := os.Lstat(abs)
+	if err != nil {
+		return "", "", err
+	}
+	if !before.Mode().IsRegular() || before.Size() < 0 || before.Size() > maxFileBytes {
+		return "", "", errors.New("verified evidence file is not a bounded regular file")
+	}
+	raw, err := readFileHeadWithContext(ctx, abs, maxFileBytes+1)
+	if err != nil {
+		return "", "", err
+	}
+	after, err := os.Lstat(abs)
+	if err != nil {
+		return "", "", err
+	}
+	if after.Mode()&os.ModeSymlink != 0 || !after.Mode().IsRegular() || !os.SameFile(before, after) || int64(len(raw)) != after.Size() {
+		return "", "", errors.New("verified evidence file identity changed during read")
+	}
+	if !utf8.Valid(raw) {
+		return "", "", errors.New("verified evidence file is not utf-8 text")
+	}
+	observedContentHash := canonicalMemoryContentHash(string(raw))
+	if !strings.EqualFold(observedContentHash, expectedContentHash) {
+		return "", "", errors.New("verified evidence content hash mismatch")
+	}
+	return clipText(string(raw), maxPreviewBytes), observedContentHash, nil
+}
+
 func (m *memoryStore) purgeEphemeral(project string, topicPath string, filePrefix string, dryRun bool, reason string) (map[string]any, error) {
 	if m == nil || !m.isEnabled() {
 		return map[string]any{"ok": false, "error": "go memory store is disabled"}, errors.New("go memory store is disabled")
@@ -1896,14 +1986,29 @@ func (m *memoryStore) collectDocs(ctx context.Context, projectFilter string, opt
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if docs, ok := m.collectDocsFromHistoryIndex(ctx, projectFilter, includeCold, includeEphemeral); ok {
+	indexUnknown := m.projectHistoryIndexUnknown(projectFilter)
+	if docs, ok := m.collectDocsFromHistoryIndex(ctx, projectFilter, includeCold, includeEphemeral); ok && !indexUnknown {
 		return docs, nil
 	}
 	return m.collectDocsFromDisk(ctx, projectFilter, includeCold, includeEphemeral)
 }
 
-func (m *memoryStore) collectDocsFromDisk(ctx context.Context, projectFilter string, options ...bool) ([]memoryStoreDoc, error) {
-	includeCold, includeEphemeral := memoryStoreIncludeOptions(options)
+func (m *memoryStore) projectHistoryIndexUnknown(projectFilter string) bool {
+	if m == nil || strings.TrimSpace(projectFilter) == "" {
+		return false
+	}
+	projectKey := normalizeCurrentKeyIndexProject(projectFilter)
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.currentKeysByProject == nil || m.currentKeyCountsByProject == nil {
+		return false
+	}
+	_, indexPresent := m.currentKeysByProject[projectKey]
+	_, countKnown := m.currentKeyCountsByProject[projectKey]
+	return !indexPresent && !countKnown
+}
+
+func (m *memoryStore) collectDocsFromDisk(ctx context.Context, projectFilter string, includeCold bool, includeEphemeral bool) ([]memoryStoreDoc, error) {
 	if m == nil || !m.isEnabled() {
 		return []memoryStoreDoc{}, nil
 	}
@@ -2082,19 +2187,80 @@ func (m *memoryStore) collectDocsFromHistoryIndex(ctx context.Context, projectFi
 	if m == nil || !m.policy.rollupUseHistoryIndex {
 		return nil, false
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	select {
+	case <-ctx.Done():
+		return []memoryStoreDoc{}, true
+	default:
+	}
 	normalizedProject := strings.TrimSpace(projectFilter)
+	latestTopic := map[string]string{}
+	currentState := map[string]memoryCurrentState{}
+	exactStatePaths := map[string]struct{}{}
 	m.mu.RLock()
-	latestTopic := make(map[string]string, len(m.latestTopic))
-	for key, value := range m.latestTopic {
-		latestTopic[key] = value
-	}
-	currentState := make(map[string]memoryCurrentState, len(m.currentState))
-	for key, state := range m.currentState {
-		currentState[key] = state
-	}
-	exactStatePaths := make(map[string]struct{}, len(m.exactStatePaths))
-	for key := range m.exactStatePaths {
-		exactStatePaths[key] = struct{}{}
+	if normalizedProject != "" {
+		// A missing or nil index is not equivalent to an empty project. The
+		// caller must fall back to the bounded disk lane rather than risk a
+		// partial result if index ownership has been lost.
+		if m.currentKeysByProject == nil || m.currentKeyCountsByProject == nil {
+			m.mu.RUnlock()
+			return nil, false
+		}
+		projectKey := normalizeCurrentKeyIndexProject(normalizedProject)
+		indexedKeys, indexPresent := m.currentKeysByProject[projectKey]
+		expectedCount, countKnown := m.currentKeyCountsByProject[projectKey]
+		// Once both index maps are materialized, absence from both maps is an
+		// authoritative empty project, not permission to fall through to a disk
+		// corpus. A one-sided entry or count mismatch is corruption and must keep
+		// the existing fail-closed fallback signal.
+		if !indexPresent && !countKnown {
+			m.mu.RUnlock()
+			return []memoryStoreDoc{}, true
+		}
+		if !indexPresent || !countKnown || expectedCount < 0 || len(indexedKeys) != expectedCount {
+			m.mu.RUnlock()
+			return nil, false
+		}
+		if expectedCount == 0 {
+			m.mu.RUnlock()
+			return []memoryStoreDoc{}, true
+		}
+		for key := range indexedKeys {
+			select {
+			case <-ctx.Done():
+				m.mu.RUnlock()
+				return []memoryStoreDoc{}, true
+			default:
+			}
+			project, fileName, ok := parseMemoryStoreKeyToken(key)
+			state, stateOK := m.currentState[key]
+			topic, topicOK := m.latestTopic[key]
+			if !ok || !strings.EqualFold(project, normalizedProject) || fileName == "" ||
+				!stateOK || state.Tombstone || !topicOK {
+				m.mu.RUnlock()
+				return nil, false
+			}
+			latestTopic[key] = topic
+			currentState[key] = state
+			if _, exact := m.exactStatePaths[key]; exact {
+				exactStatePaths[key] = struct{}{}
+			}
+		}
+	} else {
+		latestTopic = make(map[string]string, len(m.latestTopic))
+		for key, value := range m.latestTopic {
+			latestTopic[key] = value
+		}
+		currentState = make(map[string]memoryCurrentState, len(m.currentState))
+		for key, state := range m.currentState {
+			currentState[key] = state
+		}
+		exactStatePaths = make(map[string]struct{}, len(m.exactStatePaths))
+		for key := range m.exactStatePaths {
+			exactStatePaths[key] = struct{}{}
+		}
 	}
 	m.mu.RUnlock()
 	if len(latestTopic) == 0 {
@@ -2113,6 +2279,11 @@ func (m *memoryStore) collectDocsFromHistoryIndex(ctx context.Context, projectFi
 	}
 	metadataByKey := map[string]recentMeta{}
 	for key, state := range currentState {
+		select {
+		case <-ctx.Done():
+			return []memoryStoreDoc{}, true
+		default:
+		}
 		if state.Tombstone {
 			continue
 		}

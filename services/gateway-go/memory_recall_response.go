@@ -11,6 +11,7 @@ const (
 	recallResponseMaxConflicts = 8
 	recallResponseMaxGaps      = 12
 	recallResponseMaxReceipts  = 8
+	recallResponseMaxGapRefs   = recallResponseMaxProofRefs
 )
 
 func composeRecallResponse(input map[string]any) map[string]any {
@@ -22,7 +23,13 @@ func composeRecallResponse(input map[string]any) map[string]any {
 // and returned if any nested U2 invariant fails.
 func composeRecallResponseWithPolicy(input map[string]any, policy validatedRecallResponsePolicyInput) map[string]any {
 	prepared, asOf := recallResponsePrepareTemporalInput(input)
+	silence, silenceObserved := recallResponseServerSilence(prepared)
 	control := composeRecallResponseV1Control(prepared, policy, asOf)
+	// Apply the server-owned U6 disposition to both the candidate and its
+	// compatibility control. If candidate proof/module validation later falls
+	// back, the same no-dispatch/no-writeback decision remains attached to the
+	// exact v1 artifact instead of being silently discarded.
+	recallResponseApplyServerSilence(control, silence, silenceObserved)
 	candidate := cloneJSONMap(control)
 	evidence := contextPackAnyList(candidate["evidence"])
 	conflicts := contextPackAnyList(candidate["conflicts"])
@@ -41,13 +48,13 @@ func composeRecallResponseWithPolicy(input map[string]any, policy validatedRecal
 	answer := anyMap(candidate["answer"])
 	compressedProof, compression, compressionOK := recallResponseCompressProof(candidate, proof, policy, prepared)
 	if !compressionOK || !compression.Sufficient {
-		return recallResponseCandidateOrControl(control, nil, policy, asOf, false)
+		return recallResponseCandidateOrControl(control, nil, policy, asOf, false, recallResponseFallbackStageReceipt(compression.FailureStage, compression, candidate))
 	}
 	proof = compressedProof
 	answer["proof_spine"] = proof
 	modules, primaryModule, orderedModules, modulesOK := recallResponseBuildModules(candidate, proof, policy, prepared)
 	if !modulesOK {
-		return recallResponseCandidateOrControl(control, nil, policy, asOf, false)
+		return recallResponseCandidateOrControl(control, nil, policy, asOf, false, recallResponseFallbackStageReceipt(recallResponseFallbackStageModuleValidation, recallResponseProofCompression{}, candidate))
 	}
 	answer["components"] = modules
 	composition := recallResponseComposition(policy, proof)
@@ -58,7 +65,7 @@ func composeRecallResponseWithPolicy(input map[string]any, policy validatedRecal
 	candidate["response_id"] = recallResponseIDForResponse(candidate)
 	candidate["response_digest"] = recallResponseSemanticDigest(candidate)
 	if !recallResponseFitCandidateBudget(candidate) {
-		return recallResponseCandidateOrControl(control, nil, policy, asOf, false)
+		return recallResponseCandidateOrControl(control, nil, policy, asOf, false, recallResponseFallbackStageReceipt(recallResponseFallbackStageFit, recallResponseProofCompression{}, candidate))
 	}
 	return recallResponseCandidateOrControl(control, candidate, policy, asOf, true)
 }
@@ -262,7 +269,7 @@ func composeRecallResponseV1Control(input map[string]any, policy validatedRecall
 		answerSummary = "Bounded evidence is available, but unresolved limits remain; verify before acting."
 		answerMode = "qualified_answer"
 	}
-	components := recallResponseComponents(classification, rankedEvidence, taskClass, len(evidence), len(conflicts), len(gaps), scopeDigest)
+	components := recallResponseComponents(classification, rankedEvidence, taskClass, len(evidence), len(conflicts), len(gaps), scopeDigest, input)
 
 	nextActionKind := "retrieve_or_verify"
 	nextActionLabel := "Retrieve or verify the remaining proof"
@@ -489,7 +496,14 @@ func recallResponseGaps(input, contextPack, sourceCoverage map[string]any, ranke
 		before := len(out)
 		add("excluded_evidence", "Invalid, quarantined, superseded, or policy-omitted evidence was excluded from support.", true)
 		if len(out) > before {
-			anyMap(out[len(out)-1])["refs"] = excludedRefs
+			gap := anyMap(out[len(out)-1])
+			total := len(excludedRefs)
+			if total > recallResponseMaxGapRefs {
+				excludedRefs = excludedRefs[:recallResponseMaxGapRefs]
+				gap["reason"] = "Invalid, quarantined, superseded, or policy-omitted evidence was excluded from support; " +
+					anyToString(len(excludedRefs)) + " of " + anyToString(total) + " bounded opaque identities are disclosed."
+			}
+			gap["refs"] = excludedRefs
 		}
 	}
 	if anyToBool(input["_invalid_as_of"]) {
@@ -797,7 +811,11 @@ func recallResponseStricterConsequence(computed, supplied string) string {
 	return computed
 }
 
-func recallResponseComponents(classification map[string]any, rankedEvidence []any, taskClass string, evidenceCount, conflictCount, gapCount int, scopeDigest string) []any {
+func recallResponseComponents(classification map[string]any, rankedEvidence []any, taskClass string, evidenceCount, conflictCount, gapCount int, scopeDigest string, sources ...map[string]any) []any {
+	var source map[string]any
+	if len(sources) > 0 {
+		source = sources[0]
+	}
 	selected := map[string]bool{}
 	add := func(kind string) {
 		if kind != "" {
@@ -847,8 +865,17 @@ func recallResponseComponents(classification map[string]any, rankedEvidence []an
 	if evidenceCount > 0 && len(selected) == 0 {
 		add("multi_memory_synthesis")
 	}
-	if recallResponseHasStructuredActionEvidence(rankedEvidence) {
+	actionAllowed := recallResponseActionProjectionAllowed(source)
+	hasStructuredAction := recallResponseHasStructuredActionEvidence(rankedEvidence)
+	if actionAllowed && hasStructuredAction {
 		add("memory_to_action")
+		if !recallResponseHasReadyActionEvidence(rankedEvidence) {
+			add("negative_abstention")
+		}
+	}
+	if !actionAllowed && selected["memory_to_action"] {
+		delete(selected, "memory_to_action")
+		add("negative_abstention")
 	}
 	primary := recallResponsePrimaryModuleKind(classification, selected, taskClass, evidenceCount)
 	order := []string{primary}

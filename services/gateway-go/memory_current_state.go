@@ -108,6 +108,169 @@ func (m *memoryStore) ensureCurrentStateMapLocked() {
 	}
 }
 
+func (m *memoryStore) ensureCurrentKeyIndexLocked() {
+	if m == nil {
+		return
+	}
+	if m.currentKeysByProject == nil {
+		m.currentKeysByProject = map[string]map[string]struct{}{}
+	}
+	if m.currentKeyCountsByProject == nil {
+		m.currentKeyCountsByProject = map[string]int{}
+	}
+	if m.currentKeysByProjectTopic == nil {
+		m.currentKeysByProjectTopic = map[string]map[string]map[string]struct{}{}
+	}
+	if m.currentTopicKeyCountsByProject == nil {
+		m.currentTopicKeyCountsByProject = map[string]int{}
+	}
+	if m.currentKeyIndexGeneration == nil {
+		m.currentKeyIndexGeneration = map[string]uint64{}
+	}
+	if m.currentTopicIndexGeneration == nil {
+		m.currentTopicIndexGeneration = map[string]uint64{}
+	}
+}
+
+func normalizeCurrentKeyIndexProject(project string) string {
+	return strings.ToLower(strings.TrimSpace(project))
+}
+
+const currentStateUnscopedTopicBucket = "\x00"
+
+func currentStateTopicBucket(topicPath string) string {
+	normalized := normalizeTopicPathLoose(topicPath)
+	if normalized == "" {
+		return currentStateUnscopedTopicBucket
+	}
+	return normalized
+}
+
+func (m *memoryStore) ensureCurrentProjectIndexLocked(projectKey string) {
+	if m == nil || projectKey == "" {
+		return
+	}
+	m.ensureCurrentKeyIndexLocked()
+	if m.currentKeysByProject[projectKey] == nil {
+		m.currentKeysByProject[projectKey] = map[string]struct{}{}
+	}
+	if m.currentKeysByProjectTopic[projectKey] == nil {
+		m.currentKeysByProjectTopic[projectKey] = map[string]map[string]struct{}{}
+	}
+	if _, exists := m.currentKeyCountsByProject[projectKey]; !exists {
+		m.currentKeyCountsByProject[projectKey] = 0
+	}
+	if _, exists := m.currentTopicKeyCountsByProject[projectKey]; !exists {
+		m.currentTopicKeyCountsByProject[projectKey] = 0
+	}
+	if _, exists := m.currentKeyIndexGeneration[projectKey]; !exists {
+		m.currentKeyIndexGeneration[projectKey] = 0
+	}
+	if _, exists := m.currentTopicIndexGeneration[projectKey]; !exists {
+		m.currentTopicIndexGeneration[projectKey] = 0
+	}
+}
+
+func (m *memoryStore) advanceCurrentIndexGenerationLocked(projectKey string) {
+	if m == nil || projectKey == "" {
+		return
+	}
+	keyGeneration := m.currentKeyIndexGeneration[projectKey]
+	topicGeneration := m.currentTopicIndexGeneration[projectKey]
+	if keyGeneration != topicGeneration {
+		return
+	}
+	if keyGeneration == ^uint64(0) {
+		// Saturation is an explicit fail-closed state; never wrap and make a
+		// stale topic projection look coherent with the primary index.
+		m.currentTopicIndexGeneration[projectKey] = 0
+		return
+	}
+	keyGeneration++
+	m.currentKeyIndexGeneration[projectKey] = keyGeneration
+	m.currentTopicIndexGeneration[projectKey] = keyGeneration
+}
+
+func (m *memoryStore) addCurrentKeyLocked(project string, key string, topicPath string) {
+	if m == nil || key == "::" {
+		return
+	}
+	projectKey := normalizeCurrentKeyIndexProject(project)
+	if projectKey == "" {
+		return
+	}
+	m.ensureCurrentProjectIndexLocked(projectKey)
+	keys := m.currentKeysByProject[projectKey]
+	changed := false
+	if _, exists := keys[key]; !exists {
+		keys[key] = struct{}{}
+		m.currentKeyCountsByProject[projectKey]++
+		changed = true
+	}
+
+	newTopic := currentStateTopicBucket(topicPath)
+	oldTopic := currentStateTopicBucket(m.latestTopic[key])
+	topics := m.currentKeysByProjectTopic[projectKey]
+	if oldTopic != newTopic {
+		if oldKeys := topics[oldTopic]; oldKeys != nil {
+			if _, exists := oldKeys[key]; exists {
+				delete(oldKeys, key)
+				m.currentTopicKeyCountsByProject[projectKey]--
+				changed = true
+				if len(oldKeys) == 0 {
+					delete(topics, oldTopic)
+				}
+			}
+		}
+	}
+	newKeys := topics[newTopic]
+	if newKeys == nil {
+		newKeys = map[string]struct{}{}
+		topics[newTopic] = newKeys
+	}
+	if _, exists := newKeys[key]; !exists {
+		newKeys[key] = struct{}{}
+		m.currentTopicKeyCountsByProject[projectKey]++
+		changed = true
+	}
+	if changed {
+		m.advanceCurrentIndexGenerationLocked(projectKey)
+	}
+}
+
+func (m *memoryStore) removeCurrentKeyLocked(project string, key string) {
+	if m == nil || key == "::" || m.currentKeysByProject == nil {
+		return
+	}
+	projectKey := normalizeCurrentKeyIndexProject(project)
+	keys := m.currentKeysByProject[projectKey]
+	if keys == nil {
+		return
+	}
+	if _, exists := keys[key]; !exists {
+		return
+	}
+	delete(keys, key)
+	oldTopic := currentStateTopicBucket(m.latestTopic[key])
+	if topics := m.currentKeysByProjectTopic[projectKey]; topics != nil {
+		if topicKeys := topics[oldTopic]; topicKeys != nil {
+			if _, exists := topicKeys[key]; exists {
+				delete(topicKeys, key)
+				m.currentTopicKeyCountsByProject[projectKey]--
+				if len(topicKeys) == 0 {
+					delete(topics, oldTopic)
+				}
+			}
+		}
+	}
+	if count := m.currentKeyCountsByProject[projectKey] - 1; count > 0 {
+		m.currentKeyCountsByProject[projectKey] = count
+	} else {
+		m.currentKeyCountsByProject[projectKey] = 0
+	}
+	m.advanceCurrentIndexGenerationLocked(projectKey)
+}
+
 func (m *memoryStore) applyCurrentStateEntryLocked(entry memoryStoreEntry) bool {
 	if m == nil {
 		return false
@@ -129,9 +292,18 @@ func (m *memoryStore) restoreLatestIndexesFromCurrentStateLocked() {
 	if m == nil {
 		return
 	}
+	m.ensureCurrentStateMapLocked()
+	m.ensureCurrentKeyIndexLocked()
+	m.currentKeysByProject = map[string]map[string]struct{}{}
+	m.currentKeyCountsByProject = map[string]int{}
+	m.currentKeysByProjectTopic = map[string]map[string]map[string]struct{}{}
+	m.currentTopicKeyCountsByProject = map[string]int{}
+	m.currentKeyIndexGeneration = map[string]uint64{}
+	m.currentTopicIndexGeneration = map[string]uint64{}
+	m.latestTopic = map[string]string{}
 	for key, state := range m.currentState {
 		entry := state.Entry
-		if state.Tombstone {
+		if exactStatePathSetContains(m.exactStatePaths, entry.Project, entry.FileName) {
 			delete(m.latestTopic, key)
 			delete(m.latestHash, key)
 			delete(m.latestHorizon, key)
@@ -141,6 +313,21 @@ func (m *memoryStore) restoreLatestIndexesFromCurrentStateLocked() {
 			delete(m.confidence, key)
 			continue
 		}
+		if state.Tombstone {
+			projectKey := normalizeCurrentKeyIndexProject(entry.Project)
+			if projectKey != "" {
+				m.ensureCurrentProjectIndexLocked(projectKey)
+			}
+			delete(m.latestTopic, key)
+			delete(m.latestHash, key)
+			delete(m.latestHorizon, key)
+			delete(m.latestLifecycle, key)
+			delete(m.latestStorageTier, key)
+			delete(m.lastAccess, key)
+			delete(m.confidence, key)
+			continue
+		}
+		m.addCurrentKeyLocked(entry.Project, key, entry.TopicPath)
 		m.latestTopic[key] = entry.TopicPath
 		m.latestLifecycle[key] = normalizeMemoryLifecycle(entry.Lifecycle)
 		m.latestStorageTier[key] = normalizeMemoryStorageTier(entry.StorageTier)

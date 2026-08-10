@@ -18,6 +18,7 @@ class AgentPolicyPackTest(unittest.TestCase):
         stdout: str = "",
         stdout_size: int = 0,
         exit_code: int = 0,
+        timeout: str | None = "1",
     ) -> subprocess.CompletedProcess[str]:
         with tempfile.TemporaryDirectory() as temp_dir:
             fake_bin = Path(temp_dir)
@@ -42,8 +43,11 @@ class AgentPolicyPackTest(unittest.TestCase):
                 response_file = fake_bin / "response.txt"
                 response_file.write_text("x" * stdout_size, encoding="utf-8")
                 env["FAKE_CURL_STDOUT_FILE"] = str(response_file)
+            command = [str(SCRIPT)]
+            if timeout is not None:
+                command.extend(("--timeout", timeout))
             return subprocess.run(
-                [str(SCRIPT), "--timeout", "1"],
+                command,
                 check=False,
                 capture_output=True,
                 text=True,
@@ -67,6 +71,36 @@ class AgentPolicyPackTest(unittest.TestCase):
             self.run_with_fake_curl(exit_code=7),
             "request failed",
         )
+
+    def test_watchdog_failure_is_typed_and_does_not_claim_partial_results(self) -> None:
+        result = self.run_with_fake_curl(exit_code=28, stdout='{"results":[{"file":"must-not-claim.md"}]}', timeout="200")
+
+        self.assert_degraded(result, "watchdog timeout")
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["status"], "degraded")
+        self.assertEqual(payload["result_state"], "degraded")
+        self.assertIs(payload["partial"], False)
+        self.assertEqual(payload["retrieval"]["result_count"], 0)
+        self.assertIs(payload["retrieval"]["partial"], False)
+        self.assertEqual(payload["error"]["type"], "watchdog_timeout")
+        self.assertEqual(payload["watchdog"]["status"], "failed")
+        self.assertEqual(payload["watchdog"]["requested_timeout_secs"], 200.0)
+        self.assertEqual(payload["watchdog"]["effective_timeout_secs"], 200.0)
+        self.assertNotIn("max_timeout_secs", payload["watchdog"])
+        self.assertTrue(payload["watchdog"]["effective_deadline"])
+        self.assertIn("do not replay", payload["watchdog"]["repair_hint"])
+
+    def test_invalid_timeout_falls_back_to_repo_default_with_typed_hint(self) -> None:
+        result = self.run_with_fake_curl(timeout="nan", stdout='{"degraded":false,"result_state":"ready","results":[]}')
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        watchdog = payload["watchdog"]
+        self.assertEqual(watchdog["timeout_validation"], "invalid_fell_back_to_default")
+        self.assertEqual(watchdog["requested_timeout_secs"], None)
+        self.assertEqual(watchdog["effective_timeout_secs"], 200.0)
+        self.assertEqual(watchdog["default_timeout_secs"], 200.0)
+        self.assertIn("finite positive", watchdog["repair_hint"])
 
     def test_unusable_responses_are_reported_as_degraded(self) -> None:
         cases = (
@@ -123,6 +157,18 @@ class AgentPolicyPackTest(unittest.TestCase):
         self.assertIs(payload["ok"], True)
         self.assertIs(payload["retrieval"]["degraded"], False)
         self.assertEqual(payload["retrieval"]["result_count"], 1)
+        self.assertEqual(payload["status"], "ready")
+        self.assertEqual(payload["watchdog"]["status"], "completed")
+        self.assertEqual(payload["watchdog"]["effective_timeout_secs"], 1.0)
+
+    def test_repo_default_timeout_is_preserved_when_not_overridden(self) -> None:
+        result = self.run_with_fake_curl(timeout=None, stdout='{"degraded":false,"result_state":"ready","results":[]}')
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        watchdog = json.loads(result.stdout)["watchdog"]
+        self.assertEqual(watchdog["requested_timeout_secs"], 200.0)
+        self.assertEqual(watchdog["effective_timeout_secs"], 200.0)
+        self.assertEqual(watchdog["default_timeout_secs"], 200.0)
 
 
 if __name__ == "__main__":

@@ -27,6 +27,8 @@ REQUIRED_RUNTIME_FILES = [
     "scripts/agent/compaction-handoff-payload",
     "scripts/agent/contextlattice-session",
     "scripts/agent/contextlattice-recall-response",
+    "scripts/agent/recall-quality-eval",
+    "scripts/agent/context-pack-quality-benchmark",
     "scripts/agent_contracts.py",
     "scripts/agent_orchestration.py",
     "scripts/contextlattice_client.py",
@@ -205,12 +207,21 @@ def main() -> int:
         "contextlattice_mesh_export",
         "contextlattice_mesh_import",
         "contextlattice_mesh_status",
+        "contextlattice_recall_quality_eval",
+        "contextlattice_context_pack_quality_benchmark",
     ]:
         path = bin_dir / name
         checks.append(check(f"wrapper:{name}", executable(path), path=str(path)))
     for name in OPTIONAL_DEV_WRAPPERS:
         path = bin_dir / name
         checks.append(check(f"dev_wrapper_absent:{name}", not path.exists(), path=str(path)))
+    checks.append(
+        check(
+            "dev_script_absent:runner-quality",
+            not (global_home / "scripts" / "agent" / "runner-quality").exists(),
+            path=str(global_home / "scripts" / "agent" / "runner-quality"),
+        )
+    )
     agent_hook_files = {
         "omp": test_home / ".omp" / "agent" / "AGENTS.md",
         "mercury-agent": test_home / ".mercury" / "soul.md",
@@ -227,6 +238,26 @@ def main() -> int:
 
     smoke_env = install_env.copy()
     smoke_env["CONTEXTLATTICE_GLOBAL_HOME"] = str(global_home)
+    recall_help = run([str(bin_dir / "contextlattice_recall_quality_eval"), "--help"], 20, smoke_env)
+    recall_help_text = f"{recall_help.get('stdout', '')}\n{recall_help.get('stderr', '')}"
+    checks.append(
+        check(
+            "recall_quality_eval_help_without_dev_tools",
+            bool(recall_help.get("ok")) and "Run saved recall evaluation" in recall_help_text,
+            stdout=recall_help.get("stdout"),
+            stderr=recall_help.get("stderr"),
+        )
+    )
+    benchmark_help = run([str(bin_dir / "contextlattice_context_pack_quality_benchmark"), "--help"], 20, smoke_env)
+    benchmark_help_text = f"{benchmark_help.get('stdout', '')}\n{benchmark_help.get('stderr', '')}"
+    checks.append(
+        check(
+            "context_pack_quality_benchmark_help_without_dev_tools",
+            bool(benchmark_help.get("ok")) and "Run a fail-closed context-pack quality benchmark" in benchmark_help_text,
+            stdout=benchmark_help.get("stdout"),
+            stderr=benchmark_help.get("stderr"),
+        )
+    )
     pre_env = smoke_env | {"CONTEXTLATTICE_PRECOMPACT_SCHEMA_SMOKE": "1"}
     post_env = smoke_env | {"CONTEXTLATTICE_POSTCOMPACT_SCHEMA_SMOKE": "1"}
     pre = run([str(bin_dir / "contextlattice_pre_compaction_write")], 20, pre_env)

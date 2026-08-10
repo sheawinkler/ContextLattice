@@ -546,8 +546,15 @@ func finalizeFullTransport(payload map[string]any, attach func(map[string]any) m
 		count := contextPackCountAnyTokens(payload)
 		applyTransportTokenImpact(payload, count, scope, packedKind)
 		if contextPack := anyMap(payload["context_pack"]); len(contextPack) > 0 {
-			contextPack["token_impact"] = payload["token_impact"]
-			contextPack["tokenImpact"] = payload["token_impact"]
+			if _, keepCanonical := contextPack["token_impact"]; keepCanonical {
+				contextPack["token_impact"] = payload["token_impact"]
+			}
+			// Preserve the legacy alias only when the caller's projection retained
+			// it. Canonical context-pack responses intentionally omit redundant
+			// compiled aliases so transport accounting cannot recreate them.
+			if _, keepLegacyAlias := contextPack["tokenImpact"]; keepLegacyAlias {
+				contextPack["tokenImpact"] = payload["token_impact"]
+			}
 		}
 	}
 	return attach(payload)

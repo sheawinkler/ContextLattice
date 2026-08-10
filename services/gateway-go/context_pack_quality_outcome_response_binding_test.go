@@ -298,3 +298,111 @@ func TestContextPackOutcomeResponseBindingMalformedDurableRowsFailClosed(t *test
 		t.Fatalf("malformed response-bound outcome became resident/calibration eligible: outcomes=%#v calibration=%d", restarted.outcomes, restarted.calibrationOutcomeCount)
 	}
 }
+
+func contextPackLegacyResponseBindingRow(t *testing.T, sampleID string) map[string]any {
+	t.Helper()
+	sample, _ := contextPackOutcomeResponseBindingFixture(t, sampleID)
+	row := contextPackQualityEntryFromSample(sample)
+	if len(row) == 0 {
+		t.Fatal("canonical quality fixture was not normalized")
+	}
+	legacyRefs := make([]any, 0)
+	for _, raw := range contextPackAnyList(row["response_component_refs"]) {
+		ref := anyMap(raw)
+		legacyRefs = append(legacyRefs, map[string]any{
+			"component_ref":    ref["component_ref"],
+			"component_digest": ref["component_digest"],
+			"ordinal":          ref["ordinal"],
+			"kind":             ref["kind"],
+		})
+	}
+	row["response_component_refs"] = legacyRefs
+	if contextPackQualityRowBindingValid(row) || !contextPackQualityLegacyResponseBindingRetirable(row) {
+		t.Fatalf("fixture is not the exact retirable legacy binding shape: %#v", row["response_component_refs"])
+	}
+	return row
+}
+
+func TestContextPackQualityLegacyResponseBindingMigrationRetainsQualityAndReceipt(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "quality.ndjson")
+	legacy := contextPackLegacyResponseBindingRow(t, "cpq_legacy_response_binding")
+	raw, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(raw, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ledger := &contextPackQualityLedger{
+		enabled: true, path: path, maxBytes: 2 * 1024 * 1024, maxSamples: 20,
+		writeFile: writeOwnerOnlyDurableAtomicFile,
+	}
+	restarted := newContextPackQualityTelemetryWithLedger(20, ledger)
+	if !contextPackQualityLedgerAvailable(ledger) {
+		t.Fatalf("legacy migration disabled the quality ledger: %#v", contextPackQualityLedgerPublicStatus(ledger))
+	}
+	rows, parseErrors, err := ledger.readRows()
+	if err != nil || parseErrors != 0 || len(rows) != 1 {
+		t.Fatalf("migrated quality row was not retained: rows=%#v parse_errors=%d err=%v", rows, parseErrors, err)
+	}
+	migrated := rows[0]
+	if recallResponseBindingHasAnyFields(migrated) {
+		t.Fatalf("incomplete legacy response binding survived migration: %#v", migrated["response_component_refs"])
+	}
+	if len(contextPackSelectionReceiptFromSample(migrated["selection_receipt"])) == 0 {
+		t.Fatal("legacy migration removed the durable selection receipt")
+	}
+	if anyToString(migrated["sample_id"]) != anyToString(legacy["sample_id"]) ||
+		anyToFloat(migrated["quality_score"]) != anyToFloat(legacy["quality_score"]) {
+		t.Fatalf("legacy migration changed quality identity or measurement: before=%#v after=%#v", legacy, migrated)
+	}
+	loaded, found := restarted.sampleForUtility(anyToString(legacy["sample_id"]))
+	if !found || recallResponseBindingHasAnyFields(loaded) || len(contextPackSelectionReceiptFromSample(loaded["selection_receipt"])) == 0 {
+		t.Fatalf("migrated row was not usable as unbound quality evidence: found=%v row=%#v", found, loaded)
+	}
+}
+
+func TestContextPackQualityLegacyResponseBindingMigrationRejectsDependentOutcome(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "quality.ndjson")
+	legacy := contextPackLegacyResponseBindingRow(t, "cpq_legacy_response_binding_linked")
+	outcome, err := contextPackQualityOutcomeFromSampleChecked(map[string]any{
+		"outcome_id": "cpo_legacy_response_binding_linked", "sample_id": legacy["sample_id"],
+		"project": "contextlattice", "first_pass_success": true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	qualityRaw, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcomeRaw, err := json.Marshal(outcome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := append(append(append([]byte(nil), qualityRaw...), '\n'), outcomeRaw...)
+	before = append(before, '\n')
+	if err := os.WriteFile(path, before, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ledger := &contextPackQualityLedger{
+		enabled: true, path: path, maxBytes: 2 * 1024 * 1024, maxSamples: 20,
+		writeFile: writeOwnerOnlyDurableAtomicFile,
+	}
+	restarted := newContextPackQualityTelemetryWithLedger(20, ledger)
+	if ledger.enabled || anyToString(contextPackQualityLedgerPublicStatus(ledger)["last_error"]) != "privacy_migration_failed" {
+		t.Fatalf("dependent legacy outcome did not fail closed: %#v", contextPackQualityLedgerPublicStatus(ledger))
+	}
+	if len(restarted.samples) != 0 || len(restarted.outcomes) != 0 {
+		t.Fatalf("rejected legacy binding became resident: samples=%#v outcomes=%#v", restarted.samples, restarted.outcomes)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatal("failed-closed legacy migration changed durable bytes")
+	}
+}

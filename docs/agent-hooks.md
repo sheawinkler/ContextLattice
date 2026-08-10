@@ -112,12 +112,23 @@ Installed commands:
 | `contextlattice_codex_session_store_doctor` | Optional development helper, installed with `--include-dev-python-tools`, for Codex transcript storage checks. |
 | `contextlattice_runner_quality` | Primary CLI for bounded runner-quality telemetry and advisor-only runner recommendations. |
 | `contextlattice_recall_quality_eval` | Primary CLI for saved recall quality, same-snapshot ablation, review-only regression derivation, and advisory evidence reputation. |
+| `contextlattice_context_pack_quality_benchmark` | Fail-closed frozen-holdout benchmark for unchanged context-pack score plus saved retrieval, graph, and latency metrics. |
 | `contextlattice_preflight_hook` | ContextLattice preflight wrapper. |
 | `contextlattice_checkpoint` | Write checkpoint and verify readback. |
 | `contextlattice_git_lane_guard` | Branch, upstream, clean-tree, sync checks. |
 | `contextlattice_branch_lane_guard` | Private/public/public-paid lane hygiene. |
 | `contextlattice_rust_rebuild_gate` | Detect Rust changes and enforce full rebuild. |
 | `contextlattice_runtime_env_guard` | Detect stale/conflicting env override drift. |
+| `contextlattice_recall_quality_gate` | Recall eval/telemetry pre-release gate. |
+| `contextlattice_resource_pressure_guard` | Host disk/RAM/container runtime pressure sampler. |
+| `contextlattice_orbstack_forward_guard` | Docker/OrbStack and 8075 host-forward repair guard. |
+| `contextlattice_native_endpoint_smoke` | Fast smoke for critical go-native routes after restart/redeploy. |
+| `contextlattice_recall_monitor_seed` | Seed recall monitor snapshot when cold so tuning has live samples. |
+| `contextlattice_public_leak_guard` | Secret, private path, and machine-local path scanner. |
+| `contextlattice_agent_policy_pack` | Compact mission/objective/goal plus retrieval package. |
+| `contextlattice_command_output_budget` | Bounded command output with full artifact capture. |
+| `contextlattice_pre_compaction_write` | Persist objective state before compaction/handoff. |
+| `contextlattice_post_compaction_read` | Read objective state after compaction/resume. |
 
 Pi and Droid runner adapters are repo-local task-worker internals under `scripts/agent_runners/`. ContextLattice reports install hints and readiness, but it does not install or require third-party Pi/Droid CLIs for quickstart.
 
@@ -128,16 +139,6 @@ OMP and Mercury are instruction-hook integrations, not bundled harnesses. Instal
 
 Use `scripts/install_global_agent_tools.sh --no-agent-hooks` or `contextlattice_adopt install --no-install-agent-hooks` to opt out. These hooks teach the detected agent the compact `contextlattice context/resume/remember/finish/correct/doctor` workflow; they do not install OMP or Mercury binaries.
 Runner adapter completions write compact `runner_quality_sample.v1` rows when task-agent workers can access the ledger. Inspect them with primary CLI command `contextlattice_runner_quality --pretty` or repo-local development fallback `scripts/agent/runner-quality --pretty`.
-| `contextlattice_recall_quality_gate` | Recall eval/telemetry pre-release gate. |
-| `contextlattice_resource_pressure_guard` | Host disk/RAM/container runtime pressure sampler. |
-| `contextlattice_orbstack_forward_guard` | Docker/OrbStack and 8075 host-forward repair guard. |
-| `contextlattice_native_endpoint_smoke` | Fast smoke for critical go-native routes after restart/redeploy. |
-| `contextlattice_recall_monitor_seed` | Seed recall monitor snapshot when cold so tuning has live samples. |
-| `contextlattice_public_leak_guard` | Secret, private path, and machine-local path scanner. |
-| `contextlattice_agent_policy_pack` | Compact mission/objective/goal + retrieval package. |
-| `contextlattice_command_output_budget` | Bounded command output with full artifact capture. |
-| `contextlattice_pre_compaction_write` | Persist objective state before compaction/handoff. |
-| `contextlattice_post_compaction_read` | Read objective state after compaction/resume. |
 
 ### Portable Continuation
 

@@ -119,6 +119,17 @@ class RecallResponseOfflineEvalTests(unittest.TestCase):
         self.assertNotIn("context_pack", json.dumps(static, sort_keys=True))
         self.assertNotIn("agent_packet", json.dumps(static, sort_keys=True))
 
+        baseline = self.module.load_fixture(BASELINE)
+        response = self.module._project_case(baseline["cases"][0], "static_recall_response")["response"]
+        self.assertEqual(response["request_scope"]["condition"], "universal_template")
+        self.assertEqual(response["answer"]["composition"]["proof_strategy"], "shared_bounded_v1")
+        self.assertLessEqual(len(response["answer"]["proof_spine"]["proof_refs"]), 8)
+        self.assertEqual(response["classification"]["facets"]["jobs"], ["look_up"])
+
+        cognition = self.module._project_case(baseline["cases"][0], "continuous_cognition")["response"]
+        self.assertEqual(cognition["next_action"], self.module._static_policy(baseline["cases"][0])["next_action"])
+        self.assertEqual(cognition["silence"]["policy_version"], "continuous_cognition.offline_eval.v1")
+
     def test_retrieval_only_privacy_scans_rows_when_no_response_exists(self) -> None:
         baseline = self.module.load_fixture(BASELINE)
         case = copy.deepcopy(baseline["cases"][0])

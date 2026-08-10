@@ -5,17 +5,30 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 from pathlib import Path
 import subprocess
 import sys
-import time
 from typing import Any
 
 from _common import REPO_ROOT, emit, ensure_agent_session, now_iso, read_agent_session_state, request_json, write_agent_session_state
 
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 from agent_contracts import attach_format_contract  # noqa: E402
+
+
+DEFAULT_CLIENT_TIMEOUT_SECS = 200.0
+
+
+def client_timeout_from_env() -> float:
+    try:
+        value = float(os.getenv("CONTEXTLATTICE_CLIENT_TIMEOUT_SECS", "").strip())
+    except (TypeError, ValueError):
+        return DEFAULT_CLIENT_TIMEOUT_SECS
+    if not math.isfinite(value) or value <= 0:
+        return DEFAULT_CLIENT_TIMEOUT_SECS
+    return value
 
 
 CAMEL_TO_SNAKE = {
@@ -588,7 +601,8 @@ def failure_payload(query: str, budget_chars: int, error: str, attempts: int) ->
         "ok": False,
         "task_summary": query[:240],
         "context_budget_chars": budget_chars,
-        "status": "failed_after_retries",
+        "status": "failed_without_retry",
+        "retry_policy": "one_shot_no_replay",
         "structured_failure": True,
         "attempts": attempts,
         "error": error[:1000],
@@ -627,18 +641,16 @@ def failure_payload(query: str, budget_chars: int, error: str, attempts: int) ->
 
 
 def request_with_retries(path: str, payload: dict[str, Any], timeout: float, retries: int, retry_delay: float) -> tuple[dict[str, Any] | None, str, int]:
-    attempts = max(1, retries + 1)
-    last_error = ""
-    for attempt in range(1, attempts + 1):
-        try:
-            return request_json("POST", path, payload, timeout), "", attempt
-        except SystemExit as exc:
-            last_error = str(exc.code)
-        except Exception as exc:
-            last_error = str(exc)
-        if attempt < attempts:
-            time.sleep(max(0.0, retry_delay) * attempt)
-    return None, last_error, attempts
+    # Kept as a compatibility-shaped helper for callers that still pass the
+    # old retry flags. This Python transport has no proof that a failed POST
+    # was pre-delivery, so it must never replay the request.
+    del retries, retry_delay
+    try:
+        return request_json("POST", path, payload, timeout), "", 1
+    except SystemExit as exc:
+        return None, str(exc.code), 1
+    except Exception as exc:
+        return None, str(exc), 1
 
 
 def trigger_self_heal(event: str) -> None:
@@ -680,13 +692,14 @@ def main() -> int:
     parser.add_argument("--auto-session", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--blocking", action="store_true", help="Wait synchronously for slow sources in /memory/context-pack.")
     parser.add_argument("--nonblocking", action="store_true", help="Deprecated compatibility flag; fail-open is the default.")
-    parser.add_argument("--soft", action="store_true", help="Return exit 0 on unavailable ContextLattice after retries.")
+    parser.add_argument("--soft", action="store_true", help="Return exit 0 on unavailable ContextLattice after one bounded request.")
     parser.add_argument("--strict", action="store_true", help="Deprecated compatibility flag; hard failure is the default.")
-    parser.add_argument("--retries", type=int, default=2)
-    parser.add_argument("--retry-delay", type=float, default=1.0)
-    parser.add_argument("--timeout", type=float, default=30)
+    parser.add_argument("--retries", type=int, default=0, help="Compatibility flag; legacy pack never replays POST requests.")
+    parser.add_argument("--retry-delay", type=float, default=1.0, help="Compatibility flag; legacy pack never replays POST requests.")
+    parser.add_argument("--timeout", type=float, default=None)
     parser.add_argument("--pretty", action="store_true")
     args = parser.parse_args()
+    request_timeout = args.timeout if args.timeout is not None else client_timeout_from_env()
 
     blocking_slow_sources = bool(args.blocking and not args.nonblocking)
     payload = {
@@ -723,7 +736,7 @@ def main() -> int:
             agent="agent-cli",
             metadata=session_metadata,
             tags=["auto-session", "context-pack"],
-            timeout=min(float(args.timeout), 10.0),
+            timeout=min(float(request_timeout), 10.0),
             soft=True,
         )
         session_id = str(ensured.get("session_id") or "")
@@ -734,7 +747,7 @@ def main() -> int:
     raw, error, attempts = request_with_retries(
         "/memory/context-pack",
         payload,
-        args.timeout,
+        request_timeout,
         max(0, args.retries),
         args.retry_delay,
     )

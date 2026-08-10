@@ -3,16 +3,27 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
+
+type testRoundTripper func(*http.Request) (*http.Response, error)
+
+func (roundTripper testRoundTripper) RoundTrip(request *http.Request) (*http.Response, error) {
+	return roundTripper(request)
+}
 
 func TestParseArgsAllowsFlagsAfterPositionalQuery(t *testing.T) {
 	parsed := parseArgs(
@@ -34,6 +45,29 @@ func TestParseArgsAllowsFlagsAfterPositionalQuery(t *testing.T) {
 	}
 	if len(parsed.pos) != 1 || parsed.pos[0] != "release readiness" {
 		t.Fatalf("unexpected positional args: %#v", parsed.pos)
+	}
+}
+
+func TestClientTimeoutForUsesExplicitEnvAndDefault(t *testing.T) {
+	tests := []struct {
+		name string
+		env  string
+		args []string
+		want float64
+	}{
+		{name: "repo default", env: "", want: defaultContextLatticeClientTimeoutSecs},
+		{name: "finite environment override", env: "49", want: 49},
+		{name: "invalid environment falls back", env: "not-a-number", want: defaultContextLatticeClientTimeoutSecs},
+		{name: "explicit timeout wins", env: "49", args: []string{"--timeout", "7"}, want: 7},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("CONTEXTLATTICE_CLIENT_TIMEOUT_SECS", test.env)
+			parsed := parseArgs(test.args, commonStringFlags(), commonBoolFlags())
+			if got := clientTimeoutFor(parsed); got != test.want {
+				t.Fatalf("clientTimeoutFor()=%v want=%v", got, test.want)
+			}
+		})
 	}
 }
 
@@ -312,6 +346,173 @@ func TestPackCommandMarksNativeCLIAndSession(t *testing.T) {
 	}
 	if firstString(asMap(output["outcome_report"])["sample_id"]) != "cpq_test_pack" {
 		t.Fatalf("expected context-pack output to include outcome report, got %#v", output["outcome_report"])
+	}
+}
+
+func TestPackCommandDoesNotReplayPostDeliveryTimeout(t *testing.T) {
+	var requests atomic.Int32
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		_, _ = io.ReadAll(r.Body)
+		<-r.Context().Done()
+	}))
+	defer gateway.Close()
+
+	var stdout bytes.Buffer
+	c := newCLI(&stdout, ioDiscard{})
+	c.baseURL = gateway.URL
+	if err := c.run([]string{
+		"contextlattice_pack", "timeout must not duplicate continuation",
+		"--no-auto-session", "--soft", "--timeout", "1", "--retries", "3", "--raw",
+	}); err != nil {
+		t.Fatalf("run timed-out pack: %v output=%s", err, stdout.String())
+	}
+	if got := requests.Load(); got != 1 {
+		t.Fatalf("post-delivery timeout was replayed: requests=%d", got)
+	}
+	output := map[string]any{}
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
+		t.Fatalf("decode timeout output: %v output=%s", err, stdout.String())
+	}
+	evidence := asMap(output["error_evidence"])
+	if !asBool(evidence["timed_out"]) || !asBool(evidence["wrote_request"]) || !asBool(evidence["got_connection"]) || asBool(evidence["pre_delivery"]) || asBool(evidence["retryable"]) {
+		t.Fatalf("timeout did not preserve non-retryable transport evidence: %#v", evidence)
+	}
+}
+
+func TestPackCommandDefaultsToOneAttempt(t *testing.T) {
+	var requests atomic.Int32
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte(`{"error":"gateway unavailable"}`))
+	}))
+	defer gateway.Close()
+
+	var stdout bytes.Buffer
+	c := newCLI(&stdout, ioDiscard{})
+	c.baseURL = gateway.URL
+	if err := c.run([]string{
+		"contextlattice_pack", "default retry budget", "--no-auto-session", "--soft", "--raw",
+	}); err != nil {
+		t.Fatalf("run default retry budget pack: %v output=%s", err, stdout.String())
+	}
+	if got := requests.Load(); got != 1 {
+		t.Fatalf("default retry budget was not zero: requests=%d", got)
+	}
+	output := map[string]any{}
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
+		t.Fatalf("decode default retry failure: %v output=%s", err, stdout.String())
+	}
+	if output["status"] != "failed_without_replay" || output["retry_policy"] != "pre_delivery_connection_failures_only" {
+		t.Fatalf("failure envelope advertised replay semantics: %#v", output)
+	}
+}
+
+func TestPackCommandUsesClientTimeoutResolution(t *testing.T) {
+	tests := []struct {
+		name      string
+		env       string
+		extraArgs []string
+		expected  float64
+	}{
+		{name: "repo default", env: "", expected: defaultContextLatticeClientTimeoutSecs},
+		{name: "finite environment override", env: "49", expected: 49},
+		{name: "explicit timeout wins", env: "49", extraArgs: []string{"--timeout", "7"}, expected: 7},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("CONTEXTLATTICE_CLIENT_TIMEOUT_SECS", test.env)
+			var deadline time.Time
+			c := newCLI(io.Discard, ioDiscard{})
+			c.client = &http.Client{Transport: testRoundTripper(func(r *http.Request) (*http.Response, error) {
+				var ok bool
+				deadline, ok = r.Context().Deadline()
+				if !ok {
+					return nil, errors.New("retrieval request did not carry a deadline")
+				}
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body:       io.NopCloser(strings.NewReader(`{"ok":true,"context_pack":{"facts":[],"results":[]}}`)),
+					Request:    r,
+				}, nil
+			})}
+
+			var stdout bytes.Buffer
+			c.stdout = &stdout
+			args := append([]string{"contextlattice_pack", "timeout resolution", "--no-auto-session", "--raw"}, test.extraArgs...)
+			if err := c.run(args); err != nil {
+				t.Fatalf("run pack: %v output=%s", err, stdout.String())
+			}
+			remaining := deadline.Sub(time.Now()).Seconds()
+			if remaining < test.expected-2 || remaining > test.expected+1 {
+				t.Fatalf("retrieval deadline remaining=%v want approximately %v", remaining, test.expected)
+			}
+		})
+	}
+}
+
+func TestCLIRequestRetryRequiresPreDeliveryEvidence(t *testing.T) {
+	connectionFailure := &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connection refused")}
+	preDelivery := cliRequestFailure(http.MethodPost, "/memory/context-pack", 0, connectionFailure, false, false)
+	if !cliRequestRetryable(preDelivery) {
+		t.Fatalf("provable pre-delivery connection failure was not retryable: %#v", preDelivery)
+	}
+	postDelivery := cliRequestFailure(http.MethodPost, "/memory/context-pack", 0, connectionFailure, true, true)
+	if cliRequestRetryable(postDelivery) {
+		t.Fatalf("post-delivery connection failure was incorrectly retryable: %#v", postDelivery)
+	}
+	partialWrite := cliRequestFailure(http.MethodPost, "/memory/context-pack", 0, connectionFailure, false, true)
+	if cliRequestRetryable(partialWrite) {
+		t.Fatalf("connection-acquired write failure was incorrectly retryable: %#v", partialWrite)
+	}
+	var requestErr *cliRequestError
+	if !errors.As(partialWrite, &requestErr) || !requestErr.GotConnection || requestErr.WroteRequest || requestErr.Retryable {
+		t.Fatalf("partial-write evidence was incomplete: %#v", partialWrite)
+	}
+}
+
+func TestRequestRetryRejectsPartialWriteAfterConnection(t *testing.T) {
+	var requests atomic.Int32
+	c := newCLI(io.Discard, ioDiscard{})
+	c.client = &http.Client{Transport: testRoundTripper(func(request *http.Request) (*http.Response, error) {
+		requests.Add(1)
+		trace := httptrace.ContextClientTrace(request.Context())
+		if trace == nil || trace.GotConn == nil {
+			return nil, errors.New("test transport did not receive client trace")
+		}
+		trace.GotConn(httptrace.GotConnInfo{})
+		return nil, &net.OpError{Op: "write", Net: "tcp", Err: errors.New("partial write")}
+	})}
+	_, err := c.requestWithRetries("/memory/context-pack", map[string]any{"query": "partial write"}, 1, 3, 0)
+	if requests.Load() != 1 {
+		t.Fatalf("partial-write failure was replayed: requests=%d", requests.Load())
+	}
+	var requestErr *cliRequestError
+	if !errors.As(err, &requestErr) || !requestErr.GotConnection || requestErr.WroteRequest || requestErr.Retryable {
+		t.Fatalf("partial-write retry evidence was incorrect: %#v", err)
+	}
+	if !asBool(requestErr.evidence()["got_connection"]) {
+		t.Fatalf("typed evidence omitted got_connection: %#v", requestErr.evidence())
+	}
+}
+
+func TestRequestRetryAllowsPreConnectionDialFailure(t *testing.T) {
+	var requests atomic.Int32
+	c := newCLI(io.Discard, ioDiscard{})
+	c.client = &http.Client{Transport: testRoundTripper(func(*http.Request) (*http.Response, error) {
+		requests.Add(1)
+		return nil, &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connection refused")}
+	})}
+	_, err := c.requestWithRetries("/memory/context-pack", map[string]any{"query": "pre-connect"}, 1, 1, 0)
+	if requests.Load() != 2 {
+		t.Fatalf("provable pre-connection failure did not use the explicit retry: requests=%d", requests.Load())
+	}
+	var requestErr *cliRequestError
+	if !errors.As(err, &requestErr) || requestErr.GotConnection || !requestErr.PreDelivery || !requestErr.Retryable {
+		t.Fatalf("pre-connection retry evidence was incorrect: %#v", err)
 	}
 }
 

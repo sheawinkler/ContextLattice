@@ -1,0 +1,1276 @@
+#!/usr/bin/env python3
+"""Run a fail-closed context-pack quality benchmark over a frozen saved-recall v3 set.
+
+The benchmark is intentionally separate from ``recall-quality-eval``.  The
+saved-recall evaluator remains the owner of Recall@K/MRR and related retrieval
+metrics; this command records the production context-pack quality sample that
+the Gateway emits for the same frozen holdout.  It never recomputes or
+reweights ``contextPackQualityScore``.
+
+The default artifact is the Gateway-owned v3 case-set path.  A run evaluates
+every held-out case in that artifact, calls ``POST /memory/context-pack`` once
+per case, and then requests the existing saved-recall holdout metrics as a
+separate report.  A missing, synthetic, contaminated, partial, or mismatched
+artifact/result can never become promotion evidence.
+"""
+
+from __future__ import annotations
+
+import argparse
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
+import hashlib
+import json
+import math
+import os
+from pathlib import Path
+import sys
+import time
+from typing import Any, Iterable, Mapping, Protocol
+import urllib.error
+import urllib.request
+
+
+try:
+    from _common import contextlattice_api_key, contextlattice_base_url, emit
+except ImportError:  # pragma: no cover - allows direct import from a test loader.
+    _SCRIPT_DIR = Path(__file__).resolve().parent
+    if str(_SCRIPT_DIR) not in sys.path:
+        sys.path.insert(0, str(_SCRIPT_DIR))
+    from _common import contextlattice_api_key, contextlattice_base_url, emit
+
+
+BENCHMARK_SCHEMA_ID = "context_pack_quality_benchmark.v2"
+RUNTIME_IDENTITY_SCHEMA_ID = "context_pack_quality_runtime_identity.v1"
+BUILD_IDENTITY_SCHEMA_ID = "contextlattice_build_identity.v1"
+SAVED_RECALL_SCHEMA_ID = "saved_recall_eval_case_set.v3"
+SAVED_RECALL_CUSTODY_SCHEMA_ID = "saved_recall_eval_custody.v1"
+SAVED_RECALL_SNAPSHOT_SCHEMA_ID = "saved_recall_eval_snapshot.v1"
+QUALITY_SCHEMA_ID = "contextlattice_context_pack_quality.v1"
+CONTEXT_PACK_ROUTE = "/memory/context-pack"
+SAVED_RECALL_ROUTE = "/memory/recall/evaluate/saved"
+HEALTH_ROUTE = "/health"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_ARTIFACT = Path(".data/orchestrator/recall_eval_cases.json")
+FALLBACK_ARTIFACT = Path("services/orchestrator/data/recall_eval_cases.json")
+DEFAULT_CONCURRENCY = 4
+MAX_CONCURRENCY = 16
+DEFAULT_REQUEST_TIMEOUT_SECONDS = 200.0
+QUALITY_SCORE_THRESHOLD = 90
+FROZEN_INDEX_SOURCES = frozenset(("current_state_bottom_k", "project_current_state_bottom_k"))
+SAVED_RECALL_REQUIRED_FIELDS = (
+    "k",
+    "casesTotal",
+    "casesEvaluated",
+    "recallAtK",
+    "mrr",
+    "numericExactness",
+    "citationCoverage",
+    "noHitRate",
+    "lowConfidenceRate",
+    "sourceDiversity",
+    "avgLatencyMs",
+    "p95LatencyMs",
+    "directPassed",
+    "graphEvaluatedCases",
+    "graphExplicitCases",
+    "graphExpectedHits",
+    "graphAddedExpectedHits",
+    "graphHelpedCases",
+    "graphLift",
+    "graphPassed",
+    "graphRequired",
+    "graphEfficacyStatus",
+)
+REQUIRED_QUALITY_FIELDS = (
+    "schema_id",
+    "version",
+    "sample_id",
+    "query_hash",
+    "project",
+    "quality_score",
+    "ranked_evidence_count",
+    "high_impact_evidence_count",
+    "omitted_high_value_count",
+    "returned_source_count",
+    "warning_count",
+    "tokenizer_exact",
+    "token_budget_active",
+    "source_coverage_complete",
+    "graph_context_used",
+    "exact_prompt_tokens_saved",
+)
+QUALITY_COUNT_FIELDS = (
+    "version",
+    "quality_score",
+    "ranked_evidence_count",
+    "high_impact_evidence_count",
+    "omitted_high_value_count",
+    "returned_source_count",
+    "warning_count",
+    "exact_prompt_tokens_saved",
+)
+QUALITY_BOOL_FIELDS = (
+    "tokenizer_exact",
+    "token_budget_active",
+    "source_coverage_complete",
+    "graph_context_used",
+)
+QUALITY_SAFE_FIELDS = frozenset(
+    REQUIRED_QUALITY_FIELDS
+    + (
+        "confidence",
+        "calibration_grade",
+        "exact_prompt_tokens_saved",
+        "modeled_inference_tokens_avoided",
+        "modeled_extra_calls_avoided",
+        "counterfactual_baseline",
+        "warning_total_count",
+        "warning_notice_count",
+        "warning_impact_categories",
+        "warning_notice_categories",
+        "tokenizer_encoding",
+        "model_visible_context_tokens_exact",
+        "model_call_token_basis",
+        "raw_retry_probability_estimate",
+        "packed_retry_probability_estimate",
+        "measurement_limit",
+    )
+)
+SHA256_RE = "sha256:"
+
+
+class RequestTransport(Protocol):
+    def request(
+        self, method: str, path: str, payload: Mapping[str, Any] | None, timeout_seconds: float
+    ) -> "TransportResponse": ...
+
+
+@dataclass(frozen=True)
+class TransportResponse:
+    status: int
+    payload: dict[str, Any]
+    latency_ms: float = 0.0
+    error: str = ""
+
+
+@dataclass(frozen=True)
+class ArtifactLoad:
+    payload: dict[str, Any]
+    raw_bytes: bytes
+    path: Path
+
+
+def _canonical_json(value: Any) -> bytes:
+    """Canonical JSON close to Go's encoding/json map ordering.
+
+    v3 case fields are scalar/ASCII in production.  Escaping HTML characters
+    keeps the digest compatible with Go's default encoder for those fields.
+    """
+
+    raw = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    return raw.replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e").encode("utf-8")
+
+
+def digest(value: Any) -> str:
+    return SHA256_RE + hashlib.sha256(_canonical_json(value)).hexdigest()
+
+
+def bytes_digest(raw: bytes) -> str:
+    return SHA256_RE + hashlib.sha256(raw).hexdigest()
+
+
+def _is_hex40(value: Any) -> bool:
+    text = str(value or "").strip().lower()
+    return len(text) == 40 and all(character in "0123456789abcdef" for character in text)
+
+
+def _is_nonempty_string(value: Any) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _is_bool(value: Any) -> bool:
+    return isinstance(value, bool)
+
+
+def _is_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _is_finite_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(float(value))
+
+
+def _as_map(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _as_list(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def _issue(issues: list[dict[str, Any]], code: str, detail: str, *, case_id: str = "") -> None:
+    row = {"code": code, "detail": detail}
+    if case_id:
+        row["case_id"] = case_id
+    issues.append(row)
+
+
+def _normal_text(value: Any) -> str:
+    return " ".join(str(value or "").strip().lower().replace("\\", "/").split())
+
+
+def _file_tokens(value: Any) -> set[str]:
+    text = _normal_text(value)
+    return {token.strip("\t\r\n .,;:!?()[]{}'\"`") for token in text.split() if token.strip()}
+
+
+def _query_contains_file(query: str, file_name: str) -> bool:
+    tokens = _file_tokens(query)
+    normalized = _normal_text(file_name).strip("/")
+    base_name = normalized.rsplit("/", 1)[-1]
+    return any(token in tokens for token in (normalized, base_name) if len(token) >= 3)
+
+
+def _sha256_ref(value: Any) -> bool:
+    return isinstance(value, str) and value.startswith(SHA256_RE) and len(value) == len(SHA256_RE) + 64 and all(
+        char in "0123456789abcdefABCDEF" for char in value[len(SHA256_RE) :]
+    )
+
+
+def _case_is_graph(case: Mapping[str, Any]) -> bool:
+    return str(case.get("case_kind") or "").strip().lower() == "graph_neighbor" or bool(
+        _as_list(case.get("graph_expected_files")) or _as_list(case.get("graph_expected_substrings"))
+    )
+
+
+def _computed_split_counts(cases: Iterable[Mapping[str, Any]]) -> dict[str, int]:
+    counts = {"train": 0, "holdout": 0}
+    for case in cases:
+        split = str(case.get("split") or "").strip().lower()
+        if split in counts:
+            counts[split] += 1
+    return counts
+
+
+def _metadata_digest(value: Any) -> str:
+    return digest(value)
+
+
+def configured_timeout_seconds(explicit: float | None = None) -> float:
+    """Resolve the established client timeout without inventing a short kill window."""
+
+    if explicit is not None:
+        value = float(explicit)
+        if not math.isfinite(value) or value <= 0:
+            raise ValueError("timeout must be finite and positive")
+        return value
+    raw = os.getenv("CONTEXTLATTICE_CLIENT_TIMEOUT_SECS", "").strip()
+    try:
+        value = float(raw) if raw else DEFAULT_REQUEST_TIMEOUT_SECONDS
+    except ValueError:
+        value = DEFAULT_REQUEST_TIMEOUT_SECONDS
+    if not math.isfinite(value) or value <= 0:
+        return DEFAULT_REQUEST_TIMEOUT_SECONDS
+    return value
+
+
+def default_artifact_path() -> Path:
+    override = os.getenv("ORCH_RECALL_EVAL_CASES_PATH", "").strip()
+    if override:
+        return Path(override).expanduser()
+    primary = REPO_ROOT / DEFAULT_ARTIFACT
+    if primary.exists():
+        return primary
+    return REPO_ROOT / FALLBACK_ARTIFACT
+
+
+def validate_frozen_v3_artifact(payload: Mapping[str, Any], raw_bytes: bytes | None = None) -> dict[str, Any]:
+    """Validate the complete saved-recall v3 custody contract.
+
+    The returned holdout list is the only case collection accepted by the
+    executor.  Validation deliberately rejects an artifact that contains only
+    a cherry-picked holdout, even when its local denominator is self-consistent.
+    """
+
+    data = dict(payload) if isinstance(payload, Mapping) else {}
+    issues: list[dict[str, Any]] = []
+    schema_id = data.get("schema_id")
+    version = data.get("version")
+    if schema_id != SAVED_RECALL_SCHEMA_ID or version != 3:
+        _issue(issues, "schema_version_mismatch", "artifact is not saved_recall_eval_case_set.v3 version 3")
+
+    if "synthetic" not in data or not _is_bool(data.get("synthetic")):
+        _issue(issues, "synthetic_flag_missing", "artifact must explicitly declare synthetic=false")
+    elif data.get("synthetic"):
+        _issue(issues, "synthetic_case_set", "synthetic or built-in cases are not promotion evidence")
+
+    cases = _as_list(data.get("cases"))
+    if not cases:
+        _issue(issues, "empty_case_set", "saved v3 artifact contains no cases")
+    elif any(not isinstance(case, dict) for case in cases):
+        _issue(issues, "malformed_case", "every saved v3 case must be an object")
+
+    case_maps = [case for case in cases if isinstance(case, dict)]
+    holdout = [case for case in case_maps if str(case.get("split") or "").strip().lower() == "holdout"]
+    train = [case for case in case_maps if str(case.get("split") or "").strip().lower() == "train"]
+    if not train or not holdout:
+        _issue(issues, "incomplete_split_set", "complete v3 artifact must contain both train and holdout cases")
+
+    split_counts = data.get("split_counts")
+    computed_counts = _computed_split_counts(case_maps)
+    if not isinstance(split_counts, dict):
+        _issue(issues, "missing_split_denominator", "split_counts is required for exact holdout reconciliation")
+    else:
+        observed_counts = {key: split_counts.get(key) for key in ("train", "holdout")}
+        if observed_counts != computed_counts:
+            _issue(issues, "split_count_mismatch", "split_counts does not match the complete case list")
+        if not _is_int(split_counts.get("holdout")) or int(split_counts.get("holdout")) != len(holdout):
+            _issue(issues, "missing_holdout_denominator", "holdout denominator does not match the frozen artifact")
+
+    source = str(data.get("source") or "").strip().lower()
+    if not source:
+        _issue(issues, "missing_source_provenance", "artifact source provenance is required")
+    elif "fallback" in source or "synthetic" in source:
+        _issue(issues, "fallback_source", "fallback or synthetic source is not promotion evidence")
+    elif source not in FROZEN_INDEX_SOURCES:
+        _issue(issues, "unsupported_index_source", "promotion requires a closed current-state indexed source")
+
+    def validate_source_stats(label: str, stats: Mapping[str, Any]) -> None:
+        if not stats:
+            _issue(issues, f"missing_{label}_source_stats", f"{label} source_stats are required for custody")
+            return
+        if stats.get("index_mode") != source:
+            _issue(issues, f"{label}_source_stats_mode_mismatch", f"{label} source_stats index_mode does not match source")
+        if stats.get("bounded") is not True:
+            _issue(issues, f"{label}_source_not_bounded", f"{label} source_stats bounded must be true")
+        if stats.get("index_integrity") is not True:
+            _issue(issues, f"{label}_source_index_integrity_invalid", f"{label} source_stats index_integrity must be true")
+        if stats.get("context_cancelled") is not False:
+            _issue(issues, f"{label}_source_context_cancelled", f"{label} source_stats context_cancelled must be false")
+
+    validate_source_stats("artifact", _as_map(data.get("source_stats")))
+
+    case_set_digest = data.get("case_set_digest")
+    if not _sha256_ref(case_set_digest):
+        _issue(issues, "missing_case_set_digest", "frozen case_set_digest is required")
+    elif case_set_digest.lower() != digest(case_maps).lower():
+        _issue(issues, "case_set_digest_mismatch", "case_set_digest does not match the persisted cases")
+
+    snapshot = _as_map(data.get("snapshot"))
+    if not snapshot:
+        _issue(issues, "missing_snapshot_metadata", "frozen source snapshot metadata is required")
+    else:
+        if snapshot.get("schema_id") != SAVED_RECALL_SNAPSHOT_SCHEMA_ID:
+            _issue(issues, "snapshot_schema_mismatch", "snapshot schema is not saved_recall_eval_snapshot.v1")
+        snapshot_source = str(snapshot.get("source") or "").strip().lower()
+        if not snapshot_source:
+            _issue(issues, "missing_snapshot_source", "snapshot source provenance is required")
+        elif snapshot_source != source:
+            _issue(issues, "snapshot_source_mismatch", "top-level source does not match snapshot source")
+        validate_source_stats("snapshot", _as_map(snapshot.get("source_stats")))
+        if not _sha256_ref(snapshot.get("digest")):
+            _issue(issues, "missing_snapshot_digest", "snapshot digest is required")
+        if not _is_int(snapshot.get("selected_case_count")) or int(snapshot.get("selected_case_count")) != len(case_maps):
+            _issue(issues, "snapshot_case_count_mismatch", "snapshot selected_case_count does not match complete cases")
+        population = _as_map(snapshot.get("population"))
+        sample = _as_map(snapshot.get("sample"))
+        if not _is_int(population.get("count")) or int(population.get("count")) <= 0:
+            _issue(issues, "missing_population_denominator", "snapshot population.count is required")
+        if not _is_int(sample.get("count")) or int(sample.get("count")) != len(case_maps):
+            _issue(issues, "snapshot_sample_count_mismatch", "snapshot sample.count does not match complete cases")
+        diversity = _as_map(snapshot.get("diversity"))
+        if diversity.get("valid") is not True:
+            _issue(issues, "insufficient_diversity", "frozen snapshot diversity.valid must be true")
+
+    custody = _as_map(data.get("custody"))
+    if not custody:
+        _issue(issues, "missing_custody", "frozen live-index custody metadata is required")
+    else:
+        if custody.get("schema_id") != SAVED_RECALL_CUSTODY_SCHEMA_ID:
+            _issue(issues, "custody_schema_mismatch", "custody schema is not saved_recall_eval_custody.v1")
+        if custody.get("owner") != "gateway-go" or custody.get("mode") != "frozen_live_index":
+            _issue(issues, "custody_owner_mismatch", "custody must be owned by gateway-go frozen_live_index")
+        if custody.get("synthetic") is not False:
+            _issue(issues, "synthetic_custody", "custody must explicitly declare synthetic=false")
+        contamination = str(custody.get("contamination_state") or "").strip().lower()
+        if "contamin" in contamination or contamination in {"invalid", "synthetic", "local_regression"}:
+            _issue(issues, "contaminated_custody", "contaminated custody cannot support promotion")
+        if custody.get("promotional_claims_allowed") is False:
+            _issue(issues, "promotional_claims_disallowed", "custody explicitly disallows promotional claims")
+        validate_source_stats("custody", _as_map(custody.get("source_stats")))
+        if not _sha256_ref(custody.get("source_snapshot_digest")) or custody.get("source_snapshot_digest") != snapshot.get("digest"):
+            _issue(issues, "custody_snapshot_mismatch", "custody source snapshot digest does not match snapshot")
+        if not _sha256_ref(custody.get("case_set_digest")) or custody.get("case_set_digest") != case_set_digest:
+            _issue(issues, "custody_case_set_mismatch", "custody case-set digest does not match artifact")
+        if not _is_int(custody.get("population_count")) or int(custody.get("population_count")) < len(case_maps):
+            _issue(issues, "invalid_population_denominator", "custody population_count is absent or below sample count")
+        elif _is_int(_as_map(snapshot.get("population")).get("count")) and int(custody.get("population_count")) != int(_as_map(snapshot.get("population")).get("count")):
+            _issue(issues, "population_denominator_mismatch", "custody and snapshot population counts differ")
+        if not _is_int(custody.get("sample_count")) or int(custody.get("sample_count")) != len(case_maps):
+            _issue(issues, "custody_sample_count_mismatch", "custody sample_count does not match complete cases")
+        if custody.get("diversity_valid") is not True:
+            _issue(issues, "custody_diversity_invalid", "custody diversity_valid must be true")
+        if "filename_removed" not in str(custody.get("oracle_leakage") or ""):
+            _issue(issues, "oracle_leakage_unproven", "custody does not prove filename-redacted oracle separation")
+
+    ids: set[str] = set()
+    direct_files: set[str] = set()
+    direct_queries: set[str] = set()
+    for index, case in enumerate(case_maps):
+        case_id = str(case.get("id") or "").strip()
+        if not case_id:
+            _issue(issues, "missing_case_id", f"case {index} has no stable id")
+        elif case_id.lower() in ids:
+            _issue(issues, "duplicate_case_id", "case id is duplicated", case_id=case_id)
+        else:
+            ids.add(case_id.lower())
+        query = str(case.get("query") or "").strip()
+        project = str(case.get("project") or "").strip()
+        topic = str(case.get("topic_path") or "").strip().strip("/")
+        expected = [str(item).strip().strip("/") for item in _as_list(case.get("expected_files")) if str(item).strip()]
+        split = str(case.get("split") or "").strip().lower()
+        if not query:
+            _issue(issues, "missing_query", "case query is empty", case_id=case_id)
+        if not project:
+            _issue(issues, "missing_project", "case project is empty", case_id=case_id)
+        if not topic or topic in {"root", "."}:
+            _issue(issues, "invalid_topic", "case topic_path must be concrete", case_id=case_id)
+        if not _is_int(case.get("limit")) or not 1 <= int(case.get("limit")) <= 100:
+            _issue(issues, "invalid_limit", "case limit must be an integer in [1,100]", case_id=case_id)
+        if len(expected) != 1:
+            _issue(issues, "expected_file_denominator", "each direct case must name exactly one expected file", case_id=case_id)
+        if split not in {"train", "holdout"}:
+            _issue(issues, "invalid_split", "case split must be train or holdout", case_id=case_id)
+        if split == "holdout" and not str(case.get("source_updated_at") or "").strip():
+            _issue(issues, "holdout_missing_timestamp", "holdout case has no source_updated_at", case_id=case_id)
+        case_provenance = " ".join(
+            str(case.get(field) or "").strip().lower()
+            for field in ("source", "source_kind", "fixture", "fixture_kind", "traffic_class")
+        )
+        if any(marker in case_provenance for marker in ("synthetic", "built-in", "fallback")):
+            _issue(issues, "synthetic_case_marker", "case provenance is synthetic or fallback", case_id=case_id)
+        if expected and _query_contains_file(query, expected[0]):
+            _issue(issues, "query_contains_expected_file", "query leaks its expected filename", case_id=case_id)
+        if not _case_is_graph(case) and len(expected) == 1:
+            file_key = f"{project.lower()}\x00{expected[0].lower()}"
+            query_key = f"{project.lower()}\x00{' '.join(query.lower().split())}"
+            if file_key in direct_files:
+                _issue(issues, "duplicate_expected_file", "direct expected file is reused", case_id=case_id)
+            else:
+                direct_files.add(file_key)
+            if query_key in direct_queries:
+                _issue(issues, "duplicate_query", "direct query is reused", case_id=case_id)
+            else:
+                direct_queries.add(query_key)
+
+    snapshot_digest = snapshot.get("digest")
+    digests = {
+        "dataset_digest": bytes_digest(raw_bytes) if raw_bytes is not None else None,
+        "case_set_digest": case_set_digest,
+        "snapshot_digest": snapshot_digest,
+        "custody_metadata_digest": _metadata_digest(custody) if custody else None,
+        "holdout_case_ids_digest": digest([str(case.get("id") or "") for case in holdout]),
+        "holdout_cases_digest": digest(holdout),
+    }
+    valid = not issues and bool(holdout)
+    return {
+        "valid": valid,
+        "status": "valid" if valid else "rejected",
+        "issues": issues,
+        "case_count": len(case_maps),
+        "train_count": len(train),
+        "holdout_count": len(holdout),
+        "split_counts": computed_counts,
+        "cases": case_maps,
+        "holdout_cases": holdout,
+        "snapshot": snapshot,
+        "custody": custody,
+        "digests": digests,
+    }
+
+
+def load_artifact(path: Path) -> ArtifactLoad:
+    resolved = path.expanduser().resolve()
+    raw = resolved.read_bytes()
+    parsed = json.loads(raw.decode("utf-8"))
+    if not isinstance(parsed, dict):
+        raise ValueError("frozen v3 artifact must contain a JSON object")
+    return ArtifactLoad(payload=parsed, raw_bytes=raw, path=resolved)
+
+
+def build_context_pack_request(case: Mapping[str, Any]) -> dict[str, Any]:
+    request: dict[str, Any] = {
+        "query": str(case.get("query") or "").strip(),
+        "project": str(case.get("project") or "").strip(),
+        "topic_path": str(case.get("topic_path") or "").strip(),
+        "limit": int(case.get("limit", 10)),
+        "include_grounding": True,
+        "include_retrieval_debug": False,
+        "traffic_class": "benchmark",
+    }
+    for field in ("retrieval_mode", "retrieval_intent", "agent_id", "session_id", "query_expansion"):
+        if field in case:
+            request[field] = case[field]
+    return request
+
+
+def _get_path(mapping: Mapping[str, Any], paths: Iterable[tuple[str, ...]]) -> tuple[Any, str]:
+    for path in paths:
+        current: Any = mapping
+        for key in path:
+            if not isinstance(current, Mapping) or key not in current:
+                break
+            current = current[key]
+        else:
+            return current, ".".join(path)
+    return None, ""
+
+
+def _telemetry_value(response: Mapping[str, Any], paths: Iterable[tuple[str, ...]]) -> dict[str, Any]:
+    value, path = _get_path(response, paths)
+    if value is None:
+        return {"available": False, "value": None, "field": ""}
+    if not _is_finite_number(value):
+        return {"available": False, "value": None, "field": path, "error": "non_numeric"}
+    return {"available": True, "value": float(value), "field": path}
+
+
+def _cost_and_tools(response: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "cost": _telemetry_value(
+            response,
+            (
+                ("cost_microusd",),
+                ("provider_cost_micros",),
+                ("total_cost_micros",),
+                ("economics", "cost_microusd"),
+                ("economics", "provider_cost_micros"),
+                ("cost", "microusd"),
+            ),
+        ),
+        "tool_calls": _telemetry_value(
+            response,
+            (("tool_calls",), ("tool_call_count",), ("economics", "tool_calls"), ("cost", "tool_calls")),
+        ),
+    }
+
+
+TOKEN_IMPACT_NUMERIC_FIELDS = (
+    "baseline_tokens_estimate",
+    "packed_tokens_estimate",
+    "compiled_prompt_tokens_estimate",
+    "saved_tokens_estimate",
+    "net_token_delta",
+    "transport_tokens_exact",
+    "model_visible_context_tokens_exact",
+)
+TOKEN_IMPACT_BOOL_FIELDS = ("transport_inclusive", "tokenizer_exact")
+TOKEN_IMPACT_STRING_FIELDS = ("schema_id", "tokenizer_encoding", "calibration_grade", "estimate_method")
+
+
+def _token_impact_projection(response: Mapping[str, Any]) -> dict[str, Any]:
+    source = _as_map(response.get("token_impact"))
+    if not source:
+        source = _as_map(_as_map(response.get("context_pack")).get("token_impact"))
+    projection: dict[str, Any] = {"available": bool(source)}
+    for field in TOKEN_IMPACT_NUMERIC_FIELDS:
+        value = source.get(field)
+        projection[field] = int(value) if _is_int(value) else None
+    for field in TOKEN_IMPACT_BOOL_FIELDS:
+        value = source.get(field)
+        projection[field] = value if _is_bool(value) else None
+    for field in TOKEN_IMPACT_STRING_FIELDS:
+        value = source.get(field)
+        projection[field] = value if _is_nonempty_string(value) else None
+    if source and not any(value is not None for key, value in projection.items() if key != "available"):
+        projection["available"] = False
+    return projection
+
+
+def _quality_failure(code: str, detail: str) -> dict[str, Any]:
+    return {"code": code, "detail": detail}
+
+
+def _extract_quality(request: Mapping[str, Any], response: Mapping[str, Any]) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    if response.get("ok") is not True:
+        return None, _quality_failure("response_not_ok", "context-pack boundary did not return ok=true")
+    context_pack = _as_map(response.get("context_pack"))
+    if str(response.get("query") or "") != request.get("query"):
+        return None, _quality_failure("request_result_mismatch", "response query does not equal request query")
+    if str(context_pack.get("query") or "") != request.get("query"):
+        return None, _quality_failure("request_result_mismatch", "nested context-pack query does not equal request query")
+    if str(context_pack.get("project") or "") != request.get("project"):
+        return None, _quality_failure("request_result_mismatch", "context-pack project does not equal request project")
+    if str(context_pack.get("topic_path") or "") != request.get("topic_path"):
+        return None, _quality_failure("request_result_mismatch", "context-pack topic does not equal request topic")
+    format_contract = _as_map(response.get("format_contract"))
+    if not format_contract:
+        return None, _quality_failure("boundary_receipt_missing", "production context-pack response has no boundary receipt")
+    if format_contract.get("schema_id") != "context_pack_response.v1" or format_contract.get("contract_valid") is not True:
+        return None, _quality_failure("boundary_contract_invalid", "production context-pack boundary contract did not validate")
+    if format_contract.get("truncated") is not False:
+        return None, _quality_failure("boundary_compaction_detected", "production context-pack response was compacted after quality scoring")
+    actual_bytes = format_contract.get("actual_json_bytes")
+    max_bytes = format_contract.get("max_total_json_bytes")
+    if not _is_int(actual_bytes) or not _is_int(max_bytes) or int(actual_bytes) > int(max_bytes):
+        return None, _quality_failure("boundary_size_invalid", "production context-pack response does not prove its output size bound")
+    compiler = _as_map(response.get("context_compiler")) or _as_map(context_pack.get("context_compiler"))
+    if compiler.get("complete") is not True or compiler.get("boundary_compacted") is True:
+        return None, _quality_failure("compiled_packet_incomplete", "returned compiler packet is incomplete or boundary-compacted")
+    quality = _as_map(response.get("context_pack_quality"))
+    nested_quality = _as_map(context_pack.get("contextPackQuality")) or _as_map(context_pack.get("context_pack_quality"))
+    if not quality:
+        return None, _quality_failure("quality_row_missing", "production context-pack response has no quality row")
+    if nested_quality and _canonical_json(quality) != _canonical_json(nested_quality):
+        return None, _quality_failure("quality_row_mismatch", "root and nested quality rows differ")
+    if quality.get("schema_id") != QUALITY_SCHEMA_ID:
+        return None, _quality_failure("quality_schema_mismatch", "quality row is not the existing context-pack quality schema")
+    missing = [field for field in REQUIRED_QUALITY_FIELDS if field not in quality]
+    if missing:
+        return None, _quality_failure("quality_signals_incomplete", "quality row is missing required signals: " + ",".join(missing))
+    if not _is_nonempty_string(quality.get("sample_id")) or not _is_nonempty_string(quality.get("project")):
+        return None, _quality_failure("quality_identity_missing", "quality sample_id/project is missing")
+    if quality.get("project") != request.get("project"):
+        return None, _quality_failure("request_result_mismatch", "quality project does not equal request project")
+    expected_hash = hashlib.sha256(str(request.get("query") or "").encode("utf-8")).hexdigest()[:16]
+    if quality.get("query_hash") != expected_hash:
+        return None, _quality_failure("request_result_mismatch", "quality query_hash does not equal request query")
+    if not _is_int(quality.get("quality_score")) or not 0 <= int(quality.get("quality_score")) <= 100:
+        return None, _quality_failure("quality_score_invalid", "quality_score is not an integer in [0,100]")
+    for field in QUALITY_COUNT_FIELDS:
+        if not _is_int(quality.get(field)) or int(quality.get(field)) < 0:
+            return None, _quality_failure("quality_signal_invalid", f"quality signal {field} is not a non-negative integer")
+    for field in QUALITY_BOOL_FIELDS:
+        if not _is_bool(quality.get(field)):
+            return None, _quality_failure("quality_signal_invalid", f"quality signal {field} is not boolean")
+    safe_quality = {key: value for key, value in quality.items() if key in QUALITY_SAFE_FIELDS}
+    # Preserve the server quality row's hashed identity while avoiding raw
+    # project labels in a release evidence ledger.
+    safe_quality["project_digest"] = digest(str(quality.get("project") or ""))
+    safe_quality.pop("project", None)
+    return safe_quality, None
+
+
+def _evaluate_one_case(
+    index: int,
+    case: Mapping[str, Any],
+    transport: RequestTransport,
+    timeout_seconds: float,
+) -> tuple[int, dict[str, Any]]:
+    case_id = str(case.get("id") or "")
+    request = build_context_pack_request(case)
+    request_digest = digest(request)
+    started = time.perf_counter()
+    row: dict[str, Any] = {
+        "index": index,
+        "case_id": case_id,
+        "request_digest": request_digest,
+        "request_identity": {
+            "query_digest": digest(request["query"]),
+            "project_digest": digest(request["project"]),
+            "topic_digest": digest(request["topic_path"]),
+            "limit": request["limit"],
+        },
+        "status": None,
+        "latency_ms": None,
+        "quality_score": None,
+        "quality_signals": None,
+        "token_impact": None,
+        "cost": {"available": False, "value": None, "field": ""},
+        "tool_calls": {"available": False, "value": None, "field": ""},
+        "failure": None,
+    }
+    try:
+        result = transport.request("POST", CONTEXT_PACK_ROUTE, request, timeout_seconds)
+        if not isinstance(result, TransportResponse):
+            raise TypeError("transport returned an invalid result")
+        response = result.payload if isinstance(result.payload, dict) else {}
+        row["status"] = int(result.status)
+        row["latency_ms"] = round(max(float(result.latency_ms), (time.perf_counter() - started) * 1000), 3)
+        row["response_digest"] = digest(response)
+        row["token_impact"] = _token_impact_projection(response)
+        row.update(_cost_and_tools(response))
+        if result.error:
+            row["failure"] = {"code": "transport_error", "detail": "context-pack transport returned an error"}
+            return index, row
+        if int(result.status) < 200 or int(result.status) >= 300:
+            row["failure"] = {"code": "http_status", "detail": f"context-pack returned HTTP {result.status}"}
+            return index, row
+        quality, failure = _extract_quality(request, response)
+        if failure:
+            row["failure"] = failure
+            return index, row
+        row["quality_score"] = int(quality["quality_score"]) if quality else None
+        row["quality_signals"] = quality
+        return index, row
+    except Exception as exc:  # noqa: BLE001 - one case failure must reconcile, not abort the set.
+        row["latency_ms"] = round(max(0.0, (time.perf_counter() - started) * 1000), 3)
+        row["failure"] = {"code": "transport_exception", "detail": type(exc).__name__}
+        return index, row
+
+
+def _nearest_rank(values: list[int], fraction: float) -> int:
+    if not values:
+        raise ValueError("nearest rank requires values")
+    ordered = sorted(values)
+    rank = max(1, int(math.ceil(fraction * len(ordered))))
+    return ordered[rank - 1]
+
+
+def aggregate_quality_scores(scores: Iterable[int], denominator: int | None = None) -> dict[str, Any]:
+    values = [int(value) for value in scores]
+    expected = len(values) if denominator is None else int(denominator)
+    if expected <= 0 or len(values) != expected:
+        return {
+            "denominator": expected,
+            "evaluated": len(values),
+            "complete": False,
+            "mean": None,
+            "median": None,
+            "p10": None,
+            "pass_fraction": None,
+            "threshold": QUALITY_SCORE_THRESHOLD,
+            "percentile_method": "nearest_rank",
+        }
+    ordered = sorted(values)
+    middle = len(ordered) // 2
+    median = ordered[middle] if len(ordered) % 2 else (ordered[middle - 1] + ordered[middle]) / 2
+    return {
+        "denominator": expected,
+        "evaluated": len(values),
+        "complete": True,
+        "mean": round(sum(values) / len(values), 6),
+        "median": median,
+        "p10": _nearest_rank(values, 0.10),
+        "pass_fraction": round(sum(value >= QUALITY_SCORE_THRESHOLD for value in values) / len(values), 6),
+        "min": min(values),
+        "max": max(values),
+        "threshold": QUALITY_SCORE_THRESHOLD,
+        "percentile_method": "nearest_rank",
+    }
+
+
+def aggregate_latency(rows: Iterable[Mapping[str, Any]], denominator: int) -> dict[str, Any]:
+    values = [float(row["latency_ms"]) for row in rows if _is_finite_number(row.get("latency_ms"))]
+    complete = denominator > 0 and len(values) == denominator
+    if not complete:
+        return {
+            "denominator": denominator,
+            "observed": len(values),
+            "complete": False,
+            "mean_ms": None,
+            "p50_ms": None,
+            "p95_ms": None,
+            "percentile_method": "nearest_rank",
+        }
+    micros = [int(round(value * 1000)) for value in values]
+    return {
+        "denominator": denominator,
+        "observed": len(values),
+        "complete": True,
+        "mean_ms": round(sum(values) / len(values), 3),
+        "p50_ms": round(_nearest_rank(micros, 0.50) / 1000, 3),
+        "p95_ms": round(_nearest_rank(micros, 0.95) / 1000, 3),
+        "percentile_method": "nearest_rank",
+    }
+
+
+def aggregate_telemetry(rows: Iterable[Mapping[str, Any]], field: str, denominator: int) -> dict[str, Any]:
+    values = []
+    for row in rows:
+        metric = _as_map(row.get(field))
+        if metric.get("available") and _is_finite_number(metric.get("value")):
+            values.append(float(metric["value"]))
+    complete = denominator > 0 and len(values) == denominator
+    observed_total = round(sum(values), 6) if values else None
+    return {
+        "available": complete,
+        "denominator": denominator,
+        "observed": len(values),
+        "missing": max(0, denominator - len(values)),
+        "total": observed_total if complete else None,
+        "observed_total": observed_total,
+        "mean": round(sum(values) / len(values), 6) if complete else None,
+    }
+
+
+def _failure_ledger(rows: Iterable[Mapping[str, Any]], *, reconciliation: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    by_code: dict[str, int] = {}
+    total = 0
+    for row in rows:
+        failure = _as_map(row.get("failure"))
+        if not failure:
+            continue
+        total += 1
+        code = str(failure.get("code") or "unknown")
+        by_code[code] = by_code.get(code, 0) + 1
+    for issue in reconciliation or []:
+        total += 1
+        code = str(issue.get("code") or "reconciliation_error")
+        by_code[code] = by_code.get(code, 0) + 1
+    return {"total": total, "by_code": dict(sorted(by_code.items())), "reconciliation": reconciliation or []}
+
+
+def _parse_saved_recall(
+    result: TransportResponse,
+    artifact: Mapping[str, Any],
+    holdout_count: int,
+) -> dict[str, Any]:
+    base = {
+        "available": False,
+        "route": SAVED_RECALL_ROUTE,
+        "status": result.status,
+        "latency_ms": round(float(result.latency_ms), 3),
+        "metrics": None,
+        "failure": None,
+    }
+    if result.error:
+        base["failure"] = {"code": "saved_recall_transport_error", "detail": "saved recall transport returned an error"}
+        return base
+    if result.status < 200 or result.status >= 300:
+        base["failure"] = {"code": "saved_recall_http_status", "detail": f"saved recall returned HTTP {result.status}"}
+        return base
+    payload = result.payload if isinstance(result.payload, dict) else {}
+    metrics = _as_map(payload.get("metrics"))
+    if payload.get("ok") is not True or not metrics:
+        base["failure"] = {"code": "saved_recall_metrics_missing", "detail": "saved recall response has no metrics"}
+        return base
+    missing = [field for field in SAVED_RECALL_REQUIRED_FIELDS if field not in metrics]
+    if missing:
+        base["failure"] = {"code": "saved_recall_metrics_incomplete", "detail": "missing: " + ",".join(missing)}
+        return base
+    if metrics.get("k") != 5:
+        base["failure"] = {"code": "saved_recall_not_at_five", "detail": "saved recall denominator is not Recall@5"}
+        return base
+    if metrics.get("casesTotal") != holdout_count or metrics.get("casesEvaluated") != holdout_count:
+        base["failure"] = {"code": "saved_recall_denominator_mismatch", "detail": "saved recall denominator does not equal frozen holdout count"}
+        return base
+    saved_set = _as_map(payload.get("savedCaseSet"))
+    if saved_set.get("case_set_digest") != artifact.get("case_set_digest") or saved_set.get("evaluation_split") != "holdout":
+        base["failure"] = {"code": "saved_recall_artifact_mismatch", "detail": "saved recall metrics are not bound to this holdout artifact"}
+        return base
+    numeric_fields = ("recallAtK", "mrr", "numericExactness", "citationCoverage", "noHitRate", "lowConfidenceRate")
+    if any(not _is_finite_number(metrics.get(field)) or not 0 <= float(metrics.get(field)) <= 1 for field in numeric_fields):
+        base["failure"] = {"code": "saved_recall_metric_invalid", "detail": "saved recall metric is outside [0,1]"}
+        return base
+    if not _is_finite_number(metrics.get("sourceDiversity")) or float(metrics.get("sourceDiversity")) < 0:
+        base["failure"] = {"code": "saved_recall_metric_invalid", "detail": "saved source diversity is invalid"}
+        return base
+    if any(
+        not _is_finite_number(metrics.get(field)) or float(metrics.get(field)) < 0
+        for field in ("avgLatencyMs", "p95LatencyMs")
+    ) or not _is_finite_number(metrics.get("graphLift")):
+        base["failure"] = {"code": "saved_recall_metric_invalid", "detail": "saved latency or graph metric is invalid"}
+        return base
+    if any(not _is_int(metrics.get(field)) or int(metrics.get(field)) < 0 for field in (
+        "graphEvaluatedCases", "graphExplicitCases", "graphExpectedHits", "graphAddedExpectedHits", "graphHelpedCases"
+    )):
+        base["failure"] = {"code": "saved_recall_metric_invalid", "detail": "saved graph denominator is invalid"}
+        return base
+    if any(not _is_bool(metrics.get(field)) for field in ("directPassed", "graphPassed", "graphRequired")) or not _is_nonempty_string(
+        metrics.get("graphEfficacyStatus")
+    ):
+        base["failure"] = {"code": "saved_recall_metric_invalid", "detail": "saved graph status is invalid"}
+        return base
+    base["available"] = True
+    base["passed"] = payload.get("passed") is True
+    base["metrics"] = {field: metrics[field] for field in SAVED_RECALL_REQUIRED_FIELDS}
+    if isinstance(metrics.get("graphContribution"), dict):
+        base["metrics"]["graphContribution"] = metrics["graphContribution"]
+    return base
+
+
+def _parse_runtime_health(result: TransportResponse) -> dict[str, Any]:
+    receipt: dict[str, Any] = {
+        "available": False,
+        "status": result.status,
+        "latency_ms": round(float(result.latency_ms), 3),
+        "identity": None,
+        "memory_store": None,
+        "failure": None,
+    }
+    if result.error:
+        receipt["failure"] = {"code": "runtime_health_transport_error"}
+        return receipt
+    if result.status < 200 or result.status >= 300:
+        receipt["failure"] = {"code": "runtime_health_http_status"}
+        return receipt
+    payload = result.payload if isinstance(result.payload, dict) else {}
+    build = _as_map(payload.get("build"))
+    memory_store = _as_map(payload.get("memoryStore"))
+    identity = {
+        "schema_id": build.get("schema_id"),
+        "version": build.get("version"),
+        "channel": build.get("channel"),
+        "source_bound": build.get("source_bound"),
+        "source_commit": build.get("source_commit"),
+        "source_tree": build.get("source_tree"),
+        "boot_nonce": build.get("boot_nonce"),
+    }
+    if payload.get("ok") is not True:
+        receipt["failure"] = {"code": "runtime_health_not_ready"}
+        return receipt
+    if identity["schema_id"] != BUILD_IDENTITY_SCHEMA_ID or identity["source_bound"] is not True:
+        receipt["failure"] = {"code": "runtime_source_identity_unbound"}
+        return receipt
+    if not all(_is_nonempty_string(identity[field]) for field in ("version", "channel", "boot_nonce")):
+        receipt["failure"] = {"code": "runtime_source_identity_incomplete"}
+        return receipt
+    if not _is_hex40(identity["source_commit"]) or not _is_hex40(identity["source_tree"]):
+        receipt["failure"] = {"code": "runtime_source_identity_invalid"}
+        return receipt
+    memory_receipt = {
+        "ready": memory_store.get("ready"),
+        "phase": memory_store.get("phase"),
+        "writer_policy": memory_store.get("writer_policy"),
+        "store_ref": memory_store.get("store_ref"),
+        "processed_entries": memory_store.get("processed_entries"),
+        "batch_count": memory_store.get("batch_count"),
+    }
+    if (
+        memory_receipt["ready"] is not True
+        or memory_receipt["phase"] != "ready"
+        or memory_receipt["writer_policy"] != "owner_only_writer.v2"
+        or not _is_nonempty_string(memory_receipt["store_ref"])
+        or not _is_int(memory_receipt["processed_entries"])
+        or int(memory_receipt["processed_entries"]) < 1
+        or not _is_int(memory_receipt["batch_count"])
+        or int(memory_receipt["batch_count"]) < 1
+    ):
+        receipt["failure"] = {"code": "runtime_memory_store_not_ready"}
+        return receipt
+    receipt["available"] = True
+    receipt["identity"] = identity
+    receipt["memory_store"] = memory_receipt
+    return receipt
+
+
+def _runtime_identity_receipt(before: Mapping[str, Any] | None, after: Mapping[str, Any] | None) -> dict[str, Any]:
+    before_map = _as_map(before)
+    after_map = _as_map(after)
+    before_identity = _as_map(before_map.get("identity"))
+    after_identity = _as_map(after_map.get("identity"))
+    before_memory = _as_map(before_map.get("memory_store"))
+    after_memory = _as_map(after_map.get("memory_store"))
+    stable = bool(
+        before_map.get("available")
+        and after_map.get("available")
+        and before_identity == after_identity
+        and before_memory.get("store_ref") == after_memory.get("store_ref")
+        and before_memory.get("writer_policy") == after_memory.get("writer_policy")
+    )
+    return {
+        "schema_id": RUNTIME_IDENTITY_SCHEMA_ID,
+        "route": HEALTH_ROUTE,
+        "before": before_map or None,
+        "after": after_map or None,
+        "stable_across_run": stable,
+        "identity_digest": digest(before_identity) if before_map.get("available") else None,
+    }
+
+
+def run_benchmark(
+    artifact_payload: Mapping[str, Any],
+    transport: RequestTransport,
+    *,
+    artifact_bytes: bytes | None = None,
+    concurrency: int = DEFAULT_CONCURRENCY,
+    timeout_seconds: float | None = None,
+    include_saved_recall: bool = True,
+) -> dict[str, Any]:
+    try:
+        timeout_seconds = configured_timeout_seconds(timeout_seconds)
+    except ValueError:
+        timeout_seconds = 0.0
+    validation = validate_frozen_v3_artifact(artifact_payload, artifact_bytes)
+    report: dict[str, Any] = {
+        "schema_id": BENCHMARK_SCHEMA_ID,
+        "ok": False,
+        "route": CONTEXT_PACK_ROUTE,
+        "quality_schema_id": QUALITY_SCHEMA_ID,
+        "measurement": {
+            "baseline": "gateway_production_context_pack_quality",
+            "metric": "context_pack_quality.quality_score",
+            "ruler": "unchanged_gateway_contextPackQualityScore",
+            "holdout": "saved_recall_eval_case_set.v3.split=holdout",
+            "recomputed": False,
+            "threshold": QUALITY_SCORE_THRESHOLD,
+        },
+        "concurrency": concurrency,
+        "request_timeout_seconds": timeout_seconds,
+        "custody": {
+            "status": validation["status"],
+            "valid": validation["valid"],
+            "issues": validation["issues"],
+            "digests": validation["digests"],
+        },
+        "dataset": {
+            "schema_id": SAVED_RECALL_SCHEMA_ID,
+            "version": 3,
+            "case_set_digest": validation["digests"].get("case_set_digest"),
+            "snapshot_digest": validation["digests"].get("snapshot_digest"),
+            "custody_metadata_digest": validation["digests"].get("custody_metadata_digest"),
+            "holdout_case_ids_digest": validation["digests"].get("holdout_case_ids_digest"),
+            "holdout_cases_digest": validation["digests"].get("holdout_cases_digest"),
+            "artifact_digest": validation["digests"].get("dataset_digest"),
+        },
+        "denominator": validation.get("holdout_count", 0),
+        "cases": [],
+        "aggregate": aggregate_quality_scores([], validation.get("holdout_count", 0)),
+        "latency": aggregate_latency([], validation.get("holdout_count", 0)),
+        "cost": aggregate_telemetry([], "cost", validation.get("holdout_count", 0)),
+        "tool_calls": aggregate_telemetry([], "tool_calls", validation.get("holdout_count", 0)),
+        "failure_ledger": {"total": 0, "by_code": {}, "reconciliation": []},
+        "saved_recall": {"available": False, "status": "not_requested", "metrics": None, "failure": None},
+        "runtime_identity": _runtime_identity_receipt(None, None),
+        "promotion": {"promotion_eligible": False, "blocked_reasons": []},
+    }
+    if not validation["valid"]:
+        report["status"] = "custody_rejected"
+        report["promotion"]["blocked_reasons"] = [issue["code"] for issue in validation["issues"]]
+        return report
+    if concurrency < 1 or concurrency > MAX_CONCURRENCY:
+        report["status"] = "configuration_rejected"
+        report["promotion"]["blocked_reasons"] = ["concurrency_out_of_bounds"]
+        return report
+    if not _is_finite_number(timeout_seconds) or float(timeout_seconds) <= 0:
+        report["status"] = "configuration_rejected"
+        report["promotion"]["blocked_reasons"] = ["timeout_invalid"]
+        return report
+
+    try:
+        runtime_before = _parse_runtime_health(
+            transport.request("GET", HEALTH_ROUTE, None, float(timeout_seconds))
+        )
+    except Exception as exc:  # noqa: BLE001 - a missing proof must fail closed.
+        runtime_before = {
+            "available": False,
+            "status": None,
+            "latency_ms": None,
+            "identity": None,
+            "memory_store": None,
+            "failure": {"code": "runtime_health_exception", "detail": type(exc).__name__},
+        }
+    report["runtime_identity"] = _runtime_identity_receipt(runtime_before, None)
+    if runtime_before.get("available") is not True:
+        failure = _as_map(runtime_before.get("failure"))
+        report["status"] = "runtime_identity_rejected"
+        report["promotion"]["blocked_reasons"] = [str(failure.get("code") or "runtime_identity_before_unavailable")]
+        return report
+
+    holdout_cases = validation["holdout_cases"]
+    rows_by_index: dict[int, dict[str, Any]] = {}
+    reconciliation: list[dict[str, Any]] = []
+    with ThreadPoolExecutor(max_workers=concurrency, thread_name_prefix="context-pack-benchmark") as executor:
+        futures: list[Future[tuple[int, dict[str, Any]]]] = [
+            executor.submit(_evaluate_one_case, index, case, transport, float(timeout_seconds))
+            for index, case in enumerate(holdout_cases)
+        ]
+        for future in as_completed(futures):
+            try:
+                index, row = future.result()
+            except Exception as exc:  # pragma: no cover - executor guards are tested via transport failures.
+                reconciliation.append({"code": "worker_exception", "detail": type(exc).__name__})
+                continue
+            if index in rows_by_index:
+                reconciliation.append({"code": "duplicate_result", "detail": f"duplicate result index {index}"})
+            elif index < 0 or index >= len(holdout_cases):
+                reconciliation.append({"code": "unexpected_result", "detail": f"unexpected result index {index}"})
+            else:
+                rows_by_index[index] = row
+
+    missing_indexes = sorted(set(range(len(holdout_cases))) - set(rows_by_index))
+    reconciliation.extend({"code": "missing_result", "detail": f"missing result index {index}"} for index in missing_indexes)
+    rows = [rows_by_index[index] for index in sorted(rows_by_index)]
+    scores = [int(row["quality_score"]) for row in rows if _is_int(row.get("quality_score"))]
+    aggregate = aggregate_quality_scores(scores, len(holdout_cases))
+    failure_ledger = _failure_ledger(rows, reconciliation=reconciliation)
+    report["cases"] = rows
+    report["aggregate"] = aggregate
+    report["failure_ledger"] = failure_ledger
+    report["evaluated"] = len(scores)
+    report["latency"] = aggregate_latency(rows, len(holdout_cases))
+    report["cost"] = aggregate_telemetry(rows, "cost", len(holdout_cases))
+    report["tool_calls"] = aggregate_telemetry(rows, "tool_calls", len(holdout_cases))
+
+    if include_saved_recall:
+        saved_started = time.perf_counter()
+        try:
+            saved_result = transport.request(
+                "POST",
+                SAVED_RECALL_ROUTE,
+                {"split": "holdout", "k": 5, "include_retrieval_debug": False, "include_preferences": False},
+                float(timeout_seconds),
+            )
+            saved_latency = (time.perf_counter() - saved_started) * 1000
+            if saved_result.latency_ms <= 0:
+                saved_result = TransportResponse(saved_result.status, saved_result.payload, saved_latency, saved_result.error)
+            report["saved_recall"] = _parse_saved_recall(saved_result, artifact_payload, len(holdout_cases))
+        except Exception as exc:  # noqa: BLE001 - saved metrics remain a separate failed ledger.
+            report["saved_recall"] = {
+                "available": False,
+                "route": SAVED_RECALL_ROUTE,
+                "status": None,
+                "latency_ms": round((time.perf_counter() - saved_started) * 1000, 3),
+                "metrics": None,
+                "failure": {"code": "saved_recall_exception", "detail": type(exc).__name__},
+            }
+    else:
+        report["saved_recall"] = {
+            "available": False,
+            "route": SAVED_RECALL_ROUTE,
+            "status": "not_requested",
+            "latency_ms": None,
+            "metrics": None,
+            "failure": {"code": "saved_recall_not_requested", "detail": "legacy metrics were intentionally omitted"},
+        }
+
+    try:
+        runtime_after = _parse_runtime_health(
+            transport.request("GET", HEALTH_ROUTE, None, float(timeout_seconds))
+        )
+    except Exception as exc:  # noqa: BLE001 - a missing proof must fail closed.
+        runtime_after = {
+            "available": False,
+            "status": None,
+            "latency_ms": None,
+            "identity": None,
+            "memory_store": None,
+            "failure": {"code": "runtime_health_exception", "detail": type(exc).__name__},
+        }
+    report["runtime_identity"] = _runtime_identity_receipt(runtime_before, runtime_after)
+
+    blocked: list[str] = []
+    if not aggregate.get("complete"):
+        blocked.append("partial_or_missing_case_results")
+    if failure_ledger["total"]:
+        blocked.append("case_or_reconciliation_failures")
+    if aggregate.get("complete"):
+        if float(aggregate.get("mean")) < QUALITY_SCORE_THRESHOLD:
+            blocked.append("quality_mean_below_90")
+        if float(aggregate.get("median")) < QUALITY_SCORE_THRESHOLD:
+            blocked.append("quality_median_below_90")
+        if float(aggregate.get("p10")) < QUALITY_SCORE_THRESHOLD:
+            blocked.append("quality_p10_below_90")
+    if not report["saved_recall"].get("available"):
+        failure = _as_map(report["saved_recall"].get("failure"))
+        blocked.append(str(failure.get("code") or "saved_recall_unavailable"))
+    elif report["saved_recall"].get("passed") is not True:
+        blocked.append("saved_recall_gate_failed")
+    if runtime_after.get("available") is not True:
+        failure = _as_map(runtime_after.get("failure"))
+        blocked.append(str(failure.get("code") or "runtime_identity_after_unavailable"))
+    elif report["runtime_identity"].get("stable_across_run") is not True:
+        blocked.append("runtime_identity_changed_during_run")
+    report["promotion"] = {
+        "promotion_eligible": not blocked,
+        "blocked_reasons": sorted(set(blocked)),
+        "score_fields": ["aggregate.mean", "aggregate.median", "aggregate.p10"],
+        "score_threshold": QUALITY_SCORE_THRESHOLD,
+        "promotional": not blocked,
+    }
+    report["status"] = "passed" if not blocked else "failed"
+    report["ok"] = (
+        bool(aggregate.get("complete"))
+        and not failure_ledger["total"]
+        and report["runtime_identity"].get("stable_across_run") is True
+    )
+    return report
+
+
+class HTTPTransport:
+    """Small stdlib transport used by the CLI and replaceable in fixture tests."""
+
+    def __init__(self, base_url: str = "") -> None:
+        self.base_url = (base_url or contextlattice_base_url()).rstrip("/")
+        self.api_key = contextlattice_api_key()
+
+    def request(
+        self, method: str, path: str, payload: Mapping[str, Any] | None, timeout_seconds: float
+    ) -> TransportResponse:
+        url = path if path.startswith(("http://", "https://")) else self.base_url + path
+        body = json.dumps(payload or {}, separators=(",", ":")).encode("utf-8") if payload is not None else None
+        headers = {"content-type": "application/json"}
+        if self.api_key:
+            headers["x-api-key"] = self.api_key
+        request = urllib.request.Request(url, data=body, method=method.upper(), headers=headers)
+        started = time.perf_counter()
+        try:
+            with urllib.request.urlopen(request, timeout=float(timeout_seconds)) as response:
+                raw = response.read()
+                parsed = json.loads(raw.decode("utf-8")) if raw.strip() else {}
+            payload_map = parsed if isinstance(parsed, dict) else {}
+            error = "" if isinstance(parsed, dict) else "invalid_json_object"
+            return TransportResponse(int(response.status), payload_map, (time.perf_counter() - started) * 1000, error)
+        except urllib.error.HTTPError as exc:
+            try:
+                exc.read()
+            except OSError:
+                pass
+            return TransportResponse(exc.code, {}, (time.perf_counter() - started) * 1000, "http_error")
+        except (OSError, ValueError, TimeoutError) as exc:
+            return TransportResponse(0, {}, (time.perf_counter() - started) * 1000, type(exc).__name__)
+
+
+def _terminal_summary(report: Mapping[str, Any]) -> None:
+    promotion = _as_map(report.get("promotion"))
+    aggregate = _as_map(report.get("aggregate"))
+    status = "PASS" if promotion.get("promotion_eligible") else "FAIL"
+    print(
+        f"context-pack-quality-benchmark {status} status={report.get('status', 'unknown')} "
+        f"cases={report.get('evaluated', 0)}/{report.get('denominator', 0)} "
+        f"mean={aggregate.get('mean')} median={aggregate.get('median')} "
+        f"p10={aggregate.get('p10')} pass_fraction={aggregate.get('pass_fraction')}"
+    )
+    saved = _as_map(report.get("saved_recall"))
+    metrics = _as_map(saved.get("metrics"))
+    if saved.get("available"):
+        print(
+            f"  saved-recall recall@{metrics.get('k')}={metrics.get('recallAtK')} "
+            f"mrr={metrics.get('mrr')} numeric={metrics.get('numericExactness')} "
+            f"citation={metrics.get('citationCoverage')}"
+        )
+    else:
+        print(f"  saved-recall unavailable reason={_as_map(saved.get('failure')).get('code', 'unknown')}")
+    for reason in promotion.get("blocked_reasons") or []:
+        print(f"  blocked: {reason}")
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--artifact", type=Path, default=default_artifact_path(), help="complete frozen saved-recall v3 JSON artifact")
+    parser.add_argument("--base-url", default="", help="ContextLattice Gateway base URL")
+    parser.add_argument("--concurrency", type=int, default=DEFAULT_CONCURRENCY)
+    parser.add_argument("--timeout", type=float, default=None, help="per-request timeout in seconds; otherwise CONTEXTLATTICE_CLIENT_TIMEOUT_SECS or 200s")
+    parser.add_argument("--no-saved-recall", action="store_true", help="omit the separate legacy saved-recall metrics request")
+    parser.add_argument("--json", action="store_true", help="emit the full benchmark ledger as JSON")
+    parser.add_argument("--pretty", action="store_true", help="pretty-print JSON output")
+    args = parser.parse_args(argv)
+    try:
+        artifact = load_artifact(args.artifact)
+        report = run_benchmark(
+            artifact.payload,
+            HTTPTransport(args.base_url),
+            artifact_bytes=artifact.raw_bytes,
+            concurrency=args.concurrency,
+            timeout_seconds=configured_timeout_seconds(args.timeout),
+            include_saved_recall=not args.no_saved_recall,
+        )
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        report = {
+            "schema_id": BENCHMARK_SCHEMA_ID,
+            "status": "input_rejected",
+            "ok": False,
+            "promotion": {"promotion_eligible": False, "blocked_reasons": ["artifact_load_failed"]},
+            "error": str(exc)[:500],
+        }
+    if args.json or args.pretty:
+        emit(report, pretty=args.pretty)
+    else:
+        _terminal_summary(report)
+    return 0 if _as_map(report.get("promotion")).get("promotion_eligible") else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

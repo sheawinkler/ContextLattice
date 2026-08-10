@@ -166,16 +166,23 @@ docs/evals/recall-response-compositional-benchmark.v1.json # public-paid-private
 docs/evals/recall-response-transfer-egress-policy.v1.json # public-paid-private-only
 docs/evals/recall-response-transfer.v1.md # public-paid-private-only
 docs/evals/results/recall-response-transfer-unavailable.v1.json # public-paid-private-only
+docs/evals/fixtures/recall-response-compositional-development.v2.json # public-paid-private-only
+docs/evals/fixtures/recall-response-compositional-holdout.v2.json # public-paid-private-only
+docs/evals/recall-response-compositional-benchmark.v2.json # public-paid-private-only
+docs/evals/results/recall-response-transfer-v4.0.11.json # public-paid-private-only
 docs/plans/2026-08-09-001-feat-compositional-response-intelligence-plan.md # public-paid-private-only
 scripts/agent/generate-recall-response-compositional-fixtures # public-paid-private-only
+scripts/agent/generate-recall-response-compositional-fixtures-v2 # public-paid-private-only
 scripts/agent/recall-response-compositional-eval # public-paid-private-only
 scripts/agent/recall-response-downstream-simulator # public-paid-private-only
 scripts/agent/recall-response-holdout-custody # public-paid-private-only
+scripts/agent/recall-response-transfer-capture # public-paid-private-only
 scripts/agent/recall-response-transfer-eval # public-paid-private-only
 scripts/agent/test_recall_response_compositional_eval.py # public-paid-private-only
 scripts/agent/test_recall_response_compositional_fixtures.py # public-paid-private-only
 scripts/agent/test_recall_response_transfer.py # public-paid-private-only
 services/gateway-go/memory_recall_response_u9_export_test.go # public-paid-private-only
+services/gateway-go/memory_recall_response_fallback_receipt_private_test.go # public-paid-private-only
 
 # Private Frontier program planning and its audit must never enter public/main.
 scripts/agent/audit-frontier-30-program # public-paid-private-only

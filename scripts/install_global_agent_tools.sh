@@ -82,6 +82,7 @@ Installs Go-native ContextLattice agent helpers to ~/.contextlattice and creates
   contextlattice_*_guard wrappers
   contextlattice_pre_compaction_write
   contextlattice_post_compaction_read
+  contextlattice_recall_quality_eval
 
 Optional development-only Python helpers are installed only with
 --include-dev-python-tools:
@@ -346,6 +347,11 @@ HOOK_RUNTIME_PYTHON_FILES=(
   scripts/agent/compaction-handoff-payload
   scripts/agent/contextlattice-session
   scripts/agent/contextlattice-recall-response
+  # Saved recall quality is a supported runtime CLI, not a development-only
+  # helper.  Keep its script beside the compact hook dependencies so the
+  # wrapper remains usable when the optional dev venv is not installed.
+  scripts/agent/recall-quality-eval
+  scripts/agent/context-pack-quality-benchmark
   scripts/agent_contracts.py
   scripts/agent_orchestration.py
   scripts/contextlattice_client.py
@@ -685,8 +691,35 @@ set -euo pipefail
 TOOL_HOME="${CONTEXTLATTICE_GLOBAL_HOME:-$HOME/.contextlattice}"
 PYTHON_BIN="${TOOL_HOME}/venv-agent-tools/bin/python"
 SCRIPT_PATH="${TOOL_HOME}/scripts/agent/recall-quality-eval"
+if [[ ! -x "${SCRIPT_PATH}" ]]; then
+  echo "Missing ${SCRIPT_PATH}. Run scripts/install_global_agent_tools.sh first." >&2
+  exit 1
+fi
 if [[ ! -x "${PYTHON_BIN}" ]]; then
-  echo "Missing ${PYTHON_BIN}. Run scripts/install_global_agent_tools.sh first." >&2
+  PYTHON_BIN="$(command -v python3 || command -v python || true)"
+fi
+if [[ -z "${PYTHON_BIN}" ]]; then
+  echo "Missing Python runtime. Install python3 or run scripts/install_global_agent_tools.sh --include-dev-python-tools." >&2
+  exit 1
+fi
+exec "${PYTHON_BIN}" "${SCRIPT_PATH}" "$@"
+EOF
+
+cat > "${GLOBAL_BIN_DIR}/contextlattice_context_pack_quality_benchmark" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+TOOL_HOME="${CONTEXTLATTICE_GLOBAL_HOME:-$HOME/.contextlattice}"
+PYTHON_BIN="${TOOL_HOME}/venv-agent-tools/bin/python"
+SCRIPT_PATH="${TOOL_HOME}/scripts/agent/context-pack-quality-benchmark"
+if [[ ! -x "${SCRIPT_PATH}" ]]; then
+  echo "Missing ${SCRIPT_PATH}. Run scripts/install_global_agent_tools.sh first." >&2
+  exit 1
+fi
+if [[ ! -x "${PYTHON_BIN}" ]]; then
+  PYTHON_BIN="$(command -v python3 || command -v python || true)"
+fi
+if [[ -z "${PYTHON_BIN}" ]]; then
+  echo "Missing Python runtime. Install python3 or run scripts/install_global_agent_tools.sh --include-dev-python-tools." >&2
   exit 1
 fi
 exec "${PYTHON_BIN}" "${SCRIPT_PATH}" "$@"
@@ -713,7 +746,8 @@ chmod +x \
   "${GLOBAL_BIN_DIR}/contextlattice_skills_index" \
   "${GLOBAL_BIN_DIR}/contextlattice_codex_session_store_doctor" \
   "${GLOBAL_BIN_DIR}/contextlattice_runner_quality" \
-  "${GLOBAL_BIN_DIR}/contextlattice_recall_quality_eval"
+  "${GLOBAL_BIN_DIR}/contextlattice_recall_quality_eval" \
+  "${GLOBAL_BIN_DIR}/contextlattice_context_pack_quality_benchmark"
 
 build_go_agent_tools
 

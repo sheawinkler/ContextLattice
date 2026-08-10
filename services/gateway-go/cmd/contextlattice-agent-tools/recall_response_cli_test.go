@@ -3,11 +3,16 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestRecallResponseCLIAliasesAndPackDelegationPreserveSemantics(t *testing.T) {
@@ -62,6 +67,95 @@ func TestRecallResponseCLIAliasesAndPackDelegationPreserveSemantics(t *testing.T
 	}
 	if captured["include_retrieval_debug"] != false || captured["native_cli_implementation"] != true {
 		t.Fatalf("recall payload crossed the pack boundary: %#v", captured)
+	}
+}
+
+func TestRecallResponseCLIUsesClientTimeoutResolution(t *testing.T) {
+	tests := []struct {
+		name      string
+		env       string
+		extraArgs []string
+		expected  float64
+	}{
+		{name: "repo default", env: "", expected: defaultContextLatticeClientTimeoutSecs},
+		{name: "finite environment override", env: "49", expected: 49},
+		{name: "explicit timeout wins", env: "49", extraArgs: []string{"--timeout", "7"}, expected: 7},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("CONTEXTLATTICE_CLIENT_TIMEOUT_SECS", test.env)
+			var deadline time.Time
+			c := newCLI(io.Discard, ioDiscard{})
+			c.client = &http.Client{Transport: testRoundTripper(func(r *http.Request) (*http.Response, error) {
+				var ok bool
+				deadline, ok = r.Context().Deadline()
+				if !ok {
+					return nil, errors.New("retrieval request did not carry a deadline")
+				}
+				encoded, err := json.Marshal(failureRecallResponse())
+				if err != nil {
+					return nil, err
+				}
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body:       io.NopCloser(bytes.NewReader(encoded)),
+					Request:    r,
+				}, nil
+			})}
+
+			var stdout bytes.Buffer
+			c.stdout = &stdout
+			args := append([]string{"contextlattice_recall_response", "timeout resolution", "--no-auto-session", "--raw"}, test.extraArgs...)
+			if err := c.run(args); err != nil {
+				t.Fatalf("run recall response: %v output=%s", err, stdout.String())
+			}
+			remaining := deadline.Sub(time.Now()).Seconds()
+			if remaining < test.expected-2 || remaining > test.expected+1 {
+				t.Fatalf("retrieval deadline remaining=%v want approximately %v", remaining, test.expected)
+			}
+		})
+	}
+}
+
+func TestRecallResponseRetryRejectsPartialWriteAfterConnection(t *testing.T) {
+	var requests atomic.Int32
+	c := newCLI(io.Discard, ioDiscard{})
+	c.client = &http.Client{Transport: testRoundTripper(func(request *http.Request) (*http.Response, error) {
+		requests.Add(1)
+		trace := httptrace.ContextClientTrace(request.Context())
+		if trace == nil || trace.GotConn == nil {
+			return nil, errors.New("test transport did not receive client trace")
+		}
+		trace.GotConn(httptrace.GotConnInfo{})
+		return nil, &net.OpError{Op: "write", Net: "tcp", Err: errors.New("partial write")}
+	})}
+	transport := c.recallResponseTransport()
+	_, err := transport.requestRecallResponseWithRetries("/memory/recall/response", map[string]any{"query": "partial write"}, 1, 3, 0)
+	if requests.Load() != 1 {
+		t.Fatalf("partial-write recall failure was replayed: requests=%d", requests.Load())
+	}
+	var requestErr *cliRequestError
+	if !errors.As(err, &requestErr) || !requestErr.GotConnection || requestErr.WroteRequest || requestErr.Retryable {
+		t.Fatalf("partial-write recall retry evidence was incorrect: %#v", err)
+	}
+}
+
+func TestRecallResponseRetryAllowsPreConnectionDialFailure(t *testing.T) {
+	var requests atomic.Int32
+	c := newCLI(io.Discard, ioDiscard{})
+	c.client = &http.Client{Transport: testRoundTripper(func(*http.Request) (*http.Response, error) {
+		requests.Add(1)
+		return nil, &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connection refused")}
+	})}
+	transport := c.recallResponseTransport()
+	_, err := transport.requestRecallResponseWithRetries("/memory/recall/response", map[string]any{"query": "pre-connect"}, 1, 1, 0)
+	if requests.Load() != 2 {
+		t.Fatalf("provable pre-connection recall failure did not use the explicit retry: requests=%d", requests.Load())
+	}
+	var requestErr *cliRequestError
+	if !errors.As(err, &requestErr) || requestErr.GotConnection || !requestErr.PreDelivery || !requestErr.Retryable {
+		t.Fatalf("pre-connection recall retry evidence was incorrect: %#v", err)
 	}
 }
 

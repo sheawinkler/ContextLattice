@@ -35,12 +35,19 @@ type recallEvalGate struct {
 }
 
 type recallEvalSavedConfig struct {
-	Path      string
-	Version   any
-	UpdatedAt any
-	K         int
-	Gate      recallEvalGate
-	Cases     []map[string]any
+	Path          string
+	SchemaID      string
+	Version       any
+	UpdatedAt     any
+	CaseSetDigest string
+	Source        string
+	Synthetic     bool
+	Snapshot      map[string]any
+	Custody       map[string]any
+	SplitCounts   map[string]any
+	K             int
+	Gate          recallEvalGate
+	Cases         []map[string]any
 }
 
 func (s *server) memoryRecallEvaluateSavedNative(w http.ResponseWriter, r *http.Request) {
@@ -109,13 +116,37 @@ func (s *server) memoryRecallEvaluateSavedNative(w http.ResponseWriter, r *http.
 		s.writeRecallEvalCaseSetInvalid(w, cfg, caseSetHealth)
 		return
 	}
+	evaluationSplit := strings.ToLower(strings.TrimSpace(anyToString(payload["split"])))
+	if evaluationSplit == "all" {
+		evaluationSplit = ""
+	}
+	if evaluationSplit != "" && evaluationSplit != "train" && evaluationSplit != "holdout" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "unsupported saved recall evaluation split", "supported_splits": []string{"all", "train", "holdout"}})
+		return
+	}
+	evaluationCases := cfg.Cases
+	if evaluationSplit != "" {
+		evaluationCases = recallEvalCasesForSplit(cfg.Cases, evaluationSplit)
+		if len(evaluationCases) == 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]any{
+				"error":                  "requested saved recall evaluation split is empty",
+				"code":                   "empty_evaluation_split",
+				"split":                  evaluationSplit,
+				"case_set_digest":        cfg.CaseSetDigest,
+				"available_split_counts": cfg.SplitCounts,
+			})
+			return
+		}
+	}
+	evaluationCfg := cfg
+	evaluationCfg.Cases = evaluationCases
 	actuatorRows := []map[string]any{}
 	if s != nil && s.contextPackQuality != nil {
 		actuatorRows, _ = s.contextPackQuality.receiptDurableOutcomeRows(evidenceReputationMaxRows)
 	}
 	actuatorRows = reconcileCandidateUtilityVerification(actuatorRows, utilityFromServer(s))
 	impactComparison := newSavedRecallImpactComparisonWithOutcomeRowsAndAuthority(
-		cfg, actuatorRows, time.Now().UTC(), comparatorAuthority,
+		evaluationCfg, actuatorRows, time.Now().UTC(), comparatorAuthority,
 	)
 
 	k := clampInt(cfg.K, 1, 20)
@@ -155,7 +186,7 @@ func (s *server) memoryRecallEvaluateSavedNative(w http.ResponseWriter, r *http.
 	noHitCases := 0
 	lowConfidenceCases := 0
 	sourceDiversitySum := 0.0
-	latencyValues := make([]float64, 0, len(cfg.Cases))
+	latencyValues := make([]float64, 0, len(evaluationCases))
 	graphEvaluatedCases := 0
 	graphSeedCount := 0
 	graphCandidateCount := 0
@@ -164,235 +195,298 @@ func (s *server) memoryRecallEvaluateSavedNative(w http.ResponseWriter, r *http.
 	graphAddedExpectedHitCount := 0
 	graphHelpedCases := 0
 	graphExplicitCases := 0
-	caseReports := make([]map[string]any, 0, len(cfg.Cases))
-	ablationReports := make([]map[string]any, 0, len(cfg.Cases))
+	caseReports := make([]map[string]any, 0, len(evaluationCases))
+	ablationReports := make([]map[string]any, 0, len(evaluationCases))
+	ablationRowsUsed := 0
 
-	for idx, rawCase := range cfg.Cases {
-		caseID := strings.TrimSpace(anyToString(rawCase["id"]))
-		if caseID == "" {
-			caseID = fmt.Sprintf("case-%d", idx+1)
+	// Keep tiny diagnostic fixtures sequential so legacy test/inspection
+	// backends that intentionally use unsynchronized capture variables retain
+	// their deterministic behavior. Full v3 refreshes (the bounded 300-case
+	// path) use the worker pool below.
+	if len(evaluationCases) > savedRecallEvalWorkerCount {
+		// Retrieval remains parallel, but ablation rows are materialized in this
+		// deterministic aggregation lane so max_ablation_rows is a global cap,
+		// never a per-case multiplier.
+		parallelResults := evaluateSavedRecallCasesConcurrently(r.Context(), s, evaluationCases, k, incomingHeaders, includeRetrievalDebug, includePreferences, userID)
+		for _, result := range parallelResults {
+			if strings.TrimSpace(anyToString(result.rawCase["query"])) != "" {
+				latencyValues = append(latencyValues, result.latencyMs)
+			}
+			if includeAblation && result.searchResponse != nil && ablationRowsUsed < maxAblationRows {
+				result.ablation = buildSavedRecallEvalAblation(result.rawCase, result.results, k, maxAblationRows-ablationRowsUsed)
+				if result.ablation != nil {
+					if result.report != nil {
+						result.report["ablation"] = result.ablation
+					}
+					ablationReports = append(ablationReports, result.ablation)
+					ablationRowsUsed += savedRecallEvalAblationRowCount(result.ablation)
+				}
+			}
+			caseReports = append(caseReports, result.report)
+			if result.retrievalFailed {
+				impactComparison.invalidateCase(result.rawCase, "retrieval_failed")
+				continue
+			}
+			if result.searchResponse == nil {
+				continue
+			}
+			if result.hasExpectations {
+				evaluatedCases++
+				if result.hit {
+					recallHits++
+				} else {
+					noHitCases++
+				}
+				reciprocalRankSum += result.reciprocalRank
+				if result.lowConfidence {
+					lowConfidenceCases++
+				}
+				sourceDiversitySum += float64(result.sourceDiversity)
+				if result.graphEligible {
+					graphEvaluatedCases++
+					graphSeedCount += anyToInt(result.graphContribution["seed_count"], 0)
+					graphCandidateCount += anyToInt(result.graphContribution["candidate_count"], 0)
+					graphAddedCandidateCount += anyToInt(result.graphContribution["added_candidate_count"], 0)
+					graphExpectedHitCount += anyToInt(result.graphContribution["expected_hit_count"], 0)
+					graphAddedExpectedHitCount += anyToInt(result.graphContribution["added_expected_hit_count"], 0)
+					if result.graphExplicit {
+						graphExplicitCases++
+					}
+					if result.graphHelped {
+						graphHelpedCases++
+					}
+				}
+			}
+			numericExpectedTotal += result.numericExpected
+			numericMatchedTotal += result.numericMatches
+			citationExpectedTotal += result.citationExpected
+			citationMatchedTotal += result.citationMatched
+			impactComparison.addCase(result.index, result.rawCase, result.results, result.searchIntelligence, result.expectedNumeric, result.latencyMs)
+			impactComparison.addActuatorCase(result.index, result.rawCase, result.searchResponse)
 		}
-		query := strings.TrimSpace(anyToString(rawCase["query"]))
-		if query == "" {
-			caseReports = append(caseReports, map[string]any{
-				"id":                  caseID,
-				"query":               "",
-				"k":                   k,
-				"hit":                 false,
-				"matched_rank":        nil,
-				"reciprocal_rank":     0.0,
-				"has_expectations":    false,
-				"result_count":        0,
-				"top_score":           0.0,
-				"expected_files":      []string{},
-				"expected_substrings": []string{},
-				"expected_numeric":    []string{},
-				"matched_numeric":     []string{},
-				"matched_files":       []string{},
-				"citation_coverage":   0.0,
-				"source_diversity":    0,
-				"latency_ms":          0.0,
-				"graph_contribution":  recallGraphContributionUnavailable("case query missing"),
-				"warnings":            []string{"case query missing"},
-				"retrieval_mode":      normalizeRetrievalMode(anyToString(rawCase["retrieval_mode"])),
-				"agent_id":            strings.TrimSpace(anyToString(rawCase["agent_id"])),
-			})
-			continue
-		}
+	} else {
+		for idx, rawCase := range evaluationCases {
+			caseID := strings.TrimSpace(anyToString(rawCase["id"]))
+			if caseID == "" {
+				caseID = fmt.Sprintf("case-%d", idx+1)
+			}
+			query := strings.TrimSpace(anyToString(rawCase["query"]))
+			if query == "" {
+				caseReports = append(caseReports, map[string]any{
+					"id":                  caseID,
+					"query":               "",
+					"k":                   k,
+					"hit":                 false,
+					"matched_rank":        nil,
+					"reciprocal_rank":     0.0,
+					"has_expectations":    false,
+					"result_count":        0,
+					"top_score":           0.0,
+					"expected_files":      []string{},
+					"expected_substrings": []string{},
+					"expected_numeric":    []string{},
+					"matched_numeric":     []string{},
+					"matched_files":       []string{},
+					"citation_coverage":   0.0,
+					"source_diversity":    0,
+					"latency_ms":          0.0,
+					"graph_contribution":  recallGraphContributionUnavailable("case query missing"),
+					"warnings":            []string{"case query missing"},
+					"retrieval_mode":      normalizeRetrievalMode(anyToString(rawCase["retrieval_mode"])),
+					"agent_id":            strings.TrimSpace(anyToString(rawCase["agent_id"])),
+				})
+				continue
+			}
 
-		// Fetch at least K direct results so graph lift cannot be manufactured by
-		// truncating the direct baseline below the evaluation window.
-		directLimit := maxInt(clampInt(anyToInt(rawCase["limit"], 10), 1, 100), k)
-		reqPayload := map[string]any{
-			"query":                   query,
-			"limit":                   directLimit,
-			"project":                 strings.TrimSpace(anyToString(rawCase["project"])),
-			"topic_path":              strings.TrimSpace(anyToString(rawCase["topic_path"])),
-			"retrieval_mode":          normalizeRetrievalMode(anyToString(rawCase["retrieval_mode"])),
-			"retrieval_intent":        strings.TrimSpace(strings.ToLower(anyToString(rawCase["retrieval_intent"]))),
-			"sources":                 anyToStringSlice(rawCase["sources"]),
-			"source_weights":          cloneAnyMap(anyMap(rawCase["source_weights"])),
-			"rerank_with_learning":    true,
-			"include_retrieval_debug": includeRetrievalDebug,
-			"include_grounding":       true,
-			"include_preferences":     includePreferences,
-			"user_id":                 userID,
-			"agent_id":                strings.TrimSpace(anyToString(rawCase["agent_id"])),
-			"auto_escalate":           anyToBool(rawCase["auto_escalate"]),
-			"query_expansion":         anyToBool(rawCase["query_expansion"]),
-			"deep_async":              false,
-			"callback_url":            "",
-			"traffic_class":           "synthetic",
-		}
-		if strings.TrimSpace(anyToString(reqPayload["retrieval_intent"])) == "" {
-			reqPayload["retrieval_intent"] = "decision"
-		}
+			// Fetch at least K direct results so graph lift cannot be manufactured by
+			// truncating the direct baseline below the evaluation window.
+			directLimit := maxInt(clampInt(anyToInt(rawCase["limit"], 10), 1, 100), k)
+			reqPayload := map[string]any{
+				"query":                   query,
+				"limit":                   directLimit,
+				"project":                 strings.TrimSpace(anyToString(rawCase["project"])),
+				"topic_path":              strings.TrimSpace(anyToString(rawCase["topic_path"])),
+				"retrieval_mode":          normalizeRetrievalMode(anyToString(rawCase["retrieval_mode"])),
+				"retrieval_intent":        strings.TrimSpace(strings.ToLower(anyToString(rawCase["retrieval_intent"]))),
+				"sources":                 anyToStringSlice(rawCase["sources"]),
+				"source_weights":          cloneAnyMap(anyMap(rawCase["source_weights"])),
+				"rerank_with_learning":    true,
+				"include_retrieval_debug": includeRetrievalDebug,
+				"include_grounding":       true,
+				"include_preferences":     includePreferences,
+				"user_id":                 userID,
+				"agent_id":                strings.TrimSpace(anyToString(rawCase["agent_id"])),
+				"auto_escalate":           anyToBool(rawCase["auto_escalate"]),
+				"deep_async":              false,
+				"callback_url":            "",
+				"traffic_class":           "synthetic",
+			}
+			applySavedRecallEvalCaseOptionalRetrievalFlags(reqPayload, rawCase)
+			if strings.TrimSpace(anyToString(reqPayload["retrieval_intent"])) == "" {
+				reqPayload["retrieval_intent"] = "decision"
+			}
 
-		caseStartedAt := time.Now()
-		searchResp, status, execErr := s.executeRetrieval(
-			context.Background(),
-			incomingHeaders,
-			reqPayload,
-			true,
-		)
-		latencyMs := float64(time.Since(caseStartedAt).Microseconds()) / 1000.0
-		latencyValues = append(latencyValues, latencyMs)
-		if execErr != nil {
-			impactComparison.invalidateCase(rawCase, "retrieval_failed")
-			caseReports = append(caseReports, map[string]any{
-				"id":                  caseID,
-				"query":               query,
-				"k":                   k,
-				"hit":                 false,
-				"matched_rank":        nil,
-				"reciprocal_rank":     0.0,
-				"has_expectations":    false,
-				"result_count":        0,
-				"top_score":           0.0,
-				"expected_files":      []string{},
-				"expected_substrings": []string{},
-				"expected_numeric":    []string{},
-				"matched_numeric":     []string{},
-				"matched_files":       []string{},
-				"citation_coverage":   0.0,
-				"source_diversity":    0,
-				"latency_ms":          roundFloat(latencyMs, 3),
-				"graph_contribution":  recallGraphContributionUnavailable("retrieval failed"),
-				"warnings":            []string{"retrieval failed: " + execErr.Error()},
-				"retrieval_mode":      reqPayload["retrieval_mode"],
-				"agent_id":            reqPayload["agent_id"],
-				"status_code":         status,
-			})
-			continue
-		}
+			caseStartedAt := time.Now()
+			searchResp, status, execErr := s.executeRetrieval(
+				r.Context(),
+				incomingHeaders,
+				reqPayload,
+				true,
+			)
+			latencyMs := float64(time.Since(caseStartedAt).Microseconds()) / 1000.0
+			latencyValues = append(latencyValues, latencyMs)
+			if execErr != nil {
+				impactComparison.invalidateCase(rawCase, "retrieval_failed")
+				caseReports = append(caseReports, map[string]any{
+					"id":                  caseID,
+					"query":               query,
+					"k":                   k,
+					"hit":                 false,
+					"matched_rank":        nil,
+					"reciprocal_rank":     0.0,
+					"has_expectations":    false,
+					"result_count":        0,
+					"top_score":           0.0,
+					"expected_files":      []string{},
+					"expected_substrings": []string{},
+					"expected_numeric":    []string{},
+					"matched_numeric":     []string{},
+					"matched_files":       []string{},
+					"citation_coverage":   0.0,
+					"source_diversity":    0,
+					"latency_ms":          roundFloat(latencyMs, 3),
+					"graph_contribution":  recallGraphContributionUnavailable("retrieval failed"),
+					"warnings":            []string{"retrieval failed: " + execErr.Error()},
+					"retrieval_mode":      reqPayload["retrieval_mode"],
+					"agent_id":            reqPayload["agent_id"],
+					"status_code":         status,
+				})
+				continue
+			}
 
-		results := parseRows(searchResp["results"])
-		grounding := anyMap(searchResp["grounding"])
-		expectedFiles := normalizeExpectedFileTokens(rawCase["expected_files"])
-		expectedTerms := normalizeExpectedTerms(rawCase["expected_substrings"])
-		expectedNumeric := normalizeExpectedNumeric(rawCase["expected_numeric"])
-		graphExpectedFiles := normalizeExpectedFileTokens(rawCase["graph_expected_files"])
-		graphExpectedTerms := normalizeExpectedTerms(rawCase["graph_expected_substrings"])
-		reportedGraphExpectedFiles := sortedKeys(graphExpectedFiles)
-		reportedGraphExpectedTerms := append([]string(nil), graphExpectedTerms...)
-		hasExplicitGraphExpectations := len(graphExpectedFiles) > 0 || len(graphExpectedTerms) > 0
-		if !hasExplicitGraphExpectations {
-			graphExpectedFiles = expectedFiles
-			graphExpectedTerms = expectedTerms
-		}
-		matchedFiles := matchedExpectedFilesWithinK(results, expectedFiles, k)
-		caseCitationCoverage := 1.0
-		if len(expectedFiles) > 0 {
-			caseCitationCoverage = float64(len(matchedFiles)) / float64(len(expectedFiles))
-		}
-		caseSources := uniqueSourcesWithinK(results, k)
-		graphContribution := s.evaluateRecallGraphContribution(
-			context.Background(),
-			results,
-			graphExpectedFiles,
-			graphExpectedTerms,
-			k,
-			strings.TrimSpace(anyToString(reqPayload["project"])),
-		)
-		if hasExplicitGraphExpectations {
-			graphContribution["expectation_mode"] = "explicit_graph"
-		} else {
-			graphContribution["expectation_mode"] = "direct_fallback"
-		}
-
-		matchedRank := matchRankWithinK(results, expectedFiles, expectedTerms, k)
-		hit := matchedRank != nil
-		reciprocalRank := 0.0
-		if matchedRank != nil && *matchedRank > 0 {
-			reciprocalRank = 1.0 / float64(*matchedRank)
-		}
-		numericMatches := matchedNumericFacts(grounding, expectedNumeric)
-		hasExpectations := len(expectedFiles) > 0 || len(expectedTerms) > 0
-		if hasExpectations {
-			evaluatedCases += 1
-			if hit {
-				recallHits += 1
+			results := parseRows(searchResp["results"])
+			grounding := anyMap(searchResp["grounding"])
+			expectedFiles := normalizeExpectedFileTokens(rawCase["expected_files"])
+			expectedTerms := normalizeExpectedTerms(rawCase["expected_substrings"])
+			expectedNumeric := normalizeExpectedNumeric(rawCase["expected_numeric"])
+			graphExpectedFiles := normalizeExpectedFileTokens(rawCase["graph_expected_files"])
+			graphExpectedTerms := normalizeExpectedTerms(rawCase["graph_expected_substrings"])
+			reportedGraphExpectedFiles := sortedKeys(graphExpectedFiles)
+			reportedGraphExpectedTerms := append([]string(nil), graphExpectedTerms...)
+			hasExplicitGraphExpectations := len(graphExpectedFiles) > 0 || len(graphExpectedTerms) > 0
+			if !hasExplicitGraphExpectations {
+				graphExpectedFiles = expectedFiles
+				graphExpectedTerms = expectedTerms
+			}
+			matchedFiles := matchedExpectedFilesWithinK(results, expectedFiles, k)
+			caseCitationCoverage := 1.0
+			if len(expectedFiles) > 0 {
+				caseCitationCoverage = float64(len(matchedFiles)) / float64(len(expectedFiles))
+			}
+			caseSources := uniqueSourcesWithinK(results, k)
+			graphContribution := s.evaluateRecallGraphContribution(
+				r.Context(),
+				results,
+				graphExpectedFiles,
+				graphExpectedTerms,
+				k,
+				strings.TrimSpace(anyToString(reqPayload["project"])),
+			)
+			if hasExplicitGraphExpectations {
+				graphContribution["expectation_mode"] = "explicit_graph"
 			} else {
-				noHitCases += 1
+				graphContribution["expectation_mode"] = "direct_fallback"
 			}
-			reciprocalRankSum += reciprocalRank
-			if topResultScore(results) > 0 && topResultScore(results) < 0.45 {
-				lowConfidenceCases += 1
-			}
-			sourceDiversitySum += float64(len(caseSources))
-			graphEligible := hasExplicitGraphExpectations
-			if graphEligible {
-				graphEvaluatedCases += 1
-				graphSeedCount += anyToInt(graphContribution["seed_count"], 0)
-				graphCandidateCount += anyToInt(graphContribution["candidate_count"], 0)
-				graphAddedCandidateCount += anyToInt(graphContribution["added_candidate_count"], 0)
-				graphExpectedHitCount += anyToInt(graphContribution["expected_hit_count"], 0)
-				graphAddedExpectedHitCount += anyToInt(graphContribution["added_expected_hit_count"], 0)
-				if hasExplicitGraphExpectations {
-					graphExplicitCases += 1
-				}
-				if anyToBool(graphContribution["helped"]) {
-					graphHelpedCases += 1
-				}
-			}
-		}
-		numericExpectedTotal += len(expectedNumeric)
-		numericMatchedTotal += len(numericMatches)
-		citationExpectedTotal += len(expectedFiles)
-		citationMatchedTotal += len(matchedFiles)
 
-		report := map[string]any{
-			"id":                                  caseID,
-			"query":                               query,
-			"k":                                   k,
-			"hit":                                 hit,
-			"matched_rank":                        matchedRank,
-			"reciprocal_rank":                     roundFloat(reciprocalRank, 6),
-			"has_expectations":                    hasExpectations,
-			"result_count":                        len(results),
-			"top_score":                           roundFloat(topResultScore(results), 6),
-			"expected_files":                      sortedKeys(expectedFiles),
-			"expected_substrings":                 expectedTerms,
-			"graph_expected_files":                reportedGraphExpectedFiles,
-			"graph_expected_substrings":           reportedGraphExpectedTerms,
-			"graph_effective_expected_files":      sortedKeys(graphExpectedFiles),
-			"graph_effective_expected_substrings": graphExpectedTerms,
-			"graph_expectations_explicit":         hasExplicitGraphExpectations,
-			"expected_numeric":                    expectedNumeric,
-			"matched_numeric":                     numericMatches,
-			"matched_files":                       matchedFiles,
-			"citation_coverage":                   roundFloat(caseCitationCoverage, 6),
-			"source_diversity":                    len(caseSources),
-			"sources":                             caseSources,
-			"latency_ms":                          roundFloat(latencyMs, 3),
-			"graph_contribution":                  graphContribution,
-			"warnings":                            parseWarnings(searchResp["warnings"]),
-			"retrieval_mode":                      searchResp["retrieval_mode"],
-			"agent_id":                            searchResp["agent_id"],
-			"retry_attempts":                      0,
-			"transient_retry_triggered":           false,
-			"transient_retry_recovered":           false,
-			"attempt_modes":                       []string{normalizeRetrievalMode(anyToString(searchResp["retrieval_mode"]))},
+			matchedRank := matchRankWithinK(results, expectedFiles, expectedTerms, k)
+			hit := matchedRank != nil
+			reciprocalRank := 0.0
+			if matchedRank != nil && *matchedRank > 0 {
+				reciprocalRank = 1.0 / float64(*matchedRank)
+			}
+			numericMatches := matchedNumericFacts(grounding, expectedNumeric)
+			hasExpectations := len(expectedFiles) > 0 || len(expectedTerms) > 0
+			if hasExpectations {
+				evaluatedCases += 1
+				if hit {
+					recallHits += 1
+				} else {
+					noHitCases += 1
+				}
+				reciprocalRankSum += reciprocalRank
+				if topResultScore(results) > 0 && topResultScore(results) < 0.45 {
+					lowConfidenceCases += 1
+				}
+				sourceDiversitySum += float64(len(caseSources))
+				graphEligible := hasExplicitGraphExpectations
+				if graphEligible {
+					graphEvaluatedCases += 1
+					graphSeedCount += anyToInt(graphContribution["seed_count"], 0)
+					graphCandidateCount += anyToInt(graphContribution["candidate_count"], 0)
+					graphAddedCandidateCount += anyToInt(graphContribution["added_candidate_count"], 0)
+					graphExpectedHitCount += anyToInt(graphContribution["expected_hit_count"], 0)
+					graphAddedExpectedHitCount += anyToInt(graphContribution["added_expected_hit_count"], 0)
+					if hasExplicitGraphExpectations {
+						graphExplicitCases += 1
+					}
+					if anyToBool(graphContribution["helped"]) {
+						graphHelpedCases += 1
+					}
+				}
+			}
+			numericExpectedTotal += len(expectedNumeric)
+			numericMatchedTotal += len(numericMatches)
+			citationExpectedTotal += len(expectedFiles)
+			citationMatchedTotal += len(matchedFiles)
+
+			report := map[string]any{
+				"id":                                  caseID,
+				"query":                               query,
+				"k":                                   k,
+				"hit":                                 hit,
+				"matched_rank":                        matchedRank,
+				"reciprocal_rank":                     roundFloat(reciprocalRank, 6),
+				"has_expectations":                    hasExpectations,
+				"result_count":                        len(results),
+				"top_score":                           roundFloat(topResultScore(results), 6),
+				"expected_files":                      sortedKeys(expectedFiles),
+				"expected_substrings":                 expectedTerms,
+				"graph_expected_files":                reportedGraphExpectedFiles,
+				"graph_expected_substrings":           reportedGraphExpectedTerms,
+				"graph_effective_expected_files":      sortedKeys(graphExpectedFiles),
+				"graph_effective_expected_substrings": graphExpectedTerms,
+				"graph_expectations_explicit":         hasExplicitGraphExpectations,
+				"expected_numeric":                    expectedNumeric,
+				"matched_numeric":                     numericMatches,
+				"matched_files":                       matchedFiles,
+				"citation_coverage":                   roundFloat(caseCitationCoverage, 6),
+				"source_diversity":                    len(caseSources),
+				"sources":                             caseSources,
+				"latency_ms":                          roundFloat(latencyMs, 3),
+				"graph_contribution":                  graphContribution,
+				"warnings":                            parseWarnings(searchResp["warnings"]),
+				"retrieval_mode":                      searchResp["retrieval_mode"],
+				"agent_id":                            searchResp["agent_id"],
+				"retry_attempts":                      0,
+				"transient_retry_triggered":           false,
+				"transient_retry_recovered":           false,
+				"attempt_modes":                       []string{normalizeRetrievalMode(anyToString(searchResp["retrieval_mode"]))},
+			}
+			if includeRetrievalDebug {
+				report["retrieval"] = searchResp["retrieval_debug"]
+			}
+			if includeAblation && ablationRowsUsed < maxAblationRows {
+				ablation := buildSavedRecallEvalAblation(rawCase, results, k, maxAblationRows-ablationRowsUsed)
+				if ablation != nil {
+					report["ablation"] = ablation
+					ablationReports = append(ablationReports, ablation)
+					ablationRowsUsed += savedRecallEvalAblationRowCount(ablation)
+				}
+			}
+			impactComparison.addCase(idx, rawCase, results, anyMap(searchResp["search_intelligence"]), expectedNumeric, latencyMs)
+			impactComparison.addActuatorCase(idx, rawCase, searchResp)
+			caseReports = append(caseReports, report)
 		}
-		if includeRetrievalDebug {
-			report["retrieval"] = searchResp["retrieval_debug"]
-		}
-		if includeAblation {
-			ablation := attachPayloadFormatContract(retrievalAblationSchemaID, buildRetrievalAblation(retrievalAblationInput{
-				CaseID:         caseID,
-				Results:        results,
-				ExpectedFiles:  sortedKeys(expectedFiles),
-				K:              k,
-				TrafficClass:   "synthetic",
-				SnapshotStable: true,
-				MaxRows:        maxAblationRows,
-			}), "", "retrieval_ablation", "/memory/recall/evaluate/saved")
-			report["ablation"] = ablation
-			ablationReports = append(ablationReports, ablation)
-		}
-		impactComparison.addCase(idx, rawCase, results, anyMap(searchResp["search_intelligence"]), expectedNumeric, latencyMs)
-		impactComparison.addActuatorCase(idx, rawCase, searchResp)
-		caseReports = append(caseReports, report)
 	}
 
 	recallAtK := 0.0
@@ -422,6 +516,10 @@ func (s *server) memoryRecallEvaluateSavedNative(w http.ResponseWriter, r *http.
 		graphLift = float64(graphHelpedCases) / float64(graphEvaluatedCases)
 	}
 	avgLatencyMs, p95LatencyMs := recallLatencyStats(latencyValues)
+	evaluationWorkers := 1
+	if len(evaluationCases) > savedRecallEvalWorkerCount {
+		evaluationWorkers = minInt(savedRecallEvalWorkerCount, len(evaluationCases))
+	}
 	directPassed := evaluatedCases > 0 && recallAtK >= gate.MinRecallAtK && mrr >= gate.MinMRR && numericExactness >= gate.MinNumericExactly
 	graphEfficacyStatus := "unmeasured"
 	graphPassed := false
@@ -437,7 +535,8 @@ func (s *server) memoryRecallEvaluateSavedNative(w http.ResponseWriter, r *http.
 	qualityStatus := recallEvalQualityStatus(passed, evaluatedCases, recallAtK, mrr, numericExactness)
 	metrics := map[string]any{
 		"k":                      k,
-		"casesTotal":             len(cfg.Cases),
+		"casesTotal":             len(evaluationCases),
+		"evaluationSplit":        firstNonEmptyStrings(evaluationSplit, "all"),
 		"casesEvaluated":         evaluatedCases,
 		"recallAtK":              roundFloat(recallAtK, 6),
 		"mrr":                    roundFloat(mrr, 6),
@@ -453,6 +552,11 @@ func (s *server) memoryRecallEvaluateSavedNative(w http.ResponseWriter, r *http.
 		"avgLatencyMs":           roundFloat(avgLatencyMs, 3),
 		"p95LatencyMs":           roundFloat(p95LatencyMs, 3),
 		"durationMs":             roundFloat(float64(time.Since(evaluationStartedAt).Microseconds())/1000.0, 3),
+		"evaluationWorkers":      evaluationWorkers,
+		"evaluationMode":         map[bool]string{true: "bounded_worker_pool", false: "sequential_fixture"}[evaluationWorkers > 1],
+		"caseCap":                savedRecallEvalV3MaxCases,
+		"ablationRows":           ablationRowsUsed,
+		"ablationRowCap":         maxAblationRows,
 		"qualityStatus":          qualityStatus,
 		"directPassed":           directPassed,
 		"graphEvaluatedCases":    graphEvaluatedCases,
@@ -488,9 +592,15 @@ func (s *server) memoryRecallEvaluateSavedNative(w http.ResponseWriter, r *http.
 	monitorSample := map[string]any{
 		"timestamp":             nowUTCISO(),
 		"source":                "saved_recall_eval",
+		"case_set_schema_id":    cfg.SchemaID,
+		"case_set_digest":       cfg.CaseSetDigest,
+		"benchmark_eligible":    anyToBool(caseSetHealth["benchmark_eligible"]),
+		"snapshot":              cloneAnyMap(cfg.Snapshot),
+		"custody":               cloneAnyMap(cfg.Custody),
 		"passed":                passed,
 		"qualityStatus":         qualityStatus,
-		"caseCount":             len(cfg.Cases),
+		"caseCount":             len(evaluationCases),
+		"evaluationSplit":       firstNonEmptyStrings(evaluationSplit, "all"),
 		"evaluatedCases":        evaluatedCases,
 		"k":                     k,
 		"recallAtK":             roundFloat(recallAtK, 6),
@@ -510,7 +620,7 @@ func (s *server) memoryRecallEvaluateSavedNative(w http.ResponseWriter, r *http.
 		"evalP95Ms":             roundFloat(p95LatencyMs, 3),
 		"retrievalAlertCount":   0,
 	}
-	impactArtifact := impactComparison.monitorFields(len(cfg.Cases))
+	impactArtifact := impactComparison.monitorFields(len(evaluationCases))
 	for key, value := range impactArtifact {
 		monitorSample[key] = value
 	}
@@ -535,10 +645,19 @@ func (s *server) memoryRecallEvaluateSavedNative(w http.ResponseWriter, r *http.
 		},
 		"cases": caseReports,
 		"savedCaseSet": map[string]any{
-			"case_set_id": ownerOnlyStoreRef("recall_eval_cases"),
-			"version":     cfg.Version,
-			"updatedAt":   cfg.UpdatedAt,
-			"count":       len(cfg.Cases),
+			"case_set_id":        ownerOnlyStoreRef("recall_eval_cases"),
+			"schema_id":          cfg.SchemaID,
+			"version":            cfg.Version,
+			"updatedAt":          cfg.UpdatedAt,
+			"case_set_digest":    cfg.CaseSetDigest,
+			"snapshot":           cloneAnyMap(cfg.Snapshot),
+			"custody":            cloneAnyMap(cfg.Custody),
+			"benchmark_eligible": anyToBool(caseSetHealth["benchmark_eligible"]),
+			"count":              len(cfg.Cases),
+			"evaluation_count":   len(evaluationCases),
+			"evaluation_split":   firstNonEmptyStrings(evaluationSplit, "all"),
+			"evaluation_workers": evaluationWorkers,
+			"evaluation_mode":    map[bool]string{true: "bounded_worker_pool", false: "sequential_fixture"}[evaluationWorkers > 1],
 		},
 		"activation_authority": map[string]any{
 			"requested":  contextPackLearnedComparatorAuthorityRequested(payload),
@@ -557,6 +676,272 @@ func (s *server) memoryRecallEvaluateSavedNative(w http.ResponseWriter, r *http.
 		)
 	}
 	writeJSON(w, http.StatusOK, response)
+}
+
+func applySavedRecallEvalCaseOptionalRetrievalFlags(reqPayload map[string]any, rawCase map[string]any) {
+	if reqPayload == nil || rawCase == nil {
+		return
+	}
+	// Preserve the product default when a saved case omits the flag. An
+	// explicit false remains a real experiment setting and must reach the
+	// retrieval boundary unchanged.
+	if value, present := rawCase["query_expansion"]; present {
+		reqPayload["query_expansion"] = anyToBool(value)
+	}
+}
+
+func recallEvalCasesForSplit(cases []map[string]any, split string) []map[string]any {
+	split = strings.ToLower(strings.TrimSpace(split))
+	if split == "" || split == "all" {
+		return cases
+	}
+	filtered := make([]map[string]any, 0, len(cases))
+	for _, rawCase := range cases {
+		if strings.EqualFold(strings.TrimSpace(anyToString(rawCase["split"])), split) {
+			filtered = append(filtered, rawCase)
+		}
+	}
+	return filtered
+}
+
+const savedRecallEvalWorkerCount = 4
+
+type savedRecallEvalCaseResult struct {
+	index              int
+	rawCase            map[string]any
+	report             map[string]any
+	ablation           map[string]any
+	results            []map[string]any
+	searchIntelligence map[string]any
+	searchResponse     map[string]any
+	expectedNumeric    []string
+	latencyMs          float64
+	retrievalFailed    bool
+	hit                bool
+	reciprocalRank     float64
+	hasExpectations    bool
+	numericMatches     int
+	numericExpected    int
+	citationMatched    int
+	citationExpected   int
+	noHit              bool
+	lowConfidence      bool
+	sourceDiversity    int
+	graphEligible      bool
+	graphContribution  map[string]any
+	graphExplicit      bool
+	graphHelped        bool
+}
+
+func evaluateSavedRecallCasesConcurrently(
+	ctx context.Context,
+	s *server,
+	cases []map[string]any,
+	k int,
+	incomingHeaders http.Header,
+	includeRetrievalDebug bool,
+	includePreferences bool,
+	userID string,
+) []savedRecallEvalCaseResult {
+	if len(cases) == 0 {
+		return []savedRecallEvalCaseResult{}
+	}
+	workerCount := minInt(savedRecallEvalWorkerCount, len(cases))
+	jobs := make(chan int)
+	results := make(chan savedRecallEvalCaseResult, len(cases))
+	var workers sync.WaitGroup
+	for worker := 0; worker < workerCount; worker++ {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for idx := range jobs {
+				results <- evaluateSavedRecallCase(ctx, s, idx, cases[idx], k, incomingHeaders, includeRetrievalDebug, includePreferences, userID)
+			}
+		}()
+	}
+	go func() {
+		defer close(jobs)
+		for idx := range cases {
+			select {
+			case jobs <- idx:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	go func() {
+		workers.Wait()
+		close(results)
+	}()
+	out := make([]savedRecallEvalCaseResult, 0, len(cases))
+	for result := range results {
+		out = append(out, result)
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].index < out[j].index })
+	return out
+}
+
+func evaluateSavedRecallCase(
+	ctx context.Context,
+	s *server,
+	idx int,
+	rawCase map[string]any,
+	k int,
+	incomingHeaders http.Header,
+	includeRetrievalDebug bool,
+	includePreferences bool,
+	userID string,
+) savedRecallEvalCaseResult {
+	result := savedRecallEvalCaseResult{index: idx, rawCase: rawCase}
+	caseID := strings.TrimSpace(anyToString(rawCase["id"]))
+	if caseID == "" {
+		caseID = fmt.Sprintf("case-%d", idx+1)
+	}
+	query := strings.TrimSpace(anyToString(rawCase["query"]))
+	if query == "" {
+		result.report = map[string]any{
+			"id": caseID, "query": "", "k": k, "hit": false, "matched_rank": nil,
+			"reciprocal_rank": 0.0, "has_expectations": false, "result_count": 0,
+			"top_score": 0.0, "expected_files": []string{}, "expected_substrings": []string{},
+			"expected_numeric": []string{}, "matched_numeric": []string{}, "matched_files": []string{},
+			"citation_coverage": 0.0, "source_diversity": 0, "latency_ms": 0.0,
+			"graph_contribution": recallGraphContributionUnavailable("case query missing"),
+			"warnings":           []string{"case query missing"},
+			"retrieval_mode":     normalizeRetrievalMode(anyToString(rawCase["retrieval_mode"])),
+			"agent_id":           strings.TrimSpace(anyToString(rawCase["agent_id"])),
+		}
+		return result
+	}
+	directLimit := maxInt(clampInt(anyToInt(rawCase["limit"], 10), 1, 100), k)
+	reqPayload := map[string]any{
+		"query": query, "limit": directLimit,
+		"project":              strings.TrimSpace(anyToString(rawCase["project"])),
+		"topic_path":           strings.TrimSpace(anyToString(rawCase["topic_path"])),
+		"retrieval_mode":       normalizeRetrievalMode(anyToString(rawCase["retrieval_mode"])),
+		"retrieval_intent":     strings.TrimSpace(strings.ToLower(anyToString(rawCase["retrieval_intent"]))),
+		"sources":              anyToStringSlice(rawCase["sources"]),
+		"source_weights":       cloneAnyMap(anyMap(rawCase["source_weights"])),
+		"rerank_with_learning": true, "include_retrieval_debug": includeRetrievalDebug,
+		"include_grounding": true, "include_preferences": includePreferences,
+		"user_id": userID, "agent_id": strings.TrimSpace(anyToString(rawCase["agent_id"])),
+		"auto_escalate": anyToBool(rawCase["auto_escalate"]), "deep_async": false,
+		"callback_url": "", "traffic_class": "synthetic",
+	}
+	applySavedRecallEvalCaseOptionalRetrievalFlags(reqPayload, rawCase)
+	if strings.TrimSpace(anyToString(reqPayload["retrieval_intent"])) == "" {
+		reqPayload["retrieval_intent"] = "decision"
+	}
+	caseStartedAt := time.Now()
+	searchResp, status, execErr := s.executeRetrieval(ctx, incomingHeaders, reqPayload, true)
+	result.latencyMs = float64(time.Since(caseStartedAt).Microseconds()) / 1000.0
+	if execErr != nil {
+		result.retrievalFailed = true
+		result.report = map[string]any{
+			"id": caseID, "query": query, "k": k, "hit": false, "matched_rank": nil,
+			"reciprocal_rank": 0.0, "has_expectations": false, "result_count": 0,
+			"top_score": 0.0, "expected_files": []string{}, "expected_substrings": []string{},
+			"expected_numeric": []string{}, "matched_numeric": []string{}, "matched_files": []string{},
+			"citation_coverage": 0.0, "source_diversity": 0,
+			"latency_ms":         roundFloat(result.latencyMs, 3),
+			"graph_contribution": recallGraphContributionUnavailable("retrieval failed"),
+			"warnings":           []string{"retrieval failed: " + execErr.Error()},
+			"retrieval_mode":     reqPayload["retrieval_mode"], "agent_id": reqPayload["agent_id"],
+			"status_code": status,
+		}
+		return result
+	}
+	result.searchResponse = searchResp
+	result.searchIntelligence = anyMap(searchResp["search_intelligence"])
+	result.results = parseRows(searchResp["results"])
+	grounding := anyMap(searchResp["grounding"])
+	expectedFiles := normalizeExpectedFileTokens(rawCase["expected_files"])
+	expectedTerms := normalizeExpectedTerms(rawCase["expected_substrings"])
+	result.expectedNumeric = normalizeExpectedNumeric(rawCase["expected_numeric"])
+	graphExpectedFiles := normalizeExpectedFileTokens(rawCase["graph_expected_files"])
+	graphExpectedTerms := normalizeExpectedTerms(rawCase["graph_expected_substrings"])
+	reportedGraphExpectedFiles := sortedKeys(graphExpectedFiles)
+	reportedGraphExpectedTerms := append([]string(nil), graphExpectedTerms...)
+	hasExplicitGraphExpectations := len(graphExpectedFiles) > 0 || len(graphExpectedTerms) > 0
+	if !hasExplicitGraphExpectations {
+		graphExpectedFiles = expectedFiles
+		graphExpectedTerms = expectedTerms
+	}
+	matchedFiles := matchedExpectedFilesWithinK(result.results, expectedFiles, k)
+	caseCitationCoverage := 1.0
+	if len(expectedFiles) > 0 {
+		caseCitationCoverage = float64(len(matchedFiles)) / float64(len(expectedFiles))
+	}
+	caseSources := uniqueSourcesWithinK(result.results, k)
+	graphContribution := s.evaluateRecallGraphContribution(ctx, result.results, graphExpectedFiles, graphExpectedTerms, k, strings.TrimSpace(anyToString(reqPayload["project"])))
+	if hasExplicitGraphExpectations {
+		graphContribution["expectation_mode"] = "explicit_graph"
+	} else {
+		graphContribution["expectation_mode"] = "direct_fallback"
+	}
+	result.graphContribution = graphContribution
+	matchedRank := matchRankWithinK(result.results, expectedFiles, expectedTerms, k)
+	result.hit = matchedRank != nil
+	if matchedRank != nil && *matchedRank > 0 {
+		result.reciprocalRank = 1.0 / float64(*matchedRank)
+	}
+	result.hasExpectations = len(expectedFiles) > 0 || len(expectedTerms) > 0
+	result.numericMatches = len(matchedNumericFacts(grounding, result.expectedNumeric))
+	result.numericExpected = len(result.expectedNumeric)
+	result.citationMatched = len(matchedFiles)
+	result.citationExpected = len(expectedFiles)
+	result.noHit = result.hasExpectations && !result.hit
+	result.lowConfidence = result.hasExpectations && topResultScore(result.results) > 0 && topResultScore(result.results) < 0.45
+	result.sourceDiversity = len(caseSources)
+	result.graphExplicit = hasExplicitGraphExpectations
+	result.graphEligible = hasExplicitGraphExpectations
+	result.graphHelped = anyToBool(graphContribution["helped"])
+	report := map[string]any{
+		"id": caseID, "query": query, "k": k, "hit": result.hit, "matched_rank": matchedRank,
+		"reciprocal_rank": roundFloat(result.reciprocalRank, 6), "has_expectations": result.hasExpectations,
+		"result_count": len(result.results), "top_score": roundFloat(topResultScore(result.results), 6),
+		"expected_files": sortedKeys(expectedFiles), "expected_substrings": expectedTerms,
+		"graph_expected_files": reportedGraphExpectedFiles, "graph_expected_substrings": reportedGraphExpectedTerms,
+		"graph_effective_expected_files": sortedKeys(graphExpectedFiles), "graph_effective_expected_substrings": graphExpectedTerms,
+		"graph_expectations_explicit": hasExplicitGraphExpectations, "expected_numeric": result.expectedNumeric,
+		"matched_numeric": matchedNumericFacts(grounding, result.expectedNumeric), "matched_files": matchedFiles,
+		"citation_coverage": roundFloat(caseCitationCoverage, 6), "source_diversity": len(caseSources),
+		"sources": caseSources, "latency_ms": roundFloat(result.latencyMs, 3),
+		"graph_contribution": graphContribution, "warnings": parseWarnings(searchResp["warnings"]),
+		"retrieval_mode": searchResp["retrieval_mode"], "agent_id": searchResp["agent_id"],
+		"retry_attempts": 0, "transient_retry_triggered": false, "transient_retry_recovered": false,
+		"attempt_modes": []string{normalizeRetrievalMode(anyToString(searchResp["retrieval_mode"]))},
+	}
+	if includeRetrievalDebug {
+		report["retrieval"] = searchResp["retrieval_debug"]
+	}
+	result.report = report
+	return result
+}
+
+func buildSavedRecallEvalAblation(rawCase map[string]any, results []map[string]any, k int, maxRows int) map[string]any {
+	if maxRows < 1 {
+		return nil
+	}
+	caseID := strings.TrimSpace(anyToString(rawCase["id"]))
+	if caseID == "" {
+		caseID = "case-unknown"
+	}
+	return attachPayloadFormatContract(retrievalAblationSchemaID, buildRetrievalAblation(retrievalAblationInput{
+		CaseID:         caseID,
+		Results:        results,
+		ExpectedFiles:  sortedKeys(normalizeExpectedFileTokens(rawCase["expected_files"])),
+		K:              k,
+		TrafficClass:   "synthetic",
+		SnapshotStable: true,
+		MaxRows:        maxRows,
+	}), "", "retrieval_ablation", "/memory/recall/evaluate/saved")
+}
+
+func savedRecallEvalAblationRowCount(report map[string]any) int {
+	if report == nil {
+		return 0
+	}
+	return anyToInt(anyMap(report["summary"])["evaluated_target_count"], 0)
 }
 
 func (s *server) writeRecallEvalCaseSetInvalid(w http.ResponseWriter, cfg recallEvalSavedConfig, health map[string]any) {
@@ -602,6 +987,11 @@ func (s *server) writeRecallEvalCaseSetInvalid(w http.ResponseWriter, cfg recall
 	monitorSample := map[string]any{
 		"timestamp":           nowUTCISO(),
 		"source":              "saved_recall_eval",
+		"case_set_schema_id":  cfg.SchemaID,
+		"case_set_digest":     cfg.CaseSetDigest,
+		"benchmark_eligible":  anyToBool(health["benchmark_eligible"]),
+		"snapshot":            cloneAnyMap(cfg.Snapshot),
+		"custody":             cloneAnyMap(cfg.Custody),
 		"passed":              false,
 		"failedFast":          true,
 		"qualityStatus":       qualityStatus,
@@ -648,10 +1038,15 @@ func (s *server) writeRecallEvalCaseSetInvalid(w http.ResponseWriter, cfg recall
 		},
 		"cases": []any{},
 		"savedCaseSet": map[string]any{
-			"case_set_id": ownerOnlyStoreRef("recall_eval_cases"),
-			"version":     cfg.Version,
-			"updatedAt":   cfg.UpdatedAt,
-			"count":       len(cfg.Cases),
+			"case_set_id":        ownerOnlyStoreRef("recall_eval_cases"),
+			"schema_id":          cfg.SchemaID,
+			"version":            cfg.Version,
+			"updatedAt":          cfg.UpdatedAt,
+			"case_set_digest":    cfg.CaseSetDigest,
+			"snapshot":           cloneAnyMap(cfg.Snapshot),
+			"custody":            cloneAnyMap(cfg.Custody),
+			"benchmark_eligible": anyToBool(health["benchmark_eligible"]),
+			"count":              len(cfg.Cases),
 		},
 	}
 	writeJSON(w, http.StatusOK, response)
@@ -682,10 +1077,17 @@ func loadSavedRecallEvalConfig() (recallEvalSavedConfig, error) {
 	}
 	gateRaw := anyMap(payload["gate"])
 	cfg := recallEvalSavedConfig{
-		Path:      path,
-		Version:   payload["version"],
-		UpdatedAt: payload["updatedAt"],
-		K:         clampInt(anyToInt(payload["k"], defaultRecallEvalK), 1, 20),
+		Path:          path,
+		SchemaID:      strings.TrimSpace(anyToString(payload["schema_id"])),
+		Version:       payload["version"],
+		UpdatedAt:     payload["updatedAt"],
+		CaseSetDigest: strings.TrimSpace(anyToString(payload["case_set_digest"])),
+		Source:        strings.TrimSpace(anyToString(payload["source"])),
+		Synthetic:     anyToBool(payload["synthetic"]),
+		Snapshot:      cloneAnyMap(anyMap(payload["snapshot"])),
+		Custody:       cloneAnyMap(anyMap(payload["custody"])),
+		SplitCounts:   cloneAnyMap(anyMap(payload["split_counts"])),
+		K:             clampInt(anyToInt(payload["k"], defaultRecallEvalK), 1, 20),
 		Gate: recallEvalGate{
 			MinRecallAtK:      clampFloat(parseAnyFloat(gateRaw["minRecallAtK"], defaultRecallEvalGateMinRecallAtK), 0.0, 1.0),
 			MinMRR:            clampFloat(parseAnyFloat(gateRaw["minMrr"], defaultRecallEvalGateMinMRR), 0.0, 1.0),
@@ -693,43 +1095,24 @@ func loadSavedRecallEvalConfig() (recallEvalSavedConfig, error) {
 		},
 		Cases: cases,
 	}
-	if len(cfg.Cases) == 0 {
-		cfg.Cases = defaultSavedRecallEvalConfig(path).Cases
-	}
 	return cfg, nil
 }
 
 func defaultSavedRecallEvalConfig(path string) recallEvalSavedConfig {
 	return recallEvalSavedConfig{
 		Path:      path,
-		Version:   1,
+		SchemaID:  savedRecallEvalV3SchemaID,
+		Version:   savedRecallEvalV3Version,
 		UpdatedAt: nowUTCISO(),
+		Source:    "no_live_case_set",
+		Synthetic: false,
 		K:         defaultRecallEvalK,
 		Gate: recallEvalGate{
 			MinRecallAtK:      defaultRecallEvalGateMinRecallAtK,
 			MinMRR:            defaultRecallEvalGateMinMRR,
 			MinNumericExactly: defaultRecallEvalGateMinNumeric,
 		},
-		Cases: []map[string]any{
-			{
-				"id":                  "health-surface",
-				"query":               "health status",
-				"limit":               8,
-				"expected_substrings": []string{"health"},
-			},
-			{
-				"id":                  "trading-telemetry-surface",
-				"query":               "trading telemetry process",
-				"limit":               8,
-				"expected_substrings": []string{"trading"},
-			},
-			{
-				"id":                  "retrieval-sources-surface",
-				"query":               "letta memory_bank retrieval",
-				"limit":               10,
-				"expected_substrings": []string{"letta", "memory_bank"},
-			},
-		},
+		Cases: []map[string]any{},
 	}
 }
 
@@ -737,6 +1120,9 @@ func validateSavedRecallEvalCaseSet(cfg recallEvalSavedConfig) map[string]any {
 	issues := make([]map[string]any, 0)
 	invalidCases := map[int]struct{}{}
 	graphCaseCount := 0
+	caseIDs := map[string]int{}
+	directFileKeys := map[string]int{}
+	directQueryKeys := map[string]int{}
 	addIssue := func(idx int, rawCase map[string]any, code string, detail string, fix string) {
 		caseID := strings.TrimSpace(anyToString(rawCase["id"]))
 		if caseID == "" {
@@ -750,6 +1136,43 @@ func validateSavedRecallEvalCaseSet(cfg recallEvalSavedConfig) map[string]any {
 			"detail":     detail,
 			"fix":        fix,
 		})
+	}
+	addGlobalIssue := func(code string, detail string, fix string) {
+		issues = append(issues, map[string]any{
+			"case_index": -1,
+			"case_id":    "case_set",
+			"code":       code,
+			"detail":     detail,
+			"fix":        fix,
+		})
+	}
+	version := anyToInt(cfg.Version, 0)
+	v3 := version >= savedRecallEvalV3Version || strings.TrimSpace(cfg.SchemaID) == savedRecallEvalV3SchemaID
+	if len(cfg.Cases) == 0 {
+		addGlobalIssue("no_live_cases", "saved case set contains no live file-backed evaluation cases", "Write durable memory and refresh; an empty or synthetic set is not a benchmark.")
+	}
+	if cfg.Synthetic {
+		addGlobalIssue("synthetic_case_set", "synthetic or built-in cases are not benchmark eligible", "Refresh from the live indexed memory store and retain the frozen snapshot custody metadata.")
+	}
+	if v3 {
+		if strings.TrimSpace(cfg.SchemaID) != savedRecallEvalV3SchemaID {
+			addGlobalIssue("schema_version_mismatch", "v3 case set is missing the saved_recall_eval_case_set.v3 schema id", "Refresh the case set using the v3 native refresh route.")
+		}
+		if strings.TrimSpace(cfg.CaseSetDigest) == "" {
+			addGlobalIssue("missing_case_set_digest", "v3 case set has no frozen case-set digest", "Refresh and persist the complete v3 case set including case_set_digest.")
+		} else if expected := "sha256:" + recallEvalCaseSetDigest(cfg.Cases); !strings.EqualFold(strings.TrimSpace(cfg.CaseSetDigest), expected) {
+			addGlobalIssue("case_set_digest_mismatch", "case_set_digest does not match the persisted cases", "Do not edit saved cases in place; regenerate the frozen case set.")
+		}
+		if len(cfg.Snapshot) == 0 {
+			addGlobalIssue("missing_snapshot_metadata", "v3 case set has no frozen source snapshot metadata", "Refresh from the indexed memory store so source scope and snapshot digest are recorded.")
+		}
+		diversity := anyMap(cfg.Snapshot["diversity"])
+		if len(diversity) > 0 && !anyToBool(diversity["valid"]) {
+			addGlobalIssue("insufficient_diversity", "v3 case set did not meet its available population diversity minima", "Increase the bounded sample or refresh after more independent projects, topics, agents, sessions, and time horizons are indexed.")
+		}
+		if len(cfg.Custody) == 0 || anyToBool(cfg.Custody["synthetic"]) {
+			addGlobalIssue("invalid_custody_metadata", "v3 case set custody is missing or marked synthetic", "Persist gateway-go frozen-live-index custody metadata; do not benchmark synthetic fallback cases.")
+		}
 	}
 	defaultIDs := map[string]struct{}{
 		"health-surface":            {},
@@ -765,6 +1188,13 @@ func validateSavedRecallEvalCaseSet(cfg recallEvalSavedConfig) map[string]any {
 		graphExpectedFiles := sortedKeys(normalizeExpectedFileTokens(rawCase["graph_expected_files"]))
 		graphExpectedTerms := normalizeExpectedTerms(rawCase["graph_expected_substrings"])
 		graphCase := strings.EqualFold(strings.TrimSpace(anyToString(rawCase["case_kind"])), "graph_neighbor") || len(graphExpectedFiles) > 0 || len(graphExpectedTerms) > 0
+		if caseID == "" {
+			addIssue(idx, rawCase, "missing_case_id", "case has no stable id", "Refresh the case set; v3 ids are deterministic hashes of the frozen source identity.")
+		} else if prior, exists := caseIDs[strings.ToLower(caseID)]; exists {
+			addIssue(idx, rawCase, "duplicate_case_id", fmt.Sprintf("case id duplicates case %d", prior), "Regenerate the case set or give each direct source file one stable case id.")
+		} else {
+			caseIDs[strings.ToLower(caseID)] = idx
+		}
 		if _, ok := defaultIDs[caseID]; ok {
 			addIssue(idx, rawCase, "default_fallback_case", "case matches the built-in fallback recall surface", "Refresh saved cases from live memory with /memory/recall/eval-cases/refresh after writing file-backed memory.")
 		}
@@ -785,6 +1215,32 @@ func validateSavedRecallEvalCaseSet(cfg recallEvalSavedConfig) map[string]any {
 		if len(expectedFiles) > 1 {
 			addIssue(idx, rawCase, "multi_file_rollup_case", "case expects multiple files from a broad rollup", "Split this into one case per expected file, or refresh from file-backed memory docs.")
 		}
+		if !graphCase && len(expectedFiles) == 1 {
+			fileKey := strings.ToLower(project + "\x00" + expectedFiles[0])
+			if prior, exists := directFileKeys[fileKey]; exists {
+				addIssue(idx, rawCase, "duplicate_expected_file", fmt.Sprintf("direct case reuses expected file from case %d", prior), "Keep one direct case per project/file in the frozen case set.")
+			} else {
+				directFileKeys[fileKey] = idx
+			}
+			queryKey := strings.ToLower(project + "\x00" + strings.Join(strings.Fields(query), " "))
+			if prior, exists := directQueryKeys[queryKey]; exists {
+				addIssue(idx, rawCase, "duplicate_query", fmt.Sprintf("direct query duplicates case %d", prior), "Use deterministic stratified refresh; duplicate queries do not add evaluation coverage.")
+			} else {
+				directQueryKeys[queryKey] = idx
+			}
+			if recallEvalQueryContainsExpectedFile(query, expectedFiles[0]) {
+				addIssue(idx, rawCase, "query_contains_expected_file", "query contains the exact expected file name", "Refresh with filename-redacted query derivation; do not use the expected file as an oracle.")
+			}
+		}
+		if v3 {
+			split := strings.ToLower(strings.TrimSpace(anyToString(rawCase["split"])))
+			if split != "train" && split != "holdout" {
+				addIssue(idx, rawCase, "missing_split", "v3 case has no train or temporal holdout split", "Refresh the case set with the v3 temporal split generator.")
+			}
+			if split == "holdout" && strings.TrimSpace(anyToString(rawCase["source_updated_at"])) == "" {
+				addIssue(idx, rawCase, "holdout_missing_timestamp", "temporal holdout case has no source timestamp", "Keep only timestamped newest cases in the temporal holdout split.")
+			}
+		}
 		if graphCase {
 			graphCaseCount++
 			if len(graphExpectedFiles) != 1 {
@@ -800,7 +1256,15 @@ func validateSavedRecallEvalCaseSet(cfg recallEvalSavedConfig) map[string]any {
 	}
 	return map[string]any{
 		"valid":              len(issues) == 0,
+		"benchmark_eligible": len(issues) == 0 && len(cfg.Cases) > 0 && !cfg.Synthetic,
 		"status":             status,
+		"schema_id":          cfg.SchemaID,
+		"version":            cfg.Version,
+		"source":             cfg.Source,
+		"synthetic":          cfg.Synthetic,
+		"case_set_digest":    cfg.CaseSetDigest,
+		"snapshot":           cloneAnyMap(cfg.Snapshot),
+		"custody":            cloneAnyMap(cfg.Custody),
 		"case_count":         len(cfg.Cases),
 		"invalid_case_count": len(invalidCases),
 		"graph_case_count":   graphCaseCount,
@@ -808,6 +1272,23 @@ func validateSavedRecallEvalCaseSet(cfg recallEvalSavedConfig) map[string]any {
 		"issues":             issues,
 		"agent_instructions": recallEvalCaseSetAgentInstructions(),
 	}
+}
+
+func recallEvalQueryContainsExpectedFile(query string, fileName string) bool {
+	queryTokens := map[string]struct{}{}
+	for _, token := range strings.Fields(strings.ToLower(strings.TrimSpace(query))) {
+		queryTokens[strings.Trim(token, "\t\r\n .,;:!?()[]{}\\\"'")] = struct{}{}
+	}
+	cleanName := strings.ToLower(strings.Trim(strings.TrimSpace(strings.ReplaceAll(fileName, "\\", "/")), "/"))
+	baseName := filepath.Base(cleanName)
+	for _, token := range []string{cleanName, baseName} {
+		if len(token) >= 3 {
+			if _, exists := queryTokens[token]; exists {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func recallEvalNormalizeCaseTopic(value string) string {
@@ -820,11 +1301,12 @@ func recallEvalNormalizeCaseTopic(value string) string {
 
 func recallEvalCaseSetAgentInstructions() []string {
 	return []string{
-		"Refresh saved recall cases from live file-backed memory: POST /memory/recall/eval-cases/refresh with {\"project\":\"<project>\",\"topic_prefix\":\"<topic/path>\",\"max_cases\":12,\"min_hits\":1,\"include_graph_cases\":true,\"graph_max_cases\":3}.",
+		"Refresh up to 300 saved recall cases from the bounded live indexed memory store: POST /memory/recall/eval-cases/refresh with {\"project\":\"<project>\",\"topic_prefix\":\"<topic/path>\",\"max_cases\":300,\"min_hits\":1,\"include_graph_cases\":true,\"graph_max_cases\":3}.",
 		"If refresh has no eligible memory, write durable memory first: POST /memory/write with projectName, fileName, topicPath, and content, then refresh the saved eval cases.",
 		"Each saved recall eval case must include project, topic_path, query, limit, and exactly one expected_files item naming the file the query should recover.",
-		"Do not use built-in fallback case IDs, empty project, topic_path root, or broad rollup cases with multiple expected_files.",
+		"Do not use built-in fallback case IDs, synthetic cases, empty project, topic_path root, or broad rollup cases with multiple expected_files.",
 		"When authoring ORCH_RECALL_EVAL_CASES_PATH manually, split broad topics into one concrete file-backed case per expected memory file.",
+		"Treat the persisted v3 snapshot, case_set_digest, and custody metadata as immutable; regenerate the set after source memory changes.",
 	}
 }
 

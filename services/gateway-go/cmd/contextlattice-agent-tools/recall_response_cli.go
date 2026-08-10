@@ -9,8 +9,10 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"net/http/httptrace"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode"
 )
@@ -233,8 +235,9 @@ func (c *cli) cmdRecallResponse(args []string) error {
 	}
 
 	transport := c.recallResponseTransport()
+	requestTimeout := clientTimeoutFor(parsed)
 	raw, err := transport.requestRecallResponseWithRetries(
-		"/memory/recall/response", payload, parsed.float("timeout", 30), parsed.int("retries", 2), parsed.float("retry_delay", 1),
+		"/memory/recall/response", payload, requestTimeout, parsed.int("retries", 0), parsed.float("retry_delay", 1),
 	)
 	if err != nil {
 		if emitErr := c.emit(failureRecallResponse(), parsed.bool("pretty") || !parsed.bool("raw")); emitErr != nil {
@@ -300,9 +303,11 @@ func (c *cli) requestRecallResponseWithRetries(path string, payload any, timeout
 		if firstString(result["schema_id"]) == recallResponseContractID {
 			return result, nil
 		}
-		if attempt < retries {
+		if attempt < retries && cliRequestRetryable(lastErr) {
 			time.Sleep(time.Duration(delay*float64(attempt+1)) * time.Second)
+			continue
 		}
+		break
 	}
 	return last, lastErr
 }
@@ -315,7 +320,7 @@ func (c *cli) requestRecallResponseJSON(ctx context.Context, method, path string
 	if payload != nil {
 		raw, err := json.Marshal(payload)
 		if err != nil {
-			return nil, 0, err
+			return nil, 0, cliRequestFailure(method, path, 0, err, false, false)
 		}
 		bodyBytes = raw
 		body = bytes.NewReader(bodyBytes)
@@ -326,7 +331,7 @@ func (c *cli) requestRecallResponseJSON(ctx context.Context, method, path string
 	}
 	req, err := http.NewRequestWithContext(ctx, method, target, body)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, cliRequestFailure(method, path, 0, err, false, false)
 	}
 	if payload != nil {
 		req.Header.Set("content-type", "application/json")
@@ -336,7 +341,7 @@ func (c *cli) requestRecallResponseJSON(ctx context.Context, method, path string
 	}
 	headers, err := entitlementHeaders()
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, cliRequestFailure(method, path, 0, err, false, false)
 	}
 	for header, value := range headers {
 		if strings.TrimSpace(value) != "" {
@@ -344,7 +349,7 @@ func (c *cli) requestRecallResponseJSON(ctx context.Context, method, path string
 		}
 	}
 	if err := addRuntimeLicenseRequestProof(req, bodyBytes); err != nil {
-		return nil, 0, err
+		return nil, 0, cliRequestFailure(method, path, 0, err, false, false)
 	}
 	baseClient := c.client
 	if baseClient == nil {
@@ -354,30 +359,41 @@ func (c *cli) requestRecallResponseJSON(ctx context.Context, method, path string
 	client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
 		return http.ErrUseLastResponse
 	}
+	var wroteRequest atomic.Bool
+	var gotConnection atomic.Bool
+	trace := &httptrace.ClientTrace{
+		GotConn: func(httptrace.GotConnInfo) {
+			gotConnection.Store(true)
+		},
+		WroteRequest: func(httptrace.WroteRequestInfo) {
+			wroteRequest.Store(true)
+		},
+	}
+	req = req.WithContext(httptrace.WithClientTrace(req.Context(), trace))
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, cliRequestFailure(method, path, 0, err, wroteRequest.Load(), gotConnection.Load())
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= http.StatusMultipleChoices && resp.StatusCode < 400 {
-		return nil, resp.StatusCode, errors.New("recall-response transport refused redirect")
+		return nil, resp.StatusCode, cliRequestFailure(method, path, resp.StatusCode, errors.New("recall-response transport refused redirect"), true, true)
 	}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, recallResponseCLIContractMaxJSONBytes+1))
 	if err != nil {
-		return nil, resp.StatusCode, err
+		return nil, resp.StatusCode, cliRequestFailure(method, path, resp.StatusCode, err, true, true)
 	}
 	if len(raw) > recallResponseCLIContractMaxJSONBytes {
-		return nil, resp.StatusCode, errors.New("gateway recall response exceeded its bounded output contract")
+		return nil, resp.StatusCode, cliRequestFailure(method, path, resp.StatusCode, errors.New("gateway recall response exceeded its bounded output contract"), true, true)
 	}
 	parsed := map[string]any{}
 	if len(bytes.TrimSpace(raw)) == 0 {
-		return nil, resp.StatusCode, errors.New("gateway recall response body was empty")
+		return nil, resp.StatusCode, cliRequestFailure(method, path, resp.StatusCode, errors.New("gateway recall response body was empty"), true, true)
 	}
 	if err := json.Unmarshal(raw, &parsed); err != nil {
-		return nil, resp.StatusCode, errors.New("gateway recall response body was malformed JSON")
+		return nil, resp.StatusCode, cliRequestFailure(method, path, resp.StatusCode, errors.New("gateway recall response body was malformed JSON"), true, true)
 	}
 	if resp.StatusCode >= 400 {
-		return parsed, resp.StatusCode, fmt.Errorf("%s %s returned status=%d", method, path, resp.StatusCode)
+		return parsed, resp.StatusCode, cliRequestFailure(method, path, resp.StatusCode, fmt.Errorf("%s %s returned status=%d", method, path, resp.StatusCode), true, true)
 	}
 	return parsed, resp.StatusCode, nil
 }

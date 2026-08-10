@@ -316,9 +316,7 @@ func recallResponseCanonicalComponentOutcomes(sample map[string]any) ([]any, boo
 // retained component is resealed before the final closed-contract check.
 func recallResponseFitCandidateBudget(candidate map[string]any) bool {
 	answer := anyMap(candidate["answer"])
-	composition := anyMap(answer["composition"])
 	proof := anyMap(answer["proof_spine"])
-	scope := anyMap(candidate["request_scope"])
 	for attempts := 0; attempts < recallResponseMaxEvidence+recallResponseMaxModules; attempts++ {
 		compactBytes, compactTokens := recallResponseCompactBudget(candidate)
 		if compactBytes <= recallResponseMaxCompactBytes && compactTokens <= recallResponseMaxCompactTokens {
@@ -331,38 +329,49 @@ func recallResponseFitCandidateBudget(candidate map[string]any) bool {
 		if recallResponsePruneLowestUnprovedEvidence(candidate, proof) {
 			continue
 		}
-		modules := contextPackAnyList(answer["components"])
-		remove := -1
-		for index := len(modules) - 1; index > 0; index-- {
-			if !recallResponseModuleSafety[anyToString(anyMap(modules[index])["kind"])] {
-				remove = index
-				break
-			}
-		}
-		if remove < 0 {
+		if !recallResponsePruneOptionalSecondaryModule(candidate) {
 			return false
 		}
-		modules = append(append([]any(nil), modules[:remove]...), modules[remove+1:]...)
-		ordered := make([]string, 0, len(modules))
-		for index, raw := range modules {
-			module := anyMap(raw)
-			module["ordinal"] = index + 1
-			module["primary"] = index == 0
-			if !recallResponseSealComponentIdentity(module) {
-				return false
-			}
-			ordered = append(ordered, anyToString(module["kind"]))
-		}
-		answer["components"] = modules
-		composition["primary_module"] = ordered[0]
-		composition["ordered_modules"] = recallResponseAnyStrings(ordered)
-		if !recallResponseValidateModules(modules, proof, scope) {
-			return false
-		}
-		candidate["response_id"] = recallResponseIDForResponse(candidate)
-		candidate["response_digest"] = recallResponseSemanticDigest(candidate)
 	}
 	return false
+}
+
+func recallResponsePruneOptionalSecondaryModule(candidate map[string]any) bool {
+	answer := anyMap(candidate["answer"])
+	composition := anyMap(answer["composition"])
+	proof := anyMap(answer["proof_spine"])
+	scope := anyMap(candidate["request_scope"])
+	modules := contextPackAnyList(answer["components"])
+	remove := -1
+	for index := len(modules) - 1; index > 0; index-- {
+		if !recallResponseModuleSafety[anyToString(anyMap(modules[index])["kind"])] {
+			remove = index
+			break
+		}
+	}
+	if remove < 0 {
+		return false
+	}
+	modules = append(append([]any(nil), modules[:remove]...), modules[remove+1:]...)
+	ordered := make([]string, 0, len(modules))
+	for index, raw := range modules {
+		module := anyMap(raw)
+		module["ordinal"] = index + 1
+		module["primary"] = index == 0
+		if !recallResponseSealComponentIdentity(module) {
+			return false
+		}
+		ordered = append(ordered, anyToString(module["kind"]))
+	}
+	answer["components"] = modules
+	composition["primary_module"] = ordered[0]
+	composition["ordered_modules"] = recallResponseAnyStrings(ordered)
+	if !recallResponseValidateModules(modules, proof, scope) {
+		return false
+	}
+	candidate["response_id"] = recallResponseIDForResponse(candidate)
+	candidate["response_digest"] = recallResponseSemanticDigest(candidate)
+	return true
 }
 
 func recallResponsePruneLowestUnprovedEvidence(candidate, proof map[string]any) bool {
@@ -412,9 +421,13 @@ func projectRecallResponseV1ControlFromArtifacts(input map[string]any, policy va
 	return recallResponseFailClosedU2Control(control, policy, asOf)
 }
 
-func recallResponseCandidateOrControl(control, candidate map[string]any, policy validatedRecallResponsePolicyInput, asOf string, valid bool) map[string]any {
+func recallResponseCandidateOrControl(control, candidate map[string]any, policy validatedRecallResponsePolicyInput, asOf string, valid bool, receipts ...map[string]any) map[string]any {
 	if !valid || candidate == nil {
-		return recallResponseFailClosedU2Control(control, policy, asOf)
+		fallback := recallResponseFailClosedU2Control(control, policy, asOf)
+		if len(receipts) > 0 {
+			recallResponseAttachFallbackStageReceipt(fallback, receipts[0])
+		}
+		return fallback
 	}
 	return candidate
 }

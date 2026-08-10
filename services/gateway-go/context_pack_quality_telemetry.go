@@ -158,9 +158,12 @@ func newContextPackQualityTelemetryWithLedger(limit int, ledger *contextPackQual
 
 // migratePersistedTopicPrivacy is a one-way, owner-only telemetry schema
 // migration. It replaces top-level quality topic paths and legacy observable-
-// only reporter labels with deterministic project-bound refs while preserving
-// every row's order, receipt, and outcome semantics. Canonical memory remains
-// the sole owner of topic labels and raw reporter-selected identifiers.
+// only reporter labels with deterministic project-bound refs. It also retires
+// the exact pre-binding component reference shape written by early
+// recall-response builds. Those quality rows and their selection receipts stay
+// intact, but their incomplete response link cannot become current attribution
+// evidence. Canonical memory remains the sole owner of topic labels and raw
+// reporter-selected identifiers.
 func (t *contextPackQualityTelemetry) migratePersistedTopicPrivacy() error {
 	if t == nil || t.ledger == nil || !t.ledger.enabled || strings.TrimSpace(t.ledger.path) == "" {
 		return nil
@@ -177,8 +180,23 @@ func (t *contextPackQualityTelemetry) migratePersistedTopicPrivacy() error {
 		// closed until a human has repaired the malformed ledger.
 		return fmt.Errorf("%w: malformed ledger rows", errContextPackPrivacyMigrationRejected)
 	}
+	outcomeSamples := make(map[string]struct{})
+	for _, row := range rows {
+		if anyToString(row["schema_id"]) != contextPackQualityOutcomeSchemaID {
+			continue
+		}
+		if sampleID := strings.TrimSpace(anyToString(row["sample_id"])); sampleID != "" {
+			outcomeSamples[sampleID] = struct{}{}
+		}
+	}
 	needsMigration := false
 	for _, row := range rows {
+		if contextPackQualityLegacyResponseBindingRetirable(row) {
+			if _, linked := outcomeSamples[strings.TrimSpace(anyToString(row["sample_id"]))]; linked {
+				return fmt.Errorf("%w: legacy response binding has a dependent outcome", errContextPackPrivacyMigrationRejected)
+			}
+			needsMigration = true
+		}
 		privacySafeRow := row
 		if anyToString(row["schema_id"]) == contextPackQualityOutcomeSchemaID {
 			var reporterMigrated bool
@@ -207,6 +225,11 @@ func (t *contextPackQualityTelemetry) migratePersistedTopicPrivacy() error {
 	content := make([]byte, 0)
 	for _, original := range rows {
 		row := cloneJSONMap(original)
+		if contextPackQualityLegacyResponseBindingRetirable(row) {
+			delete(row, "recall_response_id")
+			delete(row, "recall_response_digest")
+			delete(row, "response_component_refs")
+		}
 		if anyToString(row["schema_id"]) == contextPackQualityOutcomeSchemaID {
 			row, _, err = contextPackQualityMigrateLegacyOutcomeReporter(row)
 			if err != nil {
@@ -1671,6 +1694,15 @@ func contextPackQualityEntryFromSample(sample map[string]any) map[string]any {
 	if modeledCalls < 0 {
 		modeledCalls = 0
 	}
+	warningCount := maxInt(anyToInt(sample["warning_count"], 0), 0)
+	warningNoticeCount := maxInt(anyToInt(sample["warning_notice_count"], 0), 0)
+	warningTotalCount := maxInt(anyToInt(sample["warning_total_count"], warningCount+warningNoticeCount), 0)
+	if warningTotalCount < warningCount+warningNoticeCount {
+		warningTotalCount = warningCount + warningNoticeCount
+	}
+	// warning_count is the unchanged score-formula field, but now counts only
+	// quality-impacting warnings. Total and notice fields preserve the audit
+	// distinction without carrying warning text into the ledger.
 	entry := map[string]any{
 		"schema_id":                          contextPackQualitySchemaID,
 		"version":                            1,
@@ -1691,7 +1723,11 @@ func contextPackQualityEntryFromSample(sample map[string]any) map[string]any {
 		"high_impact_evidence_count":         anyToInt(sample["high_impact_evidence_count"], 0),
 		"omitted_high_value_count":           anyToInt(sample["omitted_high_value_count"], 0),
 		"returned_source_count":              anyToInt(sample["returned_source_count"], 0),
-		"warning_count":                      anyToInt(sample["warning_count"], 0),
+		"warning_count":                      warningCount,
+		"warning_total_count":                warningTotalCount,
+		"warning_notice_count":               warningNoticeCount,
+		"warning_impact_categories":          contextPackQualityWarningCategoryCounts(sample["warning_impact_categories"]),
+		"warning_notice_categories":          contextPackQualityWarningCategoryCounts(sample["warning_notice_categories"]),
 		"tokenizer_exact":                    anyToBool(sample["tokenizer_exact"]),
 		"wire_tokens_exact":                  anyToInt(firstPresentAny(sample["wire_tokens_exact"], sample["transport_tokens_exact"]), 0),
 		"model_visible_context_tokens_exact": anyToInt(sample["model_visible_context_tokens_exact"], 0),
@@ -1741,6 +1777,55 @@ func contextPackQualityRowBindingValid(row map[string]any) bool {
 		_, ok = recallResponseCanonicalComponentOutcomes(row)
 	}
 	return ok
+}
+
+// contextPackQualityLegacyResponseBindingRetirable recognizes only the exact
+// four-field component reference rows emitted before nested component binding
+// became mandatory. The IDs and digests remain opaque and ordered, but without
+// the nested binding they cannot be authenticated against the current response
+// artifact. They may be retired from an otherwise valid quality row; every
+// other partial or malformed shape remains a hard stop.
+func contextPackQualityLegacyResponseBindingRetirable(row map[string]any) bool {
+	if anyToString(row["schema_id"]) != contextPackQualitySchemaID {
+		return false
+	}
+	id, idPresent := row["recall_response_id"]
+	digest, digestPresent := row["recall_response_digest"]
+	refsRaw, refsPresent := row["response_component_refs"]
+	if !idPresent || !digestPresent || !refsPresent ||
+		!recallResponseExactOpaqueID(strings.TrimSpace(anyToString(id)), "rr_") ||
+		!recallResponseValidDigest(strings.TrimSpace(anyToString(digest))) {
+		return false
+	}
+	refs, ok := refsRaw.([]any)
+	if !ok || len(refs) == 0 || len(refs) > recallResponseBindingMaxComponents {
+		return false
+	}
+	seen := make(map[string]struct{}, len(refs))
+	for index, raw := range refs {
+		ref, ok := raw.(map[string]any)
+		if !ok || len(ref) != 4 {
+			return false
+		}
+		for _, key := range []string{"component_ref", "component_digest", "ordinal", "kind"} {
+			if _, present := ref[key]; !present {
+				return false
+			}
+		}
+		componentRef := strings.TrimSpace(anyToString(ref["component_ref"]))
+		kind := strings.ToLower(strings.TrimSpace(anyToString(ref["kind"])))
+		if !recallResponseExactOpaqueID(componentRef, "rrc_") ||
+			!recallResponseValidDigest(strings.TrimSpace(anyToString(ref["component_digest"]))) ||
+			!recallResponseBindingKindsContains(kind) ||
+			!recallResponseExactOrdinal(ref["ordinal"], index+1) {
+			return false
+		}
+		if _, duplicate := seen[componentRef]; duplicate {
+			return false
+		}
+		seen[componentRef] = struct{}{}
+	}
+	return true
 }
 
 // contextPackQualityIdentifier is intentionally stricter than a clipped
@@ -3453,7 +3538,8 @@ func contextPackQualityBasis() []any {
 	return []any{
 		"exact context_pack.token_impact prompt-token delta",
 		"ranked evidence count and high-impact evidence mix",
-		"source coverage completeness and warning pressure",
+		"source coverage completeness and impact-only warning pressure",
+		"total, notice, and impacting warning category counts for audit",
 		"bounded counterfactual retry probability model",
 		"optional posted outcome rows and provider usage counters for calibration",
 	}
@@ -3906,11 +3992,11 @@ func (l *contextPackQualityLedger) readRowsForPrivacyMigrationUnlocked() ([]map[
 			parseErrors++
 			continue
 		}
-		if !contextPackQualityRowBindingValid(row) {
-			return nil, parseErrors + 1, fmt.Errorf("context-pack quality ledger contains malformed recall response binding")
-		}
 		switch anyToString(row["schema_id"]) {
 		case contextPackQualitySchemaID, contextPackQualityOutcomeSchemaID:
+			if !contextPackQualityRowBindingValid(row) && !contextPackQualityLegacyResponseBindingRetirable(row) {
+				return nil, parseErrors + 1, fmt.Errorf("%w: malformed recall response binding", errContextPackPrivacyMigrationRejected)
+			}
 			rows = append(rows, row)
 		default:
 			return nil, parseErrors, fmt.Errorf("%w: unrecognized ledger schema", errContextPackPrivacyMigrationRejected)
@@ -3976,7 +4062,8 @@ func buildContextPackQualitySample(input contextPackQualitySampleInput) map[stri
 			highImpactCount++
 		}
 	}
-	warningCount := len(input.Warnings)
+	warningAssessment := contextPackQualityWarningAssessmentFor(input.Warnings)
+	warningCount := warningAssessment.ImpactingCount
 	returnedSources := len(anyToStringList(coverage["returned"], 64))
 	tokenizerExact := anyToBool(input.TokenImpact["tokenizer_exact"])
 	tokenBudgetActive := anyToBool(anyMap(input.Compiled["token_budget"])["active"])
@@ -4023,6 +4110,10 @@ func buildContextPackQualitySample(input contextPackQualitySampleInput) map[stri
 		"omitted_high_value_count":           len(omitted),
 		"returned_source_count":              returnedSources,
 		"warning_count":                      warningCount,
+		"warning_total_count":                warningAssessment.TotalCount,
+		"warning_notice_count":               warningAssessment.NoticeCount,
+		"warning_impact_categories":          contextPackQualityWarningCategoryCountsSorted(warningAssessment.ImpactCategories),
+		"warning_notice_categories":          contextPackQualityWarningCategoryCountsSorted(warningAssessment.NoticeCategories),
 		"tokenizer_exact":                    tokenizerExact,
 		"tokenizer_encoding":                 contextPackQualityIdentifier(input.TokenImpact["tokenizer_encoding"], 80),
 		"model_visible_context_tokens_exact": anyToInt(input.TokenImpact["model_visible_context_tokens_exact"], 0),

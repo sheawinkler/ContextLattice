@@ -69,19 +69,62 @@ class ContextLatticePackBudgetTests(unittest.TestCase):
     def test_default_mode_still_posts_context_pack(self) -> None:
         module = load_pack_module()
         calls: list[str] = []
+        timeouts: list[float] = []
 
         def fake_request(method, path, payload, timeout):
             calls.append(path)
+            timeouts.append(timeout)
             return {"ok": True, "context_pack": {"facts": [], "results": []}}
 
         stdout = io.StringIO()
         argv = ["contextlattice-pack", "default task", "--no-auto-session", "--retries", "0"]
-        with patch.object(module, "request_json", side_effect=fake_request), patch.object(sys, "argv", argv), redirect_stdout(stdout):
+        with patch.dict(module.os.environ, {"CONTEXTLATTICE_CLIENT_TIMEOUT_SECS": ""}), patch.object(module, "request_json", side_effect=fake_request), patch.object(sys, "argv", argv), redirect_stdout(stdout):
             self.assertEqual(module.main(), 0)
         output = json.loads(stdout.getvalue())
         self.assertEqual(calls, ["/memory/context-pack"])
+        self.assertEqual(timeouts, [200.0])
         self.assertIn("context_pack", output)
         self.assertEqual(output["format_contract"]["schema_id"], "context_pack_response.v1")
+
+    def test_legacy_pack_timeout_uses_finite_env_or_explicit_override(self) -> None:
+        module = load_pack_module()
+        cases = (
+            ("49", [], 49.0),
+            ("49", ["--timeout", "7"], 7.0),
+            ("not-a-number", [], 200.0),
+        )
+        for env_timeout, timeout_args, expected in cases:
+            with self.subTest(env_timeout=env_timeout, timeout_args=timeout_args):
+                calls: list[float] = []
+
+                def fake_request(method, path, payload, timeout):
+                    calls.append(timeout)
+                    return {"ok": True, "context_pack": {"facts": [], "results": []}}
+
+                stdout = io.StringIO()
+                argv = ["contextlattice-pack", "timeout resolution", "--no-auto-session", *timeout_args]
+                with patch.dict(module.os.environ, {"CONTEXTLATTICE_CLIENT_TIMEOUT_SECS": env_timeout}), patch.object(module, "request_json", side_effect=fake_request), patch.object(sys, "argv", argv), redirect_stdout(stdout):
+                    self.assertEqual(module.main(), 0)
+                self.assertEqual(calls, [expected])
+
+    def test_legacy_pack_retry_flag_cannot_replay_post(self) -> None:
+        module = load_pack_module()
+        calls: list[str] = []
+
+        def failed_request(method, path, payload, timeout):
+            calls.append(path)
+            raise RuntimeError("simulated one-shot failure")
+
+        stdout = io.StringIO()
+        argv = ["contextlattice-pack", "legacy retry budget", "--no-auto-session", "--soft", "--retries", "3", "--budget-chars", "100000"]
+        with patch.dict(module.os.environ, {"CONTEXTLATTICE_TRIGGER_SELF_HEAL": "0"}), patch.object(module, "request_json", side_effect=failed_request), patch.object(sys, "argv", argv), redirect_stdout(stdout):
+            self.assertEqual(module.main(), 0)
+
+        output = json.loads(stdout.getvalue())
+        self.assertEqual(calls, ["/memory/context-pack"])
+        self.assertEqual(output["attempts"], 1)
+        self.assertEqual(output["status"], "failed_without_retry")
+        self.assertEqual(output["retry_policy"], "one_shot_no_replay")
 
 
 if __name__ == "__main__":

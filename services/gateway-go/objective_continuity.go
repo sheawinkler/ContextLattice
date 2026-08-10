@@ -473,10 +473,31 @@ func objectiveTransitionChronologyLess(left objectiveTransition, right objective
 	return left.TransitionID < right.TransitionID
 }
 
-func (s *continuityStore) objectiveGraphSelectionLocked(project string, objectiveID string, asOf time.Time, limit int) (map[string]struct{}, int, int, int, int, bool) {
+func objectiveGraphRelationMatchesTransition(currentObjectiveID string, relation objectiveGraphRelationRef, transition objectiveTransition) bool {
+	if currentObjectiveID == "" || relation.RelatedObjectiveID == "" || currentObjectiveID == relation.RelatedObjectiveID {
+		return false
+	}
+	relatedIDs := mergeContinuityStrings(
+		[]string{transition.ParentObjectiveID},
+		append(append([]string{}, transition.DependsOn...), transition.Supersedes...),
+		129,
+	)
+	for _, relatedID := range relatedIDs {
+		if currentObjectiveID == transition.ObjectiveID && relation.RelatedObjectiveID == relatedID {
+			return true
+		}
+		if relation.RelatedObjectiveID == transition.ObjectiveID && currentObjectiveID == relatedID {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *continuityStore) objectiveGraphSelectionLocked(project string, objectiveID string, asOf time.Time, limit int) (map[string]struct{}, int, int, int, int, bool, int) {
 	selected := map[string]struct{}{}
 	selectionLimit := minInt(maxInt(limit*objectiveGraphRelationInspectionsPerNode, objectiveGraphRelationInspectionsPerNode), objectiveGraphMaxSelectionInspections)
 	selectionInspections := 0
+	invalidIndexes := 0
 	if objectiveID == "" {
 		truncated := false
 		indexes := s.objectiveProjectIndex[strings.ToLower(strings.TrimSpace(project))]
@@ -488,9 +509,14 @@ func (s *continuityStore) objectiveGraphSelectionLocked(project string, objectiv
 			selectionInspections++
 			index := indexes[position]
 			if index < 0 || index >= len(s.objectiveTransitions) {
+				invalidIndexes++
 				continue
 			}
 			transition := s.objectiveTransitions[index]
+			if !strings.EqualFold(transition.Project, project) || strings.TrimSpace(transition.ObjectiveID) == "" {
+				invalidIndexes++
+				continue
+			}
 			if !objectiveGraphTransitionEligible(transition, project, asOf) {
 				continue
 			}
@@ -503,31 +529,59 @@ func (s *continuityStore) objectiveGraphSelectionLocked(project string, objectiv
 			}
 			selected[transition.ObjectiveID] = struct{}{}
 		}
-		return selected, 0, 0, selectionInspections, selectionLimit, truncated
+		return selected, 0, 0, selectionInspections, selectionLimit, truncated, invalidIndexes
 	}
 
 	known := false
+	truncated := false
 	objectiveKey := continuityScopedIndexKey(project, objectiveID)
-	for position := len(s.objectiveTransitionIndex[objectiveKey]) - 1; position >= 0 && selectionInspections < selectionLimit; position-- {
-		selectionInspections++
-		index := s.objectiveTransitionIndex[objectiveKey][position]
-		if index >= 0 && index < len(s.objectiveTransitions) && objectiveGraphTransitionEligible(s.objectiveTransitions[index], project, asOf) {
-			known = true
+	transitionIndexes := s.objectiveTransitionIndex[objectiveKey]
+	for position := len(transitionIndexes) - 1; position >= 0; position-- {
+		if selectionInspections >= selectionLimit {
+			truncated = true
 			break
 		}
+		selectionInspections++
+		index := transitionIndexes[position]
+		if index < 0 || index >= len(s.objectiveTransitions) {
+			invalidIndexes++
+			continue
+		}
+		transition := s.objectiveTransitions[index]
+		if transition.ObjectiveID != objectiveID || !strings.EqualFold(transition.Project, project) {
+			invalidIndexes++
+			continue
+		}
+		if objectiveGraphTransitionEligible(transition, project, asOf) {
+			known = true
+		}
 	}
-	if !known {
-		for position := len(s.objectiveRelationIndex[objectiveKey]) - 1; position >= 0 && selectionInspections < selectionLimit; position-- {
-			selectionInspections++
-			index := s.objectiveRelationIndex[objectiveKey][position].TransitionIndex
-			if index >= 0 && index < len(s.objectiveTransitions) && objectiveGraphTransitionEligible(s.objectiveTransitions[index], project, asOf) {
-				known = true
+	if !known && !truncated {
+		relations := s.objectiveRelationIndex[objectiveKey]
+		for position := len(relations) - 1; position >= 0; position-- {
+			if selectionInspections >= selectionLimit {
+				truncated = true
 				break
+			}
+			selectionInspections++
+			relation := relations[position]
+			index := relation.TransitionIndex
+			if index < 0 || index >= len(s.objectiveTransitions) {
+				invalidIndexes++
+				continue
+			}
+			transition := s.objectiveTransitions[index]
+			if !strings.EqualFold(transition.Project, project) || !objectiveGraphRelationMatchesTransition(objectiveID, relation, transition) {
+				invalidIndexes++
+				continue
+			}
+			if objectiveGraphTransitionEligible(transition, project, asOf) {
+				known = true
 			}
 		}
 	}
 	if !known {
-		return selected, 0, 0, selectionInspections, selectionLimit, selectionInspections >= selectionLimit
+		return selected, 0, 0, selectionInspections, selectionLimit, truncated, invalidIndexes
 	}
 	selected[objectiveID] = struct{}{}
 	queue := []string{objectiveID}
@@ -536,7 +590,6 @@ func (s *continuityStore) objectiveGraphSelectionLocked(project string, objectiv
 		objectiveGraphMaxRelationInspections,
 	)
 	inspections := 0
-	truncated := false
 
 traversal:
 	for queueIndex := 0; queueIndex < len(queue); queueIndex++ {
@@ -550,9 +603,14 @@ traversal:
 			inspections++
 			relation := relations[relationIndex]
 			if relation.TransitionIndex < 0 || relation.TransitionIndex >= len(s.objectiveTransitions) {
+				invalidIndexes++
 				continue
 			}
 			transition := s.objectiveTransitions[relation.TransitionIndex]
+			if !strings.EqualFold(transition.Project, project) || !objectiveGraphRelationMatchesTransition(current, relation, transition) {
+				invalidIndexes++
+				continue
+			}
 			if !objectiveGraphTransitionEligible(transition, project, asOf) {
 				continue
 			}
@@ -567,7 +625,7 @@ traversal:
 			queue = append(queue, relation.RelatedObjectiveID)
 		}
 	}
-	return selected, inspections, inspectionLimit, selectionInspections, selectionLimit, truncated
+	return selected, inspections, inspectionLimit, selectionInspections, selectionLimit, truncated, invalidIndexes
 }
 
 func (s *continuityStore) objectiveGraphReplaySelectedLocked(
@@ -633,18 +691,30 @@ func (s *continuityStore) objectiveGraph(project string, objectiveID string, asO
 		return map[string]any{"ok": false, "schema_id": objectiveGraphContractID, "error": "project is required"}
 	}
 	s.mu.RLock()
-	selected, relationInspections, relationInspectionLimit, selectionInspections, selectionInspectionLimit, traversalTruncated := s.objectiveGraphSelectionLocked(project, objectiveID, asOf, limit)
+	selected, relationInspections, relationInspectionLimit, selectionInspections, selectionInspectionLimit, traversalTruncated, invalidSelectionIndexes := s.objectiveGraphSelectionLocked(project, objectiveID, asOf, limit)
 	replayInspectionLimit := objectiveGraphMaxReplayInspections
-	filtered, replayInspections, replayTruncated, invalidReplayIndexes := s.objectiveGraphReplaySelectedLocked(
-		project, selected, asOf, replayInspectionLimit,
-	)
+	filtered := []objectiveTransition{}
+	replayInspections := 0
+	replayTruncated := false
+	invalidReplayIndexes := 0
+	if invalidSelectionIndexes == 0 {
+		filtered, replayInspections, replayTruncated, invalidReplayIndexes = s.objectiveGraphReplaySelectedLocked(
+			project, selected, asOf, replayInspectionLimit,
+		)
+	}
 	s.mu.RUnlock()
-	if invalidReplayIndexes > 0 {
+	invalidIndexes := invalidSelectionIndexes
+	if invalidIndexes == 0 {
+		invalidIndexes = invalidReplayIndexes
+	}
+	if invalidIndexes > 0 {
 		return map[string]any{
 			"ok": false, "schema_id": objectiveGraphContractID, "error": "objective_transition_index_invalid",
 			"project": project, "objective_id": objectiveID, "as_of": asOf.UTC().Format(time.RFC3339Nano),
 			"complete": false, "graph_truncated": true, "index_integrity_valid": false,
-			"invalid_index_count":     invalidReplayIndexes,
+			"invalid_index_count":        invalidIndexes,
+			"selection_inspection_count": selectionInspections, "selection_inspection_limit": selectionInspectionLimit,
+			"relation_inspection_count": relationInspections, "relation_inspection_limit": relationInspectionLimit,
 			"replay_inspection_count": replayInspections, "replay_inspection_limit": replayInspectionLimit,
 		}
 	}

@@ -123,6 +123,13 @@ type contextPackCompilationArtifacts struct {
 	Learned           contextPackLearnedActivationDecision
 	LearnedActivation map[string]any
 	ProofIdentity     map[string]any
+	// This is an internal bridge from already materialized server artifacts to
+	// the recall composer. It is never copied into the public context pack or
+	// accepted from the recall request allowlist.
+	ServerProactiveObservation map[string]any
+	// A response hook sets this after the server-owned silence decision. A
+	// suppressed attempt must not enter quality/session/token write paths.
+	SideEffectsSuppressed bool
 }
 
 // contextPackCompilationHook is an internal pre-persistence seam. It receives
@@ -138,6 +145,154 @@ type contextPackCompilationHook func(
 
 type contextPackResponseBuildOptions struct {
 	compilationHook contextPackCompilationHook
+}
+
+const contextPackTransportLegacyEvidenceLimit = 1
+
+func compactContextPackLegacyTransportPreview(key string, items []any) []any {
+	switch key {
+	case "facts", "results", "relevant_decisions", "known_failure_modes", "acceptance_criteria", "runbooks":
+		if compact := minimalRankedEvidenceBoundary(items, len(items)); len(compact) > 0 {
+			return compact
+		}
+	}
+	return items
+}
+
+func contextPackTransportEvidencePointers(items []any, limit int) []any {
+	out := make([]any, 0, minInt(limit, len(items)))
+	for index, raw := range items {
+		if len(out) >= limit {
+			break
+		}
+		item := anyMap(raw)
+		pointer := map[string]any{"rank": anyToInt(item["rank"], index+1)}
+		for _, key := range []string{"candidate_id", "kind", "project", "file", "source", "topic_path"} {
+			if value, exists := item[key]; exists && strings.TrimSpace(anyToString(value)) != "" {
+				pointer[key] = cloneJSONValue(value)
+			}
+		}
+		if len(pointer) > 0 {
+			out = append(out, pointer)
+		}
+	}
+	return out
+}
+
+// projectContextPackForTransport keeps the public context-pack contract focused
+// on the compiled packet. The compiler and quality ledger deliberately inspect
+// the full candidate set before this projection. Replaying that same raw set,
+// plus both camelCase and snake_case copies of every compiled artifact, made a
+// normal token-budgeted response larger than its output contract and caused a
+// second, lower-quality boundary selection after quality had already been
+// scored. Keep a small legacy candidate preview for compatibility, preserve the
+// complete ranked packet, and publish one canonical spelling for compiled
+// artifacts.
+func projectContextPackForTransport(contextPack map[string]any) map[string]any {
+	out := cloneJSONMap(contextPack)
+	if len(out) == 0 {
+		return out
+	}
+
+	preProjectionCounts := map[string]any{}
+	retainedCounts := map[string]any{}
+	for _, spec := range []struct {
+		key   string
+		limit int
+	}{
+		{key: "facts", limit: contextPackTransportLegacyEvidenceLimit},
+		{key: "numeric_facts", limit: contextPackTransportLegacyEvidenceLimit},
+		{key: "citations", limit: contextPackTransportLegacyEvidenceLimit * 2},
+		{key: "results", limit: contextPackTransportLegacyEvidenceLimit},
+		{key: "relevant_decisions", limit: contextPackTransportLegacyEvidenceLimit},
+		{key: "known_failure_modes", limit: contextPackTransportLegacyEvidenceLimit},
+		{key: "commands", limit: contextPackTransportLegacyEvidenceLimit},
+		{key: "acceptance_criteria", limit: contextPackTransportLegacyEvidenceLimit},
+		{key: "runbooks", limit: contextPackTransportLegacyEvidenceLimit},
+		{key: "capabilities_to_use", limit: contextPackTransportLegacyEvidenceLimit},
+		{key: "graph_neighbors", limit: contextPackTransportLegacyEvidenceLimit},
+	} {
+		items := contextPackAnyList(out[spec.key])
+		preProjectionCounts[spec.key] = len(items)
+		if len(items) > spec.limit {
+			items = append([]any{}, items[:spec.limit]...)
+		}
+		items = compactContextPackLegacyTransportPreview(spec.key, items)
+		out[spec.key] = items
+		retainedCounts[spec.key] = len(items)
+	}
+	for canonical, legacy := range map[string]string{
+		"numeric_facts":       "numericFacts",
+		"relevant_decisions":  "relevantDecisions",
+		"known_failure_modes": "knownFailureModes",
+		"acceptance_criteria": "acceptanceCriteria",
+		"capabilities_to_use": "capabilitiesToUse",
+		"graph_neighbors":     "graphNeighbors",
+	} {
+		if _, exposed := out[legacy]; exposed {
+			out[legacy] = cloneJSONValue(out[canonical])
+		}
+	}
+	rankedEvidence := contextPackAnyList(out["ranked_evidence"])
+	omittedHighValue := contextPackAnyList(out["omitted_high_value_refs"])
+	promptSections := anyMap(out["prompt_sections"])
+	transportGuidance := compactAgentEvidenceGuidanceBoundary(cloneJSONMap(anyMap(out["agent_guidance"])), contextPackTransportLegacyEvidenceLimit, nil)
+	out["prompt_sections"] = map[string]any{
+		"objective":                   clipText(anyToString(promptSections["objective"]), 1200),
+		"task":                        clipText(anyToString(promptSections["task"]), 1200),
+		"next_action":                 clipText(anyToString(promptSections["next_action"]), 1200),
+		"evidence":                    contextPackTransportEvidencePointers(rankedEvidence, contextPackTransportLegacyEvidenceLimit),
+		"ranked_evidence_count":       len(rankedEvidence),
+		"ranked_evidence_path":        "$.context_pack.ranked_evidence",
+		"omitted_high_value_refs":     contextPackTransportEvidencePointers(omittedHighValue, contextPackTransportLegacyEvidenceLimit),
+		"omitted_high_value_count":    len(omittedHighValue),
+		"omitted_high_value_ref_path": "$.context_pack.omitted_high_value_refs",
+		"token_budget":                cloneJSONValue(out["token_budget"]),
+		"agent_guidance":              cloneJSONValue(transportGuidance),
+	}
+	out["agent_guidance"] = transportGuidance
+
+	// These aliases duplicate canonical compiled or evidence fields byte for
+	// byte. The v1 public contract requires the snake_case fields below; legacy
+	// raw-candidate aliases that existing clients still consume remain intact.
+	for _, key := range []string{
+		"rankedEvidence",
+		"tokenBudget",
+		"omittedHighValueRefs",
+		"agentGuidance",
+		"promptSections",
+		"contextCompiler",
+		"memoryTrustAssessment",
+		"retrievalDecisionTrace",
+		"tokenImpact",
+		"contextPackQuality",
+		"runAdvisor",
+		"graphContext",
+		// Evidence points are a bounded compiler input derived from cited result
+		// summaries. Their selected forms already live in ranked_evidence.
+		"evidence_points",
+		// Root canonical objects own these response-wide artifacts. Their nested
+		// copies carried no additional evidence or contract semantics.
+		"token_impact",
+		"context_pack_quality",
+		"run_advisor",
+		"sourceCoverage",
+		"combinedSources",
+	} {
+		delete(out, key)
+	}
+
+	out["transport_projection"] = map[string]any{
+		"schema_id":                     "contextlattice_context_pack_transport_projection.v1",
+		"strategy":                      "compiled_packet_with_bounded_legacy_preview",
+		"ranked_evidence_preserved":     true,
+		"ranked_evidence_count":         len(rankedEvidence),
+		"prompt_evidence_preview_count": minInt(len(rankedEvidence), contextPackTransportLegacyEvidenceLimit),
+		"pre_projection_counts":         preProjectionCounts,
+		"retained_legacy_counts":        retainedCounts,
+		"legacy_evidence_item_limit":    contextPackTransportLegacyEvidenceLimit,
+	}
+	return out
 }
 
 func buildContextPackCompilationArtifacts(input contextPackCompilationInput) contextPackCompilationArtifacts {
@@ -214,12 +369,25 @@ func buildContextPackCompilationArtifacts(input contextPackCompilationInput) con
 		quality["policy_arm"] = learned.Arm
 		quality["policy_phase"] = "canary"
 	}
+	serverProactiveObservation := recallResponseServerObservationFromCompilation(input, contextPack, compiled)
 	return contextPackCompilationArtifacts{
 		ContextPack: contextPack, Compiled: compiled, AgentGuidance: agentGuidance,
 		TrustAssessment: trustAssessment, DecisionTrace: decisionTrace, ReferencePrompt: referencePrompt,
 		TokenImpact: tokenImpact, RunAdvisor: runAdvisor, Quality: quality,
 		Learned: learned, LearnedActivation: learnedActivation, ProofIdentity: proofIdentity,
+		ServerProactiveObservation: serverProactiveObservation,
 	}
+}
+
+func contextPackResponseRetrievalProofs(
+	trustAssessment map[string]any,
+	decisionTrace map[string]any,
+	includeRetrievalDebug bool,
+) (map[string]any, map[string]any) {
+	if includeRetrievalDebug {
+		return trustAssessment, decisionTrace
+	}
+	return memoryTrustAssessmentReference(trustAssessment), retrievalDecisionTraceReference(decisionTrace)
 }
 
 func (s *server) persistContextPackCompilationOrFallback(
@@ -241,6 +409,9 @@ func (s *server) persistContextPackCompilationOrFallbackWithHook(
 	durableIntent := artifacts.Learned.Eligible || receiptBearing
 	if !durableIntent {
 		artifacts = invokeContextPackCompilationHook(hook, input, artifacts, false)
+		if artifacts.SideEffectsSuppressed {
+			return artifacts
+		}
 		s.recordContextPackQuality(artifacts.Quality)
 		return artifacts
 	}
@@ -249,6 +420,9 @@ func (s *server) persistContextPackCompilationOrFallbackWithHook(
 	// artifacts are returned, allowing an internal caller to bind its response
 	// identity to the row that is about to be retained.
 	artifacts = invokeContextPackCompilationHook(hook, input, artifacts, true)
+	if artifacts.SideEffectsSuppressed {
+		return artifacts
+	}
 	if err := s.recordContextPackQualityDurably(artifacts.Quality); err == nil {
 		return artifacts
 	}
@@ -260,6 +434,9 @@ func (s *server) persistContextPackCompilationOrFallbackWithHook(
 		input.Learned = contextPackLearnedForceControl(artifacts.Learned, "receipt_persistence_failed")
 		fallback := buildContextPackCompilationArtifacts(input)
 		fallback = invokeContextPackCompilationHook(hook, input, fallback, false)
+		if fallback.SideEffectsSuppressed {
+			return fallback
+		}
 		s.recordContextPackQualityLocallyWithoutReceipt(fallback.Quality)
 		return fallback
 	}
@@ -268,6 +445,9 @@ func (s *server) persistContextPackCompilationOrFallbackWithHook(
 	// and its local fallback separately. Re-run the hook against the same
 	// artifacts with durable intent disabled, then retain exactly one local row.
 	artifacts = invokeContextPackCompilationHook(hook, input, artifacts, false)
+	if artifacts.SideEffectsSuppressed {
+		return artifacts
+	}
 	s.recordContextPackQualityLocallyWithoutReceipt(artifacts.Quality)
 	return artifacts
 }
@@ -357,21 +537,30 @@ func (s *server) buildContextPackResponseForSurfaceWithOptions(
 			searchRequest[flag] = value
 		}
 	}
+	blockingDirectivePresent := false
 	for _, flag := range []string{"blocking", "wait_for_slow_sources", "sync_slow_sources"} {
 		if value, present := requestPayload[flag]; present {
+			blockingDirectivePresent = true
 			searchRequest[flag] = value
 		}
 	}
 	combinedSources := anyToBoolOrDefault(requestPayload["combined_sources"], true)
 	blockSlowByDefault := combinedSources && contextPackBlocksSlowSourcesByDefault()
-	if _, present := requestPayload["wait_for_slow_sources"]; !present && blockSlowByDefault {
+	defaultedBlockingSources := false
+	if !blockingDirectivePresent && blockSlowByDefault {
 		searchRequest["wait_for_slow_sources"] = true
-	}
-	if _, present := requestPayload["sync_slow_sources"]; !present && blockSlowByDefault {
 		searchRequest["sync_slow_sources"] = true
+		defaultedBlockingSources = true
 	}
 
-	searchResponse, status, execErr := s.executeRetrieval(ctx, incomingHeaders, searchRequest, true)
+	// Only the compiler installs this unforgeable context marker. It allows the
+	// retrieval engine to return its closed server-observation projection to the
+	// compiler without making that carrier available on raw search routes.
+	retrievalCtx := withRecallResponseServerObservationCapture(ctx)
+	if defaultedBlockingSources {
+		retrievalCtx = withContextPackDefaultBlockingSources(retrievalCtx)
+	}
+	searchResponse, status, execErr := s.executeRetrieval(retrievalCtx, incomingHeaders, searchRequest, true)
 	if execErr != nil {
 		return nil, 0, execErr
 	}
@@ -396,7 +585,9 @@ func (s *server) buildContextPackResponseForSurfaceWithOptions(
 	}
 
 	tokenBudget := contextPackTokenBudgetFromRequest(requestPayload)
+	s.attachContextPackCompilerEvidence(retrievalCtx, searchResponse, limit)
 	contextPack := buildContextPackPayload(query, searchResponse, maxFacts, limit)
+	stripContextPackCompilerEvidence(searchResponse)
 	contextPack["project"] = strings.TrimSpace(anyToString(searchRequest["project"]))
 	contextPack["topic_path"] = strings.TrimSpace(anyToString(searchRequest["topic_path"]))
 	graphQuality := s.enrichContextPackWithGraph(ctx, contextPack, requestPayload)
@@ -449,6 +640,7 @@ func (s *server) buildContextPackResponseForSurfaceWithOptions(
 	runAdvisor := artifacts.RunAdvisor
 	contextPackQuality := artifacts.Quality
 	proofIdentity := artifacts.ProofIdentity
+	sideEffectsSuppressed := artifacts.SideEffectsSuppressed
 	learningCaptureEnabled := s != nil && s.contextPackQuality != nil
 	searchResponse["learning_enabled"] = learnedDecision.Armed
 	searchResponse["learning_capture_enabled"] = learningCaptureEnabled
@@ -462,25 +654,32 @@ func (s *server) buildContextPackResponseForSurfaceWithOptions(
 	delete(contextPackQualityResponse, "selection_receipt")
 	contextPack["contextPackQuality"] = contextPackQualityResponse
 	contextPack["context_pack_quality"] = contextPackQualityResponse
+	transportContextPack := projectContextPackForTransport(contextPack)
+	transportOmittedRefs := minimalRankedEvidenceBoundary(compiled["omitted_high_value_refs"], contextPackTransportLegacyEvidenceLimit)
+	responseTrustAssessment, responseDecisionTrace := contextPackResponseRetrievalProofs(
+		trustAssessment,
+		decisionTrace,
+		includeRetrievalDebug,
+	)
 	response := map[string]any{
 		"ok":                       true,
 		"query":                    query,
-		"context_pack":             contextPack,
+		"context_pack":             transportContextPack,
 		"context_compiler":         compiled["context_compiler"],
 		"agent_guidance":           agentGuidance,
 		"reference_prompt":         referencePrompt,
 		"token_impact":             tokenImpact,
 		"context_pack_quality":     contextPackQualityResponse,
 		"run_advisor":              runAdvisor,
-		"memory_trust_assessment":  trustAssessment,
-		"retrieval_decision_trace": decisionTrace,
+		"memory_trust_assessment":  responseTrustAssessment,
+		"retrieval_decision_trace": responseDecisionTrace,
 		"learned_activation":       learnedActivation,
 		"learning_enabled":         learnedDecision.Armed,
 		"learning_capture_enabled": learningCaptureEnabled,
 		"learned_ranking_armed":    learnedDecision.Armed,
 		"learned_ranking_applied":  learnedDecision.Performed,
 		"token_budget":             compiled["token_budget"],
-		"omitted_high_value_refs":  compiled["omitted_high_value_refs"],
+		"omitted_high_value_refs":  transportOmittedRefs,
 		"warnings":                 warnings,
 		"retrieval_mode":           searchResponse["retrieval_mode"],
 		"retrieval_intent":         searchResponse["retrieval_intent"],
@@ -489,6 +688,12 @@ func (s *server) buildContextPackResponseForSurfaceWithOptions(
 		"session_id":               sessionID,
 		"source_coverage":          sourceCoverage,
 		"writeback_required":       true,
+	}
+	if sideEffectsSuppressed {
+		response["writeback_required"] = false
+	}
+	if len(activeContextPolicy) > 0 {
+		response["active_context_policy"] = activeContextPolicy
 	}
 	if includeRetrievalDebug {
 		if retrievalDebug, ok := searchResponse["retrieval_debug"]; ok {
@@ -512,10 +717,8 @@ func (s *server) buildContextPackResponseForSurfaceWithOptions(
 			"context_pack.completed",
 		)
 		response["objective_runtime"] = objectiveRuntime
-		response["objective_hierarchy"] = objectiveRuntime["objective_hierarchy"]
-		response["objective_lineage"] = objectiveRuntime["objective_lineage"]
 	}
-	if sessionID != "" {
+	if sessionID != "" && !sideEffectsSuppressed {
 		facts, _ := asAnySlice(contextPack["facts"])
 		results, _ := asAnySlice(contextPack["results"])
 		session := s.recordAgentSessionEvent(sessionID, "context_pack.completed", map[string]any{
@@ -555,7 +758,7 @@ func (s *server) buildContextPackResponseForSurfaceWithOptions(
 	}
 	if agentPacketRequested(requestPayload) {
 		packet := finalizeAgentPacketForRequest(buildAgentPacket(response, requestPayload, packetSurface), requestPayload)
-		if !anyToBool(requestPayload["_suppress_token_impact_recording"]) {
+		if !sideEffectsSuppressed && !anyToBool(requestPayload["_suppress_token_impact_recording"]) {
 			s.recordTokenImpact(anyMap(packet["token_impact"]))
 		}
 		return packet, status, nil
@@ -569,7 +772,7 @@ func (s *server) buildContextPackResponseForSurfaceWithOptions(
 	responseImpact := anyMap(response["token_impact"])
 	copyProofTimelineIdentity(responseImpact, proofIdentity)
 	response["token_impact"] = responseImpact
-	if !anyToBool(requestPayload["_suppress_token_impact_recording"]) {
+	if !sideEffectsSuppressed && !anyToBool(requestPayload["_suppress_token_impact_recording"]) {
 		s.recordTokenImpact(anyMap(response["token_impact"]))
 	}
 	return response, status, nil
@@ -901,6 +1104,9 @@ type contextPackEvidenceItem struct {
 	SourceOwner             string
 	MemoryID                string
 	TopicPath               string
+	RetrievalScope          string
+	RetrievalAncestorPrefix string
+	RetrievalAncestorDepth  int
 	Timestamp               string
 	Status                  string
 	Freshness               string
@@ -913,6 +1119,8 @@ type contextPackEvidenceItem struct {
 	DisplayTruncated        bool
 	TrustAssessment         map[string]any
 	RecallMetadata          map[string]any
+	EvidenceBasis           string
+	SourceContentHash       string
 	LearnedBaseScore        float64
 	LearnedMultiplier       float64
 	LearnedInfluenceApplied bool
@@ -954,6 +1162,13 @@ func contextPackTokenBudgetFromRequest(payload map[string]any) contextPackTokenB
 		if available > 0 {
 			budget.TargetContextPackTokens = available
 		}
+	}
+	if budget.TargetContextPackTokens <= 0 {
+		// A context pack is a model-input artifact, so an absent caller hint must
+		// not silently disable the impact-per-token allocator. Operators can set
+		// this to zero to retain the legacy unbudgeted behavior; explicit caller
+		// budgets and model-window arithmetic always take precedence.
+		budget.TargetContextPackTokens = maxInt(0, envInt("GO_CONTEXT_PACK_DEFAULT_TARGET_TOKENS", 4096))
 	}
 	if budget.TargetContextPackTokens > 0 {
 		budget.TargetContextPackTokens = clampInt(budget.TargetContextPackTokens, 128, 32768)
@@ -1083,10 +1298,13 @@ func contextPackRankedEvidenceWithLearningAt(
 		if strings.TrimSpace(anyToString(source["topic_path"])) != "" {
 			signals = append(signals, "topic_scope")
 		}
-		if containsAny(lower, []string{"fail", "failure", "timeout", "blocked", "blocker", "regression", "risk", "contradict", "do not", "must not"}) {
+		if strings.EqualFold(strings.TrimSpace(anyToString(source["retrieval_scope"])), currentStateRetrievalScopeAncestor) {
+			signals = append(signals, "nearest_topic_ancestor_context")
+		}
+		if contextPackRiskSignal(lower) || containsAny(lower, []string{"do not", "must not"}) {
 			signals = append(signals, "risk_or_contradiction_signal")
 		}
-		if containsAny(lower, []string{"verify", "test", "check", "acceptance", "must pass", "script", "command", "gmake", "go test", "pytest", "curl"}) {
+		if contextPackAcceptanceSignal(lower) || containsAny(lower, []string{"must pass", "script", "command", "gmake", "go test", "pytest", "curl"}) {
 			signals = append(signals, "actionable_verification_signal")
 		}
 		if strings.TrimSpace(anyToString(source["timestamp"])) != "" {
@@ -1123,8 +1341,7 @@ func contextPackRankedEvidenceWithLearningAt(
 		}
 		freshness := "undated"
 		statusText := strings.ToLower(strings.TrimSpace(firstNonEmptyStrings(anyToString(source["status"]), anyToString(source["temporal_state"]))))
-		lowerText := strings.ToLower(text)
-		if containsAny(statusText+" "+lowerText, []string{"superseded", "retracted", "obsolete", "deprecated", "outdated"}) {
+		if containsAny(statusText, []string{"superseded", "retracted", "obsolete", "deprecated", "outdated"}) {
 			score -= 48
 			freshness = "superseded"
 			signals = append(signals, "superseded_or_retracted")
@@ -1165,30 +1382,37 @@ func contextPackRankedEvidenceWithLearningAt(
 		estimatedTokens := contextPackEstimateTokens(clippedText + " " + reason + " " + project + " " + fileName + " " + sourceName + " " + topicPath)
 		diversityKey := firstNonEmptyStrings(fileName, topicPath, sourceName, kind)
 		out = append(out, contextPackEvidenceItem{
-			Occurrence:       len(out) + 1,
-			Kind:             kind,
-			Score:            score,
-			ImpactScore:      score,
-			Reason:           reason,
-			Text:             clippedText,
-			Project:          project,
-			File:             fileName,
-			Source:           sourceName,
-			SourceOwner:      retrievalReceiptPortable(source["source_owner"], 120),
-			MemoryID:         retrievalReceiptPortable(firstPresentAny(source["memory_id"], source["id"]), 360),
-			TopicPath:        topicPath,
-			Timestamp:        strings.TrimSpace(anyToString(source["timestamp"])),
-			Status:           statusText,
-			Freshness:        freshness,
-			QueryRelevance:   roundFloat(relevance, 3),
-			Confidence:       roundFloat(clampFloat(score/100, 0.1, 0.99), 3),
-			EstimatedTokens:  estimatedTokens,
-			ValueDensity:     roundFloat(score/float64(maxInt(estimatedTokens, 1)), 4),
-			WhySelected:      signals,
-			DiversityKey:     diversityKey,
-			DisplayTruncated: displayTruncated,
-			TrustAssessment:  retrievalReceiptPrecomputedAssessment(anyMap(source["memory_trust_assessment"])),
-			RecallMetadata:   recallResponseProjectEvidenceMetadata(source),
+			Occurrence:     len(out) + 1,
+			Kind:           kind,
+			Score:          score,
+			ImpactScore:    score,
+			Reason:         reason,
+			Text:           clippedText,
+			Project:        project,
+			File:           fileName,
+			Source:         sourceName,
+			SourceOwner:    retrievalReceiptPortable(source["source_owner"], 120),
+			MemoryID:       retrievalReceiptPortable(firstPresentAny(source["memory_id"], source["id"]), 360),
+			TopicPath:      topicPath,
+			RetrievalScope: retrievalReceiptPortable(source["retrieval_scope"], 80),
+			RetrievalAncestorPrefix: retrievalReceiptPortable(
+				source["retrieval_ancestor_prefix"], 240,
+			),
+			RetrievalAncestorDepth: anyToInt(source["retrieval_ancestor_distance"], 0),
+			Timestamp:              strings.TrimSpace(anyToString(source["timestamp"])),
+			Status:                 statusText,
+			Freshness:              freshness,
+			QueryRelevance:         roundFloat(relevance, 3),
+			Confidence:             roundFloat(clampFloat(score/100, 0.1, 0.99), 3),
+			EstimatedTokens:        estimatedTokens,
+			ValueDensity:           roundFloat(score/float64(maxInt(estimatedTokens, 1)), 4),
+			WhySelected:            signals,
+			DiversityKey:           diversityKey,
+			DisplayTruncated:       displayTruncated,
+			TrustAssessment:        retrievalReceiptPrecomputedAssessment(anyMap(source["memory_trust_assessment"])),
+			RecallMetadata:         recallResponseProjectEvidenceMetadata(source),
+			EvidenceBasis:          retrievalReceiptPortable(source["evidence_basis"], 80),
+			SourceContentHash:      retrievalReceiptPortable(source["source_content_hash"], 80),
 		})
 	}
 	for _, item := range contextPackAnyList(contextPack["relevant_decisions"]) {
@@ -1219,6 +1443,14 @@ func contextPackRankedEvidenceWithLearningAt(
 	for _, item := range contextPackAnyList(contextPack["graph_neighbors"]) {
 		source := anyMap(item)
 		add("graph_neighbor", 70, "first-hop memory edge expands the ranked seed context", anyToString(source["summary"]), source)
+	}
+	for _, item := range contextPackAnyList(contextPack["evidence_points"]) {
+		source := anyMap(item)
+		reason := "bounded evidence point extracted from a cited memory result"
+		if anyToString(source["evidence_basis"]) == "verified_current_file" {
+			reason = "bounded evidence point extracted from a content-hash-verified cited memory file"
+		}
+		add("memory_point", 68, reason, anyToString(source["text"]), source)
 	}
 	for _, item := range contextPackAnyList(contextPack["results"]) {
 		source := anyMap(item)
@@ -1299,8 +1531,25 @@ func contextPackRankedEvidenceWithLearningAt(
 		if item.Source != "" {
 			renderedItem["source"] = item.Source
 		}
+		if item.EvidenceBasis != "" {
+			renderedItem["evidence_basis"] = item.EvidenceBasis
+		}
+		if strings.HasPrefix(item.SourceContentHash, "sha256:") {
+			renderedItem["source_content_hash"] = item.SourceContentHash
+		}
 		if item.TopicPath != "" {
 			renderedItem["topic_path"] = item.TopicPath
+		}
+		if item.RetrievalScope != "" {
+			renderedItem["retrieval_scope"] = item.RetrievalScope
+		}
+		if item.RetrievalScope == currentStateRetrievalScopeAncestor {
+			if item.RetrievalAncestorPrefix != "" {
+				renderedItem["retrieval_ancestor_prefix"] = item.RetrievalAncestorPrefix
+			}
+			if item.RetrievalAncestorDepth > 0 {
+				renderedItem["retrieval_ancestor_distance"] = item.RetrievalAncestorDepth
+			}
 		}
 		if item.Timestamp != "" {
 			renderedItem["timestamp"] = item.Timestamp
@@ -1830,6 +2079,12 @@ func contextPackReferencePrompt(promptSections map[string]any) string {
 		"Objective: " + anyToString(promptSections["objective"]),
 		"Task: " + anyToString(promptSections["task"]),
 	}
+	// The active budget and its omitted frontier are execution-critical. Keep
+	// this line ahead of optional objective hierarchy prose so progressive
+	// boundary compaction cannot erase the fact that more evidence is required.
+	if budget := anyMap(promptSections["token_budget"]); len(budget) > 0 && anyToBool(budget["active"]) {
+		lines = append(lines, "Context budget: Omitted high-value refs="+anyToString(budget["omitted_high_value_count"])+"; selected "+anyToString(budget["selected_count"])+" ranked evidence items using ~"+anyToString(budget["used_tokens_estimate"])+"/"+anyToString(budget["ranked_evidence_budget_tokens"])+" estimated ranked-evidence tokens; compression="+anyToString(budget["compression_level"])+".")
+	}
 	if mission := strings.TrimSpace(anyToString(promptSections["mission"])); mission != "" {
 		lines = append(lines, "Mission: "+mission)
 	}
@@ -1849,9 +2104,6 @@ func contextPackReferencePrompt(promptSections map[string]any) string {
 		lines = append(lines, "Subobjectives: "+strings.Join(subobjectives, "; "))
 	}
 	lines = append(lines, "Next action: "+anyToString(promptSections["next_action"]))
-	if budget := anyMap(promptSections["token_budget"]); len(budget) > 0 && anyToBool(budget["active"]) {
-		lines = append(lines, "Context budget: Omitted high-value refs="+anyToString(budget["omitted_high_value_count"])+"; selected "+anyToString(budget["selected_count"])+" ranked evidence items using ~"+anyToString(budget["used_tokens_estimate"])+"/"+anyToString(budget["ranked_evidence_budget_tokens"])+" estimated ranked-evidence tokens; compression="+anyToString(budget["compression_level"])+".")
-	}
 	if omitted := contextPackAnyList(promptSections["omitted_high_value_refs"]); len(omitted) > 0 {
 		lines = append(lines, "", "Omitted high-value refs:")
 		for idx, item := range omitted {
@@ -1912,7 +2164,7 @@ func contextPackReferencePrompt(promptSections map[string]any) string {
 		}
 	}
 	lines = append(lines, "", "Rules: cite evidence, inspect current files for code claims, avoid raw logs/volatile telemetry, and keep output bounded.")
-	return clipText(strings.Join(lines, "\n"), 5000)
+	return clipUTF8Bytes(sanitizeProviderOverflowText(strings.Join(lines, "\n")), 5000)
 }
 
 func contextPackEvidenceCitation(item map[string]any) string {
@@ -2014,12 +2266,29 @@ func buildContextPackPayload(
 		if lifecycle := strings.TrimSpace(anyToString(row["lifecycle"])); lifecycle != "" {
 			rendered["lifecycle"] = normalizeMemoryLifecycle(lifecycle)
 		}
+		if retrievalScope := strings.TrimSpace(anyToString(row["retrieval_scope"])); retrievalScope != "" {
+			switch retrievalScope {
+			case currentStateRetrievalScopeExact, currentStateRetrievalScopeAncestor:
+				rendered["retrieval_scope"] = retrievalScope
+				if retrievalScope == currentStateRetrievalScopeAncestor {
+					rendered["retrieval_ancestor_prefix"] = strings.TrimSpace(anyToString(row["retrieval_ancestor_prefix"]))
+					rendered["retrieval_ancestor_distance"] = clampInt(anyToInt(row["retrieval_ancestor_distance"], 0), 0, 8)
+				}
+			}
+		}
 		if topicRollup, ok := row["topic_rollup"].(map[string]any); ok {
 			rendered["topic_rollup"] = contextPackTopicRollup(topicRollup)
 		}
+		// Structured action metadata is server-derived evidence, not caller
+		// instructions. Project it through the closed opaque-reference bridge
+		// before the row crosses into context-pack compilation.
+		if recallMetadata := recallResponseProjectEvidenceMetadata(row); len(recallMetadata) > 0 {
+			rendered["recall_metadata"] = recallMetadata
+		}
 		resultRows = append(resultRows, rendered)
 	}
-	sections := contextPackAgentSections(factsAny, resultRows)
+	evidencePoints := contextPackResultEvidencePoints(query, results, resultRows, 6)
+	sections := contextPackAgentSections(factsAny, resultRows, evidencePoints)
 	generatedAt := nowUTCISO()
 
 	return map[string]any{
@@ -2035,6 +2304,7 @@ func buildContextPackPayload(
 		"numeric_facts":       numericFactsAny,
 		"citations":           citations,
 		"results":             resultRows,
+		"evidence_points":     evidencePoints,
 		"retrieval_input_boundary": map[string]any{
 			"source_candidate_count": factInputCount + resultInputCount,
 			"source_retained_count":  len(factsAny) + len(resultRows),
@@ -2170,7 +2440,7 @@ func contextPackSourceCoverageWithGraph(sourceCoverage map[string]any, graphQual
 	return coverage
 }
 
-func contextPackAgentSections(facts []any, results []map[string]any) map[string]any {
+func contextPackAgentSections(facts []any, results []map[string]any, evidencePoints ...[]any) map[string]any {
 	sections := map[string][]any{
 		"relevantDecisions":  {},
 		"filesToRead":        {},
@@ -2199,10 +2469,16 @@ func contextPackAgentSections(facts []any, results []map[string]any) map[string]
 			return
 		}
 		item := map[string]any{"text": text}
-		for _, key := range []string{"project", "file", "source", "topic_path", "timestamp"} {
+		for _, key := range []string{
+			"project", "file", "source", "topic_path", "timestamp", "retrieval_scope",
+			"retrieval_ancestor_prefix", "retrieval_ancestor_distance", "evidence_basis", "source_content_hash",
+		} {
 			if value, ok := source[key]; ok && strings.TrimSpace(anyToString(value)) != "" {
 				item[key] = value
 			}
+		}
+		if recallMetadata := recallResponseProjectEvidenceMetadata(source); len(recallMetadata) > 0 {
+			item["recall_metadata"] = recallMetadata
 		}
 		sections[section] = append(sections[section], item)
 	}
@@ -2214,13 +2490,13 @@ func contextPackAgentSections(facts []any, results []map[string]any) map[string]
 		if strings.Contains(topicPath, "runbook") || strings.Contains(strings.ToLower(fileName), "runbook") {
 			addText("runbooks", text, source)
 		}
-		if containsAny(lower, []string{"decision", "decided", "choose", "chosen", "policy", "contract"}) {
+		if contextPackDecisionSignal(lower) {
 			addText("relevantDecisions", text, source)
 		}
-		if containsAny(lower, []string{"fail", "failure", "timeout", "blocked", "blocker", "regression", "risk", "vulnerab"}) {
+		if contextPackRiskSignal(lower) {
 			addText("knownFailureModes", text, source)
 		}
-		if containsAny(lower, []string{"verify", "test", "check", "acceptance", "must pass", "criteria"}) {
+		if contextPackAcceptanceSignal(lower) || strings.Contains(lower, "must pass") {
 			addText("acceptanceCriteria", text, source)
 		}
 		if containsAny(lower, []string{"script", "hook", "contextlattice", "capability", "skill"}) {
@@ -2240,6 +2516,12 @@ func contextPackAgentSections(facts []any, results []map[string]any) map[string]
 	for _, row := range results {
 		classify(anyToString(row["summary"]), row)
 	}
+	for _, points := range evidencePoints {
+		for _, raw := range points {
+			point := anyMap(raw)
+			classify(anyToString(point["text"]), point)
+		}
+	}
 	for key, values := range sections {
 		if len(values) > 20 {
 			values = values[:20]
@@ -2256,6 +2538,323 @@ func contextPackAgentSections(facts []any, results []map[string]any) map[string]
 		"commands":           sections["commands"],
 		"acceptanceCriteria": sections["acceptanceCriteria"],
 	}
+}
+
+func contextPackResultEvidencePoints(query string, rawResults []map[string]any, renderedResults []map[string]any, limit int) []any {
+	limit = clampInt(limit, 1, 12)
+	out := make([]any, 0, limit)
+	for index, row := range renderedResults {
+		if anyToBool(row["quarantined"]) {
+			continue
+		}
+		summary := anyToString(row["summary"])
+		evidenceBasis := "indexed_summary"
+		sourceContentHash := ""
+		if index < len(rawResults) {
+			raw := rawResults[index]
+			summary = anyToString(raw["summary"])
+			if verified := strings.TrimSpace(anyToString(raw["_compiler_evidence"])); verified != "" &&
+				anyToString(raw["_compiler_evidence_basis"]) == "verified_current_file" {
+				summary = verified
+				evidenceBasis = "verified_current_file"
+				sourceContentHash = strings.TrimSpace(anyToString(raw["_compiler_evidence_content_hash"]))
+			}
+		}
+		segments := contextPackEvidenceSegmentsForQuery(query, summary, 3)
+		if len(segments) < 2 {
+			continue
+		}
+		for index, segment := range segments {
+			point := map[string]any{
+				"text":           segment,
+				"point_index":    index + 1,
+				"evidence_basis": evidenceBasis,
+			}
+			if strings.HasPrefix(sourceContentHash, "sha256:") {
+				point["source_content_hash"] = sourceContentHash
+			}
+			for _, key := range []string{
+				"project", "file", "source", "source_owner", "topic_path", "timestamp", "score",
+				"retrieval_scope", "retrieval_ancestor_prefix", "retrieval_ancestor_distance",
+				"recall_metadata",
+			} {
+				if value, present := row[key]; present {
+					point[key] = cloneJSONValue(value)
+				}
+			}
+			out = append(out, point)
+			if len(out) >= limit {
+				return out
+			}
+		}
+	}
+	return out
+}
+
+func (s *server) attachContextPackCompilerEvidence(ctx context.Context, searchResponse map[string]any, limit int) {
+	if s == nil || s.memoryStore == nil || searchResponse == nil {
+		return
+	}
+	rows := parseRows(searchResponse["results"])
+	rowLimit := minInt(len(rows), clampInt(limit, 1, 8))
+	maxFileBytes := int64(clampInt(envInt("GO_CONTEXT_PACK_COMPILER_EVIDENCE_MAX_FILE_BYTES", 256*1024), 32*1024, 1024*1024))
+	maxPreviewBytes := clampInt(envInt("GO_CONTEXT_PACK_COMPILER_EVIDENCE_MAX_PREVIEW_BYTES", 32*1024), 4096, 64*1024)
+	for index := 0; index < rowLimit; index++ {
+		row := rows[index]
+		if !strings.EqualFold(anyToString(row["source"]), sourceTopicRollup) ||
+			!strings.EqualFold(anyToString(row["retrieval_lane"]), "current_state_index") ||
+			!strings.EqualFold(anyToString(row["projection_authority"]), "current_event") {
+			continue
+		}
+		preview, contentHash, err := s.memoryStore.readVerifiedEvidencePreview(
+			ctx,
+			anyToString(row["project"]),
+			anyToString(row["file"]),
+			anyToString(row["content_hash"]),
+			maxFileBytes,
+			maxPreviewBytes,
+		)
+		if err != nil || strings.TrimSpace(preview) == "" {
+			continue
+		}
+		row["_compiler_evidence"] = preview
+		row["_compiler_evidence_basis"] = "verified_current_file"
+		row["_compiler_evidence_content_hash"] = "sha256:" + contentHash
+	}
+}
+
+func stripContextPackCompilerEvidence(searchResponse map[string]any) {
+	if searchResponse == nil {
+		return
+	}
+	for _, row := range parseRows(searchResponse["results"]) {
+		delete(row, "_compiler_evidence")
+		delete(row, "_compiler_evidence_basis")
+		delete(row, "_compiler_evidence_content_hash")
+	}
+}
+
+func contextPackEvidenceSegments(text string, limit int) []string {
+	return contextPackEvidenceSegmentsForQuery("", text, limit)
+}
+
+type contextPackEvidenceSegmentCandidate struct {
+	Text      string
+	Index     int
+	Priority  int
+	Relevance float64
+	Heading   bool
+}
+
+func contextPackEvidenceSegmentsForQuery(query string, text string, limit int) []string {
+	limit = clampInt(limit, 1, 6)
+	text = strings.TrimSpace(strings.ReplaceAll(text, "\r\n", "\n"))
+	if text == "" {
+		return []string{}
+	}
+	const maxInputBytes = 32 * 1024
+	jsonEligible := len(text) <= maxInputBytes
+	text = clipText(text, maxInputBytes)
+	candidates := make([]contextPackEvidenceSegmentCandidate, 0, 64)
+	seen := map[string]struct{}{}
+	queryTerms := synthesisPackQueryTokens(query)
+	add := func(candidate string, heading bool) {
+		candidate = strings.TrimSpace(candidate)
+		candidate = strings.TrimSpace(strings.TrimLeft(candidate, "#-*•> \t"))
+		if len([]rune(candidate)) < 12 || len(candidates) >= 256 {
+			return
+		}
+		candidate = clipText(candidate, 360)
+		key := strings.ToLower(strings.Join(strings.Fields(candidate), " "))
+		if _, duplicate := seen[key]; duplicate {
+			return
+		}
+		seen[key] = struct{}{}
+		candidates = append(candidates, contextPackEvidenceSegmentCandidate{
+			Text:      candidate,
+			Index:     len(candidates),
+			Priority:  contextPackEvidenceSegmentPriority(candidate, heading),
+			Relevance: lexicalEvidenceAlignment(queryTerms, candidate),
+			Heading:   heading,
+		})
+	}
+	if jsonEligible && (strings.HasPrefix(text, "{") || strings.HasPrefix(text, "[")) {
+		var decoded any
+		if json.Unmarshal([]byte(text), &decoded) == nil {
+			visited := 0
+			contextPackJSONEvidenceCandidates(decoded, "", &visited, add)
+		}
+	}
+	if len(candidates) < 2 {
+		candidates = candidates[:0]
+		seen = map[string]struct{}{}
+		for _, line := range strings.Split(text, "\n") {
+			trimmed := strings.TrimSpace(line)
+			add(trimmed, strings.HasPrefix(trimmed, "#"))
+			if len(candidates) >= 256 {
+				break
+			}
+		}
+	}
+	if len(candidates) < 2 {
+		candidates = candidates[:0]
+		seen = map[string]struct{}{}
+		normalized := strings.NewReplacer(". ", ".\n", "; ", ";\n").Replace(text)
+		for _, sentence := range strings.Split(normalized, "\n") {
+			add(sentence, false)
+		}
+	}
+	if len(candidates) < 2 {
+		return []string{clipText(text, 360)}
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].Priority != candidates[j].Priority {
+			return candidates[i].Priority > candidates[j].Priority
+		}
+		if candidates[i].Relevance != candidates[j].Relevance {
+			return candidates[i].Relevance > candidates[j].Relevance
+		}
+		if candidates[i].Heading != candidates[j].Heading {
+			return candidates[i].Heading
+		}
+		return candidates[i].Index < candidates[j].Index
+	})
+	out := make([]string, 0, limit)
+	for _, candidate := range candidates[:minInt(len(candidates), limit)] {
+		out = append(out, candidate.Text)
+	}
+	return out
+}
+
+func contextPackEvidenceSegmentPriority(text string, heading bool) int {
+	lower := strings.ToLower(strings.TrimSpace(text))
+	priority := 0
+	if contextPackDecisionSignal(lower) {
+		priority += 100
+	}
+	if contextPackRiskSignal(lower) {
+		priority += 95
+	}
+	if contextPackAcceptanceSignal(lower) {
+		priority += 90
+	}
+	if containsAny(lower, []string{
+		"outcome", "result", "status", "metric", "required", "constraint", "recommendation", "baseline", "candidate", "action",
+	}) {
+		priority += 35
+	}
+	if heading {
+		priority += 15
+	}
+	if contextPackMetadataOnlyEvidence(lower) {
+		priority -= 120
+	}
+	return priority
+}
+
+func contextPackMetadataOnlyEvidence(text string) bool {
+	text = strings.TrimSpace(strings.TrimLeft(text, "{\""))
+	for _, prefix := range []string{
+		"schema_version", "schema_id", "recorded_at", "generated_at", "created_at", "updated_at",
+		"project", "session_id", "hub_session_id", "worker_agent_id", "agent_id", "source_tree_sha256",
+	} {
+		if strings.HasPrefix(text, prefix+":") || strings.HasPrefix(text, prefix+"\"") {
+			return true
+		}
+	}
+	return false
+}
+
+func contextPackJSONEvidenceCandidates(value any, prefix string, visited *int, add func(string, bool)) {
+	if visited == nil || *visited >= 512 {
+		return
+	}
+	(*visited)++
+	switch typed := value.(type) {
+	case map[string]any:
+		keys := make([]string, 0, len(typed))
+		for key := range typed {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			next := key
+			if prefix != "" {
+				next = prefix + "." + key
+			}
+			contextPackJSONEvidenceCandidates(typed[key], next, visited, add)
+			if *visited >= 512 {
+				return
+			}
+		}
+	case []any:
+		for index, item := range typed {
+			contextPackJSONEvidenceCandidates(item, prefix+"["+strconv.Itoa(index)+"]", visited, add)
+			if *visited >= 512 {
+				return
+			}
+		}
+	case string:
+		if strings.TrimSpace(typed) != "" {
+			label := strings.TrimSpace(prefix)
+			if label == "" {
+				add(typed, false)
+			} else {
+				add(label+": "+typed, false)
+			}
+		}
+	case float64, bool, json.Number:
+		label := strings.TrimSpace(prefix)
+		if label == "" {
+			add(anyToString(typed), false)
+		} else {
+			add(label+": "+anyToString(typed), false)
+		}
+	}
+}
+
+func contextPackRiskSignal(text string) bool {
+	return containsAny(strings.ToLower(text), []string{
+		"fail", "failure", "timeout", "blocked", "blocker", "regression", "risk", "vulnerab", "contradict", "gap", "rollback", "superseded", "obsolete",
+	})
+}
+
+func contextPackAcceptanceSignal(text string) bool {
+	tokens := lexicalTokenSet(strings.ToLower(strings.TrimSpace(text)))
+	for _, token := range []string{
+		"verify", "verified", "verification", "validate", "validated", "validation", "test", "tests", "tested",
+		"check", "checked", "acceptance", "criteria", "pass", "passed", "proof", "proven", "receipt", "readback",
+		"healthy", "complete", "completed", "success", "succeeded", "digest", "gate", "gated",
+	} {
+		if _, present := tokens[token]; present {
+			return true
+		}
+	}
+	return false
+}
+
+func contextPackDecisionSignal(text string) bool {
+	lower := strings.ToLower(strings.TrimSpace(text))
+	if containsAny(lower, []string{"decision", "decided", "choose", "chosen", "policy", "contract"}) {
+		return true
+	}
+	tokens := lexicalTokenSet(lower)
+	for _, token := range []string{
+		"adjudication", "adjudicated", "approved", "approval", "disposition", "finalized", "merged", "resolution", "resolved",
+		"verdict", "recommendation", "selected", "winner", "promoted", "promotion", "retired",
+	} {
+		if _, present := tokens[token]; present {
+			if (token == "approved" && strings.Contains(lower, "not approved")) ||
+				(token == "approval" && containsAny(lower, []string{"no approval", "without approval"})) ||
+				(token == "selected" && strings.Contains(lower, "not selected")) ||
+				(token == "merged" && strings.Contains(lower, "not merged")) ||
+				(token == "resolved" && strings.Contains(lower, "not resolved")) {
+				continue
+			}
+			return true
+		}
+	}
+	return false
 }
 
 func containsAny(text string, needles []string) bool {

@@ -138,6 +138,11 @@ $hookRuntimePythonFiles = @(
     "scripts\agent\compaction-handoff-payload",
     "scripts\agent\contextlattice-session",
     "scripts\agent\contextlattice-recall-response",
+    # Saved recall quality is a supported runtime CLI, not a development-only
+    # helper. Keep its script beside the compact hook dependencies so the
+    # wrapper remains usable without the optional dev venv.
+    "scripts\agent\recall-quality-eval",
+    "scripts\agent\context-pack-quality-benchmark",
     "scripts\agent_contracts.py",
     "scripts\agent_orchestration.py",
     "scripts\contextlattice_client.py"
@@ -485,11 +490,52 @@ set TOOL_HOME=%CONTEXTLATTICE_GLOBAL_HOME%
 if "%TOOL_HOME%"=="" set TOOL_HOME=%USERPROFILE%\.contextlattice
 set PYTHON_EXE=%TOOL_HOME%\venv-agent-tools\Scripts\python.exe
 set SCRIPT_PATH=%TOOL_HOME%\scripts\agent\recall-quality-eval
+if not exist "%SCRIPT_PATH%" (
+  echo Missing %SCRIPT_PATH%. Run scripts\install_global_agent_tools.ps1 first.
+  exit /b 1
+)
 if not exist "%PYTHON_EXE%" (
-  echo Missing %PYTHON_EXE%. Run scripts\install_global_agent_tools.ps1 first.
+  set PYTHON_EXE=
+  where python.exe >nul 2>&1
+  if not errorlevel 1 set PYTHON_EXE=python.exe
+)
+if not defined PYTHON_EXE (
+  where py.exe >nul 2>&1
+  if not errorlevel 1 set PYTHON_EXE=py.exe
+)
+if not defined PYTHON_EXE (
+  echo Missing Python runtime. Install Python or run scripts\install_global_agent_tools.ps1 -IncludeDevPythonTools.
   exit /b 1
 )
 "%PYTHON_EXE%" "%SCRIPT_PATH%" %*
+exit /b %ERRORLEVEL%
+"@
+
+$contextPackQualityBenchmarkCmd = @"
+@echo off
+set TOOL_HOME=%CONTEXTLATTICE_GLOBAL_HOME%
+if "%TOOL_HOME%"=="" set TOOL_HOME=%USERPROFILE%\.contextlattice
+set PYTHON_EXE=%TOOL_HOME%\venv-agent-tools\Scripts\python.exe
+set SCRIPT_PATH=%TOOL_HOME%\scripts\agent\context-pack-quality-benchmark
+if not exist "%SCRIPT_PATH%" (
+  echo Missing %SCRIPT_PATH%. Run scripts\install_global_agent_tools.ps1 first.
+  exit /b 1
+)
+if not exist "%PYTHON_EXE%" (
+  set PYTHON_EXE=
+  where python.exe >nul 2>&1
+  if not errorlevel 1 set PYTHON_EXE=python.exe
+)
+if not defined PYTHON_EXE (
+  where py.exe >nul 2>&1
+  if not errorlevel 1 set PYTHON_EXE=py.exe
+)
+if not defined PYTHON_EXE (
+  echo Missing Python runtime. Install Python or run scripts\install_global_agent_tools.ps1 -IncludeDevPythonTools.
+  exit /b 1
+)
+"%PYTHON_EXE%" "%SCRIPT_PATH%" %*
+exit /b %ERRORLEVEL%
 "@
 
 Set-Content -Path (Join-Path $BinDir "contextlattice_search.cmd") -Value $searchCmd -Encoding Ascii
@@ -513,6 +559,7 @@ Set-Content -Path (Join-Path $BinDir "contextlattice_codex_session_store_doctor.
 Set-Content -Path (Join-Path $BinDir "contextlattice_async_inbox_hook.cmd") -Value $asyncInboxHookCmd -Encoding Ascii
 Set-Content -Path (Join-Path $BinDir "contextlattice_runner_quality.cmd") -Value $runnerQualityCmd -Encoding Ascii
 Set-Content -Path (Join-Path $BinDir "contextlattice_recall_quality_eval.cmd") -Value $recallQualityEvalCmd -Encoding Ascii
+Set-Content -Path (Join-Path $BinDir "contextlattice_context_pack_quality_benchmark.cmd") -Value $contextPackQualityBenchmarkCmd -Encoding Ascii
 
 function Write-GoNativeCmd {
     param([string]$Name)
@@ -664,6 +711,8 @@ Write-Host "  contextlattice_memory_topology --pretty"
 Write-Host "  contextlattice_agent_runtime_doctor --pretty"
 Write-Host "  contextlattice_skills_index search agent --pretty"
 Write-Host "  contextlattice_runner_quality --pretty"
+Write-Host "  contextlattice_recall_quality_eval --pretty"
+Write-Host "  contextlattice_context_pack_quality_benchmark --json"
 if ($IncludeDevPythonTools.IsPresent) {
     Write-Host "  contextlattice_source_backfill --source jsonl --path data.jsonl --project my-project --pretty"
     Write-Host "  contextlattice_codex_session_store_doctor --pretty"

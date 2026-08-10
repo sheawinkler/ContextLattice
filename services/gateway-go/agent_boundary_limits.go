@@ -1033,6 +1033,12 @@ func reconcileContextPackBoundaryMetadata(payload map[string]any, rebuildReferen
 	if len(contextPack) == 0 {
 		return
 	}
+	transportProjection := anyMap(contextPack["transport_projection"])
+	canonicalTransportProjection := anyToString(transportProjection["schema_id"]) == "contextlattice_context_pack_transport_projection.v1"
+	_, rankedAliasExposed := contextPack["rankedEvidence"]
+	_, compilerAliasExposed := contextPack["contextCompiler"]
+	_, tokenBudgetAliasExposed := contextPack["tokenBudget"]
+	_, promptSectionsAliasExposed := contextPack["promptSections"]
 	rankedEvidence := contextPackAnyList(firstPresentAny(contextPack["ranked_evidence"], contextPack["rankedEvidence"]))
 	compiler := cloneJSONMap(anyMap(firstPresentAny(contextPack["context_compiler"], contextPack["contextCompiler"], payload["context_compiler"], payload["contextCompiler"])))
 	if len(compiler) == 0 {
@@ -1061,13 +1067,19 @@ func reconcileContextPackBoundaryMetadata(payload map[string]any, rebuildReferen
 			compiler["token_budget"] = tokenBudget
 		}
 	}
-	contextPack["rankedEvidence"] = rankedEvidence
 	contextPack["ranked_evidence"] = rankedEvidence
-	contextPack["contextCompiler"] = compiler
+	if rankedAliasExposed {
+		contextPack["rankedEvidence"] = rankedEvidence
+	}
 	contextPack["context_compiler"] = compiler
+	if compilerAliasExposed {
+		contextPack["contextCompiler"] = compiler
+	}
 	if len(tokenBudget) > 0 {
-		contextPack["tokenBudget"] = tokenBudget
 		contextPack["token_budget"] = tokenBudget
+		if tokenBudgetAliasExposed {
+			contextPack["tokenBudget"] = tokenBudget
+		}
 		payload["token_budget"] = tokenBudget
 		if _, ok := payload["tokenBudget"]; ok {
 			payload["tokenBudget"] = tokenBudget
@@ -1075,12 +1087,23 @@ func reconcileContextPackBoundaryMetadata(payload map[string]any, rebuildReferen
 	}
 	promptSections := anyMap(firstPresentAny(contextPack["prompt_sections"], contextPack["promptSections"]))
 	if len(promptSections) > 0 {
-		promptSections["evidence"] = rankedEvidence
+		if canonicalTransportProjection {
+			promptSections["evidence"] = contextPackTransportEvidencePointers(rankedEvidence, contextPackTransportLegacyEvidenceLimit)
+			promptSections["ranked_evidence_count"] = len(rankedEvidence)
+			promptSections["ranked_evidence_path"] = "$.context_pack.ranked_evidence"
+			transportProjection["ranked_evidence_count"] = len(rankedEvidence)
+			transportProjection["prompt_evidence_preview_count"] = minInt(len(rankedEvidence), contextPackTransportLegacyEvidenceLimit)
+			contextPack["transport_projection"] = transportProjection
+		} else {
+			promptSections["evidence"] = rankedEvidence
+		}
 		if len(tokenBudget) > 0 {
 			promptSections["token_budget"] = tokenBudget
 		}
-		contextPack["promptSections"] = promptSections
 		contextPack["prompt_sections"] = promptSections
+		if promptSectionsAliasExposed {
+			contextPack["promptSections"] = promptSections
+		}
 		if rebuildReferencePrompt && compacted {
 			payload["reference_prompt"] = contextPackReferencePrompt(promptSections)
 		}
