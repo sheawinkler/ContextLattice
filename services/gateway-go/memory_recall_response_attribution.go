@@ -236,6 +236,7 @@ func recallResponseIDForResponse(response map[string]any) string {
 	delete(material, "response_id")
 	delete(material, "response_digest")
 	delete(material, "format_contract")
+	delete(material, recallResponseFallbackStageReceiptKey)
 	return "rr_" + sha256Hex(recallResponseCanonicalJSON(material))[:24]
 }
 

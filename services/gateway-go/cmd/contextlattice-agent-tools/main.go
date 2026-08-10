@@ -12,7 +12,9 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"os"
 	"os/exec"
@@ -20,20 +22,22 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
 const (
-	defaultBaseURL                 = "http://127.0.0.1:8075"
-	agentPacketContractID          = "agent_packet.v1"
-	agentPacketDeltaContractID     = "agent_packet_delta.v1"
-	agentPacketReconstructionID    = "agent_packet_reconstruction.v1"
-	defaultAgentPacketTargetTokens = 2000
-	defaultAgentPacketHardTokens   = 4000
-	maxAgentPacketCLIFileBytes     = 64 << 10
-	runtimeAuditMaximumAge         = 2 * time.Minute
-	runtimeAuditMaximumFutureSkew  = 30 * time.Second
-	retrievalGovernanceContractID  = "frontier_t4_retrieval_governance.v1"
+	defaultBaseURL                         = "http://127.0.0.1:8075"
+	agentPacketContractID                  = "agent_packet.v1"
+	agentPacketDeltaContractID             = "agent_packet_delta.v1"
+	agentPacketReconstructionID            = "agent_packet_reconstruction.v1"
+	defaultAgentPacketTargetTokens         = 2000
+	defaultAgentPacketHardTokens           = 4000
+	maxAgentPacketCLIFileBytes             = 64 << 10
+	runtimeAuditMaximumAge                 = 2 * time.Minute
+	runtimeAuditMaximumFutureSkew          = 30 * time.Second
+	retrievalGovernanceContractID          = "frontier_t4_retrieval_governance.v1"
+	defaultContextLatticeClientTimeoutSecs = 200.0
 )
 
 var nativeToolNames = map[string]string{
@@ -159,6 +163,56 @@ type cli struct {
 	client  *http.Client
 	stdout  io.Writer
 	stderr  io.Writer
+}
+
+// cliRequestError preserves transport evidence needed to decide whether an
+// explicit retry is safe. A transport failure after GotConn is never
+// retryable: a write may have delivered bytes even when WroteRequest has not
+// fired, and the gateway may already have accepted the request and enqueued
+// continuation work.
+type cliRequestError struct {
+	Method         string
+	Path           string
+	StatusCode     int
+	Cause          error
+	TimedOut       bool
+	WroteRequest   bool
+	GotConnection  bool
+	PreDelivery    bool
+	ConnectionFail bool
+	Retryable      bool
+}
+
+func (e *cliRequestError) Error() string {
+	if e == nil || e.Cause == nil {
+		return "ContextLattice request failed"
+	}
+	return e.Cause.Error()
+}
+
+func (e *cliRequestError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Cause
+}
+
+func (e *cliRequestError) evidence() map[string]any {
+	if e == nil {
+		return map[string]any{}
+	}
+	return map[string]any{
+		"schema_id":         "contextlattice_cli_request_error.v1",
+		"method":            e.Method,
+		"path":              e.Path,
+		"status_code":       e.StatusCode,
+		"timed_out":         e.TimedOut,
+		"wrote_request":     e.WroteRequest,
+		"got_connection":    e.GotConnection,
+		"pre_delivery":      e.PreDelivery,
+		"connection_failed": e.ConnectionFail,
+		"retryable":         e.Retryable,
+	}
 }
 
 type parsedArgs struct {
@@ -1082,6 +1136,23 @@ func baseURLFromEnv() string {
 	return defaultBaseURL
 }
 
+func clientTimeoutFor(parsed parsedArgs) float64 {
+	if parsed.has("timeout") {
+		if value, err := strconv.ParseFloat(strings.TrimSpace(parsed.values["timeout"]), 64); err == nil && finitePositiveFloat(value) {
+			return value
+		}
+		return defaultContextLatticeClientTimeoutSecs
+	}
+	if value, err := strconv.ParseFloat(strings.TrimSpace(os.Getenv("CONTEXTLATTICE_CLIENT_TIMEOUT_SECS")), 64); err == nil && finitePositiveFloat(value) {
+		return value
+	}
+	return defaultContextLatticeClientTimeoutSecs
+}
+
+func finitePositiveFloat(value float64) bool {
+	return value > 0 && !math.IsNaN(value) && !math.IsInf(value, 0)
+}
+
 func apiKeyFromEnv() string {
 	if value := strings.TrimSpace(os.Getenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY")); value != "" {
 		return value
@@ -1144,6 +1215,31 @@ func (c *cli) requestJSON(ctx context.Context, method, path string, payload any,
 	return parsed, status, err
 }
 
+func cliRequestFailure(method, path string, status int, cause error, wroteRequest, gotConnection bool) error {
+	if cause == nil {
+		return nil
+	}
+	var networkErr net.Error
+	connectionFailed := errors.As(cause, &networkErr)
+	timedOut := errors.Is(cause, context.DeadlineExceeded)
+	if connectionFailed && networkErr.Timeout() {
+		timedOut = true
+	}
+	preDelivery := !gotConnection && !wroteRequest && connectionFailed
+	return &cliRequestError{
+		Method:         method,
+		Path:           path,
+		StatusCode:     status,
+		Cause:          cause,
+		TimedOut:       timedOut,
+		WroteRequest:   wroteRequest,
+		GotConnection:  gotConnection,
+		PreDelivery:    preDelivery,
+		ConnectionFail: connectionFailed,
+		Retryable:      preDelivery,
+	}
+}
+
 func (c *cli) requestJSONWithHeaders(ctx context.Context, method, path string, payload any, timeout float64, requestHeaders http.Header) (map[string]any, int, http.Header, error) {
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(maxFloat(timeout, 1))*time.Second)
 	defer cancel()
@@ -1151,7 +1247,7 @@ func (c *cli) requestJSONWithHeaders(ctx context.Context, method, path string, p
 	if payload != nil {
 		raw, err := json.Marshal(payload)
 		if err != nil {
-			return nil, 0, nil, err
+			return nil, 0, nil, cliRequestFailure(method, path, 0, err, false, false)
 		}
 		body = bytes.NewReader(raw)
 	}
@@ -1161,7 +1257,7 @@ func (c *cli) requestJSONWithHeaders(ctx context.Context, method, path string, p
 	}
 	req, err := http.NewRequestWithContext(ctx, method, target, body)
 	if err != nil {
-		return nil, 0, nil, err
+		return nil, 0, nil, cliRequestFailure(method, path, 0, err, false, false)
 	}
 	if payload != nil {
 		req.Header.Set("content-type", "application/json")
@@ -1176,23 +1272,34 @@ func (c *cli) requestJSONWithHeaders(ctx context.Context, method, path string, p
 			}
 		}
 	}
+	var wroteRequest atomic.Bool
+	var gotConnection atomic.Bool
+	trace := &httptrace.ClientTrace{
+		GotConn: func(httptrace.GotConnInfo) {
+			gotConnection.Store(true)
+		},
+		WroteRequest: func(httptrace.WroteRequestInfo) {
+			wroteRequest.Store(true)
+		},
+	}
+	req = req.WithContext(httptrace.WithClientTrace(req.Context(), trace))
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return nil, 0, nil, err
+		return nil, 0, nil, cliRequestFailure(method, path, 0, err, wroteRequest.Load(), gotConnection.Load())
 	}
 	defer resp.Body.Close()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	if err != nil {
-		return nil, resp.StatusCode, resp.Header.Clone(), err
+		return nil, resp.StatusCode, resp.Header.Clone(), cliRequestFailure(method, path, resp.StatusCode, err, true, true)
 	}
 	parsed := map[string]any{}
 	if len(bytes.TrimSpace(raw)) > 0 {
 		if err := json.Unmarshal(raw, &parsed); err != nil {
-			return nil, resp.StatusCode, resp.Header.Clone(), fmt.Errorf("decode %s: %w: %s", path, err, string(raw[:minInt(len(raw), 1000)]))
+			return nil, resp.StatusCode, resp.Header.Clone(), cliRequestFailure(method, path, resp.StatusCode, fmt.Errorf("decode %s: %w: %s", path, err, string(raw[:minInt(len(raw), 1000)])), true, true)
 		}
 	}
 	if resp.StatusCode >= 400 {
-		return parsed, resp.StatusCode, resp.Header.Clone(), fmt.Errorf("%s %s returned status=%d payload=%s", method, path, resp.StatusCode, compactJSON(parsed))
+		return parsed, resp.StatusCode, resp.Header.Clone(), cliRequestFailure(method, path, resp.StatusCode, fmt.Errorf("%s %s returned status=%d payload=%s", method, path, resp.StatusCode, compactJSON(parsed)), true, true)
 	}
 	return parsed, resp.StatusCode, resp.Header.Clone(), nil
 }
@@ -2884,12 +2991,13 @@ func (c *cli) cmdPackWithRouteMode(args []string, commandName string, route stri
 	if value := parsed.string("evidence_obligations", ""); value != "" {
 		payload["evidence_obligations"] = splitCSV(value)
 	}
+	requestTimeout := clientTimeoutFor(parsed)
 	var raw map[string]any
 	var err error
 	if responseMode {
-		raw, err = c.requestRecallResponseWithRetries(route, payload, parsed.float("timeout", 30), parsed.int("retries", 2), parsed.float("retry_delay", 1))
+		raw, err = c.requestRecallResponseWithRetries(route, payload, requestTimeout, parsed.int("retries", 0), parsed.float("retry_delay", 1))
 	} else {
-		raw, err = c.requestWithRetries(route, payload, parsed.float("timeout", 30), parsed.int("retries", 2), parsed.float("retry_delay", 1))
+		raw, err = c.requestWithRetries(route, payload, requestTimeout, parsed.int("retries", 0), parsed.float("retry_delay", 1))
 	}
 	if err != nil {
 		if responseMode {
@@ -2953,11 +3061,21 @@ func (c *cli) requestWithRetries(path string, payload any, timeout float64, retr
 			return result, nil
 		}
 		last = err
-		if attempt < retries {
+		// A retry is safe only when the transport proved that no request bytes
+		// were delivered. In particular, never replay a timeout after
+		// WroteRequest: the gateway may already have created continuation work.
+		if attempt < retries && cliRequestRetryable(err) {
 			time.Sleep(time.Duration(delay*float64(attempt+1)) * time.Second)
+			continue
 		}
+		break
 	}
 	return nil, last
+}
+
+func cliRequestRetryable(err error) bool {
+	var requestErr *cliRequestError
+	return errors.As(err, &requestErr) && requestErr.Retryable
 }
 
 func derivedAgentTaskID(project, objective string) string {
@@ -3113,11 +3231,12 @@ func addContextPackTokenBudgetArgs(payload map[string]any, parsed parsedArgs) {
 }
 
 func failurePack(query string, budget int, err error) map[string]any {
-	return map[string]any{
+	payload := map[string]any{
 		"ok":                   false,
 		"task_summary":         query,
 		"context_budget_chars": budget,
-		"status":               "failed_after_retries",
+		"status":               "failed_without_replay",
+		"retry_policy":         "pre_delivery_connection_failures_only",
 		"structured_failure":   true,
 		"error":                truncate(err.Error(), 1000),
 		"context_pack": map[string]any{
@@ -3131,6 +3250,11 @@ func failurePack(query string, budget int, err error) map[string]any {
 			"writeback_required": true,
 		},
 	}
+	var requestErr *cliRequestError
+	if errors.As(err, &requestErr) {
+		payload["error_evidence"] = requestErr.evidence()
+	}
+	return payload
 }
 
 func (c *cli) cmdSession(args []string) error {

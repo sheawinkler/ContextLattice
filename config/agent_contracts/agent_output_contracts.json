@@ -910,6 +910,22 @@
         "answer.composition": "object",
         "answer.composition.ordered_modules": "list",
         "answer.components": "list",
+        "state.silence": "object",
+        "state.silenced": "bool",
+        "state.silence.reason": "string",
+        "state.silence.value_inputs": "object",
+        "state.silence.value_inputs.material_new_proof": "bool",
+        "state.silence.value_inputs.blocked_next_action": "bool",
+        "state.silence.value_inputs.supported_high_impact_conflict": "bool",
+        "state.silence.value_inputs.actionable_gap": "bool",
+        "state.silence.value_inputs.utility_verified": "bool",
+        "state.silence.value_inputs.utility_status": "string",
+        "state.silence.value_inputs.source_complete": "bool",
+        "state.silence.value_inputs.proof_complete": "bool",
+        "state.silence.value_score": "int",
+        "state.silence.threshold": "int",
+        "state.silence.policy_version": "string",
+        "state.silence.loop_guard_digest": "string",
         "request_scope.as_of": "string",
         "request_scope.task_class": "string",
         "request_scope.temporal_premise_digest": "string",
@@ -1057,6 +1073,34 @@
         ]
       },
       "closed_fields_by_path": {
+        "state": [
+          "status",
+          "source_complete",
+          "evidence_count",
+          "conflict_count",
+          "gap_count",
+          "retrieval_mode",
+          "silence",
+          "silenced"
+        ],
+        "state.silence": [
+          "reason",
+          "value_inputs",
+          "value_score",
+          "threshold",
+          "policy_version",
+          "loop_guard_digest"
+        ],
+        "state.silence.value_inputs": [
+          "material_new_proof",
+          "blocked_next_action",
+          "supported_high_impact_conflict",
+          "actionable_gap",
+          "utility_verified",
+          "utility_status",
+          "source_complete",
+          "proof_complete"
+        ],
         "classification.facets": [
           "jobs",
           "memory_objects",

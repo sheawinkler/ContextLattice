@@ -175,6 +175,16 @@ def main() -> int:
         "contextlattice_pre_compaction_write": bin_dir / "contextlattice_pre_compaction_write",
         "contextlattice_post_compaction_read": bin_dir / "contextlattice_post_compaction_read",
     }
+    recall_wrapper = bin_dir / (
+        "contextlattice_recall_quality_eval.cmd" if os.name == "nt" else "contextlattice_recall_quality_eval"
+    )
+    recall_script = global_home / "scripts" / "agent" / "recall-quality-eval"
+    benchmark_wrapper = bin_dir / (
+        "contextlattice_context_pack_quality_benchmark.cmd"
+        if os.name == "nt"
+        else "contextlattice_context_pack_quality_benchmark"
+    )
+    benchmark_script = global_home / "scripts" / "agent" / "context-pack-quality-benchmark"
     hook_runtime_files = {
         "scripts/agent/_common.py": global_home / "scripts" / "agent" / "_common.py",
         "scripts/agent/audit-codex-session-store": global_home / "scripts" / "agent" / "audit-codex-session-store",
@@ -212,6 +222,59 @@ def main() -> int:
         if not installed:
             extra["suggested_fix"] = "Run scripts/install_global_agent_tools.sh from a current ContextLattice checkout."
         checks.append(record(f"hook_runtime:{label}", installed, **extra))
+
+    recall_script_installed = recall_script.is_file() and (
+        os.name == "nt" or os.access(recall_script, os.X_OK)
+    )
+    checks.append(
+        record(
+            "runtime_script:recall-quality-eval",
+            recall_script_installed,
+            path=str(recall_script),
+            runtime_dependency=True,
+            suggested_fix=(
+                "Run scripts/install_global_agent_tools.sh from a current ContextLattice checkout."
+                if not recall_script_installed
+                else ""
+            ),
+        )
+    )
+    recall_wrapper_installed = recall_wrapper.is_file() and (
+        os.name == "nt" or os.access(recall_wrapper, os.X_OK)
+    )
+    checks.append(
+        record(
+            "runtime_wrapper:contextlattice_recall_quality_eval",
+            recall_wrapper_installed,
+            path=str(recall_wrapper),
+            runtime_dependency=True,
+        )
+    )
+    if recall_script_installed and recall_wrapper_installed:
+        ok, detail = run_text([str(recall_wrapper), "--help"], args.timeout, runtime_env)
+        checks.append(record("runtime_wrapper_help:contextlattice_recall_quality_eval", ok, detail))
+
+    benchmark_script_installed = benchmark_script.is_file() and (
+        os.name == "nt" or os.access(benchmark_script, os.X_OK)
+    )
+    checks.append(record(
+        "runtime_script:context-pack-quality-benchmark",
+        benchmark_script_installed,
+        path=str(benchmark_script),
+        runtime_dependency=True,
+    ))
+    benchmark_wrapper_installed = benchmark_wrapper.is_file() and (
+        os.name == "nt" or os.access(benchmark_wrapper, os.X_OK)
+    )
+    checks.append(record(
+        "runtime_wrapper:contextlattice_context_pack_quality_benchmark",
+        benchmark_wrapper_installed,
+        path=str(benchmark_wrapper),
+        runtime_dependency=True,
+    ))
+    if benchmark_script_installed and benchmark_wrapper_installed:
+        ok, detail = run_text([str(benchmark_wrapper), "--help"], args.timeout, runtime_env)
+        checks.append(record("runtime_wrapper_help:contextlattice_context_pack_quality_benchmark", ok, detail))
 
     for name, path in optional_dev.items():
         installed = path.is_file() and os.access(path, os.X_OK)

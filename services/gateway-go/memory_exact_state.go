@@ -129,6 +129,7 @@ func (m *memoryStore) registerExactStatePathLocked(project string, fileName stri
 	m.exactStatePaths = next
 	m.exactStateCount.Store(int64(len(next)))
 	delete(m.latestTopic, key)
+	m.removeCurrentKeyLocked(project, key)
 	delete(m.latestHash, key)
 	m.removeMemoryEdgesForKeyLocked(key)
 	filtered := m.recent[:0]

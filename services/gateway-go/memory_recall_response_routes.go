@@ -156,6 +156,12 @@ func recallResponseCompositionInputFromCompilation(
 	composition["workspace_ref"] = input.WorkspaceRef
 	delete(composition, "workspace_id")
 	delete(composition, "workspaceId")
+	if len(artifacts.ServerProactiveObservation) > 0 {
+		// This private carrier is filled by the compiler from the server's
+		// materialized retrieval response. It never crosses the public response
+		// boundary and cannot be supplied by the caller allowlist.
+		composition["_server_proactive_observation"] = cloneJSONMap(artifacts.ServerProactiveObservation)
+	}
 	if durable {
 		// This is an internal candidate for attribution only. The persisted row
 		// is re-read after the append before its outcome can become public.
@@ -170,23 +176,47 @@ func recallResponseSemanticDigest(payload map[string]any) string {
 	material := cloneJSONMap(payload)
 	delete(material, "format_contract")
 	delete(material, "response_digest")
+	delete(material, recallResponseFallbackStageReceiptKey)
 	return "sha256:" + sha256Hex(recallResponseCanonicalJSON(material))
 }
 
 func finalizeRecallResponseTransport(payload map[string]any, agentID, lane, endpoint string) map[string]any {
-	delete(payload, "format_contract")
-	// Attach the contract first so its shared projection has finished clipping
-	// semantic fields. Both semantic identities are then recomputed because a
-	// future clipping pass may change component or evidence material. Their
-	// fixed-width replacements cannot change the stamped byte count.
-	payload = attachPayloadFormatContract(recallResponseContractID, payload, agentID, lane, endpoint)
-	if recallResponseRecomputeClippedIdentity(payload) {
+	for attempts := 0; attempts < recallResponseMaxEvidence+recallResponseMaxModules+1; attempts++ {
+		// Fallback-stage diagnostics are server-internal and must never cross the
+		// agent-facing transport boundary.
+		delete(payload, recallResponseFallbackStageReceiptKey)
 		delete(payload, "format_contract")
+		// Attach the contract first so its shared projection has finished clipping
+		// semantic fields. Both semantic identities are then recomputed because a
+		// future clipping pass may change component or evidence material. Their
+		// fixed-width replacements cannot change the stamped byte count.
 		payload = attachPayloadFormatContract(recallResponseContractID, payload, agentID, lane, endpoint)
-		recallResponseRecomputeClippedIdentity(payload)
+		if recallResponseRecomputeClippedIdentity(payload) {
+			delete(payload, "format_contract")
+			payload = attachPayloadFormatContract(recallResponseContractID, payload, agentID, lane, endpoint)
+			recallResponseRecomputeClippedIdentity(payload)
+		}
+		payload["response_id"] = recallResponseIDForResponse(payload)
+		payload["response_digest"] = recallResponseSemanticDigest(payload)
+		delete(payload, recallResponseFallbackStageReceiptKey)
+		compactBytes, compactTokens := recallResponseCompactBudget(payload)
+		if compactBytes <= recallResponseMaxCompactBytes && compactTokens <= recallResponseMaxCompactTokens {
+			return payload
+		}
+
+		// The compact contract applies to the complete agent-facing payload, not
+		// only the pre-format candidate. Remove optional material using the actual
+		// stamped size, then restamp and revalidate on the next iteration.
+		proof := anyMap(anyMap(payload["answer"])["proof_spine"])
+		if recallResponsePruneLowestUnprovedEvidence(payload, proof) {
+			continue
+		}
+		if recallResponsePruneOptionalSecondaryModule(payload) {
+			continue
+		}
+		break
 	}
-	payload["response_id"] = recallResponseIDForResponse(payload)
-	payload["response_digest"] = recallResponseSemanticDigest(payload)
+	delete(payload, recallResponseFallbackStageReceiptKey)
 	return payload
 }
 
@@ -253,7 +283,7 @@ func (s *server) recallResponseRoute(w http.ResponseWriter, r *http.Request, too
 		var fallbackResponse map[string]any
 		fallback := func() map[string]any {
 			if fallbackResponse == nil {
-				fallbackResponse = projectRecallResponseV1ControlFromArtifacts(fallbackComposition, recallResponseProductionPolicyInput())
+				fallbackResponse = recallResponseProjectFallbackWithServerSilence(fallbackComposition, recallResponseProductionPolicyInput())
 				fallbackResponse = finalizeRecallResponseTransport(fallbackResponse, agentID, "recall_response", endpoint)
 			}
 			return cloneJSONMap(fallbackResponse)
@@ -265,8 +295,18 @@ func (s *server) recallResponseRoute(w http.ResponseWriter, r *http.Request, too
 		if !durable || !recallResponseTransportCandidateValid(response) {
 			response = fallback()
 		}
+		artifacts.SideEffectsSuppressed = recallResponseServerSilenced(response)
+		if artifacts.SideEffectsSuppressed {
+			// A silent response is advisory output only. Remove any provisional
+			// attribution before the persistence seam sees the artifacts.
+			for _, key := range []string{"recall_response_id", "recall_response_digest", "response_component_refs"} {
+				delete(artifacts.Quality, key)
+			}
+			delete(artifacts.Quality, "selection_receipt")
+			delete(composition, "_durable_context_pack_quality")
+		}
 		var binding map[string]any
-		if durable && !recallResponseIsV1Control(response) {
+		if durable && !artifacts.SideEffectsSuppressed && !recallResponseIsV1Control(response) {
 			if canonical, ok := recallResponseBindingFromResponse(response); ok && recallResponseCopyBinding(artifacts.Quality, canonical) {
 				binding = canonical
 			} else {
@@ -284,7 +324,7 @@ func (s *server) recallResponseRoute(w http.ResponseWriter, r *http.Request, too
 		hookedResponse = response
 		hookedFallbackResponse = fallback
 		hookedBinding = binding
-		hookedDurable = durable && binding != nil
+		hookedDurable = durable && !artifacts.SideEffectsSuppressed && binding != nil
 		hookedSampleID = anyToString(artifacts.Quality["sample_id"])
 		hookedReceiptDigest = ""
 		if durable {
@@ -336,7 +376,7 @@ func (s *server) recallResponseRoute(w http.ResponseWriter, r *http.Request, too
 			// projection from sanitized error data.
 			response = hookedFallbackResponse()
 		} else {
-			response = projectRecallResponseV1ControlFromArtifacts(recallResponseCompositionInput(request, contextResponse), recallResponseProductionPolicyInput())
+			response = recallResponseProjectFallbackWithServerSilence(recallResponseCompositionInput(request, contextResponse), recallResponseProductionPolicyInput())
 			response = finalizeRecallResponseTransport(response, agentID, "recall_response", endpoint)
 		}
 		hookedDurable = false
@@ -365,7 +405,7 @@ func (s *server) recallResponseRoute(w http.ResponseWriter, r *http.Request, too
 			if hookedFallbackResponse != nil {
 				response = hookedFallbackResponse()
 			} else {
-				response = projectRecallResponseV1ControlFromArtifacts(recallResponseCompositionInput(request, contextResponse), recallResponseProductionPolicyInput())
+				response = recallResponseProjectFallbackWithServerSilence(recallResponseCompositionInput(request, contextResponse), recallResponseProductionPolicyInput())
 				response = finalizeRecallResponseTransport(response, agentID, "recall_response", endpoint)
 			}
 		}
@@ -387,7 +427,9 @@ func recallResponseTransportCandidateValid(response map[string]any) bool {
 		return true
 	}
 	contract := anyMap(response["format_contract"])
-	if !anyToBool(contract["contract_valid"]) || anyToBool(contract["truncated"]) || !validateRecallResponseU2(response) {
+	compactBytes, compactTokens := recallResponseCompactBudget(response)
+	if !anyToBool(contract["contract_valid"]) || anyToBool(contract["truncated"]) ||
+		compactBytes > recallResponseMaxCompactBytes || compactTokens > recallResponseMaxCompactTokens || !validateRecallResponseU2(response) {
 		return false
 	}
 	_, ok := recallResponseBindingFromResponse(response)

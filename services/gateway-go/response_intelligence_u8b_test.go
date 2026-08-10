@@ -99,6 +99,44 @@ func TestU8bSelectedHistoryTruncationIsExplicit(t *testing.T) {
 	}
 }
 
+func TestU8bObjectiveSelectionIndexesFailClosedBeforeSelection(t *testing.T) {
+	when := time.Date(2026, time.August, 9, 8, 0, 0, 0, time.UTC)
+
+	t.Run("explicit objective with only invalid transition indexes", func(t *testing.T) {
+		store := newU8bObjectiveStore()
+		key := continuityScopedIndexKey("contextlattice", "missing_selected")
+		store.objectiveTransitionIndex[key] = []int{7}
+		graph := store.objectiveGraph("contextlattice", "missing_selected", when, true, 10)
+		if anyToBool(graph["ok"]) || anyToString(graph["error"]) != "objective_transition_index_invalid" ||
+			anyToInt(graph["invalid_index_count"], 0) != 1 || anyToBool(graph["index_integrity_valid"]) {
+			t.Fatalf("invalid-only objective index did not fail closed: %#v", graph)
+		}
+	})
+
+	t.Run("project selection with only invalid indexes", func(t *testing.T) {
+		store := newU8bObjectiveStore()
+		store.objectiveProjectIndex["contextlattice"] = []int{-1}
+		graph := store.objectiveGraph("contextlattice", "", when, true, 10)
+		if anyToBool(graph["ok"]) || anyToString(graph["error"]) != "objective_transition_index_invalid" ||
+			anyToInt(graph["invalid_index_count"], 0) != 1 || anyToBool(graph["index_integrity_valid"]) {
+			t.Fatalf("invalid-only project index did not fail closed: %#v", graph)
+		}
+	})
+
+	t.Run("relation index cannot invent objective membership", func(t *testing.T) {
+		store := newU8bObjectiveStore()
+		transition := u8bObjectiveTransition("other", "ot_other", "active", when, 1)
+		store.applyObjectiveTransitionValidatedLocked(transition)
+		key := continuityScopedIndexKey("contextlattice", "missing_relation")
+		store.objectiveRelationIndex[key] = []objectiveGraphRelationRef{{RelatedObjectiveID: "other", TransitionIndex: 0}}
+		graph := store.objectiveGraph("contextlattice", "missing_relation", when, true, 10)
+		if anyToBool(graph["ok"]) || anyToString(graph["error"]) != "objective_transition_index_invalid" ||
+			anyToInt(graph["invalid_index_count"], 0) != 1 || anyToBool(graph["index_integrity_valid"]) {
+			t.Fatalf("forged relation membership did not fail closed: %#v", graph)
+		}
+	})
+}
+
 func TestU8bProofSourceRevisionsAreAtomicAndMonotonic(t *testing.T) {
 	continuity := newTestContinuityStore(t)
 	continuityBefore := continuity.proofTimelineCurrentRevision()

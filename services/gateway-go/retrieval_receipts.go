@@ -496,13 +496,20 @@ func retrievalDecisionTraceReference(trace map[string]any) map[string]any {
 }
 
 func retrievalReceiptItemMetadata(item contextPackEvidenceItem) map[string]any {
-	return map[string]any{
+	metadata := map[string]any{
 		"kind": item.Kind, "project": retrievalReceiptPortable(item.Project, 160),
 		"file": retrievalReceiptPortable(item.File, 360), "source": retrievalReceiptPortable(item.Source, 160),
 		"topic_path": retrievalReceiptPortable(item.TopicPath, 240), "freshness": item.Freshness,
 		"content_digest": item.ContentDigest, "estimated_tokens": item.EstimatedTokens,
 		"trust_label": anyToString(item.TrustAssessment["trust_label"]),
 	}
+	if item.EvidenceBasis != "" {
+		metadata["evidence_basis"] = item.EvidenceBasis
+	}
+	if strings.HasPrefix(item.SourceContentHash, "sha256:") {
+		metadata["source_content_hash"] = item.SourceContentHash
+	}
+	return metadata
 }
 
 func retrievalReceiptWhyNow(item contextPackEvidenceItem) []string {

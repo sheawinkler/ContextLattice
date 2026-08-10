@@ -13,12 +13,15 @@ const (
 )
 
 type recallResponseProofCompression struct {
-	Candidates    []string
-	Selected      []string
-	Obligations   []string
-	OracleChecked bool
-	OraclePassed  bool
-	Sufficient    bool
+	Candidates           []string
+	Selected             []string
+	Obligations          []string
+	OracleChecked        bool
+	OraclePassed         bool
+	Sufficient           bool
+	FailureStage         string
+	ProtectedObligations int
+	ProtectedWitnesses   int
 }
 
 type recallResponseProofObligation struct {
@@ -60,7 +63,7 @@ func recallResponseCompressProof(response, proof map[string]any, policy validate
 	}
 	moduleKinds, modulesOK := recallResponseSelectedModuleKinds(response, proof, policy, source)
 	if !modulesOK {
-		return nil, recallResponseProofCompression{Candidates: candidates}, false
+		return nil, recallResponseProofCompression{Candidates: candidates, FailureStage: recallResponseFallbackStageModuleValidation}, false
 	}
 	obligations := []recallResponseProofObligation{}
 	addObligation := func(name string, alternatives []string) {
@@ -92,6 +95,12 @@ func recallResponseCompressProof(response, proof map[string]any, policy validate
 	obligationNames := make([]string, 0, len(obligations))
 	for _, obligation := range obligations {
 		obligationNames = append(obligationNames, obligation.Name)
+	}
+	protected := 0
+	for _, obligation := range obligations {
+		if !strings.HasPrefix(obligation.Name, "module:") {
+			protected++
+		}
 	}
 	// Protected refs are selected first. Remaining module obligations use a
 	// stable greedy cover over the original proof order.
@@ -127,10 +136,16 @@ func recallResponseCompressProof(response, proof map[string]any, policy validate
 		addSelected(best)
 	}
 	compression := recallResponseProofCompression{
-		Candidates:  append([]string(nil), candidates...),
-		Selected:    append([]string(nil), selected...),
-		Obligations: obligationNames,
-		Sufficient:  recallResponseProofObligationsSatisfied(selected, obligations),
+		Candidates:           append([]string(nil), candidates...),
+		Selected:             append([]string(nil), selected...),
+		Obligations:          obligationNames,
+		ProtectedObligations: protected,
+		Sufficient:           recallResponseProofObligationsSatisfied(selected, obligations),
+	}
+	for _, obligation := range obligations {
+		if !strings.HasPrefix(obligation.Name, "module:") && recallResponseProofObligationsSatisfied(selected, []recallResponseProofObligation{obligation}) {
+			compression.ProtectedWitnesses++
+		}
 	}
 	if len(candidates) <= recallResponseMaxOracleRefs {
 		compression.OracleChecked = true
@@ -141,6 +156,11 @@ func recallResponseCompressProof(response, proof map[string]any, policy validate
 	}
 	compression.Sufficient = compression.Sufficient && compression.OraclePassed
 	if !compression.Sufficient {
+		if compression.ProtectedWitnesses < compression.ProtectedObligations {
+			compression.FailureStage = recallResponseFallbackStageProtectedWitness
+		} else {
+			compression.FailureStage = recallResponseFallbackStageCompression
+		}
 		return nil, compression, false
 	}
 

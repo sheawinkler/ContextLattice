@@ -363,18 +363,24 @@ func recallResponseRecomputeClippedIdentity(response map[string]any) bool {
 		return false
 	}
 	if !canaryPolicyOK {
-		recallResponseReplaceWithControl(response, recallResponseFailClosedU2Control(response, policy, asOf))
+		fallback := recallResponseFailClosedU2Control(response, policy, asOf)
+		recallResponseAttachFallbackStageReceipt(fallback, recallResponseFallbackStageReceipt(recallResponseFallbackStageModuleValidation, recallResponseProofCompression{}, response))
+		recallResponseReplaceWithControl(response, fallback)
 		return true
 	}
 	compressed, compression, compressionOK := recallResponseCompressProof(response, proof, policy)
 	if !compressionOK || !compression.Sufficient {
-		recallResponseReplaceWithControl(response, recallResponseFailClosedU2Control(response, policy, asOf))
+		fallback := recallResponseFailClosedU2Control(response, policy, asOf)
+		recallResponseAttachFallbackStageReceipt(fallback, recallResponseFallbackStageReceipt(compression.FailureStage, compression, response))
+		recallResponseReplaceWithControl(response, fallback)
 		return true
 	}
 	answer["proof_spine"] = compressed
 	modules, primary, ordered, modulesOK := recallResponseBuildModules(response, compressed, policy)
 	if !modulesOK {
-		recallResponseReplaceWithControl(response, recallResponseFailClosedU2Control(response, policy, asOf))
+		fallback := recallResponseFailClosedU2Control(response, policy, asOf)
+		recallResponseAttachFallbackStageReceipt(fallback, recallResponseFallbackStageReceipt(recallResponseFallbackStageModuleValidation, recallResponseProofCompression{}, response))
+		recallResponseReplaceWithControl(response, fallback)
 		return true
 	}
 	answer["components"] = modules
@@ -409,6 +415,7 @@ func recallResponseFailClosedU2Control(
 	asOf string,
 ) map[string]any {
 	response := cloneJSONMap(control)
+	serverSilenced := recallResponseServerSilenced(response)
 	facets := map[string]any{
 		"jobs": []any{"verify"}, "memory_objects": []any{"durable_memory"},
 		"temporal_state": "current_or_unknown", "evidence_state": "degraded", "consequence": "high_stakes",
@@ -456,6 +463,18 @@ func recallResponseFailClosedU2Control(
 	nextAction["kind"] = "retrieve_or_verify"
 	nextAction["label"] = "Verify the response contract and proof snapshot"
 	nextAction["reason"] = "Candidate projection validation failed; no candidate identity or action authority is retained."
+	if serverSilenced {
+		// U6's server-owned hard/ordinary silence is stronger than the generic
+		// v1 fallback advice. Preserve the no-dispatch boundary after fallback
+		// projection, including its recomputed response identity below.
+		nextAction["kind"] = "none"
+		nextAction["label"] = "No action"
+		nextAction["reason"] = "The server-derived silence decision closed the action boundary."
+		nextAction["requires_verification"] = false
+		actionBoundary := anyMap(response["action_boundary"])
+		actionBoundary["reason"] = "The server-derived silence decision forbids dispatch and external mutation."
+		response["writeback_required"] = false
+	}
 	outcome := anyMap(response["outcome"])
 	outcome["status"] = "not_attributable"
 	outcome["attributable"] = false

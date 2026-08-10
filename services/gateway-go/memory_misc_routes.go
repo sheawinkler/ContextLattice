@@ -260,11 +260,16 @@ func (s *server) memoryRecallEvalCases(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"case_set_id":     ownerOnlyStoreRef("recall_eval_cases"),
-		"version":         cfg.Version,
-		"updatedAt":       cfg.UpdatedAt,
-		"k":               cfg.K,
-		"case_set_health": validateSavedRecallEvalCaseSet(cfg),
+		"case_set_id":        ownerOnlyStoreRef("recall_eval_cases"),
+		"schema_id":          cfg.SchemaID,
+		"version":            cfg.Version,
+		"updatedAt":          cfg.UpdatedAt,
+		"case_set_digest":    cfg.CaseSetDigest,
+		"snapshot":           cloneAnyMap(cfg.Snapshot),
+		"custody":            cloneAnyMap(cfg.Custody),
+		"benchmark_eligible": anyToBool(validateSavedRecallEvalCaseSet(cfg)["benchmark_eligible"]),
+		"k":                  cfg.K,
+		"case_set_health":    validateSavedRecallEvalCaseSet(cfg),
 		"gate": map[string]any{
 			"minRecallAtK":        cfg.Gate.MinRecallAtK,
 			"minMrr":              cfg.Gate.MinMRR,
@@ -296,13 +301,13 @@ func (s *server) memoryRecallEvalCasesRefresh(w http.ResponseWriter, r *http.Req
 			return
 		}
 	}
-	maxCases := clampInt(anyToInt(payload["max_cases"], 12), 1, 20)
+	maxCases := clampInt(anyToInt(payload["max_cases"], savedRecallEvalV3MaxCases), 1, savedRecallEvalV3MaxCases)
 	minHits := clampInt(anyToInt(payload["min_hits"], 1), 1, 1000)
 	project := strings.TrimSpace(anyToString(payload["project"]))
 	topicPrefix := strings.TrimSpace(anyToString(payload["topic_prefix"]))
 	includeGraphCases := anyToBool(payload["include_graph_cases"])
-	graphMaxCases := clampInt(anyToInt(payload["graph_max_cases"], 3), 0, 5)
-	refreshed := s.buildRefreshedRecallEvalCaseSetWithGraph(maxCases, minHits, project, topicPrefix, includeGraphCases, graphMaxCases)
+	graphMaxCases := clampInt(anyToInt(payload["graph_max_cases"], 3), 0, savedRecallEvalV3MaxGraphCases)
+	refreshed := s.buildRefreshedRecallEvalCaseSetWithGraphContext(r.Context(), maxCases, minHits, project, topicPrefix, includeGraphCases, graphMaxCases)
 	path := resolveRecallEvalCasesPath()
 	raw, err := json.MarshalIndent(refreshed, "", "  ")
 	if err != nil {
@@ -321,10 +326,17 @@ func (s *server) memoryRecallEvalCasesRefresh(w http.ResponseWriter, r *http.Req
 	}
 	casesAny, _ := refreshed["cases"].([]map[string]any)
 	refreshedHealth := validateSavedRecallEvalCaseSet(recallEvalSavedConfig{
-		Path:      path,
-		Version:   refreshed["version"],
-		UpdatedAt: refreshed["updatedAt"],
-		K:         anyToInt(refreshed["k"], defaultRecallEvalK),
+		Path:          path,
+		SchemaID:      anyToString(refreshed["schema_id"]),
+		Version:       refreshed["version"],
+		UpdatedAt:     refreshed["updatedAt"],
+		CaseSetDigest: anyToString(refreshed["case_set_digest"]),
+		Source:        anyToString(refreshed["source"]),
+		Synthetic:     anyToBool(refreshed["synthetic"]),
+		Snapshot:      cloneAnyMap(anyMap(refreshed["snapshot"])),
+		Custody:       cloneAnyMap(anyMap(refreshed["custody"])),
+		SplitCounts:   cloneAnyMap(anyMap(refreshed["split_counts"])),
+		K:             anyToInt(refreshed["k"], defaultRecallEvalK),
 		Gate: recallEvalGate{
 			MinRecallAtK:      defaultRecallEvalGateMinRecallAtK,
 			MinMRR:            defaultRecallEvalGateMinMRR,
@@ -345,6 +357,10 @@ func (s *server) memoryRecallEvalCasesRefresh(w http.ResponseWriter, r *http.Req
 			"graphCaseCount":    anyToInt(refreshed["graphCaseCount"], 0),
 			"graphCasesEnabled": includeGraphCases,
 			"caseSetHealthy":    anyToBool(refreshedHealth["valid"]),
+			"benchmarkEligible": anyToBool(refreshedHealth["benchmark_eligible"]),
+			"caseSetDigest":     refreshed["case_set_digest"],
+			"snapshot":          refreshed["snapshot"],
+			"custody":           refreshed["custody"],
 		},
 	}
 	if anyToBool(payload["run_evaluation"]) {
@@ -361,98 +377,105 @@ func (s *server) memoryRecallEvaluateSaved(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *server) buildRefreshedRecallEvalCaseSet(maxCases int, minHits int, project string, topicPrefix string) map[string]any {
-	return s.buildRefreshedRecallEvalCaseSetWithGraph(maxCases, minHits, project, topicPrefix, false, 0)
+	return s.buildRefreshedRecallEvalCaseSetWithGraphContext(context.Background(), maxCases, minHits, project, topicPrefix, false, 0)
 }
 
 func (s *server) buildRefreshedRecallEvalCaseSetWithGraph(maxCases int, minHits int, project string, topicPrefix string, includeGraph bool, graphMaxCases int) map[string]any {
-	maxCases = clampInt(maxCases, 1, 20)
-	graphMaxCases = clampInt(graphMaxCases, 0, minInt(5, maxInt(0, maxCases-1)))
+	return s.buildRefreshedRecallEvalCaseSetWithGraphContext(context.Background(), maxCases, minHits, project, topicPrefix, includeGraph, graphMaxCases)
+}
+
+func (s *server) buildRefreshedRecallEvalCaseSetWithGraphContext(ctx context.Context, maxCases int, minHits int, project string, topicPrefix string, includeGraph bool, graphMaxCases int) map[string]any {
+	maxCases = clampInt(maxCases, 1, savedRecallEvalV3MaxCases)
+	graphMaxCases = clampInt(graphMaxCases, 0, minInt(savedRecallEvalV3MaxGraphCases, maxInt(0, maxCases-1)))
 	if minHits < 1 {
 		minHits = 1
 	}
 	project = strings.TrimSpace(project)
-	topicPrefix = recallEvalNormalizeTopicPath(topicPrefix)
-	cases := make([]map[string]any, 0, maxCases)
+	topicPrefix = normalizeTopicPathLoose(topicPrefix)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	allCandidates, sourceKind, sourceStats := s.recallEvalIndexedCandidates(ctx, project, topicPrefix, savedRecallEvalV3MaxSourceDocs)
+	eligible := recallEvalEligibleCandidates(allCandidates, minHits, project, topicPrefix)
+	// Select the complete direct pool first. Graph rows replace direct rows only
+	// when the graph store can actually produce valid cases; reserving the
+	// configured maximum up front silently reduced real no-graph case sets.
+	directCandidates, temporal := recallEvalSelectCandidates(eligible, maxCases)
+	cases := recallEvalCasesFromCandidates(directCandidates, project)
 	graphCases := make([]map[string]any, 0, graphMaxCases)
-	var candidateDocs []memoryStoreDoc
-	if s.memoryStore != nil && s.memoryStore.policy.enabled {
-		docs, err := s.memoryStore.collectDocs(context.Background(), project)
-		if err == nil {
-			candidateDocs = docs
-			cases = recallEvalCasesFromDocs(docs, maxCases, minHits, project, topicPrefix)
+	if includeGraph && graphMaxCases > 0 && len(eligible) > 0 && len(cases) > 0 {
+		candidateDocs := make([]memoryStoreDoc, 0, len(eligible))
+		for _, candidate := range eligible {
+			candidateDocs = append(candidateDocs, candidate.doc)
 		}
-		if len(cases) == 0 {
-			rollups := s.memoryStore.topicRollupsWithContext(context.Background(), project, minHits, maxCases*6, 0)
-			if rowsAny, ok := rollups["topics"].([]any); ok {
-				for _, item := range rowsAny {
-					row := anyMap(item)
-					topic := recallEvalNormalizeTopicPath(anyToString(row["topic_path"]))
-					if topic == "" {
-						topic = recallEvalNormalizeTopicPath(anyToString(row["path"]))
-					}
-					if topicPrefix != "" && !strings.HasPrefix(topic, topicPrefix) {
-						continue
-					}
-					hits := anyToInt(row["event_count"], anyToInt(row["eventCount"], 0))
-					if hits < minHits {
-						continue
-					}
-					query := strings.TrimSpace(strings.ReplaceAll(topic, "/", " "))
-					summarySnippets := recallEvalSummarySnippets(row)
-					if query == "" && len(summarySnippets) > 0 {
-						query = strings.TrimSpace(summarySnippets[0])
-					}
-					if query == "" {
-						continue
-					}
-					expectedFiles := recallEvalExpectedFilesFromTopic(row)
-					expectedTerms := []string{}
-					for _, summary := range summarySnippets {
-						expectedTerms = append(expectedTerms, clipText(strings.ToLower(summary), 64))
-						if len(expectedTerms) >= 2 {
-							break
-						}
-					}
-					cases = append(cases, map[string]any{
-						"id":                  recallEvalCaseID(topic, len(cases)),
-						"query":               query,
-						"project":             project,
-						"topic_path":          topic,
-						"limit":               10,
-						"expected_files":      expectedFiles,
-						"expected_substrings": expectedTerms,
-					})
-					if len(cases) >= maxCases {
-						break
-					}
-				}
-			}
-		}
+		graphCases = s.recallEvalGraphCasesFromDocs(ctx, candidateDocs, cases, graphMaxCases)
 	}
-	if len(cases) == 0 {
-		cases = defaultSavedRecallEvalConfig(resolveRecallEvalCasesPath()).Cases
-		if len(cases) > maxCases {
-			cases = cases[:maxCases]
-		}
+	if len(graphCases) > 0 {
+		directCount := maxInt(0, maxCases-len(graphCases))
+		directCandidates, temporal = recallEvalSelectCandidates(eligible, directCount)
+		cases = recallEvalCasesFromCandidates(directCandidates, project)
+		cases = append(cases, graphCases...)
 	}
-	if includeGraph && graphMaxCases > 0 && len(candidateDocs) > 0 && len(cases) > 0 {
-		graphCases = s.recallEvalGraphCasesFromDocs(context.Background(), candidateDocs, cases, graphMaxCases)
-		if len(graphCases) > 0 {
-			directLimit := maxInt(1, maxCases-len(graphCases))
-			if len(cases) > directLimit {
-				cases = cases[:directLimit]
-			}
-			cases = append(cases, graphCases...)
-		}
+	for _, graphCase := range graphCases {
+		graphCase["case_kind"] = "graph_neighbor"
 	}
-	version := 1
-	if includeGraph {
-		version = 2
+	snapshotDigest := recallEvalSnapshotDigest(eligible)
+	caseSetDigest := recallEvalCaseSetDigest(cases)
+	updatedAt := nowUTCISO()
+	splitCounts := map[string]any{"train": 0, "holdout": 0}
+	for _, rawCase := range cases {
+		split := strings.ToLower(strings.TrimSpace(anyToString(rawCase["split"])))
+		if split == "" {
+			split = "train"
+		}
+		splitCounts[split] = anyToInt(splitCounts[split], 0) + 1
+	}
+	snapshot := map[string]any{
+		"schema_id":           savedRecallEvalV3SnapshotSchemaID,
+		"captured_at":         updatedAt,
+		"source":              sourceKind,
+		"project_scope":       project,
+		"topic_prefix":        topicPrefix,
+		"candidate_count":     len(eligible),
+		"selected_case_count": len(cases),
+		"source_cap":          savedRecallEvalV3MaxSourceDocs,
+		"digest":              "sha256:" + snapshotDigest,
+		"temporal_holdout":    temporal,
+	}
+	populationMetadata := recallEvalPopulationMetadata(eligible, cases)
+	snapshot["population"] = populationMetadata["population"]
+	snapshot["sample"] = populationMetadata["sample"]
+	snapshot["diversity"] = populationMetadata["diversity"]
+	snapshot["source_stats"] = cloneAnyMap(sourceStats)
+	custody := map[string]any{
+		"schema_id":              savedRecallEvalV3CustodySchemaID,
+		"owner":                  "gateway-go",
+		"mode":                   "frozen_live_index",
+		"synthetic":              false,
+		"source_snapshot_digest": "sha256:" + snapshotDigest,
+		"case_set_digest":        "sha256:" + caseSetDigest,
+		"derivation":             "file_backed_memory_summary_with_filename_redaction",
+		"oracle_leakage":         "filename_removed_from_query; summary-derived labels retained",
+		"population_count":       len(eligible),
+		"sample_count":           len(cases),
+		"source_stats":           cloneAnyMap(sourceStats),
+		"diversity_valid":        anyToBool(anyMap(populationMetadata["diversity"])["valid"]),
 	}
 	return map[string]any{
-		"version":   version,
-		"updatedAt": nowUTCISO(),
-		"k":         defaultRecallEvalK,
+		"schema_id":        savedRecallEvalV3SchemaID,
+		"version":          savedRecallEvalV3Version,
+		"updatedAt":        updatedAt,
+		"case_set_digest":  "sha256:" + caseSetDigest,
+		"snapshot":         snapshot,
+		"custody":          custody,
+		"source":           sourceKind,
+		"synthetic":        false,
+		"population_count": len(eligible),
+		"sample_count":     len(cases),
+		"source_stats":     cloneAnyMap(sourceStats),
+		"diversity_valid":  anyToBool(anyMap(populationMetadata["diversity"])["valid"]),
+		"split_counts":     splitCounts,
+		"k":                defaultRecallEvalK,
 		"gate": map[string]any{
 			"minRecallAtK":        defaultRecallEvalGateMinRecallAtK,
 			"minMrr":              defaultRecallEvalGateMinMRR,
@@ -653,16 +676,34 @@ func recallEvalExpectedFilesFromTopic(row map[string]any) []string {
 }
 
 func recallEvalQueryFromDoc(doc memoryStoreDoc) string {
-	topic := strings.ReplaceAll(recallEvalNormalizeTopicPath(doc.TopicPath), "/", " ")
-	fileName := strings.TrimSpace(doc.FileName)
-	fileStem := strings.TrimSuffix(fileName, filepath.Ext(fileName))
-	fileStem = strings.ReplaceAll(fileStem, "/", " ")
-	summary := clipText(doc.Summary, 120)
-	query := strings.TrimSpace(strings.Join([]string{topic, fileStem, summary}, " "))
+	topic := strings.ReplaceAll(normalizeTopicPathLoose(doc.TopicPath), "/", " ")
+	// The expected file is intentionally absent from the query. Keep the
+	// summary because it is the only deterministic content available from the
+	// indexed write, but redact path/base-name tokens from that summary and
+	// record the derivation caveat in each generated case.
+	summary := recallEvalRedactFileTokens(clipText(doc.Summary, 160), doc.FileName)
+	query := strings.TrimSpace(strings.Join([]string{topic, summary}, " "))
 	if query != "" {
 		return query
 	}
-	return strings.TrimSpace(clipText(doc.Summary, 160))
+	return strings.TrimSpace(recallEvalRedactFileTokens(clipText(doc.Summary, 160), doc.FileName))
+}
+
+func recallEvalRedactFileTokens(value string, fileName string) string {
+	text := strings.ToLower(strings.TrimSpace(value))
+	if text == "" {
+		return ""
+	}
+	cleanName := strings.ToLower(strings.Trim(strings.TrimSpace(strings.ReplaceAll(fileName, "\\", "/")), "/"))
+	baseName := filepath.Base(cleanName)
+	for _, token := range []string{cleanName, baseName} {
+		if len(token) < 3 {
+			continue
+		}
+		text = strings.ReplaceAll(text, token, " ")
+	}
+	fields := strings.Fields(text)
+	return strings.Join(fields, " ")
 }
 
 func recallEvalCaseID(seed string, idx int) string {

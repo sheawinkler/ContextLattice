@@ -12,6 +12,7 @@ use axum::{Json, Router};
 use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
+use tokio::sync::OnceCell;
 
 #[cfg(not(target_env = "msvc"))]
 #[global_allocator]
@@ -41,11 +42,12 @@ impl Config {
 }
 
 type SharedModel = Arc<Mutex<TextEmbedding>>;
+type ModelSlot = Arc<OnceCell<SharedModel>>;
 
 #[derive(Clone)]
 struct AppState {
     cfg: Config,
-    models: Arc<Mutex<HashMap<String, SharedModel>>>,
+    models: Arc<Mutex<HashMap<String, ModelSlot>>>,
 }
 
 #[derive(Deserialize)]
@@ -100,6 +102,14 @@ async fn main() -> Result<()> {
         models: Arc::new(Mutex::new(HashMap::new())),
     };
 
+    // Readiness must mean that the configured model is loaded, not merely that
+    // the HTTP listener exists. This also removes the concurrent cold-start
+    // race from the first production retrieval burst.
+    let default_model = state.cfg.default_model.clone();
+    get_or_load_model(&state, &default_model)
+        .await
+        .with_context(|| format!("preload default embedding model {default_model}"))?;
+
     let app = Router::new()
         .route("/health", get(health))
         .route("/embed", post(embed))
@@ -116,7 +126,10 @@ async fn main() -> Result<()> {
 async fn health(State(state): State<AppState>) -> impl IntoResponse {
     let loaded_models = {
         let models = state.models.lock().expect("models lock");
-        let mut keys: Vec<String> = models.keys().cloned().collect();
+        let mut keys: Vec<String> = models
+            .iter()
+            .filter_map(|(name, slot)| slot.get().map(|_| name.clone()))
+            .collect();
         keys.sort();
         keys
     };
@@ -179,25 +192,25 @@ async fn embed_impl(state: AppState, req: EmbedRequest) -> Result<EmbedResponse>
 }
 
 async fn get_or_load_model(state: &AppState, model_name: &str) -> Result<SharedModel> {
-    {
-        let models = state.models.lock().expect("models lock");
-        if let Some(existing) = models.get(model_name) {
-            return Ok(existing.clone());
-        }
-    }
-
+    let slot = {
+        let mut models = state.models.lock().expect("models lock");
+        models
+            .entry(model_name.to_string())
+            .or_insert_with(|| Arc::new(OnceCell::new()))
+            .clone()
+    };
     let model_name_owned = model_name.to_string();
     let cache_dir = state.cfg.cache_dir.clone();
-    let loaded = tokio::task::spawn_blocking(move || load_model(&model_name_owned, cache_dir))
-        .await
-        .context("join model loader")??;
-    let wrapped = Arc::new(Mutex::new(loaded));
-
-    let mut models = state.models.lock().expect("models lock");
-    let entry = models
-        .entry(model_name.to_string())
-        .or_insert_with(|| wrapped.clone());
-    Ok(entry.clone())
+    let shared = slot
+        .get_or_try_init(|| async move {
+            let loaded =
+                tokio::task::spawn_blocking(move || load_model(&model_name_owned, cache_dir))
+                    .await
+                    .context("join model loader")??;
+            Ok::<SharedModel, anyhow::Error>(Arc::new(Mutex::new(loaded)))
+        })
+        .await?;
+    Ok(shared.clone())
 }
 
 fn load_model(model_name: &str, cache_dir: PathBuf) -> Result<TextEmbedding> {

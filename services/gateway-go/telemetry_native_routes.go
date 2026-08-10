@@ -148,24 +148,25 @@ func (s *server) telemetryMetricsRoute(w http.ResponseWriter, r *http.Request) {
 	gate := _inferenceFastembedGateStatus()
 	enabledByFlag := _inferenceFastembedAdapterEnabledByFlag()
 	enabled := _inferenceFastembedAdapterEnabled()
+	fastembedTelemetry := nativeEmbeddingCacheSnapshot()
+	for key, value := range map[string]any{
+		"enabled":       enabled,
+		"enabledByFlag": enabledByFlag,
+		"configured":    strings.TrimSpace(os.Getenv("ORCH_FASTEMBED_RS_BASE_URL")) != "",
+		"timeoutSecs":   envDurationSeconds("ORCH_FASTEMBED_RS_TIMEOUT_SECS", 2.5).Seconds(),
+		"route":         strings.TrimSpace(os.Getenv("ORCH_FASTEMBED_RS_ROUTE")),
+		"gate":          gate,
+		"batchCalls":    0,
+		"batchItems":    0,
+		"batchFailures": 0,
+	} {
+		fastembedTelemetry[key] = value
+	}
 	payload["embeddingCache"] = map[string]any{
-		"fastembedRs": map[string]any{
-			"enabled":       enabled,
-			"enabledByFlag": enabledByFlag,
-			"configured":    strings.TrimSpace(os.Getenv("ORCH_FASTEMBED_RS_BASE_URL")) != "",
-			"timeoutSecs":   envDurationSeconds("ORCH_FASTEMBED_RS_TIMEOUT_SECS", 2.5).Seconds(),
-			"route":         strings.TrimSpace(os.Getenv("ORCH_FASTEMBED_RS_ROUTE")),
-			"gate":          gate,
-			"attempts":      0,
-			"successes":     0,
-			"failures":      0,
-			"fallbacks":     0,
-			"batchCalls":    0,
-			"batchItems":    0,
-			"batchFailures": 0,
-			"lastError":     nil,
-			"lastLatencyMs": nil,
-		},
+		"fastembedRs": fastembedTelemetry,
+	}
+	payload["retrievalStages"] = map[string]any{
+		"qdrant": nativeQdrantQueryTelemetrySnapshot(),
 	}
 	writeJSON(w, http.StatusOK, payload)
 }

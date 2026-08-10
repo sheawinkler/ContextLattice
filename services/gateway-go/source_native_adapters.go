@@ -21,11 +21,13 @@ import (
 	"time"
 
 	"github.com/lib/pq"
+	"golang.org/x/sync/singleflight"
 )
 
 var (
 	nativeQdrantDimCacheMu sync.Mutex
 	nativeQdrantDimCache   = map[string]int{}
+	nativeQdrantDimFlight  = &singleflight.Group{}
 
 	nativePgvectorDBMu      sync.Mutex
 	nativePgvectorDBByDSN   = map[string]*sql.DB{}
@@ -210,67 +212,12 @@ func nativeEmbedQueryVector(
 		vector := nativeCheapEmbedding(query, targetDim)
 		return vector, warnings, nil
 	}
-
-	payload := map[string]any{
-		"input": []string{query},
-	}
-	body, err := json.Marshal(payload)
+	vector, err := nativeFastembedCachedVector(ctx, client, query, targetDim, baseURL, nativeFastembedRoute())
 	if err != nil {
-		vector := nativeCheapEmbedding(query, targetDim)
-		warnings = append(warnings, "fastembed adapter serialization failed; using cheap embedding fallback: "+err.Error())
-		return vector, warnings, nil
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+nativeFastembedRoute(), bytes.NewReader(body))
-	if err != nil {
-		vector := nativeCheapEmbedding(query, targetDim)
-		warnings = append(warnings, "fastembed adapter request build failed; using cheap embedding fallback: "+err.Error())
-		return vector, warnings, nil
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		vector := nativeCheapEmbedding(query, targetDim)
+		nativeEmbeddingRecordFallback()
+		vector = nativeCheapEmbedding(query, targetDim)
 		warnings = append(warnings, "fastembed adapter unavailable; using cheap embedding fallback: "+err.Error())
 		return vector, warnings, nil
-	}
-	defer resp.Body.Close()
-	bodyBytes, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode >= 400 {
-		vector := nativeCheapEmbedding(query, targetDim)
-		message := "fastembed adapter status=" + strconv.Itoa(resp.StatusCode)
-		if trimmed := strings.TrimSpace(string(bodyBytes)); trimmed != "" {
-			message += " body=" + trimmed
-		}
-		warnings = append(warnings, message+"; using cheap embedding fallback")
-		return vector, warnings, nil
-	}
-	responsePayload, err := parseJSONMap(bodyBytes)
-	if err != nil {
-		vector := nativeCheapEmbedding(query, targetDim)
-		warnings = append(warnings, "fastembed adapter response parse failed; using cheap embedding fallback: "+err.Error())
-		return vector, warnings, nil
-	}
-	rawVectors, _ := responsePayload["vectors"].([]any)
-	if len(rawVectors) == 0 {
-		vector := nativeCheapEmbedding(query, targetDim)
-		warnings = append(warnings, "fastembed adapter returned empty vectors; using cheap embedding fallback")
-		return vector, warnings, nil
-	}
-	firstVector, _ := rawVectors[0].([]any)
-	if len(firstVector) == 0 {
-		vector := nativeCheapEmbedding(query, targetDim)
-		warnings = append(warnings, "fastembed adapter returned empty vector row; using cheap embedding fallback")
-		return vector, warnings, nil
-	}
-	vector := make([]float64, 0, len(firstVector))
-	for _, value := range firstVector {
-		vector = append(vector, anyToFloat(value))
-	}
-	vector = nativeAdjustVectorDim(vector, targetDim)
-	if len(vector) == 0 {
-		vector = nativeCheapEmbedding(query, targetDim)
-		warnings = append(warnings, "fastembed adapter vector coercion failed; using cheap embedding fallback")
 	}
 	return vector, warnings, nil
 }
@@ -303,8 +250,40 @@ func nativeQdrantCollectionDim(
 	collection string,
 ) (int, error) {
 	if cached := nativeQdrantCachedDim(baseURL, collection); cached > 0 {
+		nativeQdrantDimensionProbeCacheHit()
 		return cached, nil
 	}
+	key := nativeQdrantCollectionDimCacheKey(baseURL, collection)
+	resultCh := nativeQdrantDimFlight.DoChan(key, func() (any, error) {
+		if cached := nativeQdrantCachedDim(baseURL, collection); cached > 0 {
+			return cached, nil
+		}
+		return nativeQdrantCollectionDimProbe(ctx, client, baseURL, collection)
+	})
+	select {
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	case result := <-resultCh:
+		if result.Shared {
+			nativeQdrantDimensionProbeCoalesced()
+		}
+		if result.Err != nil {
+			return 0, result.Err
+		}
+		dim, ok := result.Val.(int)
+		if !ok || dim <= 0 {
+			return 0, errors.New("qdrant collection dimension probe returned an invalid shared result")
+		}
+		return dim, nil
+	}
+}
+
+func nativeQdrantCollectionDimProbe(
+	ctx context.Context,
+	client *http.Client,
+	baseURL string,
+	collection string,
+) (int, error) {
 	requestURL := baseURL + "/collections/" + url.PathEscape(collection)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
 	if err != nil {
@@ -354,6 +333,13 @@ func nativeQdrantCollectionDim(
 	}
 	nativeQdrantSetCachedDim(baseURL, collection, dim)
 	return dim, nil
+}
+
+func nativeQdrantPrimaryEmbeddingQuery(query string, minTokens int) (string, bool) {
+	if normalized, ok := deriveCoverageRescueQuery(query, maxInt(1, minTokens)); ok {
+		return normalized, true
+	}
+	return strings.TrimSpace(query), false
 }
 
 func nativeQdrantCollectionMissing(err error) bool {
@@ -587,21 +573,34 @@ func (s *server) queryQdrantSource(
 	}
 	projectFilter := strings.TrimSpace(anyToString(baseRequest["project"]))
 	topicFilter := strings.TrimSpace(anyToString(baseRequest["topic_path"]))
+	observation := newNativeQdrantQueryObservation()
+	defer observation.finish()
 
+	observation.terminalStage = "collection_dimension_probe"
+	probeStarted := time.Now()
 	vectorDim, err := nativeQdrantCollectionDim(ctx, s.client, baseURL, collection)
+	observation.collectionProbe = time.Since(probeStarted)
 	warnings := []string{}
 	if err != nil || vectorDim <= 0 {
+		observation.collectionProbeFallback = true
 		vectorDim = nativeDefaultEmbedDim()
 		if err != nil {
 			warnings = append(warnings, "qdrant collection dimension probe failed; using default embed dim: "+err.Error())
 		}
 	}
-	queryVector, embedWarnings, err := nativeEmbedQueryVector(ctx, s.client, query, vectorDim)
+	embeddingQuery, queryNormalized := nativeQdrantPrimaryEmbeddingQuery(query, s.retrieval.coverageRescueMinTokens)
+	observation.queryNormalized = queryNormalized
+	observation.terminalStage = "embedding"
+	embedStarted := time.Now()
+	queryVector, embedWarnings, err := nativeEmbedQueryVector(ctx, s.client, embeddingQuery, vectorDim)
+	observation.embedding = time.Since(embedStarted)
 	if err != nil {
 		return nil, append(warnings, embedWarnings...), err
 	}
 	warnings = append(warnings, embedWarnings...)
 
+	observation.terminalStage = "qdrant_search"
+	searchStarted := time.Now()
 	searchPayload := map[string]any{
 		"vector":       queryVector,
 		"limit":        scanLimit,
@@ -656,6 +655,7 @@ func (s *server) queryQdrantSource(
 	if err != nil {
 		return nil, warnings, err
 	}
+	observation.search = time.Since(searchStarted)
 	hits, _ := payload["result"].([]any)
 	rows := make([]map[string]any, 0, len(hits))
 	for _, raw := range hits {
@@ -698,7 +698,10 @@ func (s *server) queryQdrantSource(
 			"content_hash": entry["content_hash"],
 		})
 	}
+	observation.terminalStage = "authority_reconciliation"
+	reconcileStarted := time.Now()
 	rows, reconcileStats := s.reconcileVectorRowsDetailed(baseRequest, rows)
+	observation.reconciliation = time.Since(reconcileStarted)
 	if reconcileStats.Suppressed > 0 || reconcileStats.LegacyPathOnly > 0 {
 		warnings = append(warnings, reconcileStats.warning("qdrant"))
 	}
@@ -708,6 +711,8 @@ func (s *server) queryQdrantSource(
 	if len(rows) > limit {
 		rows = rows[:limit]
 	}
+	observation.succeeded = true
+	observation.terminalStage = "complete"
 	return rows, warnings, nil
 }
 

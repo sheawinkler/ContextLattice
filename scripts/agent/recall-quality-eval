@@ -148,13 +148,16 @@ def main() -> int:
     parser.add_argument("--include-debug", action="store_true")
     parser.add_argument("--include-preferences", action="store_true")
     parser.add_argument("--refresh-cases", action="store_true")
-    parser.add_argument("--max-cases", type=int, default=12)
+    parser.add_argument("--max-cases", type=int, default=300, help="Bounded v3 refresh case count (server cap: 300).")
     parser.add_argument("--derive-max-rows", type=int, default=128)
     parser.add_argument("--max-proposals", type=int, default=128)
     parser.add_argument("--max-ablation-rows", type=int, default=128)
     parser.add_argument("--reputation-min-samples", type=int, default=3)
     parser.add_argument("--reputation-limit", type=int, default=32)
     parser.add_argument("--min-hits", type=int, default=1)
+    parser.add_argument("--include-graph-cases", action="store_true", help="Include separately labeled graph-neighbor cases during refresh.")
+    parser.add_argument("--graph-max-cases", type=int, default=3)
+    parser.add_argument("--split", choices=("all", "train", "holdout"), default="all", help="Evaluate all cases or one frozen v3 split.")
     parser.add_argument("--project", default="")
     parser.add_argument("--topic-prefix", default="")
     parser.add_argument("--tuning", action="store_true", help="Fetch recall tuning recommendations after eval.")
@@ -200,6 +203,9 @@ def main() -> int:
         "project": args.project,
         "topic_prefix": args.topic_prefix,
     }
+    if args.include_graph_cases:
+        refresh_payload["include_graph_cases"] = True
+        refresh_payload["graph_max_cases"] = args.graph_max_cases
     if args.refresh_cases:
         request_json("POST", "/memory/recall/eval-cases/refresh", refresh_payload, args.timeout)
 
@@ -212,6 +218,8 @@ def main() -> int:
         payload["max_ablation_rows"] = args.max_ablation_rows
     if args.k is not None:
         payload["k"] = args.k
+    if args.split != "all":
+        payload["split"] = args.split
     evaluation = request_json("POST", "/memory/recall/evaluate/saved", payload, args.timeout)
     tuning = None
     if args.tuning:

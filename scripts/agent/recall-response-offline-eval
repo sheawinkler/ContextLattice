@@ -356,10 +356,32 @@ def _build_static_response(case: dict[str, Any], policy: dict[str, Any]) -> dict
     rows = policy["rows"]
     request = case["request"]
     selected_refs = [row["evidence_ref"] for row in rows]
+    receipt_refs = [row["citation_ref"] for row in rows]
     conflict_groups = list(policy["conflict_groups"])
+    conflict_refs = [_opaque("conflict", group) for group in conflict_groups]
     abstain = bool(policy["abstain"])
     status = str(policy["status"])
     posture = "abstain" if abstain else "advisory"
+    as_of = "latest_available"
+    temporal_state = "contested" if conflict_groups else ("unknown" if abstain else "current")
+    temporal_premise_digest = _digest({
+        "as_of": as_of,
+        "selection_rule": "evidence_observed_at_or_before_as_of",
+        "temporal_state": temporal_state,
+    })
+    snapshot_digest = _digest({
+        "case_ref": _opaque("case", case["case_id"]),
+        "conflict_refs": conflict_refs,
+        "selected_refs": selected_refs,
+        "status": status,
+        "temporal_premise_digest": temporal_premise_digest,
+    })
+    receipt_digest = _digest(receipt_refs)
+    gap_refs = [_opaque("gap", case["case_id"])] if abstain else []
+    proof_refs: list[str] = []
+    for ref in selected_refs + conflict_refs + gap_refs:
+        if ref and ref not in proof_refs and len(proof_refs) < 8:
+            proof_refs.append(ref)
     components: list[dict[str, Any]] = []
     for ordinal, row in enumerate(rows, start=1):
         component = {
@@ -387,6 +409,7 @@ def _build_static_response(case: dict[str, Any], policy: dict[str, Any]) -> dict
         "request_scope": {
             "scope_digest": _opaque("scope", str(request["scope_ref"])),
             "query_digest": _opaque("request", str(request["request_ref"])),
+            "owner_ref": _opaque("owner", str(request["scope_ref"])),
             "workspace_ref": _opaque("workspace", case["case_id"]),
             "project_ref": _opaque("project", case["case_id"]),
             "topic_ref": _opaque("topic", case["case_id"]),
@@ -396,6 +419,13 @@ def _build_static_response(case: dict[str, Any], policy: dict[str, Any]) -> dict
             "task_identity_ref": _opaque("task_identity", case["case_id"]),
             "execution_lane_ref": _opaque("execution_lane", "offline_fixture"),
             "retrieval_intent": str(request["intent"]),
+            "as_of": as_of,
+            "task_class": "offline_fixture_" + str(request["intent"]),
+            "temporal_premise_digest": temporal_premise_digest,
+            "snapshot_digest": snapshot_digest,
+            "receipt_digest": receipt_digest,
+            "condition": "universal_template",
+            "ablation": "none",
         },
         "classification": {
             "jobs": ["look_up"],
@@ -404,6 +434,13 @@ def _build_static_response(case: dict[str, Any], policy: dict[str, Any]) -> dict
             "evidence_state": "contested" if conflict_groups else ("degraded" if abstain else "clean"),
             "consequence": "informational",
             "posture": posture,
+            "facets": {
+                "jobs": ["look_up"],
+                "memory_objects": ["fact"],
+                "temporal_state": temporal_state,
+                "evidence_state": "contested" if conflict_groups else ("degraded" if abstain else "clean"),
+                "consequence": "informational",
+            },
         },
         "answer": {
             "summary": "Synthetic bounded evidence response.",
@@ -415,6 +452,45 @@ def _build_static_response(case: dict[str, Any], policy: dict[str, Any]) -> dict
                 "level": "summary",
                 "available_levels": ["summary", "proof_refs", "next_action"],
                 "next_level_requires": "independent verification",
+            },
+            "proof_spine": {
+                "primary_result": selected_refs[0] if selected_refs else "",
+                "as_of": as_of,
+                "temporal_premise_digest": temporal_premise_digest,
+                "proof_refs": proof_refs,
+                "confidence_basis": ["synthetic_evidence_refs"],
+                "conflict_refs": conflict_refs,
+                "gap_refs": gap_refs,
+                "memory_boundary": "server_evidence_and_deterministic_inference_only",
+                "next_move": "verify" if abstain else "review",
+                "receipt_refs": receipt_refs[:8],
+                "disclosure": "opaque_refs_only",
+                "coverage": [
+                    {
+                        "obligation": "primary_result",
+                        "status": "satisfied" if selected_refs else "unsatisfied",
+                        "proof_refs": selected_refs[:8],
+                    },
+                    {
+                        "obligation": "conflict_free",
+                        "status": "satisfied" if not conflict_refs else "unsatisfied",
+                        "proof_refs": conflict_refs[:8],
+                    },
+                    {
+                        "obligation": "material_gaps_resolved",
+                        "status": "satisfied" if not gap_refs else "unsatisfied",
+                        "proof_refs": gap_refs[:8],
+                    },
+                ],
+            },
+            "composition": {
+                "condition": "universal_template",
+                "ablation": "none",
+                "primary_module": "static_recall_response",
+                "ordered_modules": ["evidence_selection"] if selected_refs else [],
+                "proof_strategy": "shared_bounded_v1",
+                "coverage_status": "unsatisfied" if abstain else "satisfied",
+                "fallback_reason": "",
             },
         },
         "state": {
@@ -480,7 +556,7 @@ def _build_static_response(case: dict[str, Any], policy: dict[str, Any]) -> dict
             "inference_boundary": "Only opaque references and deterministic metadata are returned.",
             "omission_policy": "Unverified or omitted evidence never becomes implicit support.",
         },
-        "receipt_refs": [row["citation_ref"] for row in rows],
+        "receipt_refs": receipt_refs,
         "outcome": {
             "status": "not_attributable",
             "attributable": False,
@@ -563,6 +639,27 @@ def _build_continuous_cognition_response(
         "status": policy["status"],
     })
     material_gap = bool(policy["abstain"])
+    material_new_proof = bool(rows)
+    supported_high_impact_conflict = bool(policy["conflict_groups"]) and policy["decision_impact"] == "high"
+    silence_value_inputs = {
+        "material_new_proof": material_new_proof,
+        "blocked_next_action": material_gap,
+        "supported_high_impact_conflict": supported_high_impact_conflict,
+        "actionable_gap": material_gap,
+        "utility_verified": False,
+        "utility_status": "unverified",
+        "source_complete": not material_gap,
+        "proof_complete": not material_gap,
+    }
+    silence_value_score = sum(
+        int(silence_value_inputs[key])
+        for key in (
+            "material_new_proof",
+            "blocked_next_action",
+            "supported_high_impact_conflict",
+            "actionable_gap",
+        )
+    )
     gaps = []
     if material_gap:
         gaps.append({
@@ -595,6 +692,7 @@ def _build_continuous_cognition_response(
         "operation": operation,
         "phase": phase_by_operation[operation],
         "decision": decision,
+        "next_action": str(policy["next_action"]),
         "request_scope": request_scope,
         "observation": {
             "objective_graph_ref": _opaque("objective_graph", request["request_ref"]),
@@ -700,6 +798,18 @@ def _build_continuous_cognition_response(
             "network_calls": 0,
         },
         "gaps": gaps,
+        "silence": {
+            "reason": "not_silenced" if silence_value_score >= 1 else "ordinary_silence",
+            "value_inputs": silence_value_inputs,
+            "value_score": silence_value_score,
+            "threshold": 1,
+            "policy_version": "continuous_cognition.offline_eval.v1",
+            "loop_guard_digest": _digest({
+                "cycle_ref": request_scope["cycle_ref"],
+                "operation": operation,
+                "source_anchor_digest": source_anchor_digest,
+            }),
+        },
         "writeback_required": True,
     }
     response["cognition_digest"] = _digest(_continuous_cognition_digest_material(response))

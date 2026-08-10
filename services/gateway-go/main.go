@@ -4888,8 +4888,32 @@ func (s *server) queryTopicRollupsSource(
 	limit := clampInt(anyToInt(baseRequest["limit"], 10), 1, 100)
 	projectFilter := strings.TrimSpace(anyToString(baseRequest["project"]))
 	topicFilter := strings.TrimSpace(anyToString(baseRequest["topic_path"]))
+	includeCold := anyToBool(baseRequest["include_cold"])
+	if !includeCold && strings.EqualFold(strings.TrimSpace(anyToString(baseRequest["retrieval_mode"])), "deep") {
+		includeCold = true
+	}
+	includeEphemeral := requestIncludesEphemeralMemory(baseRequest)
 	topics := make([]any, 0)
 	memoryStoreEnabled := s.memoryStore != nil && s.memoryStore.isEnabled()
+	if memoryStoreEnabled && projectFilter != "" && currentStateSearchAsOfSupported(baseRequest["as_of"]) {
+		rows, _, currentStateErr := s.memoryStore.searchCurrentStateRows(
+			ctx,
+			query,
+			projectFilter,
+			topicFilter,
+			limit,
+			includeCold,
+			includeEphemeral,
+		)
+		if currentStateErr == nil && len(rows) > 0 {
+			return rows, nil, nil
+		}
+		if currentStateErr != nil && !errors.Is(currentStateErr, context.Canceled) && !errors.Is(currentStateErr, context.DeadlineExceeded) {
+			// Keep the existing rollup path available, but make an integrity loss
+			// visible instead of silently treating it as an empty project.
+			log.Printf("gateway-go current-state search unavailable project_ref=sha256:%s detail=%v", sha256Hex(strings.ToLower(projectFilter))[:16], currentStateErr)
+		}
+	}
 	if memoryStoreEnabled {
 		topN := s.retrieval.topicRollupSearchTopN
 		if topN < limit {
@@ -4903,7 +4927,7 @@ func (s *server) queryTopicRollupsSource(
 			}
 		}
 		topN = clampInt(topN, 200, 5000)
-		rollups := s.memoryStore.topicRollupsWithContext(ctx, projectFilter, 1, topN, 0)
+		rollups := s.memoryStore.topicRollupsWithOptions(ctx, projectFilter, 1, topN, 0, includeCold, includeEphemeral)
 		if memoryTopics, ok := rollups["topics"].([]any); ok && len(memoryTopics) > 0 {
 			topics = memoryTopics
 		}
@@ -4916,9 +4940,10 @@ func (s *server) queryTopicRollupsSource(
 			return nil, nil, errors.New("memory store topic rollups unavailable")
 		}
 		backendPayload := map[string]any{
-			"project":  projectFilter,
-			"topN":     5000,
-			"maxDepth": 1,
+			"project":      projectFilter,
+			"topN":         5000,
+			"maxDepth":     1,
+			"include_cold": includeCold,
 		}
 		backendRollups, _, err := s.backendJSONRequest(
 			ctx,
@@ -4998,13 +5023,14 @@ func (s *server) callBackendSourceQuery(
 	baseRequest map[string]any,
 	source string,
 	explicitSourceOverride bool,
-) ([]map[string]any, []string, map[string]any, string, error) {
+) ([]map[string]any, []string, map[string]any, string, map[string]any, error) {
 	baseRequest = cloneJSONMap(baseRequest)
 	incomingHeaders = incomingHeaders.Clone()
 	fallbackWarnings := []string{}
+	var nativeErr error
 	if source == sourceLetta {
 		rows, warnings, err := s.queryLettaSource(ctx, baseRequest)
-		return rows, warnings, nil, sourceOwnerGoNative, err
+		return rows, warnings, nil, sourceOwnerGoNative, nil, err
 	}
 	if source == sourceMemoryBank {
 		rows, warnings, sourceTrace, owner, err := s.queryMemoryBankSource(
@@ -5013,82 +5039,91 @@ func (s *server) callBackendSourceQuery(
 			baseRequest,
 			explicitSourceOverride,
 		)
-		return rows, warnings, sourceTrace, owner, err
+		return rows, warnings, sourceTrace, owner, nil, err
 	}
 	if source == sourceMongoRaw {
 		rows, warnings, err := s.queryMongoRawSource(ctx, baseRequest)
 		if err == nil {
-			return rows, warnings, nil, sourceOwnerGoNative, nil
+			return rows, warnings, nil, sourceOwnerGoNative, nil, nil
 		}
 		fallbackWarnings = append(
 			fallbackWarnings,
 			"mongo_raw go-adapter fallback to backend retrieval lane: "+err.Error(),
 		)
+		nativeErr = err
 	}
 	if source == sourceMindsdb {
 		rows, warnings, err := s.queryMindsdbSource(ctx, baseRequest)
 		if err == nil {
-			return rows, warnings, nil, sourceOwnerGoNative, nil
+			return rows, warnings, nil, sourceOwnerGoNative, nil, nil
 		}
 		fallbackWarnings = append(
 			fallbackWarnings,
 			"mindsdb go-adapter fallback to backend retrieval lane: "+err.Error(),
 		)
+		nativeErr = err
 	}
 	if source == sourceQdrant {
 		rows, warnings, err := s.queryQdrantSource(ctx, baseRequest)
 		if err == nil {
-			return rows, warnings, nil, sourceOwnerGoNative, nil
+			return rows, warnings, nil, sourceOwnerGoNative, nil, nil
 		}
 		if errors.Is(err, errQdrantPayloadIndexesWarming) {
-			return []map[string]any{}, warnings, nil, sourceOwnerGoNative, err
+			return []map[string]any{}, warnings, nil, sourceOwnerGoNative, nil, err
 		}
 		fallbackWarnings = append(
 			fallbackWarnings,
 			"qdrant go-adapter fallback to backend retrieval lane: "+err.Error(),
 		)
+		nativeErr = err
 	}
 	if source == sourceWeaviate {
 		rows, warnings, err := s.queryWeaviateSource(ctx, baseRequest)
 		if err == nil {
-			return rows, warnings, nil, sourceOwnerGoNative, nil
+			return rows, warnings, nil, sourceOwnerGoNative, nil, nil
 		}
 		fallbackWarnings = append(
 			fallbackWarnings,
 			"weaviate go-adapter fallback to backend retrieval lane: "+err.Error(),
 		)
+		nativeErr = err
 	}
 	if source == sourcePgvector {
 		rows, warnings, err := s.queryPostgresPgvectorSource(ctx, baseRequest)
 		if err == nil {
-			return rows, warnings, nil, sourceOwnerGoNative, nil
+			return rows, warnings, nil, sourceOwnerGoNative, nil, nil
 		}
 		fallbackWarnings = append(
 			fallbackWarnings,
 			"postgres_pgvector go-adapter fallback to backend retrieval lane: "+err.Error(),
 		)
+		nativeErr = err
 	}
 	if source == sourceTopicRollup {
 		rows, warnings, err := s.queryTopicRollupsSource(ctx, incomingHeaders, baseRequest)
 		if err == nil {
-			return rows, warnings, nil, sourceOwnerGoNative, nil
+			return rows, warnings, nil, sourceOwnerGoNative, nil, nil
 		}
 		if errors.Is(err, errTopicRollupsNoMatch) {
 			// A lexical miss in topic rollups is a valid empty-result outcome.
-			return []map[string]any{}, warnings, nil, sourceOwnerGoNative, nil
+			return []map[string]any{}, warnings, nil, sourceOwnerGoNative, nil, nil
 		}
 		fallbackWarnings = append(
 			fallbackWarnings,
 			"topic_rollups go-adapter fallback to backend retrieval lane: "+err.Error(),
 		)
+		nativeErr = err
 	}
 	if s.strictNoPythonRuntime {
 		if len(fallbackWarnings) > 0 {
 			fallbackWarnings = append(fallbackWarnings, "python backend fallback disabled by strict runtime policy")
 		}
-		return []map[string]any{}, fallbackWarnings, nil, sourceOwnerGoNative, errors.New("python backend fallback disabled for source " + source)
+		if nativeErr != nil {
+			return []map[string]any{}, fallbackWarnings, nil, sourceOwnerGoNative, nil, fmt.Errorf("%s native adapter failed: %w; python backend fallback disabled by strict runtime policy", source, nativeErr)
+		}
+		return []map[string]any{}, fallbackWarnings, nil, sourceOwnerGoNative, nil, errors.New("python backend fallback disabled for source " + source)
 	}
-	rows, warnings, _, err := s.queryBackendSourceSingle(
+	rows, warnings, payload, err := s.queryBackendSourceSingle(
 		ctx,
 		incomingHeaders,
 		baseRequest,
@@ -5097,7 +5132,7 @@ func (s *server) callBackendSourceQuery(
 		"",
 	)
 	if err != nil {
-		return nil, nil, nil, sourceOwnerPythonBackendFallback, err
+		return nil, nil, nil, sourceOwnerPythonBackendFallback, nil, err
 	}
 	for _, row := range rows {
 		if strings.TrimSpace(anyToString(row["source"])) == "" {
@@ -5112,7 +5147,7 @@ func (s *server) callBackendSourceQuery(
 		}
 	}
 	warnings = append(warnings, fallbackWarnings...)
-	return rows, warnings, nil, sourceOwnerPythonBackendFallback, nil
+	return rows, warnings, nil, sourceOwnerPythonBackendFallback, recallResponseServerObservationFromBackendPayload(payload), nil
 }
 
 func (s *server) queryBackendSourceSingle(
@@ -5417,7 +5452,7 @@ func (s *server) scheduleContinuationWarmWithStatus(
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
 		start := time.Now()
-		_, _, _, _, err := s.callBackendSourceQuery(ctx, incomingHeaders, baseRequest, source, true)
+		_, _, _, _, _, err := s.callBackendSourceQuery(ctx, incomingHeaders, baseRequest, source, true)
 		status := "ok"
 		errorText := ""
 		cooldownRemaining := 0.0
@@ -5451,40 +5486,43 @@ func (s *server) scheduleContinuationWarmWithStatus(
 }
 
 type sourceCallResult struct {
-	source         string
-	sourceOwner    string
-	sourceTrace    map[string]any
-	phase          string
-	rows           []map[string]any
-	warnings       []string
-	err            error
-	timedOut       bool
-	budgetExceeded bool
-	timeout        time.Duration
-	latency        time.Duration
+	source                     string
+	sourceOwner                string
+	sourceTrace                map[string]any
+	serverProactiveObservation map[string]any
+	phase                      string
+	rows                       []map[string]any
+	warnings                   []string
+	err                        error
+	timedOut                   bool
+	budgetExceeded             bool
+	timeout                    time.Duration
+	latency                    time.Duration
 }
 
 type sourceCallPayload struct {
-	rows        []map[string]any
-	warnings    []string
-	sourceTrace map[string]any
-	owner       string
-	err         error
+	rows                       []map[string]any
+	warnings                   []string
+	sourceTrace                map[string]any
+	owner                      string
+	serverProactiveObservation map[string]any
+	err                        error
 }
 
 type sourceBatchOutput struct {
-	rows                    map[string][]map[string]any
-	sourceOwners            map[string]string
-	sourceErrors            map[string]map[string]any
-	sourceChainDebug        map[string][]map[string]any
-	warnings                []string
-	timedOutSources         []string
-	budgetExceededSources   []string
-	continuationSources     []string
-	continuationUnavailable []string
-	skippedSources          []string
-	effectiveTimeoutsSecs   map[string]float64
-	adaptiveBudgets         map[string]map[string]any
+	rows                        map[string][]map[string]any
+	sourceOwners                map[string]string
+	sourceErrors                map[string]map[string]any
+	sourceChainDebug            map[string][]map[string]any
+	warnings                    []string
+	timedOutSources             []string
+	budgetExceededSources       []string
+	continuationSources         []string
+	continuationUnavailable     []string
+	skippedSources              []string
+	effectiveTimeoutsSecs       map[string]float64
+	adaptiveBudgets             map[string]map[string]any
+	serverProactiveObservations map[string]map[string]any
 }
 
 func (s *server) runSourceBatch(
@@ -5502,13 +5540,14 @@ func (s *server) runSourceBatch(
 	continuationToken string,
 ) sourceBatchOutput {
 	output := sourceBatchOutput{
-		rows:                  make(map[string][]map[string]any),
-		sourceOwners:          make(map[string]string),
-		sourceErrors:          make(map[string]map[string]any),
-		sourceChainDebug:      make(map[string][]map[string]any),
-		warnings:              []string{},
-		effectiveTimeoutsSecs: make(map[string]float64),
-		adaptiveBudgets:       make(map[string]map[string]any),
+		rows:                        make(map[string][]map[string]any),
+		sourceOwners:                make(map[string]string),
+		sourceErrors:                make(map[string]map[string]any),
+		sourceChainDebug:            make(map[string][]map[string]any),
+		warnings:                    []string{},
+		effectiveTimeoutsSecs:       make(map[string]float64),
+		adaptiveBudgets:             make(map[string]map[string]any),
+		serverProactiveObservations: make(map[string]map[string]any),
 	}
 	if len(sources) == 0 {
 		return output
@@ -5580,7 +5619,7 @@ func (s *server) runSourceBatch(
 			}
 			callDone := make(chan sourceCallPayload, 1)
 			go func() {
-				rows, warnings, sourceTrace, owner, err := s.callBackendSourceQuery(
+				rows, warnings, sourceTrace, owner, serverProactiveObservation, err := s.callBackendSourceQuery(
 					sourceCtx,
 					incomingHeaders,
 					cloneAnyMap(sourceRequest),
@@ -5588,23 +5627,26 @@ func (s *server) runSourceBatch(
 					explicitSourceOverride,
 				)
 				callDone <- sourceCallPayload{
-					rows:        rows,
-					warnings:    warnings,
-					sourceTrace: sourceTrace,
-					owner:       owner,
-					err:         err,
+					rows:                       rows,
+					warnings:                   warnings,
+					sourceTrace:                sourceTrace,
+					owner:                      owner,
+					serverProactiveObservation: serverProactiveObservation,
+					err:                        err,
 				}
 			}()
 			rows := []map[string]any{}
 			warnings := []string{}
 			sourceTrace := map[string]any(nil)
 			owner := sourceOwnerForSource(sourceName)
+			serverProactiveObservation := map[string]any(nil)
 			err := error(nil)
 			select {
 			case payload := <-callDone:
 				rows = payload.rows
 				warnings = payload.warnings
 				sourceTrace = payload.sourceTrace
+				serverProactiveObservation = payload.serverProactiveObservation
 				if strings.TrimSpace(payload.owner) != "" {
 					owner = payload.owner
 				}
@@ -5650,17 +5692,18 @@ func (s *server) runSourceBatch(
 				LatencyMs: latency.Milliseconds(),
 			})
 			resultsCh <- sourceCallResult{
-				source:         sourceName,
-				sourceOwner:    owner,
-				sourceTrace:    sourceTrace,
-				phase:          phase,
-				rows:           rows,
-				warnings:       warnings,
-				err:            err,
-				timedOut:       timedOut,
-				budgetExceeded: budgetExceeded,
-				timeout:        timeout,
-				latency:        latency,
+				source:                     sourceName,
+				sourceOwner:                owner,
+				sourceTrace:                sourceTrace,
+				serverProactiveObservation: serverProactiveObservation,
+				phase:                      phase,
+				rows:                       rows,
+				warnings:                   warnings,
+				err:                        err,
+				timedOut:                   timedOut,
+				budgetExceeded:             budgetExceeded,
+				timeout:                    timeout,
+				latency:                    latency,
 			}
 		}(normalized, sourceTimeout)
 	}
@@ -5671,6 +5714,9 @@ func (s *server) runSourceBatch(
 			result.sourceOwner = sourceOwnerForSource(result.source)
 		}
 		output.sourceOwners[result.source] = result.sourceOwner
+		if len(result.serverProactiveObservation) > 0 {
+			output.serverProactiveObservations[result.source] = cloneJSONMap(result.serverProactiveObservation)
+		}
 		if len(result.sourceTrace) > 0 {
 			output.sourceChainDebug[result.source] = append(
 				output.sourceChainDebug[result.source],
@@ -6071,6 +6117,7 @@ func (s *server) executeRetrieval(
 	sourceOwners := map[string]string{}
 	sourceRows := map[string][]map[string]any{}
 	sourceChainDebug := map[string][]map[string]any{}
+	serverProactiveObservations := map[string]map[string]any{}
 	effectiveTimeouts := map[string]float64{}
 	adaptiveBudgets := map[string]map[string]any{}
 	timedOutObserved := map[string]struct{}{}
@@ -6086,26 +6133,43 @@ func (s *server) executeRetrieval(
 	continuationToken := continuationTokenForRequest(query, requestPayload)
 	minFastTarget := s.resolveMinFastResults(retrievalMode)
 
-	fastBatch := s.runSourceBatch(
-		ctx,
-		incomingHeaders,
-		requestPayload,
-		fastSources,
-		retrievalMode,
-		"fast",
-		explicitSourceOverride,
-		blockingSlowSources,
-		true,
-		false,
-		adaptiveSkipped,
-		continuationToken,
-	)
+	authoritativeCurrentStateFastPath := false
+	fastBatch := sourceBatchOutput{}
+	if !explicitSourceOverride && (!blockingSlowSources || contextPackDefaultBlockingSources(ctx)) {
+		fastBatch, authoritativeCurrentStateFastPath = s.authoritativeCurrentStateFastPath(
+			ctx,
+			requestPayload,
+			retrievalMode,
+			minFastTarget,
+		)
+	}
+	if authoritativeCurrentStateFastPath {
+		fastSources = []string{sourceTopicRollup}
+		slowSources = []string{}
+		blockingSlowSources = false
+	} else {
+		fastBatch = s.runSourceBatch(
+			ctx,
+			incomingHeaders,
+			requestPayload,
+			fastSources,
+			retrievalMode,
+			"fast",
+			explicitSourceOverride,
+			blockingSlowSources,
+			true,
+			false,
+			adaptiveSkipped,
+			continuationToken,
+		)
+	}
 	for source, rows := range fastBatch.rows {
 		sourceRows[source] = rows
 	}
 	for source, owner := range fastBatch.sourceOwners {
 		sourceOwners[source] = owner
 	}
+	mergeRecallResponseServerObservations(serverProactiveObservations, fastBatch.serverProactiveObservations)
 	mergeSourceChainDebug(sourceChainDebug, fastBatch.sourceChainDebug)
 	for source, payload := range fastBatch.sourceErrors {
 		sourceErrors[source] = payload
@@ -6203,6 +6267,7 @@ func (s *server) executeRetrieval(
 						for source, owner := range rustBatch.sourceOwners {
 							sourceOwners[source] = owner
 						}
+						mergeRecallResponseServerObservations(serverProactiveObservations, rustBatch.serverProactiveObservations)
 						mergeSourceChainDebug(sourceChainDebug, rustBatch.sourceChainDebug)
 						for source, payload := range rustBatch.sourceErrors {
 							sourceErrors[source] = payload
@@ -6280,6 +6345,7 @@ func (s *server) executeRetrieval(
 				for source, owner := range slowBatch.sourceOwners {
 					sourceOwners[source] = owner
 				}
+				mergeRecallResponseServerObservations(serverProactiveObservations, slowBatch.serverProactiveObservations)
 				mergeSourceChainDebug(sourceChainDebug, slowBatch.sourceChainDebug)
 				for source, payload := range slowBatch.sourceErrors {
 					sourceErrors[source] = payload
@@ -6333,6 +6399,7 @@ func (s *server) executeRetrieval(
 			for source, owner := range slowBatch.sourceOwners {
 				sourceOwners[source] = owner
 			}
+			mergeRecallResponseServerObservations(serverProactiveObservations, slowBatch.serverProactiveObservations)
 			mergeSourceChainDebug(sourceChainDebug, slowBatch.sourceChainDebug)
 			for source, payload := range slowBatch.sourceErrors {
 				sourceErrors[source] = payload
@@ -6391,6 +6458,7 @@ func (s *server) executeRetrieval(
 			for source, owner := range rescueBatch.sourceOwners {
 				sourceOwners[source] = owner
 			}
+			mergeRecallResponseServerObservations(serverProactiveObservations, rescueBatch.serverProactiveObservations)
 			mergeSourceChainDebug(sourceChainDebug, rescueBatch.sourceChainDebug)
 			for source, payload := range rescueBatch.sourceErrors {
 				sourceErrors[source] = payload
@@ -6804,30 +6872,31 @@ func (s *server) executeRetrieval(
 				s.retrieval.continuationDurableRetryMax.Seconds(),
 				3,
 			),
-			"continuation_durable_max_attempts": s.retrieval.continuationDurableMaxAttempts,
-			"sync_source_concurrency_default":   s.retrieval.syncSourceConcurrencyDefault,
-			"sync_source_concurrency_overrides": cloneIntMap(s.retrieval.syncSourceConcurrencyOverrides),
-			"sync_queue_age_warn_secs":          s.retrieval.syncQueueAgeWarnSecs,
-			"sync_queue_age_high_secs":          s.retrieval.syncQueueAgeHighSecs,
-			"timeout_contract_grace_secs":       s.retrieval.timeoutContractGrace.Seconds(),
-			"lexical_guard_enabled":             s.retrieval.lexicalGuardEnabled,
-			"lexical_guard_min_coverage":        s.retrieval.lexicalGuardMinCoverage,
-			"lexical_guard_min_results":         s.retrieval.lexicalGuardMinResults,
-			"runtime_backend_policy":            rustBackendPolicy,
-			"traffic_class":                     trafficClass,
-			"rust_lane_gate_applied":            rustLaneGateApplied,
-			"topic_prefilter_applied":           topicPrefilterApplied,
-			"topic_prefilter_hint":              topicPrefilterHint,
-			"coverage_rescue_enabled":           s.retrieval.coverageRescueEnabled,
-			"coverage_rescue_min_tokens":        s.retrieval.coverageRescueMinTokens,
-			"coverage_rescue_applied":           coverageRescueApplied,
-			"coverage_rescue_query":             coverageRescueQuery,
-			"coverage_rescue_sources":           coverageRescueSources,
-			"memory_bank_backend_effective":     strings.TrimSpace(strings.ToLower(anyToString(rustBackendPolicy["memory_bank_backend"]))),
-			"rust_quality_fallback_enabled":     s.retrieval.rustQualityFallbackEnabled,
-			"rust_quality_fallback_sources":     s.retrieval.rustQualityFallbackSources,
-			"rust_quality_fallback_mode":        s.retrieval.rustQualityFallbackMode,
-			"source_ownership_mode":             s.retrieval.sourceOwnershipMode,
+			"continuation_durable_max_attempts":     s.retrieval.continuationDurableMaxAttempts,
+			"sync_source_concurrency_default":       s.retrieval.syncSourceConcurrencyDefault,
+			"sync_source_concurrency_overrides":     cloneIntMap(s.retrieval.syncSourceConcurrencyOverrides),
+			"sync_queue_age_warn_secs":              s.retrieval.syncQueueAgeWarnSecs,
+			"sync_queue_age_high_secs":              s.retrieval.syncQueueAgeHighSecs,
+			"timeout_contract_grace_secs":           s.retrieval.timeoutContractGrace.Seconds(),
+			"lexical_guard_enabled":                 s.retrieval.lexicalGuardEnabled,
+			"lexical_guard_min_coverage":            s.retrieval.lexicalGuardMinCoverage,
+			"lexical_guard_min_results":             s.retrieval.lexicalGuardMinResults,
+			"runtime_backend_policy":                rustBackendPolicy,
+			"traffic_class":                         trafficClass,
+			"rust_lane_gate_applied":                rustLaneGateApplied,
+			"topic_prefilter_applied":               topicPrefilterApplied,
+			"topic_prefilter_hint":                  topicPrefilterHint,
+			"authoritative_current_state_fast_path": authoritativeCurrentStateFastPath,
+			"coverage_rescue_enabled":               s.retrieval.coverageRescueEnabled,
+			"coverage_rescue_min_tokens":            s.retrieval.coverageRescueMinTokens,
+			"coverage_rescue_applied":               coverageRescueApplied,
+			"coverage_rescue_query":                 coverageRescueQuery,
+			"coverage_rescue_sources":               coverageRescueSources,
+			"memory_bank_backend_effective":         strings.TrimSpace(strings.ToLower(anyToString(rustBackendPolicy["memory_bank_backend"]))),
+			"rust_quality_fallback_enabled":         s.retrieval.rustQualityFallbackEnabled,
+			"rust_quality_fallback_sources":         s.retrieval.rustQualityFallbackSources,
+			"rust_quality_fallback_mode":            s.retrieval.rustQualityFallbackMode,
+			"source_ownership_mode":                 s.retrieval.sourceOwnershipMode,
 			"source_ownership_strict_fast_allow_python": mapKeysSorted(
 				s.retrieval.sourceOwnershipStrictFastAllowPy,
 			),
@@ -6835,33 +6904,34 @@ func (s *server) executeRetrieval(
 			"memory_bank_fallback_chain": memoryBankFallbackChain,
 		},
 		"staged_fetch": map[string]any{
-			"enabled":                          true,
-			"used":                             true,
-			"fast_sources":                     fastSources,
-			"slow_sources":                     slowSources,
-			"sync_fallback_slow_sources":       normalizeSourceList(syncFallbackSlowSources),
-			"async_warm_slow_sources":          asyncWarmSlowSources,
-			"warming_sources":                  warmingSources,
-			"fail_open_continuation_sources":   continuationSources,
-			"continuation_unavailable_sources": continuationUnavailable,
-			"continuation_durable":             continuationDurable,
-			"timeout_adaptive_skipped_sources": skippedList,
-			"timed_out_sources":                timedOutList,
-			"deferred_timeout_sources":         deferredTimedOutList,
-			"terminal_timed_out_sources":       terminalTimedOutList,
-			"budget_exceeded_sources":          budgetExceededList,
-			"lexical_backend":                  lexicalBackend,
-			"lexical_guard_applied":            lexicalGuardApplied,
-			"lexical_guard_coverage":           lexicalGuardCoverage,
-			"rust_quality_fallback_attempted":  rustQualityFallbackAttempted,
-			"rust_quality_fallback_applied":    rustQualityFallbackApplied,
-			"rust_quality_fallback_sources":    rustQualityFallbackSourcesUsed,
-			"rust_quality_fallback_mode":       rustQualityFallbackModeUsed,
-			"effective_timeout_secs":           effectiveTimeouts,
-			"adaptive_timeout_budget":          adaptiveBudgets,
-			"coverage_rescue_applied":          coverageRescueApplied,
-			"coverage_rescue_query":            coverageRescueQuery,
-			"coverage_rescue_sources":          coverageRescueSources,
+			"enabled":                               true,
+			"used":                                  true,
+			"fast_sources":                          fastSources,
+			"slow_sources":                          slowSources,
+			"sync_fallback_slow_sources":            normalizeSourceList(syncFallbackSlowSources),
+			"async_warm_slow_sources":               asyncWarmSlowSources,
+			"warming_sources":                       warmingSources,
+			"fail_open_continuation_sources":        continuationSources,
+			"continuation_unavailable_sources":      continuationUnavailable,
+			"continuation_durable":                  continuationDurable,
+			"timeout_adaptive_skipped_sources":      skippedList,
+			"timed_out_sources":                     timedOutList,
+			"deferred_timeout_sources":              deferredTimedOutList,
+			"terminal_timed_out_sources":            terminalTimedOutList,
+			"budget_exceeded_sources":               budgetExceededList,
+			"lexical_backend":                       lexicalBackend,
+			"lexical_guard_applied":                 lexicalGuardApplied,
+			"lexical_guard_coverage":                lexicalGuardCoverage,
+			"rust_quality_fallback_attempted":       rustQualityFallbackAttempted,
+			"rust_quality_fallback_applied":         rustQualityFallbackApplied,
+			"rust_quality_fallback_sources":         rustQualityFallbackSourcesUsed,
+			"rust_quality_fallback_mode":            rustQualityFallbackModeUsed,
+			"effective_timeout_secs":                effectiveTimeouts,
+			"adaptive_timeout_budget":               adaptiveBudgets,
+			"coverage_rescue_applied":               coverageRescueApplied,
+			"coverage_rescue_query":                 coverageRescueQuery,
+			"coverage_rescue_sources":               coverageRescueSources,
+			"authoritative_current_state_fast_path": authoritativeCurrentStateFastPath,
 		},
 	}
 
@@ -6913,6 +6983,12 @@ func (s *server) executeRetrieval(
 		},
 		"objective_context_capture": objectiveCapture,
 		"search_intelligence":       searchIntelligence,
+	}
+	if proactiveObservation := recallResponseFirstServerObservation(serverProactiveObservations); len(proactiveObservation) > 0 && recallResponseServerObservationCaptureEnabled(ctx) {
+		// This is a server-owned internal retrieval envelope. Context-pack
+		// compilation consumes it into its private bridge. Raw retrieval routes
+		// never enable capture, and caller request fields cannot enable it.
+		response["_server_proactive_observation"] = proactiveObservation
 	}
 	if !objectiveCtx.empty() {
 		response["objective_context"] = objectiveCtx.toMap()

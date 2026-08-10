@@ -102,6 +102,17 @@ func recallResponseProjectActionMetadata(source map[string]any) map[string]any {
 		raw = anyMap(source["structured_action"])
 	}
 	if len(raw) == 0 {
+		raw = anyMap(source["action"])
+	}
+	if len(raw) == 0 {
+		// A previous server-owned compiler may already have projected the
+		// action into recall_metadata. Re-project that closed shape rather than
+		// dropping it at the next context-pack compilation boundary. This keeps
+		// the bridge additive while still passing every value through the same
+		// opaque-reference sanitizer below.
+		raw = anyMap(anyMap(source["recall_metadata"])["action"])
+	}
+	if len(raw) == 0 {
 		return nil
 	}
 	namespace := firstNonEmptyStrings(anyToString(source["candidate_id"]), anyToString(source["memory_id"]), anyToString(source["id"]), "bounded_action")
@@ -190,6 +201,108 @@ func recallResponseHasStructuredActionEvidence(items []any) bool {
 	return false
 }
 
+func recallResponseHasReadyActionEvidence(items []any) bool {
+	for _, raw := range items {
+		row := anyMap(raw)
+		_, eligible := recallResponseEvidenceStatus(row)
+		_, confidenceValid := recallResponseEvidenceConfidence(row["confidence"])
+		if !eligible || !confidenceValid {
+			continue
+		}
+		action := anyMap(anyMap(row["recall_metadata"])["action"])
+		if len(action) == 0 {
+			action = recallResponseProjectActionMetadata(row)
+		}
+		if recallResponseActionMetadataReady(action) {
+			return true
+		}
+	}
+	return false
+}
+
+// recallResponseActionProjectionAllowed is the production action-preparation
+// gate. Action metadata remains memory-as-data: proof/verification requests,
+// incomplete source coverage, and retirement/supersession evidence may still
+// be explained, but they cannot become a prepared tool or parameter binding.
+// A structured action is projected only when at least one eligible witness is
+// present. Parameter readiness is tracked separately: unresolved/sensitive
+// bindings may be explained with refusal conditions but are not selectable.
+func recallResponseActionProjectionAllowed(source map[string]any) bool {
+	if len(source) == 0 {
+		// Post-boundary recomposition has no raw source snapshot. It may reuse
+		// only the already validated component payload below.
+		return true
+	}
+	retrievalIntent := strings.ToLower(strings.TrimSpace(anyToString(source["retrieval_intent"])))
+	if retrievalIntent == "proof" || retrievalIntent == "verification" {
+		return false
+	}
+	coverage := anyMap(source["source_coverage"])
+	if len(coverage) == 0 {
+		coverage = anyMap(source["sourceCoverage"])
+	}
+	if len(coverage) > 0 && !anyToBool(coverage["complete"]) {
+		return false
+	}
+	if recallResponseTemporalHasRetirement(source) {
+		return false
+	}
+	for _, raw := range recallResponseTemporalRows(source) {
+		row := anyMap(raw)
+		relation := strings.ToLower(strings.TrimSpace(anyToString(row["relation"])))
+		if relation == "retires" || relation == "retired" {
+			return false
+		}
+		_, eligible := recallResponseEvidenceStatus(row)
+		_, confidenceValid := recallResponseEvidenceConfidence(row["confidence"])
+		if !eligible || !confidenceValid {
+			continue
+		}
+		action := anyMap(anyMap(row["recall_metadata"])["action"])
+		if len(action) == 0 {
+			action = recallResponseProjectActionMetadata(row)
+		}
+		if len(action) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func recallResponseActionMetadataReady(action map[string]any) bool {
+	toolRef := anyToString(action["tool_ref"])
+	if toolRef == "unresolved_tool" || !recallResponseValidDigest(toolRef) {
+		return false
+	}
+	for _, raw := range contextPackAnyList(action["parameter_bindings"]) {
+		row := anyMap(raw)
+		if anyToBool(row["required"]) && anyToString(row["value_state"]) != "bound_redacted" && anyToString(row["value_state"]) != "sensitive_unresolved" {
+			return false
+		}
+	}
+	return true
+}
+
+func recallResponseActionPayloadReady(payload map[string]any) bool {
+	toolRef := firstNonEmptyStrings(anyToString(payload["tool_ref"]), anyToString(payload["intended_tool_ref"]))
+	if toolRef == "unresolved_tool" || !recallResponseValidDigest(toolRef) {
+		return false
+	}
+	for _, raw := range contextPackAnyList(payload["parameter_bindings"]) {
+		row := anyMap(raw)
+		if anyToBool(row["required"]) && anyToString(row["value_state"]) != "bound_redacted" && anyToString(row["value_state"]) != "sensitive_unresolved" {
+			return false
+		}
+	}
+	for _, raw := range contextPackAnyList(payload["refusal_conditions"]) {
+		switch anyToString(anyMap(raw)["code"]) {
+		case "credential_access", "missing_required_parameter", "proof_mismatch":
+			return false
+		}
+	}
+	return true
+}
+
 func recallResponseProjectedConditionCodes(value any, requireAuthorization bool) []any {
 	values := []string{}
 	if requireAuthorization {
@@ -207,9 +320,36 @@ func recallResponseProjectedConditionCodes(value any, requireAuthorization bool)
 }
 
 func recallResponseActionPayload(kind string, response map[string]any, refs []string, source map[string]any) map[string]any {
+	if len(source) == 0 {
+		// Boundary recomposition operates only on the bounded response. Reuse
+		// the previously validated payload instead of attempting to recreate an
+		// action from source material that is intentionally unavailable here.
+		for _, raw := range contextPackAnyList(anyMap(response["answer"])["components"]) {
+			module := anyMap(raw)
+			if anyToString(module["kind"]) == kind {
+				if payload := anyMap(module["payload"]); len(payload) > 0 {
+					return cloneJSONMap(payload)
+				}
+			}
+		}
+	}
 	action := map[string]any{}
 	proofRef := ""
+	if !recallResponseActionProjectionAllowed(source) {
+		proofRef = firstString(refs)
+		action = map[string]any{
+			"tool_ref":            "unresolved_tool",
+			"parameter_bindings":  []any{},
+			"ordered_steps":       []any{},
+			"refusal_conditions":  []any{"independent_authorization_required", "proof_mismatch"},
+			"recovery_conditions": []any{},
+			"rollback_conditions": []any{},
+		}
+	}
 	for _, raw := range recallResponseTemporalRows(source) {
+		if len(action) > 0 {
+			break
+		}
 		row := anyMap(raw)
 		_, eligible := recallResponseEvidenceStatus(row)
 		_, confidenceValid := recallResponseEvidenceConfidence(row["confidence"])

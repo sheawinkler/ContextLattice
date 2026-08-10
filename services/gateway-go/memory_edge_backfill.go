@@ -362,7 +362,11 @@ func (m *memoryStore) deterministicMemoryEdgeBackfill(ctx context.Context, req m
 	if req.Corpus == "disk" {
 		storeDocs, err = m.collectDocsFromDisk(ctx, req.Project, req.IncludeCold, req.IncludeEphemeral)
 	} else {
-		storeDocs, err = m.collectDocs(ctx, req.Project)
+		var indexOK bool
+		storeDocs, indexOK = m.collectDocsFromHistoryIndex(ctx, req.Project, req.IncludeCold, req.IncludeEphemeral)
+		if !indexOK {
+			return nil, errors.New("memory history index is unavailable or inconsistent")
+		}
 	}
 	if err != nil {
 		return nil, err

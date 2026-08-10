@@ -924,6 +924,15 @@ def update_index(text: str, contract: dict[str, Any], page_key: str) -> str:
     for pattern, replacement, label, flags in identity_replacements:
         text = replace_once(text, pattern, replacement, f"{page_key} {label}", flags=flags)
 
+    if page_key == "index":
+        release_sequence = version.rsplit(".", 1)[-1]
+        text = replace_once(
+            text,
+            r"      <span><strong>\d+</strong> Current: v\d+\.\d+\.\d+</span>",
+            f"      <span><strong>{release_sequence}</strong> Current: v{version}</span>",
+            "index current release truth tape",
+        )
+
     heading = marker_block(
         f"{page_key}-release-heading",
         f"<h3>Public v{train} (current release train)</h3>",

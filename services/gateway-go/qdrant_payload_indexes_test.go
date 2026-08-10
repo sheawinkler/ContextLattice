@@ -144,7 +144,7 @@ func TestQdrantWarmingNeverFallsBackToPythonBackend(t *testing.T) {
 		qdrantPayloadIndexes:  newQdrantPayloadIndexHardener(),
 	}
 	s.qdrantPayloadIndexes.begin(true)
-	rows, warnings, _, owner, err := s.callBackendSourceQuery(
+	rows, warnings, _, owner, _, err := s.callBackendSourceQuery(
 		context.Background(),
 		http.Header{},
 		map[string]any{"query": "large store availability", "limit": 2},

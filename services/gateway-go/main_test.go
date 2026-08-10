@@ -2825,9 +2825,8 @@ func TestGatewayContextPackUsesImpactTokenBudgetAllocator(t *testing.T) {
 		!anyToBool(tokenImpact["tokenizer_exact"]) {
 		t.Fatalf("expected tokenizer-exact impact metadata, got %#v", tokenImpact)
 	}
-	nestedTokenImpact := anyMap(contextPack["token_impact"])
-	if anyToInt(nestedTokenImpact["saved_tokens_estimate"], 0) != savedTokens {
-		t.Fatalf("expected nested token impact to match root sample, root=%#v nested=%#v", tokenImpact, nestedTokenImpact)
+	if _, duplicated := contextPack["token_impact"]; duplicated {
+		t.Fatalf("expected transport token impact to have one canonical root owner, got nested duplicate %#v", contextPack["token_impact"])
 	}
 	contextPackQuality := anyMap(payload["context_pack_quality"])
 	if anyToString(contextPackQuality["schema_id"]) != contextPackQualitySchemaID {

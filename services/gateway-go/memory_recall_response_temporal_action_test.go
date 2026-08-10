@@ -163,6 +163,69 @@ func TestRecallResponseU4StructuredActionIsOpaqueOrderedAndAdvisory(t *testing.T
 	}
 }
 
+func TestRecallResponseActionPreparationFailsClosedAcrossProofCoverageAndRetirement(t *testing.T) {
+	toolRef := "sha256:" + strings.Repeat("a", 64)
+	parameterRef := "sha256:" + strings.Repeat("b", 64)
+	ready := map[string]any{
+		"candidate_id": "ready-action", "status": "selected", "confidence": 0.9,
+		"relation": "specifies_action",
+		"action_evidence": map[string]any{
+			"tool_ref": toolRef,
+			"parameter_bindings": []any{map[string]any{
+				"parameter_ref": parameterRef, "value_state": "resolved", "required": true,
+			}},
+		},
+	}
+	source := func(intent string, complete bool, rows ...any) map[string]any {
+		return map[string]any{
+			"retrieval_intent": intent,
+			"source_coverage":  map[string]any{"complete": complete},
+			"context_pack":     map[string]any{"ranked_evidence": rows},
+		}
+	}
+	if !recallResponseActionProjectionAllowed(source("action", true, ready)) {
+		t.Fatal("complete current proof-bound action was not preparable")
+	}
+	if recallResponseActionProjectionAllowed(source("proof", true, ready)) {
+		t.Fatal("proof-only request prepared an action")
+	}
+	if recallResponseActionProjectionAllowed(source("action", false, ready)) {
+		t.Fatal("incomplete source coverage prepared an action")
+	}
+	retirement := map[string]any{
+		"candidate_id": "retirement", "status": "revoked", "confidence": 0.9,
+		"relation": "retires",
+	}
+	if recallResponseActionProjectionAllowed(source("action", true, ready, retirement)) {
+		t.Fatal("retirement evidence prepared an action")
+	}
+	unresolved := cloneJSONMap(ready)
+	unresolved["action_evidence"] = map[string]any{
+		"tool_ref": toolRef,
+		"parameter_bindings": []any{map[string]any{
+			"parameter_ref": parameterRef, "value_state": "unresolved", "required": true,
+		}},
+	}
+	if !recallResponseActionProjectionAllowed(source("action", true, unresolved)) {
+		t.Fatal("unresolved action evidence was not retained for an advisory refusal")
+	}
+	projected := recallResponseProjectActionMetadata(unresolved)
+	if recallResponseActionMetadataReady(projected) {
+		t.Fatal("unresolved required parameter became selectable")
+	}
+	components := recallResponseComponents(
+		map[string]any{"jobs": []any{"act"}}, []any{unresolved}, "action", 1, 0, 0,
+		"sha256:"+strings.Repeat("c", 64), source("action", true, unresolved),
+	)
+	kinds := []string{}
+	for _, raw := range components {
+		kinds = append(kinds, anyToString(anyMap(raw)["kind"]))
+	}
+	if !containsString(kinds, "memory_to_action") || !containsString(kinds, "negative_abstention") {
+		t.Fatalf("unresolved advisory action did not retain its safety module: %v", kinds)
+	}
+}
+
 func TestRecallResponseU4MalformedValidityCannotProveAbsence(t *testing.T) {
 	input := recallResponseTestInput(false)
 	input["context_pack"] = map[string]any{"ranked_evidence": []any{map[string]any{
