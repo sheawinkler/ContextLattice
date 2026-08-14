@@ -46,6 +46,7 @@ on:
       - "scripts/tests/test_t*_public_projection.py"
       - "services/gateway-go/commercial_contract_generated.go"
       - "services/gateway-go/commercial_contract_generated_test.go"
+      - ".github/workflows/release-installers.yml"
       - ".github/workflows/public-release-installers.yml"
       - ".github/workflows/public-product-truth.yml"
   push:
@@ -96,6 +97,7 @@ on:
       - "scripts/tests/test_t*_public_projection.py"
       - "services/gateway-go/commercial_contract_generated.go"
       - "services/gateway-go/commercial_contract_generated_test.go"
+      - ".github/workflows/release-installers.yml"
       - ".github/workflows/public-release-installers.yml"
       - ".github/workflows/public-product-truth.yml"
   workflow_dispatch:

@@ -125,9 +125,9 @@ class PublicReleaseWorkflowTests(unittest.TestCase):
         agent_context = AGENT_CONTEXT_WORKFLOW.read_text(encoding="utf-8")
         for workflow in (product_truth, agent_context):
             self.assertIn('.github/workflows/public-release-installers.yml', workflow)
-            self.assertNotIn('.github/workflows/release-installers.yml', workflow)
             self.assertIn('scripts/task_agent_worker.py', workflow)
             self.assertIn('scripts/tests/test_task_agent_worker_claim_identity.py', workflow)
+        self.assertIn('.github/workflows/release-installers.yml', product_truth)
         self.assertGreaterEqual(product_truth.count('scripts/task_agent_worker.py'), 2)
         self.assertGreaterEqual(product_truth.count('scripts/tests/test_task_agent_worker_claim_identity.py'), 2)
         for required in (
