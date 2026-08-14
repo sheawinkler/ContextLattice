@@ -438,6 +438,11 @@ def build_zip(destination: Path) -> None:
         compresslevel=9,
         strict_timestamps=True,
     ) as zf:
+        root = zipfile.ZipInfo("contextlattice/", date_time=date_time)
+        root.create_system = 3
+        root.compress_type = zipfile.ZIP_DEFLATED
+        root.external_attr = (0o755 << 16) | 0x10
+        zf.writestr(root, b"")
         for path in paths:
             relative = "contextlattice/" + path.relative_to(stage).as_posix()
             if path.is_dir():
