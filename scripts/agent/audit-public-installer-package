@@ -828,6 +828,22 @@ def _snapshot_writable_tree(root: Path) -> dict[str, tuple[int, int, int, int]]:
             except OSError as exc:
                 if exc.errno in {errno.ENOENT, errno.ENOTDIR, errno.ELOOP}:
                     continue
+                if exc.errno in {errno.EACCES, errno.EPERM}:
+                    try:
+                        writable = os.access(
+                            name,
+                            os.W_OK | os.X_OK,
+                            dir_fd=directory_fd,
+                            follow_symlinks=False,
+                        )
+                    except (NotImplementedError, TypeError):
+                        writable = True
+                    # A pre-existing sibling that this process cannot enter or
+                    # write cannot be an extractor escape target. Keep its
+                    # metadata in the snapshot, but do not let a root-owned CI
+                    # temp directory make the audit environment-dependent.
+                    if not writable:
+                        continue
                 raise
             try:
                 opened = os.fstat(child_fd)

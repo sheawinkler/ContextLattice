@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import gzip
 import hashlib
 import importlib.machinery
@@ -749,6 +750,24 @@ class PublicReleasePackageScanTests(unittest.TestCase):
             finally:
                 listener.close()
                 socket_path.unlink(missing_ok=True)
+
+    def test_containment_snapshot_records_nonwritable_inaccessible_directory(self) -> None:
+        blocked = self.root / "blocked"
+        blocked.mkdir()
+        real_open = AUDIT.os.open
+
+        def open_with_blocked_directory(path: object, *args: object, **kwargs: object) -> int:
+            if path == blocked.name:
+                raise PermissionError(errno.EACCES, "permission denied", blocked.name)
+            return real_open(path, *args, **kwargs)
+
+        with (
+            mock.patch.object(AUDIT.os, "open", side_effect=open_with_blocked_directory),
+            mock.patch.object(AUDIT.os, "access", return_value=False),
+        ):
+            snapshot = AUDIT._snapshot_writable_tree(self.root)
+        self.assertIn(blocked.name, snapshot)
+        self.assertTrue(stat.S_ISDIR(snapshot[blocked.name][0]))
 
     def test_msi_directory_component_file_closure_rejects_foreign_rows(self) -> None:
         stage = self._windows_stage()
