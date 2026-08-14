@@ -52,6 +52,12 @@ func newTestServer(t *testing.T, backendURL string) *server {
 	}
 	s := newServer()
 	t.Cleanup(func() {
+		if s != nil {
+			_ = s.closeTaskDeliveryRuntime()
+		}
+		if s != nil && s.retrievalPromotionCanary != nil {
+			s.retrievalPromotionCanary.close()
+		}
 		if s != nil && s.utility != nil && s.utility.store != nil {
 			s.utility.store.close()
 		}
@@ -1210,6 +1216,8 @@ func TestHotPathRoutesRemainGoOwned(t *testing.T) {
 		`mux.HandleFunc("/telemetry/skills/foundry", s.telemetrySkillFoundry)`,
 		`mux.HandleFunc("/agents/tasks", s.agentsTasksRoute)`,
 		`mux.HandleFunc("/agents/tasks/", s.agentsTasksRoute)`,
+		`mux.HandleFunc("/agents/workers", s.agentsTasksRoute)`,
+		`mux.HandleFunc("/agents/workers/", s.agentsTasksRoute)`,
 		`mux.HandleFunc("/telemetry/metrics", s.telemetryMetricsRoute)`,
 		`mux.HandleFunc("/telemetry/token-impact", s.telemetryTokenImpactRoute)`,
 		`mux.HandleFunc(searchImpactIntelligencePath, s.telemetrySearchImpactRoute)`,
@@ -2325,12 +2333,14 @@ func TestRecallEvalCasesRefreshUsesLiveFileBackedMemory(t *testing.T) {
 			fileName:  "notes/releases/v3.3.37-recall-quality-loop.md",
 			content:   "recall quality loop graph contribution dashboard tuning",
 			topicPath: "contextlattice/recall-quality-loop",
+			sessionID: "recall-quality-loop",
 		},
 		{
 			project:   "contextlattice",
 			fileName:  "notes/ops/live-recall-gate.md",
 			content:   "live recall gate saved eval file backed memory",
 			topicPath: "contextlattice/recall-quality-loop",
+			sessionID: "recall-quality-loop",
 		},
 	} {
 		if _, _, err := s.memoryStore.put(item); err != nil {
@@ -2557,7 +2567,7 @@ func TestMemoryContextPackServedFromGatewayHandler(t *testing.T) {
 	gateway := httptest.NewServer(buildMux(s))
 	defer gateway.Close()
 
-	reqBody := `{"project":"contextlattice","query":"gateway native context pack","topic_path":"runbooks/codex-integration","limit":5,"max_facts":10,"include_retrieval_debug":true}`
+	reqBody := `{"project":"contextlattice","query":"gateway native context pack","topic_path":"runbooks/codex-integration","limit":5,"max_facts":10,"include_retrieval_debug":false}`
 	resp, err := http.Post(gateway.URL+"/memory/context-pack", "application/json", strings.NewReader(reqBody))
 	if err != nil {
 		t.Fatalf("context-pack request failed: %v", err)
@@ -2641,6 +2651,20 @@ func TestMemoryContextPackServedFromGatewayHandler(t *testing.T) {
 	contextCompiler := anyMap(contextPack["context_compiler"])
 	if anyToString(contextCompiler["recommended_surface"]) != "cli_for_local_agents" {
 		t.Fatalf("expected CLI-first compiler surface, got %#v", contextCompiler)
+	}
+	rootAssessment := anyMap(payload["memory_trust_assessment"])
+	rootTrace := anyMap(payload["retrieval_decision_trace"])
+	if anyToString(rootAssessment["canonical_path"]) != "$.memory_trust_assessment" || anyToInt(rootAssessment["assessed_count"], -1) < 0 {
+		t.Fatalf("non-debug response lost the authoritative root trust summary: %#v", rootAssessment)
+	}
+	if anyToString(rootTrace["canonical_path"]) != "$.retrieval_decision_trace" || anyToString(rootTrace["trace_id"]) == "" {
+		t.Fatalf("non-debug response lost the authoritative root decision summary: %#v", rootTrace)
+	}
+	if available, exists := rootAssessment["available"]; exists && !anyToBool(available) {
+		t.Fatalf("non-debug root trust summary was replaced with unavailable custody: %#v", rootAssessment)
+	}
+	if available, exists := rootTrace["available"]; exists && !anyToBool(available) {
+		t.Fatalf("non-debug root decision summary was replaced with unavailable custody: %#v", rootTrace)
 	}
 	if retrievalCalls < 1 {
 		t.Fatalf("expected at least one retrieval backend call, got %d", retrievalCalls)
@@ -3957,16 +3981,17 @@ func TestProxyForwardsBatchAndOpsQueuePaths(t *testing.T) {
 		t.Fatalf("expected /feedback to stay go-native, backend calls before=%d after=%d", backendCallsBeforeFeedback, backendCalls)
 	}
 
+	backendCallsBeforeAgentTasks := backendCalls
 	resp9, err := http.Get(gateway.URL + "/agents/tasks?project=contextlattice")
 	if err != nil {
 		t.Fatalf("agents tasks request failed: %v", err)
 	}
 	defer resp9.Body.Close()
-	if resp9.StatusCode != http.StatusOK {
-		t.Fatalf("expected 200 for /agents/tasks, got %d", resp9.StatusCode)
+	if resp9.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected fail-closed 401 for unauthenticated /agents/tasks, got %d", resp9.StatusCode)
 	}
-	if capturedPath != "/agents/tasks" {
-		t.Fatalf("expected /agents/tasks to be forwarded by native route, got %s", capturedPath)
+	if backendCalls != backendCallsBeforeAgentTasks {
+		t.Fatalf("expected /agents/tasks to stay go-native, backend calls before=%d after=%d", backendCallsBeforeAgentTasks, backendCalls)
 	}
 
 	backendCallsBeforeTelemetry := backendCalls

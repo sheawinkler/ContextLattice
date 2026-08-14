@@ -27,6 +27,52 @@ def metadata_from_args(raw: str) -> dict[str, Any]:
     return parsed
 
 
+def task_binding(args: argparse.Namespace) -> dict[str, str]:
+    """Return the immutable task/session linkage carried by every event."""
+    values = {
+        "session_id": getattr(args, "session_id", "") or os.getenv("CONTEXTLATTICE_SESSION_ID", ""),
+        "task_id": getattr(args, "task_id", "") or os.getenv("CONTEXTLATTICE_TASK_ID", ""),
+        "attempt_id": getattr(args, "attempt_id", "") or os.getenv("CONTEXTLATTICE_ATTEMPT_ID", ""),
+        "lease_id": getattr(args, "lease_id", "") or os.getenv("CONTEXTLATTICE_LEASE_ID", ""),
+        "worker_id": os.getenv("TASK_WORKER_ID", ""),
+        "worker_instance_id": os.getenv("TASK_WORKER_INSTANCE_ID", ""),
+        "generation": os.getenv("TASK_LEASE_GENERATION", ""),
+        "snapshot_id": getattr(args, "snapshot_id", "") or os.getenv("CONTEXTLATTICE_CONTEXT_SNAPSHOT_ID", ""),
+        "context_pack_hash": getattr(args, "context_pack_hash", "") or os.getenv("CONTEXTLATTICE_CONTEXT_PACK_HASH", ""),
+    }
+    return {key: str(value or "").strip() for key, value in values.items() if str(value or "").strip()}
+
+
+def binding_metadata(args: argparse.Namespace) -> dict[str, Any]:
+    binding = task_binding(args)
+    metadata: dict[str, Any] = dict(binding)
+    fence_keys = ("task_id", "attempt_id", "lease_id", "worker_id", "worker_instance_id", "generation")
+    if all(metadata.get(key) for key in fence_keys):
+        try:
+            generation = int(str(metadata["generation"]))
+        except (TypeError, ValueError):
+            generation = 0
+        if generation > 0:
+            metadata["fence"] = {
+                "task_id": metadata["task_id"],
+                "attempt_id": metadata["attempt_id"],
+                "lease_id": metadata["lease_id"],
+                "worker_id": metadata["worker_id"],
+                "worker_instance_id": metadata["worker_instance_id"],
+                "generation": generation,
+            }
+    return metadata
+
+
+def merge_task_binding_metadata(metadata: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
+    binding = binding_metadata(args)
+    if not binding:
+        return metadata
+    merged = dict(metadata)
+    merged["task_binding"] = binding
+    return merged
+
+
 def default_branch() -> str:
     return git_value(["git", "branch", "--show-current"])
 
@@ -42,6 +88,7 @@ def common_payload(args: argparse.Namespace) -> dict[str, Any]:
         "agent_id": args.agent_id or os.getenv("CONTEXTLATTICE_AGENT_ID", ""),
         "project": args.project,
     }
+    payload.update(task_binding(args))
     return {key: value for key, value in payload.items() if value not in ("", None)}
 
 
@@ -56,7 +103,7 @@ def cmd_start(args: argparse.Namespace) -> int:
             "branch": args.branch or default_branch(),
             "cwd": args.cwd or os.getcwd(),
             "tags": args.tag,
-            "metadata": metadata_from_args(args.metadata_json),
+            "metadata": merge_task_binding_metadata(metadata_from_args(args.metadata_json), args),
         }
     )
     raw = request_json("POST", "/v1/agents/sessions/start", payload, args.timeout)
@@ -87,7 +134,7 @@ def cmd_ensure(args: argparse.Namespace) -> int:
         agent_id=args.agent_id,
         mission=args.mission,
         goal=args.goal,
-        metadata=metadata_from_args(args.metadata_json),
+        metadata=merge_task_binding_metadata(metadata_from_args(args.metadata_json), args),
         tags=args.tag,
         timeout=args.timeout,
         soft=not args.strict,
@@ -100,7 +147,7 @@ def cmd_ensure(args: argparse.Namespace) -> int:
 
 def event_payload(args: argparse.Namespace, event_type: str, status: str = "") -> dict[str, Any]:
     payload = common_payload(args)
-    metadata = metadata_from_args(args.metadata_json)
+    metadata = merge_task_binding_metadata(metadata_from_args(args.metadata_json), args)
     payload.update(
         {
             "type": event_type,
@@ -432,6 +479,11 @@ def add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--agent", default="")
     parser.add_argument("--agent-id", default="")
     parser.add_argument("--project", default="contextlattice")
+    parser.add_argument("--task-id", default=os.getenv("CONTEXTLATTICE_TASK_ID", ""))
+    parser.add_argument("--attempt-id", default=os.getenv("CONTEXTLATTICE_ATTEMPT_ID", ""))
+    parser.add_argument("--lease-id", default=os.getenv("CONTEXTLATTICE_LEASE_ID", ""))
+    parser.add_argument("--snapshot-id", default=os.getenv("CONTEXTLATTICE_CONTEXT_SNAPSHOT_ID", ""))
+    parser.add_argument("--context-pack-hash", default=os.getenv("CONTEXTLATTICE_CONTEXT_PACK_HASH", ""))
     parser.add_argument("--timeout", type=float, default=10)
     parser.add_argument("--pretty", action="store_true")
 

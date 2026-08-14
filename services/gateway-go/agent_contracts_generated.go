@@ -10,10 +10,11 @@ type GeneratedAgentContractRef struct {
 }
 
 const GeneratedAgentContractRegistryID = "contextlattice_agent_output_contracts"
-const GeneratedAgentContractRegistryVersion = 61
+const GeneratedAgentContractRegistryVersion = 69
 
 const GeneratedAgentContractA2aReadinessProfileV1 = "a2a_readiness_profile.v1"
 const GeneratedAgentContractAgentContextProfileV1 = "agent_context_profile.v1"
+const GeneratedAgentContractAgentExecutionSurfaceV1 = "agent_execution_surface.v1"
 const GeneratedAgentContractAgentFlightRecorderEventV1 = "agent_flight_recorder_event.v1"
 const GeneratedAgentContractAgentPacketV1 = "agent_packet.v1"
 const GeneratedAgentContractAgentPacketDeltaV1 = "agent_packet_delta.v1"
@@ -24,8 +25,30 @@ const GeneratedAgentContractAgentProofTimelineV1 = "agent_proof_timeline.v1"
 const GeneratedAgentContractAgentRunTraceV1 = "agent_run_trace.v1"
 const GeneratedAgentContractAgentSessionRollupV1 = "agent_session_rollup.v1"
 const GeneratedAgentContractAgentSpanV1 = "agent_span.v1"
+const GeneratedAgentContractAgentTaskApprovalV1 = "agent_task_approval.v1"
+const GeneratedAgentContractAgentTaskArtifactV1 = "agent_task_artifact.v1"
+const GeneratedAgentContractAgentTaskAttemptV1 = "agent_task_attempt.v1"
+const GeneratedAgentContractAgentTaskBlockingAnswerV1 = "agent_task_blocking_answer.v1"
+const GeneratedAgentContractAgentTaskDeliveryV1 = "agent_task_delivery.v1"
+const GeneratedAgentContractAgentTaskIntegrationV1 = "agent_task_integration.v1"
 const GeneratedAgentContractAgentTaskLeaseV1 = "agent_task_lease.v1"
+const GeneratedAgentContractAgentTaskManifestV1 = "agent_task_manifest.v1"
+const GeneratedAgentContractAgentTaskPublicationV1 = "agent_task_publication.v1"
+const GeneratedAgentContractAgentTaskPublicationReconciliationV1 = "agent_task_publication_reconciliation.v1"
+const GeneratedAgentContractAgentTaskRecipientV1 = "agent_task_recipient.v1"
 const GeneratedAgentContractAgentTaskResultV1 = "agent_task_result.v1"
+const GeneratedAgentContractAgentTaskResultManifestV1 = "agent_task_result_manifest.v1"
+const GeneratedAgentContractAgentTaskReviewV1 = "agent_task_review.v1"
+const GeneratedAgentContractAgentTaskReviewerClaimV1 = "agent_task_reviewer_claim.v1"
+const GeneratedAgentContractAgentTaskRevisionEnvelopeV1 = "agent_task_revision_envelope.v1"
+const GeneratedAgentContractAgentTaskScheduleV1 = "agent_task_schedule.v1"
+const GeneratedAgentContractAgentTaskWritebackIntentV1 = "agent_task_writeback_intent.v1"
+const GeneratedAgentContractAgentWorkerIdentityAckV1 = "agent_worker_identity_ack.v1"
+const GeneratedAgentContractAgentWorkerIdentityReadbackV1 = "agent_worker_identity_readback.v1"
+const GeneratedAgentContractAgentWorkerIdentityRegistrationV1 = "agent_worker_identity_registration.v1"
+const GeneratedAgentContractAgentWorkerIdentityRetireV1 = "agent_worker_identity_retire.v1"
+const GeneratedAgentContractAgentWorkerIdentityRetirementReceiptV1 = "agent_worker_identity_retirement_receipt.v1"
+const GeneratedAgentContractAgentWorkerIdentityUpdateV1 = "agent_worker_identity_update.v1"
 const GeneratedAgentContractAggregateContributionV1 = "aggregate_contribution.v1"
 const GeneratedAgentContractAggregateReportV1 = "aggregate_report.v1"
 const GeneratedAgentContractAntiSchemingProtocolV1 = "anti_scheming_protocol.v1"
@@ -89,10 +112,12 @@ const GeneratedAgentContractPortableContinuationStatusV1 = "portable_continuatio
 const GeneratedAgentContractPortableEvidenceIdentityV1 = "portable_evidence_identity.v1"
 const GeneratedAgentContractPrivacyAccountantV1 = "privacy_accountant.v1"
 const GeneratedAgentContractProvenanceV1 = "provenance.v1"
+const GeneratedAgentContractRecallResponseInitialV1 = "recall_response.initial.v1"
 const GeneratedAgentContractRecallResponseV1 = "recall_response.v1"
 const GeneratedAgentContractRetrievalAblationV1 = "retrieval_ablation.v1"
 const GeneratedAgentContractRetrievalAblationReportV1 = "retrieval_ablation_report.v1"
 const GeneratedAgentContractRetrievalDecisionTraceV1 = "retrieval_decision_trace.v1"
+const GeneratedAgentContractRetrievalIntelligencePromotionCanaryV1 = "retrieval_intelligence_promotion_canary.v1"
 const GeneratedAgentContractRetrievalPlanV1 = "retrieval_plan.v1"
 const GeneratedAgentContractRetrievalProgressV1 = "retrieval_progress.v1"
 const GeneratedAgentContractReusableSkillCandidateV1 = "reusable_skill_candidate.v1"
@@ -128,6 +153,7 @@ const GeneratedAgentContractWritebackResultV1 = "writeback_result.v1"
 var GeneratedAgentContractIDs = []string{
 	GeneratedAgentContractA2aReadinessProfileV1,
 	GeneratedAgentContractAgentContextProfileV1,
+	GeneratedAgentContractAgentExecutionSurfaceV1,
 	GeneratedAgentContractAgentFlightRecorderEventV1,
 	GeneratedAgentContractAgentPacketV1,
 	GeneratedAgentContractAgentPacketDeltaV1,
@@ -138,8 +164,30 @@ var GeneratedAgentContractIDs = []string{
 	GeneratedAgentContractAgentRunTraceV1,
 	GeneratedAgentContractAgentSessionRollupV1,
 	GeneratedAgentContractAgentSpanV1,
+	GeneratedAgentContractAgentTaskApprovalV1,
+	GeneratedAgentContractAgentTaskArtifactV1,
+	GeneratedAgentContractAgentTaskAttemptV1,
+	GeneratedAgentContractAgentTaskBlockingAnswerV1,
+	GeneratedAgentContractAgentTaskDeliveryV1,
+	GeneratedAgentContractAgentTaskIntegrationV1,
 	GeneratedAgentContractAgentTaskLeaseV1,
+	GeneratedAgentContractAgentTaskManifestV1,
+	GeneratedAgentContractAgentTaskPublicationV1,
+	GeneratedAgentContractAgentTaskPublicationReconciliationV1,
+	GeneratedAgentContractAgentTaskRecipientV1,
 	GeneratedAgentContractAgentTaskResultV1,
+	GeneratedAgentContractAgentTaskResultManifestV1,
+	GeneratedAgentContractAgentTaskReviewV1,
+	GeneratedAgentContractAgentTaskReviewerClaimV1,
+	GeneratedAgentContractAgentTaskRevisionEnvelopeV1,
+	GeneratedAgentContractAgentTaskScheduleV1,
+	GeneratedAgentContractAgentTaskWritebackIntentV1,
+	GeneratedAgentContractAgentWorkerIdentityAckV1,
+	GeneratedAgentContractAgentWorkerIdentityReadbackV1,
+	GeneratedAgentContractAgentWorkerIdentityRegistrationV1,
+	GeneratedAgentContractAgentWorkerIdentityRetireV1,
+	GeneratedAgentContractAgentWorkerIdentityRetirementReceiptV1,
+	GeneratedAgentContractAgentWorkerIdentityUpdateV1,
 	GeneratedAgentContractAggregateContributionV1,
 	GeneratedAgentContractAggregateReportV1,
 	GeneratedAgentContractAntiSchemingProtocolV1,
@@ -203,10 +251,12 @@ var GeneratedAgentContractIDs = []string{
 	GeneratedAgentContractPortableEvidenceIdentityV1,
 	GeneratedAgentContractPrivacyAccountantV1,
 	GeneratedAgentContractProvenanceV1,
+	GeneratedAgentContractRecallResponseInitialV1,
 	GeneratedAgentContractRecallResponseV1,
 	GeneratedAgentContractRetrievalAblationV1,
 	GeneratedAgentContractRetrievalAblationReportV1,
 	GeneratedAgentContractRetrievalDecisionTraceV1,
+	GeneratedAgentContractRetrievalIntelligencePromotionCanaryV1,
 	GeneratedAgentContractRetrievalPlanV1,
 	GeneratedAgentContractRetrievalProgressV1,
 	GeneratedAgentContractReusableSkillCandidateV1,
@@ -250,6 +300,12 @@ var GeneratedAgentContracts = []GeneratedAgentContractRef{
 	{
 		SchemaID:           GeneratedAgentContractAgentContextProfileV1,
 		PayloadKind:        "effective_agent_context_profile",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractAgentExecutionSurfaceV1,
+		PayloadKind:        "agent_execution_surface",
 		ContractVersion:    1,
 		RequiredOutputMode: "json_object",
 	},
@@ -314,8 +370,68 @@ var GeneratedAgentContracts = []GeneratedAgentContractRef{
 		RequiredOutputMode: "json_object",
 	},
 	{
+		SchemaID:           GeneratedAgentContractAgentTaskApprovalV1,
+		PayloadKind:        "agent_task_approval",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractAgentTaskArtifactV1,
+		PayloadKind:        "agent_task_artifact",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractAgentTaskAttemptV1,
+		PayloadKind:        "agent_task_attempt",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractAgentTaskBlockingAnswerV1,
+		PayloadKind:        "agent_task_blocking_answer",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractAgentTaskDeliveryV1,
+		PayloadKind:        "agent_task_delivery",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractAgentTaskIntegrationV1,
+		PayloadKind:        "agent_task_integration",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
 		SchemaID:           GeneratedAgentContractAgentTaskLeaseV1,
 		PayloadKind:        "agent_task_lease",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractAgentTaskManifestV1,
+		PayloadKind:        "agent_task_manifest",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractAgentTaskPublicationV1,
+		PayloadKind:        "agent_task_publication",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractAgentTaskPublicationReconciliationV1,
+		PayloadKind:        "agent_task_publication_reconciliation",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractAgentTaskRecipientV1,
+		PayloadKind:        "agent_task_recipient",
 		ContractVersion:    1,
 		RequiredOutputMode: "json_object",
 	},
@@ -324,6 +440,78 @@ var GeneratedAgentContracts = []GeneratedAgentContractRef{
 		PayloadKind:        "agent_task_result",
 		ContractVersion:    1,
 		RequiredOutputMode: "json_object_or_markdown_with_json_frontmatter",
+	},
+	{
+		SchemaID:           GeneratedAgentContractAgentTaskResultManifestV1,
+		PayloadKind:        "agent_task_result_manifest",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractAgentTaskReviewV1,
+		PayloadKind:        "agent_task_review",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractAgentTaskReviewerClaimV1,
+		PayloadKind:        "agent_task_reviewer_claim",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractAgentTaskRevisionEnvelopeV1,
+		PayloadKind:        "agent_task_revision_envelope",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractAgentTaskScheduleV1,
+		PayloadKind:        "agent_task_schedule",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractAgentTaskWritebackIntentV1,
+		PayloadKind:        "agent_task_writeback_intent",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractAgentWorkerIdentityAckV1,
+		PayloadKind:        "agent_worker_identity_ack",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractAgentWorkerIdentityReadbackV1,
+		PayloadKind:        "agent_worker_identity_readback",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractAgentWorkerIdentityRegistrationV1,
+		PayloadKind:        "agent_worker_identity_registration",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractAgentWorkerIdentityRetireV1,
+		PayloadKind:        "agent_worker_identity_retire",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractAgentWorkerIdentityRetirementReceiptV1,
+		PayloadKind:        "agent_worker_identity_retirement_receipt",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractAgentWorkerIdentityUpdateV1,
+		PayloadKind:        "agent_worker_identity_update",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
 	},
 	{
 		SchemaID:           GeneratedAgentContractAggregateContributionV1,
@@ -448,7 +636,7 @@ var GeneratedAgentContracts = []GeneratedAgentContractRef{
 	{
 		SchemaID:           GeneratedAgentContractContextPackResponseV1,
 		PayloadKind:        "context_pack_response",
-		ContractVersion:    1,
+		ContractVersion:    2,
 		RequiredOutputMode: "json_object",
 	},
 	{
@@ -508,7 +696,7 @@ var GeneratedAgentContracts = []GeneratedAgentContractRef{
 	{
 		SchemaID:           GeneratedAgentContractContextlatticeLifecycleReceiptV1,
 		PayloadKind:        "contextlattice_lifecycle_receipt",
-		ContractVersion:    1,
+		ContractVersion:    2,
 		RequiredOutputMode: "json_object",
 	},
 	{
@@ -704,6 +892,12 @@ var GeneratedAgentContracts = []GeneratedAgentContractRef{
 		RequiredOutputMode: "json_object",
 	},
 	{
+		SchemaID:           GeneratedAgentContractRecallResponseInitialV1,
+		PayloadKind:        "bounded_recall_response_initial_transport",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
 		SchemaID:           GeneratedAgentContractRecallResponseV1,
 		PayloadKind:        "bounded_proof_carrying_recall_response",
 		ContractVersion:    1,
@@ -724,6 +918,12 @@ var GeneratedAgentContracts = []GeneratedAgentContractRef{
 	{
 		SchemaID:           GeneratedAgentContractRetrievalDecisionTraceV1,
 		PayloadKind:        "bounded_retrieval_decision_receipt_trace",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractRetrievalIntelligencePromotionCanaryV1,
+		PayloadKind:        "entitled_signed_retrieval_promotion_canary_governance",
 		ContractVersion:    1,
 		RequiredOutputMode: "json_object",
 	},
@@ -880,7 +1080,7 @@ var GeneratedAgentContracts = []GeneratedAgentContractRef{
 	{
 		SchemaID:           GeneratedAgentContractUniversalAgentAdapterResponseV1,
 		PayloadKind:        "universal_agent_adapter_response",
-		ContractVersion:    1,
+		ContractVersion:    2,
 		RequiredOutputMode: "json_object",
 	},
 	{

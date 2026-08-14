@@ -14,10 +14,12 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import unicodedata
 from contextlib import ExitStack
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
+from xml.etree import ElementTree
 
 
 SCHEMA_ID = "contextlattice_installer_outer_contract.v1"
@@ -843,6 +845,327 @@ def validate_msi_tables(msi_path: Path, msiinfo: str = "msiinfo") -> dict[str, i
     }
 
 
+def _wix_tag(element: ElementTree.Element) -> str:
+    return element.tag.rsplit("}", 1)[-1]
+
+
+def _wix_file_name(value: str, *, description: str) -> str:
+    """Resolve a WiX file name (including an optional short|long pair)."""
+    normalized = value.replace("\\", "/").strip()
+    if not normalized or "/" in normalized:
+        raise OuterContractError(f"reviewed MSI WXS {description} name is unsafe")
+    names = normalized.split("|")
+    if len(names) > 2 or any(not name for name in names):
+        raise OuterContractError(f"reviewed MSI WXS {description} name is unsafe")
+    for name in names:
+        if (
+            name in {".", ".."}
+            or any(ord(character) < 32 for character in name)
+            or any(character in '<>:"/\\?*' for character in name)
+        ):
+            raise OuterContractError(f"reviewed MSI WXS {description} name is unsafe")
+    return names[-1]
+
+
+def _wix_source_name(value: str, *, description: str) -> str:
+    normalized = value.replace("\\", "/").strip()
+    path = PurePosixPath(normalized)
+    windows_path = PureWindowsPath(normalized)
+    if (
+        not normalized
+        or path.is_absolute()
+        or windows_path.drive
+        or windows_path.root
+        or any(":" in part for part in path.parts)
+        or any(part in {"", ".", ".."} for part in path.parts)
+    ):
+        raise OuterContractError(f"reviewed MSI WXS {description} path is unsafe")
+    return _wix_file_name(path.name, description=description)
+
+
+def _windows_destination_key(value: str) -> str:
+    """Return the collision key used by Windows path semantics."""
+    normalized = unicodedata.normalize("NFKC", value.replace("\\", "/"))
+    parts = normalized.split("/")
+    if not normalized or any(part in {"", ".", ".."} for part in parts):
+        raise OuterContractError("reviewed MSI WXS file destination is unsafe")
+    key_parts: list[str] = []
+    for part in parts:
+        # Windows ignores trailing spaces/dots and compares names case-insensitively.
+        component = part.rstrip(" .")
+        if not component:
+            raise OuterContractError("reviewed MSI WXS file destination is unsafe")
+        key_parts.append(component.casefold())
+    return "/".join(key_parts)
+
+
+def _wix_expected_msi_closure(wxs_path: Path) -> dict[str, object]:
+    try:
+        root = ElementTree.parse(wxs_path).getroot()
+    except (OSError, ElementTree.ParseError) as exc:
+        raise OuterContractError("reviewed MSI WXS structure cannot be parsed") from exc
+
+    directories: dict[str, dict[str, str | None]] = {}
+
+    def visit(element: ElementTree.Element, parent_id: str | None = None) -> None:
+        if _wix_tag(element) == "Directory":
+            directory_id = (element.get("Id") or "").strip()
+            name = (element.get("Name") or "").strip()
+            if (
+                not directory_id
+                or directory_id in directories
+                or (directory_id != "ProgramFilesFolder" and not name)
+            ):
+                raise OuterContractError("reviewed MSI WXS directory keys are ambiguous")
+            directories[directory_id] = {"parent": parent_id, "name": name}
+            for child in element:
+                visit(child, directory_id)
+            return
+        for child in element:
+            visit(child, parent_id)
+
+    visit(root)
+    if not {"TARGETDIR", "ProgramFilesFolder", "INSTALLDIR", "PAYLOADDIR"}.issubset(directories):
+        raise OuterContractError("reviewed MSI WXS directory closure is incomplete")
+
+    directory_paths: dict[str, str] = {}
+
+    def resolve_directory(directory_id: str, active: set[str] | None = None) -> str:
+        if directory_id in directory_paths:
+            return directory_paths[directory_id]
+        active = set() if active is None else active
+        if directory_id in active or directory_id not in directories:
+            raise OuterContractError("reviewed MSI WXS directory references are ambiguous")
+        active.add(directory_id)
+        row = directories[directory_id]
+        parent = row["parent"]
+        if directory_id == "TARGETDIR":
+            path = ""
+        elif directory_id == "ProgramFilesFolder":
+            if parent != "TARGETDIR":
+                raise OuterContractError("reviewed MSI WXS ProgramFilesFolder parent is invalid")
+            path = "Program Files"
+        else:
+            if not isinstance(parent, str) or not parent:
+                raise OuterContractError("reviewed MSI WXS directory parent is missing")
+            raw_name = str(row["name"])
+            if "/" in raw_name or "\\" in raw_name:
+                raise OuterContractError("reviewed MSI WXS directory name is unsafe")
+            name = _wix_source_name(raw_name, description="directory")
+            parent_path = resolve_directory(parent, active)
+            path = "/".join(part for part in (parent_path, name) if part)
+        directory_paths[directory_id] = path
+        return path
+
+    for directory_id in directories:
+        resolve_directory(directory_id)
+
+    components: dict[str, dict[str, object]] = {}
+    files: dict[str, dict[str, str]] = {}
+    for element in root.iter():
+        if _wix_tag(element) != "DirectoryRef":
+            continue
+        directory_id = (element.get("Id") or "").strip()
+        if directory_id not in directory_paths:
+            raise OuterContractError("reviewed MSI WXS DirectoryRef is missing")
+        for component_element in element:
+            if _wix_tag(component_element) != "Component":
+                continue
+            component_id = (component_element.get("Id") or "").strip()
+            if not component_id or component_id in components:
+                raise OuterContractError("reviewed MSI WXS component keys are ambiguous")
+            component_files: set[str] = set()
+            key_path: str | None = None
+            for file_element in component_element:
+                if _wix_tag(file_element) != "File":
+                    continue
+                file_id = (file_element.get("Id") or "").strip()
+                source = file_element.get("Source") or ""
+                if not file_id or file_id in files or file_id in component_files:
+                    raise OuterContractError("reviewed MSI WXS file keys are ambiguous")
+                source_name = _wix_source_name(source, description="file source")
+                name_override = file_element.get("Name")
+                destination_name = (
+                    source_name
+                    if name_override is None
+                    else _wix_file_name(name_override, description="file override")
+                )
+                destination = "/".join(
+                    part for part in (directory_paths[directory_id], destination_name) if part
+                )
+                files[file_id] = {
+                    "component": component_id,
+                    "directory": directory_id,
+                    "name": destination_name,
+                    "destination": destination,
+                }
+                component_files.add(file_id)
+                if (file_element.get("KeyPath") or "").strip().lower() == "yes":
+                    if key_path is not None:
+                        raise OuterContractError("reviewed MSI WXS component key paths are ambiguous")
+                    key_path = file_id
+            if not component_files or key_path is None:
+                raise OuterContractError("reviewed MSI WXS component has no files")
+            components[component_id] = {
+                "directory": directory_id,
+                "files": component_files,
+                "key_path": key_path,
+            }
+
+    if not components or not files:
+        raise OuterContractError("reviewed MSI WXS component/file closure is empty")
+    destinations = [_windows_destination_key(str(row["destination"])) for row in files.values()]
+    if len(destinations) != len(set(destinations)):
+        raise OuterContractError("reviewed MSI WXS file destinations collide on Windows")
+    return {
+        "directories": directories,
+        "directory_paths": directory_paths,
+        "components": components,
+        "files": files,
+    }
+
+
+def _parse_msi_export(raw: bytes | str, *, table: str) -> list[dict[str, str]]:
+    try:
+        text = raw.decode("utf-8") if isinstance(raw, bytes) else raw
+    except UnicodeError as exc:
+        raise OuterContractError(f"MSI {table} table is not UTF-8") from exc
+    lines = text.splitlines()
+    if len(lines) < 3:
+        raise OuterContractError(f"MSI {table} table header is incomplete")
+    columns = lines[0].split("\t")
+    if not columns or any(not column for column in columns) or len(columns) != len(set(columns)):
+        raise OuterContractError(f"MSI {table} table columns are ambiguous")
+    rows: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for line in lines[3:]:
+        if not line.strip():
+            continue
+        values = line.split("\t")
+        if len(values) != len(columns) or not values[0].strip():
+            raise OuterContractError(f"MSI {table} table row is malformed")
+        key = values[0].strip()
+        if key in seen:
+            raise OuterContractError(f"MSI {table} table keys are ambiguous")
+        seen.add(key)
+        rows.append({column: value.strip() for column, value in zip(columns, values)})
+    return rows
+
+
+def _msi_long_name(value: str, *, description: str) -> str:
+    value = value.strip()
+    if "|" in value:
+        value = value.split("|", 1)[1]
+    if not value or "/" in value or "\\" in value or value in {".", ".."}:
+        raise OuterContractError(f"MSI {description} destination is unsafe")
+    return value
+
+
+def validate_msi_table_closure(
+    source_root: Path,
+    directory_output: bytes | str,
+    component_output: bytes | str,
+    file_output: bytes | str,
+) -> dict[str, int]:
+    """Cross-reference MSI Directory/Component/File rows to reviewed WXS."""
+    expected = _wix_expected_msi_closure(
+        source_root / "packaging/windows/contextlattice.wxs"
+    )
+    expected_directories = expected["directories"]
+    expected_paths = expected["directory_paths"]
+    expected_components = expected["components"]
+    expected_files = expected["files"]
+    if not isinstance(expected_directories, dict) or not isinstance(expected_paths, dict):
+        raise OuterContractError("reviewed MSI WXS directory closure is malformed")
+    if not isinstance(expected_components, dict) or not isinstance(expected_files, dict):
+        raise OuterContractError("reviewed MSI WXS component/file closure is malformed")
+
+    directories = _parse_msi_export(directory_output, table="Directory")
+    directory_rows = {row["Directory"]: row for row in directories}
+    if set(directory_rows) != set(expected_directories):
+        raise OuterContractError("MSI Directory table differs from reviewed WXS")
+    actual_paths: dict[str, str] = {}
+    for directory_id, expected_row in expected_directories.items():
+        row = directory_rows[directory_id]
+        parent = row.get("Directory_Parent", "")
+        expected_parent = expected_row["parent"] or ""
+        if parent != expected_parent:
+            raise OuterContractError("MSI Directory parent differs from reviewed WXS")
+        default_name = _msi_long_name(row.get("DefaultDir", ""), description="directory")
+        if directory_id == "TARGETDIR":
+            if default_name != "SourceDir":
+                raise OuterContractError("MSI TARGETDIR name differs from reviewed WXS")
+            actual_path = ""
+        elif directory_id == "ProgramFilesFolder":
+            if default_name not in {"PFiles", "Program Files"}:
+                raise OuterContractError(
+                    "MSI ProgramFilesFolder name differs from reviewed WXS"
+                )
+            actual_path = "Program Files"
+        else:
+            if parent not in actual_paths:
+                raise OuterContractError("MSI Directory parent reference is missing")
+            actual_path = "/".join(
+                part for part in (actual_paths[parent], default_name) if part
+            )
+        if actual_path != expected_paths[directory_id]:
+            raise OuterContractError("MSI Directory destination differs from reviewed WXS")
+        actual_paths[directory_id] = actual_path
+
+    components = _parse_msi_export(component_output, table="Component")
+    component_rows = {row["Component"]: row for row in components}
+    if set(component_rows) != set(expected_components):
+        raise OuterContractError("MSI Component table differs from reviewed WXS")
+    component_ids: set[str] = set()
+    for component_id, expected_row in expected_components.items():
+        row = component_rows[component_id]
+        directory_id = expected_row["directory"]
+        if row.get("Directory_") != directory_id:
+            raise OuterContractError("MSI Component directory reference differs from reviewed WXS")
+        if row.get("KeyPath") != expected_row["key_path"]:
+            raise OuterContractError("MSI Component key path differs from reviewed WXS")
+        component_guid = row.get("ComponentId", "")
+        if not component_guid or component_guid in component_ids:
+            raise OuterContractError("MSI Component identities are ambiguous")
+        component_ids.add(component_guid)
+
+    files = _parse_msi_export(file_output, table="File")
+    file_rows = {row["File"]: row for row in files}
+    if set(file_rows) != set(expected_files):
+        raise OuterContractError("MSI File table differs from reviewed WXS")
+    actual_destinations: set[str] = set()
+    files_by_component: dict[str, set[str]] = {component_id: set() for component_id in expected_components}
+    for file_id, expected_row in expected_files.items():
+        row = file_rows[file_id]
+        component_id = expected_row["component"]
+        if row.get("Component_") != component_id:
+            raise OuterContractError("MSI File component reference differs from reviewed WXS")
+        actual_name = _msi_long_name(row.get("FileName", ""), description="file")
+        if actual_name != expected_row["name"]:
+            raise OuterContractError("MSI File name differs from reviewed WXS")
+        directory_id = expected_components[component_id]["directory"]
+        destination = "/".join(part for part in (actual_paths[directory_id], actual_name) if part)
+        destination_key = _windows_destination_key(destination)
+        if destination_key in actual_destinations:
+            raise OuterContractError("MSI File destinations collide on Windows")
+        actual_destinations.add(destination_key)
+        files_by_component[component_id].add(file_id)
+    for component_id, expected_row in expected_components.items():
+        if files_by_component[component_id] != expected_row["files"]:
+            raise OuterContractError("MSI Component file closure differs from reviewed WXS")
+    expected_destinations = {
+        _windows_destination_key(str(row["destination"]))
+        for row in expected_files.values()
+    }
+    if actual_destinations != expected_destinations:
+        raise OuterContractError("MSI file destinations differ from reviewed WXS")
+    return {
+        "directories": len(directory_rows),
+        "components": len(component_rows),
+        "files": len(file_rows),
+    }
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -864,6 +1187,11 @@ def parse_args() -> argparse.Namespace:
     msi = subparsers.add_parser("validate-msi")
     msi.add_argument("--msi", required=True)
     msi.add_argument("--msiinfo", default="msiinfo")
+    msi_closure = subparsers.add_parser("validate-msi-closure")
+    msi_closure.add_argument("--root", default=".")
+    msi_closure.add_argument("--directory-export", required=True)
+    msi_closure.add_argument("--component-export", required=True)
+    msi_closure.add_argument("--file-export", required=True)
     linux_archive = subparsers.add_parser("validate-linux-archive")
     linux_archive.add_argument("--root", default=".")
     linux_archive.add_argument("--lane", choices=LANES, required=True)
@@ -879,9 +1207,19 @@ def main() -> int:
             build_linux_archive(
                 Path(args.stage).resolve(), Path(args.archive).resolve()
             )
-            result = {"archive": str(Path(args.archive).resolve())}
+            # CLI receipts must remain portable; the caller already knows the
+            # task-scoped output location and no machine path belongs in a
+            # release proof or log artifact.
+            result = {"archive": Path(args.archive).name}
         elif args.command == "validate-msi":
             result: Any = validate_msi_tables(Path(args.msi).resolve(), args.msiinfo)
+        elif args.command == "validate-msi-closure":
+            result = validate_msi_table_closure(
+                Path(args.root).resolve(),
+                Path(args.directory_export).read_bytes(),
+                Path(args.component_export).read_bytes(),
+                Path(args.file_export).read_bytes(),
+            )
         elif args.command == "validate-linux-archive":
             result = validate_linux_archive(
                 Path(args.root).resolve(),

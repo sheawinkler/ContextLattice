@@ -192,11 +192,22 @@ func TestMemoryStoreProjectHistoryIndexConcurrentMutation(t *testing.T) {
 	}()
 	for i := 0; i < iterations; i++ {
 		docs, ok := store.collectDocsFromHistoryIndex(context.Background(), "alpha", true, true)
-		if !ok || len(docs) != 1 {
+		if !ok {
+			// Same-key rewrites advance the exact collector generation. A
+			// collection that overlaps one must fail closed rather than publish
+			// a stale snapshot; verify below that a stable post-writer read still
+			// returns the active key.
+			continue
+		}
+		if len(docs) != 1 {
 			t.Fatalf("concurrent scoped collection lost active key, ok=%v docs=%#v", ok, docs)
 		}
 	}
 	<-done
+	docs, ok := store.collectDocsFromHistoryIndex(context.Background(), "alpha", true, true)
+	if !ok || len(docs) != 1 {
+		t.Fatalf("stable scoped collection lost active key after concurrent rewrites, ok=%v docs=%#v", ok, docs)
+	}
 }
 
 func BenchmarkMemoryStoreProjectHistoryIndexCollection(b *testing.B) {

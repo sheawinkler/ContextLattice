@@ -301,6 +301,7 @@ func buildSearchIntelligence(input searchIntelligenceInput) map[string]any {
 			"ordering":       "native_score_desc_preserved",
 			"returned_count": len(input.Literal),
 		},
+		"promotion":         retrievalPromotionSearchEnvelope(input),
 		"decision_frontier": frontier,
 	}
 }

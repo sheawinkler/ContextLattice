@@ -20,7 +20,7 @@ func TestRecallResponseU3ModulesAreUsefulClosedAndBounded(t *testing.T) {
 		if anyToBool(module["primary"]) {
 			primary++
 		}
-		if anyToInt(module["ordinal"], 0) != index+1 || anyToString(module["kind"]) != anyToString(module["module_type"]) {
+		if anyToInt(module["ordinal"], 0) != index+1 {
 			t.Fatalf("module order/identity drifted: %#v", module)
 		}
 		if got := anyToString(module["component_digest"]); got != recallResponseComponentDigest(module) || !recallResponseValidDigest(got) {
@@ -203,6 +203,46 @@ func TestRecallResponseU3AblationAndPostClipRecomposition(t *testing.T) {
 			t.Fatalf("non-safety ablation %q remained selected: %#v", omitted, ablated)
 		}
 	}
+	ablatedComposition := anyMap(anyMap(ablated["answer"])["composition"])
+	if primary := anyToString(ablatedComposition["primary_module"]); primary == "v1_control" {
+		if anyToString(ablatedComposition["fallback_reason"]) != "synthetic_ablation" {
+			t.Fatalf("closed ablation control was not explicitly typed: composition=%#v stage=%#v witness=%#v", ablatedComposition, ablated[recallResponseFallbackStageReceiptKey], anyMap(ablated["disclosure"])["ablation_witness"])
+		}
+	} else if primary == string(omitted) || anyToString(ablatedComposition["fallback_reason"]) != "" {
+		t.Fatalf("valid ablation candidate retained the omitted component or a failure label: %#v", ablatedComposition)
+	}
+	ablatedRef := ""
+	for _, raw := range contextPackAnyList(anyMap(ablated["disclosure"])["component_union"]) {
+		row := anyMap(raw)
+		if anyToString(row["kind"]) == string(omitted) {
+			ablatedRef = anyToString(row["component_ref"])
+			break
+		}
+	}
+	hasAblationReceipt := false
+	for _, raw := range contextPackAnyList(anyMap(ablated["disclosure"])["omission_ledger"]) {
+		row := anyMap(raw)
+		if anyToString(row["item_type"]) == "component" && anyToString(row["item_ref"]) == ablatedRef && anyToString(row["reason"]) == "synthetic_ablation" && anyToString(anyMap(row["same_snapshot_counterfactual"])["outcome"]) == "fail_closed_control" {
+			hasAblationReceipt = true
+			break
+		}
+	}
+	if ablatedRef == "" || !hasAblationReceipt {
+		t.Fatalf("selected-primary ablation omitted its exact closed counterfactual receipt: ref=%q ledger=%#v", ablatedRef, anyMap(ablated["disclosure"])["omission_ledger"])
+	}
+	for _, raw := range contextPackAnyList(ablated["gaps"]) {
+		if anyToString(anyMap(raw)["code"]) == "candidate_projection_invalid" {
+			t.Fatalf("intentional ablation was mislabeled as a product-contract failure: %#v", ablated["gaps"])
+		}
+	}
+	witness := anyMap(anyMap(ablated["disclosure"])["ablation_witness"])
+	if !recallResponseAblationWitnessValid(ablated, witness) ||
+		!recallResponseValidDigest(anyToString(witness["baseline_union_digest"])) ||
+		!recallResponseValidDigest(anyToString(witness["omission_receipt_digest"])) ||
+		anyToString(witness["component_ref"]) != ablatedRef ||
+		anyToString(witness["component_kind"]) != string(omitted) {
+		t.Fatalf("synthetic ablation lacks its exact closed witness: %#v", witness)
+	}
 
 	finalized := finalizeRecallResponseTransport(base, "agent-alpha", "test", "/test/recall-response")
 	if !validateRecallResponseU2(finalized) {
@@ -217,5 +257,46 @@ func TestRecallResponseU3AblationAndPostClipRecomposition(t *testing.T) {
 	}
 	if !foundMinimality {
 		t.Fatalf("post-clipping recomposition dropped minimality proof: %#v", proof)
+	}
+}
+
+func TestRecallResponseSyntheticAblationDoesNotNormalizeUnrelatedFailure(t *testing.T) {
+	baseline := composeRecallResponse(recallResponseTestInput(true))
+	components := contextPackAnyList(anyMap(baseline["answer"])["components"])
+	if len(components) == 0 {
+		t.Fatal("fixture has no selected component")
+	}
+	omitted := recallResponseModuleType(anyToString(anyMap(components[0])["kind"]))
+	snapshot := recallResponseTestFrozenSnapshot(recallResponseConditionCompositional, omitted)
+	policy, ok := validateRecallResponseFrozenSnapshot(snapshot, recallResponseConditionCompositional, omitted)
+	if !ok {
+		t.Fatal("frozen ablation policy was rejected")
+	}
+	policy, ok = recallResponseBindSyntheticAblationWitness(snapshot.Input, policy)
+	if !ok {
+		t.Fatal("ablation witness could not bind its unablated baseline")
+	}
+	control := projectRecallResponseV1ControlFromArtifacts(snapshot.Input, policy)
+	injectedStage := recallResponseFallbackStageCompression
+	if anyToString(policy.ablationWitness["expected_failure_stage"]) == recallResponseAblationExpectedStage(injectedStage) {
+		injectedStage = recallResponseFallbackStageFit
+	}
+	receipt := recallResponseFallbackStageReceipt(injectedStage, recallResponseProofCompression{}, control)
+	fallback := recallResponseCandidateOrControl(control, nil, policy, recallResponseLatestAsOf, false, receipt)
+	composition := anyMap(anyMap(fallback["answer"])["composition"])
+	witness := anyMap(anyMap(fallback["disclosure"])["ablation_witness"])
+	if anyToString(composition["fallback_reason"]) != "candidate_projection_invalid" ||
+		anyToString(witness["status"]) != "candidate_projection_invalid" ||
+		anyToString(witness["observed_failure_stage"]) != injectedStage ||
+		anyToString(witness["expected_failure_stage"]) == recallResponseAblationExpectedStage(injectedStage) ||
+		!recallResponseAblationWitnessValid(fallback, witness) {
+		t.Fatalf("unrelated product failure was normalized as an accepted ablation: composition=%#v witness=%#v", composition, witness)
+	}
+	foundInvalid := false
+	for _, raw := range contextPackAnyList(fallback["gaps"]) {
+		foundInvalid = foundInvalid || anyToString(anyMap(raw)["code"]) == "candidate_projection_invalid"
+	}
+	if !foundInvalid {
+		t.Fatal("unrelated ablation failure lost its promotion-blocking product gap")
 	}
 }

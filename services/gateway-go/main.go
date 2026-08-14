@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -309,6 +310,9 @@ type server struct {
 	pythonHotPathByPath             map[string]uint64
 	pythonHotPathByReason           map[string]uint64
 	pythonHotPathLastAt             string
+	inferenceCancellationMu         sync.Mutex
+	inferenceCancellations          map[string]*inferenceCancellationEntry
+	inferenceCancellationTombstones map[string]time.Time
 	telemetry                       *retrievalTelemetry
 	writePolicy                     writeIngressPolicy
 	memoryStore                     *memoryStore
@@ -322,68 +326,109 @@ type server struct {
 	skillLifecycleMu                sync.Mutex
 	contextPassports                *contextPassportStore
 	contextMesh                     *contextMeshStore
+	retrievalPromotionCanary        *retrievalPromotionCanaryLedger
+	retrievalPromotionCanaryErr     error
+	retrievalPromotionCanaryOnce    sync.Once
 	aggregateSignal                 *frontierT10AggregateStore
 	feedbackStore                   *feedbackStore
+	// taskStore is an unregistered, read-only migration archive. Its mutation
+	// methods fail closed and no live route selects it.
+	taskStore                       *agentTaskStore
+	taskLedger                      *agentTaskDeliveryLedger
+	taskDeliveryProjectionFault     func() error
+	taskMemoryWriteFault            func(stage string) error
+	taskProjectWorkspace            func(project string) (string, error)
+	taskServiceWorkerAuthority      func(principal, workspace string) (string, string, error)
+	taskServiceOwnerLocalLifecycle  bool
+	taskSignedRouteAuth             func(*http.Request) (agentTaskRouteAuth, bool, error)
+	taskRecoveryCancel              context.CancelFunc
+	taskRecoveryDone                chan struct{}
+	taskRecoveryMu                  sync.Mutex
+	taskRecoveryClosed              bool
+	taskRuntimeCloseOnce            sync.Once
+	taskRuntimeCloseErr             error
+	taskPublicationFault            func(stage string) error
+	taskDeliveryFault               func(stage string) error
+	taskSessionEventFault           func(eventType string) error
 	telemetrySink                   *telemetrySink
 	telemetrySpool                  *telemetrySpool
 	telemetryRing                   *telemetryRing
 	tokenImpact                     *tokenImpactTelemetry
 	contextPackQuality              *contextPackQualityTelemetry
 	recallResponseRetainedProofHook func(string)
-	utility                         *utilityTelemetry
-	telemetryMetricsMu              sync.Mutex
-	telemetryMetricsState           map[string]any
-	impactComparatorMu              sync.Mutex
-	impactComparatorUnavailable     bool
-	recallMonitorShadowMu           sync.RWMutex
-	recallMonitorShadowIndex        recallMonitorShadowIndex
-	memoryTelemetryMu               sync.Mutex
-	memoryTelemetryLastWriteAt      string
-	memoryTelemetryLastWriteLatency float64
-	memoryTelemetryProcessed        int64
-	memoryTelemetryDropped          int64
-	writeSecretFindings             atomic.Uint64
-	writeSecretRedactions           atomic.Uint64
-	writeSecretBlocked              atomic.Uint64
-	tradingMu                       sync.Mutex
-	tradingState                    map[string]any
-	tradingHistory                  []map[string]any
-	tradingHistoryPath              string
-	tradingHistoryLimit             int
-	continuationSem                 chan struct{}
-	syncSourceSem                   map[string]chan struct{}
-	syncQueueMu                     sync.Mutex
-	syncSourcePending               map[string][]time.Time
-	syncSourceInFlight              map[string]int
-	syncSourceRetrying              map[string]int
-	adaptiveMu                      sync.Mutex
-	adaptiveBySource                map[string]*adaptiveSourceStats
-	continuationMu                  sync.Mutex
-	continuationInFlight            map[string]int
-	continuationInFlightStarted     map[string][]time.Time
-	continuationRetrying            map[string]int
-	continuationSourceCooldownUntil map[string]time.Time
-	continuationSubscribers         map[string][]chan map[string]any
-	continuationHistory             map[string][]map[string]any
-	continuationExpiry              map[string]time.Time
-	continuationSteeringState       map[string]string
-	continuationDurable             *continuationDurableQueue
-	qdrantWriteFanoutSem            chan struct{}
-	pgvectorWriteFanoutSem          chan struct{}
-	qdrantPayloadIndexes            *qdrantPayloadIndexHardener
-	timeoutContractViolations       atomic.Uint64
-	timeoutContractMu               sync.Mutex
-	timeoutContractBySource         map[string]uint64
-	timeoutContractLast             map[string]any
-	driftMu                         sync.Mutex
-	driftByClass                    map[string]uint64
-	driftBySource                   map[string]uint64
-	driftLast                       map[string]any
-	lettaAgentMu                    sync.Mutex
-	lettaAgentBySession             map[string]string
-	lettaAgentVerifiedAt            map[string]time.Time
-	agentSessions                   *agentSessionStore
-	continuity                      *continuityStore
+	recallResponseContinuationMu    sync.Mutex
+	recallResponseContinuations     map[string]recallResponseContinuationRecord
+	recallResponseContinuationNow   func() time.Time
+	recallResponseContinuationStats recallResponseContinuationTelemetry
+	// Route policy overrides are server-owned validated assignments used by
+	// frozen product evaluations. They are keyed by the normalized request
+	// digest and never accepted from the HTTP payload.
+	recallResponseRoutePolicyMu        sync.RWMutex
+	recallResponseRoutePolicyOverrides map[string]validatedRecallResponsePolicyInput
+	// Internal observers receive the exact route-produced source response before
+	// an initial-contract projection. They do not alter the response or route
+	// state and are nil in normal runtime.
+	recallResponseRouteResponseHook func(map[string]any)
+	// The matching internal composition observer is used only to verify that
+	// route-owned continuation state was derived from the same compilation
+	// snapshot as the captured response. It is nil in normal runtime.
+	recallResponseRouteCompositionHook func(map[string]any)
+	utility                            *utilityTelemetry
+	telemetryMetricsMu                 sync.Mutex
+	telemetryMetricsState              map[string]any
+	impactComparatorMu                 sync.Mutex
+	impactComparatorUnavailable        bool
+	graphRecallCorpusRefreshMu         sync.Mutex
+	recallMonitorShadowMu              sync.RWMutex
+	recallMonitorShadowIndex           recallMonitorShadowIndex
+	memoryTelemetryMu                  sync.Mutex
+	memoryTelemetryLastWriteAt         string
+	memoryTelemetryLastWriteLatency    float64
+	memoryTelemetryProcessed           int64
+	memoryTelemetryDropped             int64
+	writeSecretFindings                atomic.Uint64
+	writeSecretRedactions              atomic.Uint64
+	writeSecretBlocked                 atomic.Uint64
+	tradingMu                          sync.Mutex
+	tradingState                       map[string]any
+	tradingHistory                     []map[string]any
+	tradingHistoryPath                 string
+	tradingHistoryLimit                int
+	continuationSem                    chan struct{}
+	syncSourceSem                      map[string]chan struct{}
+	syncQueueMu                        sync.Mutex
+	syncSourcePending                  map[string][]time.Time
+	syncSourceInFlight                 map[string]int
+	syncSourceRetrying                 map[string]int
+	adaptiveMu                         sync.Mutex
+	adaptiveBySource                   map[string]*adaptiveSourceStats
+	continuationMu                     sync.Mutex
+	continuationInFlight               map[string]int
+	continuationInFlightStarted        map[string][]time.Time
+	continuationRetrying               map[string]int
+	continuationSourceCooldownUntil    map[string]time.Time
+	continuationSubscribers            map[string][]chan map[string]any
+	continuationHistory                map[string][]map[string]any
+	continuationExpiry                 map[string]time.Time
+	continuationSteeringState          map[string]string
+	continuationSessionScopes          map[string]map[string]any
+	continuationDurable                *continuationDurableQueue
+	qdrantWriteFanoutSem               chan struct{}
+	pgvectorWriteFanoutSem             chan struct{}
+	qdrantPayloadIndexes               *qdrantPayloadIndexHardener
+	timeoutContractViolations          atomic.Uint64
+	timeoutContractMu                  sync.Mutex
+	timeoutContractBySource            map[string]uint64
+	timeoutContractLast                map[string]any
+	driftMu                            sync.Mutex
+	driftByClass                       map[string]uint64
+	driftBySource                      map[string]uint64
+	driftLast                          map[string]any
+	lettaAgentMu                       sync.Mutex
+	lettaAgentBySession                map[string]string
+	lettaAgentVerifiedAt               map[string]time.Time
+	agentSessions                      *agentSessionStore
+	continuity                         *continuityStore
 }
 
 func normalizeHotPath(path string) string {
@@ -1216,6 +1261,10 @@ func loadLettaConfig() lettaConfig {
 }
 
 func newServer() *server {
+	return newServerWithContext(context.Background())
+}
+
+func newServerWithContext(startupContext context.Context) *server {
 	prepareGatewayStateRootForStartup()
 	backendURL := strings.TrimRight(strings.TrimSpace(os.Getenv("BACKEND_URL")), "/")
 	if backendURL == "" {
@@ -1264,6 +1313,12 @@ func newServer() *server {
 	feedbackStoreInstance, feedbackStoreErr := newFeedbackStoreFromEnv()
 	if feedbackStoreErr != nil {
 		log.Printf("gateway-go feedback store degraded: %v", feedbackStoreErr)
+	}
+	agentTaskLedgerInstance, agentTaskLedgerErr := newAgentTaskDeliveryLedgerFromEnvContext(startupContext)
+	if agentTaskLedgerErr != nil {
+		// The legacy JSON store remains available only for migration/read
+		// compatibility. Never route an authoritative mutation through it.
+		log.Printf("gateway-go authoritative agent task ledger unavailable: %v", agentTaskLedgerErr)
 	}
 	continuityStoreInstance, continuityStoreErr := newContinuityStoreFromEnv()
 	if continuityStoreErr != nil {
@@ -1361,6 +1416,9 @@ func newServer() *server {
 		contextMesh:                     contextMeshInstance,
 		aggregateSignal:                 aggregateSignalInstance,
 		feedbackStore:                   feedbackStoreInstance,
+		taskLedger:                      agentTaskLedgerInstance,
+		taskServiceWorkerAuthority:      publicLocalAgentTaskServiceWorkerAuthority,
+		taskServiceOwnerLocalLifecycle:  true,
 		telemetrySink:                   telemetrySinkInstance,
 		telemetrySpool:                  telemetrySpoolInstance,
 		telemetryRing:                   telemetryRingInstance,
@@ -1388,6 +1446,7 @@ func newServer() *server {
 		continuationHistory:             make(map[string][]map[string]any),
 		continuationExpiry:              make(map[string]time.Time),
 		continuationSteeringState:       make(map[string]string),
+		continuationSessionScopes:       make(map[string]map[string]any),
 		continuationDurable:             continuationDurable,
 		qdrantWriteFanoutSem:            make(chan struct{}, qdrantWriteFanoutAsyncMaxInflight()),
 		pgvectorWriteFanoutSem:          make(chan struct{}, pgvectorWriteFanoutAsyncMaxInflight()),
@@ -1408,6 +1467,7 @@ func newServer() *server {
 	}
 	t.start()
 	s.startContinuationDurableWorker()
+	s.startTaskDeliveryRecoveryWorker(startupContext)
 	return s
 }
 
@@ -3439,7 +3499,16 @@ func parseJSONMap(body []byte) (map[string]any, error) {
 		return map[string]any{}, nil
 	}
 	var payload map[string]any
-	if err := json.Unmarshal(body, &payload); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.UseNumber()
+	if err := decoder.Decode(&payload); err != nil {
+		return nil, err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return nil, errors.New("task delivery json contains trailing data")
+		}
 		return nil, err
 	}
 	if payload == nil {
@@ -3805,34 +3874,79 @@ func parseLettaArchivalContent(text string) map[string]string {
 	}
 }
 
-func parseScore(row map[string]any) float64 {
+func parseFiniteScore(row map[string]any) (float64, bool) {
+	nonFiniteToken := func(value string) bool {
+		switch strings.ToLower(strings.TrimSpace(value)) {
+		case "nan", "+nan", "-nan", "inf", "+inf", "-inf", "infinity", "+infinity", "-infinity":
+			return true
+		default:
+			return false
+		}
+	}
+	selected := 0.0
+	found := false
 	for _, key := range []string{"score", "hybrid_score", "similarity", "confidence"} {
 		value, ok := row[key]
 		if !ok {
 			continue
 		}
+		parsed := 0.0
+		parsedOK := true
 		switch typed := value.(type) {
 		case float64:
-			return typed
+			parsed = typed
 		case float32:
-			return float64(typed)
+			parsed = float64(typed)
 		case int:
-			return float64(typed)
+			parsed = float64(typed)
 		case int64:
-			return float64(typed)
+			parsed = float64(typed)
 		case json.Number:
-			parsed, err := typed.Float64()
-			if err == nil {
-				return parsed
+			if nonFiniteToken(typed.String()) {
+				return 0, false
 			}
+			var err error
+			parsed, err = typed.Float64()
+			if err != nil && !math.IsInf(parsed, 0) && !math.IsNaN(parsed) {
+				// An invalid json.Number would also make the output impossible to
+				// marshal, so it is a rejected score carrier rather than absence.
+				return 0, false
+			}
+			parsedOK = err == nil
 		case string:
-			parsed, err := strconv.ParseFloat(strings.TrimSpace(typed), 64)
-			if err == nil {
-				return parsed
+			if nonFiniteToken(typed) {
+				return 0, false
 			}
+			var err error
+			parsed, err = strconv.ParseFloat(strings.TrimSpace(typed), 64)
+			parsedOK = err == nil
+		default:
+			parsedOK = false
+		}
+		// Every score alias is part of the emitted row. Reject the whole row if
+		// any parseable alias is non-finite, even when a higher-priority alias
+		// is finite, so sorting, tie material, and JSON output all operate on a
+		// finite total order.
+		if math.IsNaN(parsed) || math.IsInf(parsed, 0) {
+			return 0, false
+		}
+		if !parsedOK {
+			continue
+		}
+		if !found {
+			selected = parsed
+			found = true
 		}
 	}
-	return 0
+	return selected, true
+}
+
+func parseScore(row map[string]any) float64 {
+	score, valid := parseFiniteScore(row)
+	if !valid {
+		return 0
+	}
+	return score
 }
 
 func rowIdentity(row map[string]any) string {
@@ -3847,6 +3961,15 @@ type mergeEntry struct {
 	score   float64
 	row     map[string]any
 	sources map[string]struct{}
+	rows    []mergeCandidate
+}
+
+type mergeCandidate struct {
+	key    string
+	score  float64
+	source string
+	tie    string
+	row    map[string]any
 }
 
 func mergeRows(rowsBySource map[string][]map[string]any, limit int) []map[string]any {
@@ -3854,46 +3977,75 @@ func mergeRows(rowsBySource map[string][]map[string]any, limit int) []map[string
 }
 
 func mergeRowsAll(rowsBySource map[string][]map[string]any) []map[string]any {
-	entries := make(map[string]*mergeEntry)
-	for source, rows := range rowsBySource {
+	// Map iteration order is not a custody boundary. Materialize and sort the
+	// complete candidate set before grouping so equal-score duplicate handling
+	// cannot change with backend/map insertion order.
+	candidates := make([]mergeCandidate, 0)
+	sources := make([]string, 0, len(rowsBySource))
+	for source := range rowsBySource {
+		sources = append(sources, source)
+	}
+	sort.Slice(sources, func(i, j int) bool {
+		return strings.ToLower(strings.TrimSpace(sources[i])) < strings.ToLower(strings.TrimSpace(sources[j]))
+	})
+	for _, source := range sources {
+		rows := rowsBySource[source]
 		for _, row := range rows {
 			if row == nil {
 				continue
 			}
-			key := rowIdentity(row)
-			score := parseScore(row)
 			actualSource := strings.TrimSpace(strings.ToLower(anyToString(row["source"])))
 			if actualSource == "" {
-				actualSource = source
+				actualSource = strings.TrimSpace(strings.ToLower(source))
 			}
-			if existing, ok := entries[key]; ok {
-				existing.sources[actualSource] = struct{}{}
-				if score > existing.score {
-					existing.score = score
-					replacement := cloneMap(row)
-					replacement["source"] = actualSource
-					existing.row = replacement
-				} else {
-					for field, value := range row {
-						if _, present := existing.row[field]; !present || anyToString(existing.row[field]) == "" {
-							existing.row[field] = value
-						}
-					}
-				}
+			candidateRow := cloneMap(row)
+			candidateRow["source"] = actualSource
+			candidateScore, validScore := parseFiniteScore(candidateRow)
+			if !validScore {
 				continue
 			}
-			entry := &mergeEntry{
-				key:     key,
-				score:   score,
-				row:     cloneMap(row),
-				sources: map[string]struct{}{actualSource: {}},
-			}
-			entry.row["source"] = actualSource
-			entries[key] = entry
+			key := rowIdentity(candidateRow)
+			candidates = append(candidates, mergeCandidate{
+				key: key, score: candidateScore, source: actualSource,
+				tie: mergeRowTieBreak(candidateRow), row: candidateRow,
+			})
 		}
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		left, right := candidates[i], candidates[j]
+		if left.score != right.score {
+			return left.score > right.score
+		}
+		if left.key != right.key {
+			return left.key < right.key
+		}
+		if left.tie != right.tie {
+			return left.tie < right.tie
+		}
+		return left.source < right.source
+	})
+
+	entries := make(map[string]*mergeEntry)
+	for _, candidate := range candidates {
+		key := candidate.key
+		if existing, ok := entries[key]; ok {
+			existing.sources[candidate.source] = struct{}{}
+			existing.rows = append(existing.rows, candidate)
+			if candidate.score > existing.score {
+				existing.score = candidate.score
+			}
+			continue
+		}
+		entry := &mergeEntry{
+			key: key, score: candidate.score, row: cloneMap(candidate.row),
+			sources: map[string]struct{}{candidate.source: {}},
+			rows:    []mergeCandidate{candidate},
+		}
+		entries[key] = entry
 	}
 	rows := make([]*mergeEntry, 0, len(entries))
 	for _, entry := range entries {
+		entry.row = mergeRowsConservatively(entry.key, entry.score, entry.rows)
 		rows = append(rows, entry)
 	}
 	sort.SliceStable(rows, func(i, j int) bool {
@@ -3917,6 +4069,238 @@ func mergeRowsAll(rowsBySource map[string][]map[string]any) []map[string]any {
 		out = append(out, merged)
 	}
 	return out
+}
+
+func mergeRowTieBreak(row map[string]any) string {
+	// encoding/json sorts object keys, so this is a total deterministic order
+	// over the normalized full row identity/content rather than a map address
+	// or insertion order.
+	return recallResponseCanonicalJSON(row)
+}
+
+func mergeRowSafetyClass(row map[string]any) int {
+	lifecycle := recallResponseCanonicalLifecycle(row)
+	if lifecycle.test || lifecycle.canonical == "forgotten" {
+		return 5
+	}
+	if lifecycle.retirement || lifecycle.canonical == "retired" {
+		return 4
+	}
+	if lifecycle.unknown || lifecycle.canonical == "unknown" {
+		return 3
+	}
+	if lifecycle.hard {
+		return 2
+	}
+	status, eligible := recallResponseEvidenceStatus(row)
+	if !eligible {
+		status = strings.ToLower(strings.TrimSpace(status))
+		if status == "unknown" {
+			return 3
+		}
+		return 2
+	}
+	switch strings.ToLower(strings.TrimSpace(anyToString(row["support"]))) {
+	case "distractor", "non_support", "unsupported":
+		return 2
+	}
+	return 0
+}
+
+func mergeRowSafetyField(key string) bool {
+	switch key {
+	case "lifecycle", "lifecycle_status", "revocation_status", "forgetting_status", "quarantine_status",
+		"state", "trust_class", "safety_class", "sensitivity", "freshness", "temporal_state",
+		"memory_type", "record_type", "memory_class", "classification", "data_class", "status", "proof_status",
+		"support", "authorized", "owner_authorized", "source_authorized", "eligible", "policy_eligible",
+		"retrieval_eligible", "forgetting_eligible", "temporal_evidence", "recall_metadata",
+		"status_transitions", "supersedes", "valid_from", "valid_to", "transition_history_complete", "revision",
+		"action_evidence", "structured_action", "action":
+		return true
+	default:
+		return false
+	}
+}
+
+func mergeRowActionField(key string) bool {
+	switch key {
+	case "action_evidence", "structured_action", "action":
+		return true
+	default:
+		return false
+	}
+}
+
+func mergeRowCanonicalActionPayload(row map[string]any) (map[string]any, string, bool, bool) {
+	payload, present, valid := recallResponseAgreedRawActionMetadata(row)
+	if !present || !valid {
+		return nil, "", present, valid
+	}
+	canonical := recallResponseCanonicalJSON(payload)
+	if canonical == "{}" {
+		return nil, "", true, false
+	}
+	return payload, canonical, true, true
+}
+
+func mergeRowsConservatively(key string, score float64, candidates []mergeCandidate) map[string]any {
+	if len(candidates) == 0 {
+		return map[string]any{"score": score}
+	}
+	// Select the content base by score before consulting any deterministic tie
+	// breaker. Source/key ordering is not relevance ordering, and a lower-score
+	// duplicate must never donate its ordinary fields while displaying the
+	// higher score. The defensive local sort also keeps this invariant true for
+	// callers that did not come through mergeRowsAll.
+	ordered := append([]mergeCandidate(nil), candidates...)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		left, right := ordered[i], ordered[j]
+		if left.score != right.score {
+			return left.score > right.score
+		}
+		if left.tie != right.tie {
+			return left.tie < right.tie
+		}
+		return left.source < right.source
+	})
+	winner := ordered[0]
+	base := cloneMap(winner.row)
+	strongest := winner
+	strongestClass := mergeRowSafetyClass(strongest.row)
+	conflict := false
+	for _, candidate := range ordered[1:] {
+		if candidate.tie != strongest.tie || candidate.source != strongest.source {
+			conflict = conflict || mergeRowSafetyClass(candidate.row) != strongestClass ||
+				mergeRowTieBreak(candidate.row) != mergeRowTieBreak(strongest.row)
+		}
+		candidateClass := mergeRowSafetyClass(candidate.row)
+		// Relevance score chooses ordinary content, not the safety carrier.
+		// Within the strongest safety class retain the prior full-row total
+		// order so an eligible action receipt cannot disappear merely because
+		// another duplicate has a higher retrieval score.
+		if candidateClass > strongestClass ||
+			(candidateClass == strongestClass &&
+				(candidate.tie < strongest.tie || (candidate.tie == strongest.tie && candidate.source < strongest.source))) {
+			strongest = candidate
+			strongestClass = candidateClass
+		}
+	}
+	var actionPayload map[string]any
+	actionCanonical := ""
+	actionPresent := false
+	actionConflict := false
+	if strongestClass == 0 {
+		for _, candidate := range ordered {
+			if mergeRowSafetyClass(candidate.row) != 0 {
+				continue
+			}
+			if _, eligible := recallResponseEvidenceStatus(candidate.row); !eligible {
+				continue
+			}
+			payload, canonical, present, valid := mergeRowCanonicalActionPayload(candidate.row)
+			if !valid {
+				actionConflict = true
+				break
+			}
+			if !present {
+				continue
+			}
+			if !actionPresent {
+				actionPayload = payload
+				actionCanonical = canonical
+				actionPresent = true
+				continue
+			}
+			if canonical != actionCanonical {
+				actionConflict = true
+				break
+			}
+		}
+	}
+	// Fill only genuinely absent fields in deterministic key order. Conflicting
+	// values remain represented by the stable winner except for safety fields,
+	// which always come from the conservative strongest row.
+	fieldSet := map[string]struct{}{}
+	for _, candidate := range ordered {
+		for field := range candidate.row {
+			fieldSet[field] = struct{}{}
+		}
+	}
+	fields := make([]string, 0, len(fieldSet))
+	for field := range fieldSet {
+		fields = append(fields, field)
+	}
+	sort.Strings(fields)
+	for _, field := range fields {
+		if mergeRowSafetyField(field) {
+			// Action is a separate closed overlay. Copying it from the one row
+			// that won lifecycle/support authority would either drop a unique
+			// eligible receipt or splice mutually inconsistent action records.
+			if mergeRowActionField(field) || field == "recall_metadata" {
+				continue
+			}
+			if value, present := strongest.row[field]; present {
+				base[field] = value
+			} else {
+				delete(base, field)
+			}
+			continue
+		}
+		if _, present := base[field]; present && anyToString(base[field]) != "" {
+			continue
+		}
+		for _, candidate := range ordered {
+			if value, present := candidate.row[field]; present && anyToString(value) != "" {
+				base[field] = value
+				break
+			}
+		}
+	}
+	// Delete every inherited alias first. A hard/unknown/retired duplicate
+	// suppresses action entirely; an eligible set receives only its one closed
+	// canonical payload below.
+	for _, field := range []string{"action_evidence", "structured_action", "action"} {
+		delete(base, field)
+	}
+	// recall_metadata is a mixed carrier: temporal/lifecycle state is safety
+	// authority, while action is subject to the exact alias agreement above.
+	// Keep only the strongest row's non-action metadata and replace its temporal
+	// member with the closed projection so a lower-score nested retirement,
+	// forgetting, test, or unknown marker survives the merge boundary.
+	metadata := cloneJSONMap(anyMap(strongest.row["recall_metadata"]))
+	delete(metadata, "action")
+	if len(anyMap(strongest.row["temporal_evidence"])) > 0 ||
+		len(anyMap(anyMap(strongest.row["recall_metadata"])["temporal"])) > 0 ||
+		recallResponseCanonicalLifecycle(strongest.row).hard {
+		if temporal := recallResponseProjectTemporalMetadata(strongest.row); len(temporal) > 0 {
+			metadata["temporal"] = temporal
+		} else {
+			delete(metadata, "temporal")
+		}
+	}
+	if len(metadata) > 0 {
+		base["recall_metadata"] = metadata
+	} else {
+		delete(base, "recall_metadata")
+	}
+	strongestLifecycle := recallResponseCanonicalLifecycle(strongest.row)
+	if strongestLifecycle.hard {
+		// The canonical top-level marker is an explicit fail-closed receipt for
+		// consumers that intentionally do not parse nested presentation data.
+		base["lifecycle"] = strongestLifecycle.canonical
+	}
+	if strongestClass == 0 && actionPresent && !actionConflict {
+		// Normalize equivalent aliases to one complete payload. No fields are
+		// unioned: every eligible carrier must agree byte-for-byte after
+		// canonical JSON encoding or action evidence is omitted fail closed.
+		base["action_evidence"] = cloneMap(actionPayload)
+	}
+	base["source"] = winner.source
+	base["score"] = winner.score
+	if conflict {
+		base["merge_conflict"] = "conservative_duplicate_exclusion"
+	}
+	return base
 }
 
 func truncateMergedRows(rows []map[string]any, limit int) []map[string]any {
@@ -4893,6 +5277,7 @@ func (s *server) queryTopicRollupsSource(
 		includeCold = true
 	}
 	includeEphemeral := requestIncludesEphemeralMemory(baseRequest)
+	evaluationHoldout := strings.EqualFold(strings.TrimSpace(anyToString(baseRequest["traffic_class"])), "evaluation_holdout")
 	topics := make([]any, 0)
 	memoryStoreEnabled := s.memoryStore != nil && s.memoryStore.isEnabled()
 	if memoryStoreEnabled && projectFilter != "" && currentStateSearchAsOfSupported(baseRequest["as_of"]) {
@@ -4933,6 +5318,12 @@ func (s *server) queryTopicRollupsSource(
 		}
 	}
 	if len(topics) == 0 {
+		if evaluationHoldout {
+			if memoryStoreEnabled {
+				return nil, nil, errTopicRollupsNoMatch
+			}
+			return nil, nil, errors.New("memory store topic rollups unavailable for evaluation holdout")
+		}
 		if s.strictNoPythonRuntime {
 			if memoryStoreEnabled {
 				return nil, nil, errTopicRollupsNoMatch
@@ -5028,6 +5419,13 @@ func (s *server) callBackendSourceQuery(
 	incomingHeaders = incomingHeaders.Clone()
 	fallbackWarnings := []string{}
 	var nativeErr error
+	evaluationHoldout := strings.EqualFold(strings.TrimSpace(anyToString(baseRequest["traffic_class"])), "evaluation_holdout")
+	if evaluationHoldout {
+		ctx = withRetrievalEvaluationNoRedirect(ctx)
+	}
+	if evaluationHoldout && (source == sourceLetta || source == sourceMemoryBank) {
+		return []map[string]any{}, fallbackWarnings, nil, sourceOwnerGoNative, nil, errors.New("evaluation holdout forbids provider-capable source " + source)
+	}
 	if source == sourceLetta {
 		rows, warnings, err := s.queryLettaSource(ctx, baseRequest)
 		return rows, warnings, nil, sourceOwnerGoNative, nil, err
@@ -5113,6 +5511,12 @@ func (s *server) callBackendSourceQuery(
 			"topic_rollups go-adapter fallback to backend retrieval lane: "+err.Error(),
 		)
 		nativeErr = err
+	}
+	if evaluationHoldout {
+		if nativeErr != nil {
+			return []map[string]any{}, fallbackWarnings, nil, sourceOwnerGoNative, nil, fmt.Errorf("%s native adapter failed: %w; evaluation holdout forbids backend fallback", source, nativeErr)
+		}
+		return []map[string]any{}, fallbackWarnings, nil, sourceOwnerGoNative, nil, errors.New("evaluation holdout forbids backend fallback for source " + source)
 	}
 	if s.strictNoPythonRuntime {
 		if len(fallbackWarnings) > 0 {
@@ -5244,7 +5648,12 @@ func mergeSourceChainDebug(
 	}
 }
 
+var nowUTCISOClock func() time.Time
+
 func nowUTCISO() string {
+	if nowUTCISOClock != nil {
+		return nowUTCISOClock().UTC().Format(time.RFC3339Nano)
+	}
 	return time.Now().UTC().Format(time.RFC3339Nano)
 }
 
@@ -5292,7 +5701,7 @@ func (s *server) pruneContinuationLocked(now time.Time) {
 
 func (s *server) publishContinuationEvent(token string, payload map[string]any) {
 	token = strings.TrimSpace(token)
-	if token == "" {
+	if token == "" || strings.EqualFold(strings.TrimSpace(anyToString(payload["traffic_class"])), "evaluation_holdout") || anyToBool(payload["side_effects_suppressed"]) {
 		return
 	}
 	event := cloneAnyMap(payload)
@@ -5385,6 +5794,12 @@ func (s *server) scheduleContinuationWarmWithStatus(
 	reason string,
 	streamToken string,
 ) (bool, string, map[string]any) {
+	if retrievalEvaluationSideEffectsSuppressed(nil, baseRequest) {
+		return false, "evaluation_side_effects_suppressed", map[string]any{
+			"side_effects_suppressed": true,
+			"traffic_class":           "evaluation_holdout",
+		}
+	}
 	if shed, shedReason, shedDetail := s.shouldShedContinuation(source); shed {
 		log.Printf("continuation warm skipped source=%s reason=%s detail=%s", source, reason, shedReason)
 		payload := map[string]any{
@@ -5549,6 +5964,7 @@ func (s *server) runSourceBatch(
 		adaptiveBudgets:             make(map[string]map[string]any),
 		serverProactiveObservations: make(map[string]map[string]any),
 	}
+	suppressContinuationSideEffects := retrievalEvaluationSideEffectsSuppressed(ctx, baseRequest)
 	if len(sources) == 0 {
 		return output
 	}
@@ -5779,10 +6195,15 @@ func (s *server) runSourceBatch(
 				if result.budgetExceeded {
 					output.budgetExceededSources = append(output.budgetExceededSources, result.source)
 					if !suppressSlowTimeoutWarnings {
-						if nonDegradableLane {
+						if nonDegradableLane && !suppressContinuationSideEffects {
 							output.warnings = append(
 								output.warnings,
 								result.source+" retrieval sync budget exceeded after "+strconv.FormatFloat(result.timeout.Seconds(), 'f', 1, 64)+"s (non-degradable lane; continuing asynchronously).",
+							)
+						} else if nonDegradableLane {
+							output.warnings = append(
+								output.warnings,
+								result.source+" retrieval sync budget exceeded after "+strconv.FormatFloat(result.timeout.Seconds(), 'f', 1, 64)+"s (evaluation holdout; continuation side effects suppressed).",
 							)
 						} else {
 							output.warnings = append(
@@ -5793,10 +6214,15 @@ func (s *server) runSourceBatch(
 					}
 				} else {
 					output.timedOutSources = append(output.timedOutSources, result.source)
-					if nonDegradableLane {
+					if nonDegradableLane && !suppressContinuationSideEffects {
 						output.warnings = append(
 							output.warnings,
 							result.source+" retrieval timed out after "+strconv.FormatFloat(result.timeout.Seconds(), 'f', 1, 64)+"s (non-degradable lane; continuing asynchronously).",
+						)
+					} else if nonDegradableLane {
+						output.warnings = append(
+							output.warnings,
+							result.source+" retrieval timed out after "+strconv.FormatFloat(result.timeout.Seconds(), 'f', 1, 64)+"s (evaluation holdout; continuation side effects suppressed).",
 						)
 					} else {
 						output.warnings = append(
@@ -5805,7 +6231,7 @@ func (s *server) runSourceBatch(
 						)
 					}
 				}
-				if s.shouldScheduleContinuation(result.source) || nonDegradableLane {
+				if !suppressContinuationSideEffects && (s.shouldScheduleContinuation(result.source) || nonDegradableLane) {
 					continuationState, _, _ := s.scheduleOrDeferContinuation(
 						incomingHeaders,
 						baseRequest,
@@ -5837,7 +6263,13 @@ func (s *server) runSourceBatch(
 				}
 			} else {
 				output.warnings = append(output.warnings, result.source+" retrieval failed: "+result.err.Error())
-				if nonDegradableLane {
+				if suppressContinuationSideEffects && nonDegradableLane {
+					output.warnings = append(
+						output.warnings,
+						result.source+" retrieval failed (evaluation holdout; continuation side effects suppressed).",
+					)
+				}
+				if !suppressContinuationSideEffects && nonDegradableLane {
 					continuationState, _, _ := s.scheduleOrDeferContinuation(
 						incomingHeaders,
 						baseRequest,
@@ -5867,13 +6299,15 @@ func (s *server) runSourceBatch(
 				}
 			}
 		}
-		s.recordAdaptiveObservation(
-			result.source,
-			result.latency,
-			result.timedOut || result.budgetExceeded,
-			result.err != nil,
-			result.budgetExceeded,
-		)
+		if !suppressContinuationSideEffects {
+			s.recordAdaptiveObservation(
+				result.source,
+				result.latency,
+				result.timedOut || result.budgetExceeded,
+				result.err != nil,
+				result.budgetExceeded,
+			)
+		}
 	}
 
 	output.warnings = dedupeWarnings(output.warnings)
@@ -6017,6 +6451,466 @@ func buildRetrievalLifecyclePayload(
 	}
 }
 
+const retrievalCostObservabilitySchemaID = "retrieval_cost_observability.v1"
+
+const retrievalCostObservabilityAuthority = "execute_retrieval_server"
+
+const retrievalEvaluationSourcePolicySchemaID = "retrieval_evaluation_source_policy.v1"
+
+const retrievalEvaluationSourcePolicyVersion = 1
+
+// retrievalApprovedLocalHost is intentionally a small allow-list. A native
+// adapter is not proof of local execution: Qdrant, Weaviate, pgvector, and
+// embedding endpoints can all be configured to remote hosts. Private-network
+// addresses are therefore not accepted unless they are loopback or an
+// explicitly named local/OrbStack service.
+func retrievalApprovedLocalHost(host string) bool {
+	host = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)), ".")
+	if host == "" {
+		return false
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	if host == "localhost" || host == "host.docker.internal" || host == "gateway.docker.internal" {
+		return true
+	}
+	switch host {
+	case "contextlattice-orchestrator", "qdrant", "weaviate", "postgres", "pgvector", "mindsdb", "mongo", "mongodb", "fastembed", "fastembed-rs", "orbstack":
+		return true
+	}
+	return false
+}
+
+func retrievalEndpointTransport(raw string) (string, string) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "unknown", "endpoint_not_configured"
+	}
+	lower := strings.ToLower(raw)
+	if strings.HasPrefix(lower, "unix:") || strings.HasPrefix(lower, "file:") {
+		return "approved_local_endpoint", "local_socket"
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return "unknown", "endpoint_parse_failed"
+	}
+	host := strings.TrimSpace(parsed.Hostname())
+	if host == "" {
+		// lib/pq also accepts keyword DSNs such as host=postgres port=5432.
+		for _, field := range strings.Fields(raw) {
+			key, value, ok := strings.Cut(field, "=")
+			if ok && strings.EqualFold(strings.TrimSpace(key), "host") {
+				host = strings.Trim(strings.TrimSpace(value), "'\"")
+				break
+			}
+		}
+	}
+	if host == "" {
+		return "unknown", "endpoint_host_missing"
+	}
+	if retrievalApprovedLocalHost(host) {
+		return "approved_local_endpoint", "approved_loopback_or_orbstack"
+	}
+	return "external_endpoint", "endpoint_not_approved_local"
+}
+
+func retrievalMemoryBankTransport(s *server) (string, string) {
+	backend := normalizeMemoryBankSpikeBackend(os.Getenv("ORCH_MEMORY_BANK_SEARCH_BACKEND"), "shodh_spike")
+	if backend == "disabled" {
+		return "in_process", "disabled_memory_bank"
+	}
+	if backend == "native" {
+		if s == nil {
+			return "unknown", "native_memory_bank_backend_unbound"
+		}
+		class, reason := retrievalEndpointTransport(s.backendURL)
+		return class, "native_memory_bank_backend_" + reason
+	}
+	if endpoint := memoryBankSpikeBaseURL(); endpoint != "" {
+		return retrievalEndpointTransport(endpoint)
+	}
+	_ = s
+	return "unknown", "memory_bank_backend_transport_unbound"
+}
+
+func retrievalSourceTransport(s *server, source, owner string) (string, string) {
+	source = strings.TrimSpace(strings.ToLower(source))
+	owner = strings.TrimSpace(strings.ToLower(owner))
+	if owner == sourceOwnerPythonBackendFallback {
+		if s == nil {
+			return "unknown", "backend_endpoint_unbound"
+		}
+		return retrievalEndpointTransport(s.backendURL)
+	}
+	if owner != sourceOwnerGoNative {
+		return "unknown", "source_owner_transport_unbound"
+	}
+	switch source {
+	case sourceQdrant:
+		return retrievalEndpointTransport(nativeQdrantURL())
+	case sourceWeaviate:
+		return retrievalEndpointTransport(nativeWeaviateURL())
+	case sourcePgvector:
+		return retrievalEndpointTransport(nativePgvectorDSN())
+	case sourceTopicRollup:
+		if s != nil && s.memoryStore != nil && s.memoryStore.isEnabled() {
+			return "in_process", "gateway_current_state_or_rollup_index"
+		}
+		if s == nil {
+			return "unknown", "topic_rollup_transport_unbound"
+		}
+		return retrievalEndpointTransport(s.backendURL)
+	case sourceMongoRaw:
+		if s == nil || s.telemetrySink == nil || !s.telemetrySink.enabled {
+			return "in_process", "local_telemetry_lane_disabled_or_unconfigured"
+		}
+		return "unknown", "mongo_transport_unbound"
+	case sourceMindsdb:
+		return retrievalEndpointTransport(nativeMindsdbSQLURL())
+	case sourceLetta:
+		if s == nil {
+			return "unknown", "letta_transport_unbound"
+		}
+		return retrievalEndpointTransport(s.letta.url)
+	case sourceMemoryBank:
+		return retrievalMemoryBankTransport(s)
+	default:
+		return "unknown", "source_transport_unbound"
+	}
+}
+
+func retrievalEvaluationApprovedLocalStore(source string) bool {
+	switch strings.TrimSpace(strings.ToLower(source)) {
+	case sourceQdrant, sourceWeaviate, sourcePgvector:
+		return true
+	default:
+		return false
+	}
+}
+
+func retrievalEmbeddingTransport() (string, string) {
+	provider := nativeEmbeddingProvider()
+	if provider == "cheap" || !nativeEmbeddingProviderUsesFastembed(provider) || !nativeSourceAdapterEnabled("fastembed", true) {
+		return "in_process", "cheap_or_in_process_embedding"
+	}
+	if endpoint := nativeFastembedBaseURL(); endpoint != "" {
+		return retrievalEndpointTransport(endpoint)
+	}
+	return "in_process", "cheap_embedding_fallback"
+}
+
+// retrievalEvaluationSourcePreflight resolves the effective source and
+// embedding transports before any adapter goroutine is started. Post-hoc cost
+// classification remains useful evidence, but it cannot make an external or
+// provider-capable call safe after that call has already happened.
+func retrievalEvaluationSourcePreflight(s *server, sources []string) map[string]any {
+	attempted := map[string]struct{}{}
+	owners := map[string]string{}
+	transport := map[string]any{}
+	usesVectorSource := false
+	for _, rawSource := range normalizeSourceList(sources) {
+		source := strings.TrimSpace(strings.ToLower(rawSource))
+		if source == "" {
+			continue
+		}
+		attempted[source] = struct{}{}
+		owner := sourceOwnerForSource(source)
+		owners[source] = owner
+		class, reason := retrievalSourceTransport(s, source, owner)
+		if source == sourceMemoryBank || source == sourceLetta {
+			// These lanes are provider-capable by contract even when their current
+			// endpoint is disabled or loopback. Configuration locality is not a
+			// downstream zero-provider receipt.
+			class, reason = "provider_capable_source", "provider_capable_source_forbidden_for_evaluation"
+		}
+		transport[source] = map[string]any{"class": class, "reason": reason, "owner": owner}
+		if source == sourceQdrant || source == sourcePgvector {
+			usesVectorSource = true
+		}
+	}
+	if usesVectorSource {
+		class, reason := retrievalEmbeddingTransport()
+		transport["embedding_provider"] = map[string]any{"class": class, "reason": reason, "owner": sourceOwnerGoNative}
+	}
+	receipt := retrievalEvaluationSourcePolicy(true, attempted, owners, transport, map[string]any{"staged_fetch": map[string]any{}})
+	receipt["receipt_kind"] = "preflight"
+	receipt["pre_execution_enforced"] = true
+	receipt["effective_sources"] = normalizeSourceList(sources)
+	receipt["digest"] = "sha256:" + graphCorpusDigestMap(receipt, "digest")
+	return receipt
+}
+
+func retrievalEvaluationSourcePreflightValid(receipt map[string]any) bool {
+	if anyToString(receipt["schema_id"]) != retrievalEvaluationSourcePolicySchemaID || anyToInt(receipt["version"], 0) != retrievalEvaluationSourcePolicyVersion || anyToString(receipt["receipt_kind"]) != "preflight" || !anyToBool(receipt["server_owned"]) || !anyToBool(receipt["evaluation_holdout"]) || !anyToBool(receipt["eligible"]) || !anyToBool(receipt["pre_execution_enforced"]) || len(anyToStringSlice(receipt["effective_sources"])) == 0 {
+		return false
+	}
+	digest := strings.TrimSpace(anyToString(receipt["digest"]))
+	return digest != "" && strings.EqualFold(digest, "sha256:"+graphCorpusDigestMap(receipt, "digest")) && graphRecallSourcePolicyReceiptValid(receipt)
+}
+
+type retrievalEvaluationNoRedirectContextKey struct{}
+
+type retrievalEvaluationSideEffectsSuppressedContextKey struct{}
+
+func withRetrievalEvaluationNoRedirect(ctx context.Context) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, retrievalEvaluationNoRedirectContextKey{}, true)
+}
+
+func withRetrievalEvaluationSideEffectsSuppressed(ctx context.Context) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, retrievalEvaluationSideEffectsSuppressedContextKey{}, true)
+}
+
+func retrievalEvaluationSideEffectsSuppressed(ctx context.Context, request map[string]any) bool {
+	if ctx != nil && anyToBool(ctx.Value(retrievalEvaluationSideEffectsSuppressedContextKey{})) {
+		return true
+	}
+	return strings.EqualFold(strings.TrimSpace(anyToString(request["traffic_class"])), "evaluation_holdout")
+}
+
+func retrievalHTTPDo(client *http.Client, request *http.Request) (*http.Response, error) {
+	if client == nil || request == nil {
+		return nil, errors.New("retrieval HTTP client and request are required")
+	}
+	if !anyToBool(request.Context().Value(retrievalEvaluationNoRedirectContextKey{})) {
+		return client.Do(request)
+	}
+	evaluationClient := *client
+	evaluationClient.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	return evaluationClient.Do(request)
+}
+
+func retrievalCostObservabilityEnvelope(s *server, requestPayload map[string]any, _ []string, sourceOwners map[string]string, sourceRows map[string][]map[string]any, retrievalDebug map[string]any) map[string]any {
+	transport := map[string]any{}
+	attempted := map[string]struct{}{}
+	// sourceOwners is populated by runSourceBatch for every source that was
+	// actually started, including terminal errors. Do not count configured but
+	// adaptively skipped sources as attempted network work.
+	for source := range sourceOwners {
+		if normalized := strings.TrimSpace(strings.ToLower(source)); normalized != "" {
+			attempted[normalized] = struct{}{}
+		}
+	}
+	for source := range sourceRows {
+		if normalized := strings.TrimSpace(strings.ToLower(source)); normalized != "" {
+			attempted[normalized] = struct{}{}
+		}
+	}
+	localBackendCalls := 0
+	networkCalls := 0
+	externalNetworkCalls := 0
+	transportObserved := len(attempted) > 0
+	for source := range attempted {
+		owner := strings.TrimSpace(sourceOwners[source])
+		class, reason := retrievalSourceTransport(s, source, owner)
+		transport[source] = map[string]any{"class": class, "reason": reason, "owner": owner}
+		switch class {
+		case "approved_local_endpoint":
+			localBackendCalls++
+			networkCalls++
+		case "external_endpoint":
+			externalNetworkCalls++
+			networkCalls++
+		case "in_process":
+		default:
+			transportObserved = false
+		}
+	}
+	trafficClass := strings.TrimSpace(anyToString(requestPayload["traffic_class"]))
+	evaluationHoldout := trafficClass == "evaluation_holdout"
+	providerCalls := 0
+	providerTokensObserved := true
+	providerCostObserved := true
+	if len(attempted) > 0 {
+		usesVectorSource := false
+		for source := range attempted {
+			if source == sourceQdrant || source == sourcePgvector {
+				usesVectorSource = true
+				break
+			}
+		}
+		if usesVectorSource {
+			class, reason := retrievalEmbeddingTransport()
+			transport["embedding_provider"] = map[string]any{"class": class, "reason": reason}
+			switch class {
+			case "approved_local_endpoint":
+				localBackendCalls++
+				networkCalls++
+			case "external_endpoint":
+				providerCalls = 1
+				externalNetworkCalls++
+				networkCalls++
+				providerTokensObserved = false
+				providerCostObserved = false
+			case "in_process":
+			default:
+				transportObserved = false
+				providerTokensObserved = false
+				providerCostObserved = false
+			}
+		}
+	}
+	// Evaluate the server-owned policy after embedding transport has been
+	// classified as well as the source transports. A local vector store is
+	// eligible only when its embedding path is the in-process cheap seam.
+	policy := retrievalEvaluationSourcePolicy(evaluationHoldout, attempted, sourceOwners, transport, retrievalDebug)
+	if evaluationHoldout && !anyToBool(policy["eligible"]) {
+		// Endpoint locality is configuration, not observation of downstream
+		// provider traffic. A sealed evaluation may only claim provider-free
+		// execution when the server-owned policy proves every attempted source is
+		// an in-process or explicitly approved local data-store lane.
+		transportObserved = false
+	}
+	staged := anyMap(retrievalDebug["staged_fetch"])
+	continuationSources := anyToStringSlice(staged["fail_open_continuation_sources"])
+	rescueApplied := anyToBool(staged["coverage_rescue_applied"])
+	runFallbackApplied := anyToBool(staged["rust_quality_fallback_applied"])
+	if len(continuationSources) > 0 || rescueApplied || runFallbackApplied {
+		transportObserved = false
+	}
+	localBackendsKnown := transportObserved
+	externalObserved := transportObserved
+	externalZero := transportObserved && externalNetworkCalls == 0
+	providerObserved := transportObserved && providerCalls == 0 && providerTokensObserved && providerCostObserved
+	preflight := cloneJSONMap(anyMap(requestPayload["_evaluation_source_preflight"]))
+	preflightValid := !evaluationHoldout || retrievalEvaluationSourcePreflightValid(preflight)
+	provenZero := transportObserved && externalZero && providerObserved && preflightValid && (!evaluationHoldout || anyToBool(policy["eligible"]))
+	return map[string]any{
+		"schema_id":                       retrievalCostObservabilitySchemaID,
+		"authority":                       retrievalCostObservabilityAuthority,
+		"scope":                           "single_retrieval_request",
+		"traffic_class":                   trafficClass,
+		"local_backend_calls":             localBackendCalls,
+		"local_backend_calls_observed":    localBackendsKnown,
+		"network_calls":                   networkCalls,
+		"network_calls_observed":          transportObserved,
+		"external_network_calls":          externalNetworkCalls,
+		"external_network_calls_observed": externalObserved,
+		"external_network_zero_proven":    externalZero,
+		"provider_calls":                  providerCalls,
+		"provider_calls_observed":         providerObserved,
+		"provider_tokens":                 0,
+		"provider_tokens_observed":        providerObserved,
+		"provider_cost_microusd":          0,
+		"provider_cost_observed":          providerObserved,
+		"proven_zero":                     provenZero,
+		"transport_observed":              transportObserved,
+		"transport_classification":        transport,
+		"continuation_sources":            continuationSources,
+		"coverage_rescue_applied":         rescueApplied,
+		"rust_quality_fallback_applied":   runFallbackApplied,
+		"source_runtime_identity":         contextLatticeBuildIdentity(),
+		"observed_source_count":           len(sourceRows),
+		"attempted_source_count":          len(attempted),
+		"source_policy":                   policy,
+		"source_policy_preflight":         preflight,
+		"pre_execution_policy_enforced":   preflightValid,
+		"captured_at":                     nowUTCISO(),
+	}
+}
+
+// retrievalEvaluationSourcePolicy is intentionally server-owned. It is a
+// policy/configuration receipt, not a claim inferred from a caller payload or
+// from a hostname that happens to look local. Evaluation promotion accepts
+// only the provider-incapable in-process lane until a downstream zero-provider
+// receipt exists for a provider-capable local service.
+func retrievalEvaluationSourcePolicy(evaluationHoldout bool, attempted map[string]struct{}, sourceOwners map[string]string, transport map[string]any, retrievalDebug map[string]any) map[string]any {
+	identity := contextLatticeBuildIdentity()
+	transportReceipt := map[string]any{}
+	for source, raw := range transport {
+		entry := anyMap(raw)
+		transportReceipt[source] = map[string]any{
+			"class":  anyToString(entry["class"]),
+			"reason": anyToString(entry["reason"]),
+			"owner":  anyToString(entry["owner"]),
+		}
+	}
+	receipt := map[string]any{
+		"schema_id":                    retrievalEvaluationSourcePolicySchemaID,
+		"version":                      retrievalEvaluationSourcePolicyVersion,
+		"authority":                    retrievalCostObservabilityAuthority,
+		"server_owned":                 true,
+		"evaluation_holdout":           evaluationHoldout,
+		"allowed_owner":                sourceOwnerGoNative,
+		"allowed_transport":            "in_process",
+		"provider_policy":              "provider_incapable_in_process_only",
+		"source_runtime_identity":      identity,
+		"redirect_escape_disabled":     true,
+		"downstream_zero_receipt":      false,
+		"provider_capable_local_lane":  false,
+		"local_store_policy":           "approved_local_store_with_in_process_embedding",
+		"approved_local_store_sources": []string{},
+		"transport_classification":     transportReceipt,
+	}
+	reasons := []string{}
+	if !evaluationHoldout {
+		receipt["eligible"] = true
+		receipt["reason"] = "ordinary_traffic_policy_not_a_promotion_receipt"
+		receipt["digest"] = "sha256:" + graphCorpusDigestMap(receipt)
+		return receipt
+	}
+	if len(attempted) == 0 {
+		reasons = append(reasons, "no_attempted_source")
+	}
+	localStoreSources := []string{}
+	for source := range attempted {
+		owner := strings.TrimSpace(strings.ToLower(sourceOwners[source]))
+		if owner != sourceOwnerGoNative {
+			reasons = append(reasons, "source_owner_not_provider_incapable:"+firstNonEmptyStrings(owner, "unknown"))
+		}
+		entry := anyMap(transport[source])
+		class := strings.TrimSpace(strings.ToLower(anyToString(entry["class"])))
+		switch class {
+		case "in_process":
+		case "approved_local_endpoint":
+			if !retrievalEvaluationApprovedLocalStore(source) {
+				reasons = append(reasons, "local_store_not_allowlisted:"+firstNonEmptyStrings(source, "unknown"))
+				continue
+			}
+			// Vector stores are permitted to make local backend calls, but their
+			// embedding path must be the provider-incapable in-process path. A
+			// loopback fastembed/orchestrator endpoint is still a provider-capable
+			// service and cannot be promoted without a downstream zero-provider
+			// receipt.
+			if source == sourceQdrant || source == sourcePgvector {
+				embedding := anyMap(transport["embedding_provider"])
+				if anyToString(embedding["class"]) != "in_process" {
+					reasons = append(reasons, "embedding_provider_not_in_process")
+					continue
+				}
+			}
+			localStoreSources = append(localStoreSources, source)
+		default:
+			reasons = append(reasons, "transport_not_in_process:"+firstNonEmptyStrings(class, "unknown"))
+		}
+	}
+	sort.Strings(localStoreSources)
+	receipt["approved_local_store_sources"] = localStoreSources
+	if _, present := anyMap(retrievalDebug["staged_fetch"])["redirected_sources"]; present {
+		reasons = append(reasons, "redirect_escape_unproven")
+	}
+	if len(anyToStringSlice(anyMap(retrievalDebug["staged_fetch"])["fail_open_continuation_sources"])) > 0 || anyToBool(anyMap(retrievalDebug["staged_fetch"])["coverage_rescue_applied"]) || anyToBool(anyMap(retrievalDebug["staged_fetch"])["rust_quality_fallback_applied"]) {
+		reasons = append(reasons, "fallback_or_rescue_unproven")
+	}
+	receipt["eligible"] = len(reasons) == 0
+	if len(reasons) == 0 {
+		receipt["reason"] = "all_attempted_sources_are_server_owned_provider_incapable"
+	} else {
+		receipt["reason"] = "evaluation_source_policy_blocked"
+		receipt["blocked_reasons"] = graphCorpusSortedStrings(reasons)
+	}
+	receipt["digest"] = "sha256:" + graphCorpusDigestMap(receipt)
+	return receipt
+}
+
 func (s *server) executeRetrieval(
 	ctx context.Context,
 	incomingHeaders http.Header,
@@ -6042,6 +6936,17 @@ func (s *server) executeRetrieval(
 	trafficClass := strings.TrimSpace(strings.ToLower(anyToString(requestPayload["traffic_class"])))
 	if trafficClass == "" {
 		trafficClass = "user"
+	}
+	if trafficClass == "evaluation_holdout" {
+		// Evaluation holdouts are terminal, provider-free observations. Do not
+		// let staged fail-open continuations or synthetic rescue behavior escape
+		// the request after its receipt has been sealed.
+		requestPayload["blocking"] = true
+		requestPayload["sync_slow_sources"] = true
+		requestPayload["wait_for_slow_sources"] = true
+		requestPayload["auto_escalate"] = false
+		requestPayload["deep_async"] = false
+		ctx = withRetrievalEvaluationSideEffectsSuppressed(ctx)
 	}
 	objectiveCtx := extractObjectiveContext(requestPayload)
 	if !objectiveCtx.empty() {
@@ -6091,6 +6996,18 @@ func (s *server) executeRetrieval(
 		effectiveSources = append(effectiveSources, source)
 	}
 	resolvedSources = effectiveSources
+	if trafficClass == "evaluation_holdout" {
+		preflight := retrievalEvaluationSourcePreflight(s, resolvedSources)
+		requestPayload["_evaluation_source_preflight"] = preflight
+		if !retrievalEvaluationSourcePreflightValid(preflight) {
+			return map[string]any{
+				"error":                   "evaluation source policy rejected the effective retrieval lane before execution",
+				"code":                    "evaluation_source_preflight_rejected",
+				"source_policy_preflight": preflight,
+			}, http.StatusPreconditionFailed, errors.New("evaluation source preflight rejected provider-capable, external, or unbound retrieval transport")
+		}
+		ctx = withRetrievalEvaluationNoRedirect(ctx)
+	}
 
 	fastSet := toSourceSet(s.retrieval.fastSources)
 	slowSet := toSourceSet(s.retrieval.slowSources)
@@ -6104,7 +7021,7 @@ func (s *server) executeRetrieval(
 		"enabled": objectiveContextCaptureEnabled(),
 		"status":  "skipped",
 	}
-	if !objectiveCtx.empty() {
+	if !objectiveCtx.empty() && !retrievalEvaluationSideEffectsSuppressed(ctx, requestPayload) {
 		capturePayload, captureErr := s.captureObjectiveContextDatapoint(requestPayload, objectiveCtx)
 		if capturePayload != nil {
 			objectiveCapture = capturePayload
@@ -6112,6 +7029,8 @@ func (s *server) executeRetrieval(
 		if warning := objectiveContextWarning(objectiveCapture, captureErr); warning != "" {
 			warnings = append(warnings, warning)
 		}
+	} else if !objectiveCtx.empty() {
+		objectiveCapture["status"] = "suppressed_evaluation_holdout"
 	}
 	sourceErrors := map[string]map[string]any{}
 	sourceOwners := map[string]string{}
@@ -6425,7 +7344,7 @@ func (s *server) executeRetrieval(
 		}
 	}
 
-	if len(merged) == 0 && s.retrieval.coverageRescueEnabled {
+	if len(merged) == 0 && s.retrieval.coverageRescueEnabled && trafficClass != "evaluation_holdout" {
 		if rescueQuery, rescueOK := deriveCoverageRescueQuery(query, s.retrieval.coverageRescueMinTokens); rescueOK {
 			rescuePayload := cloneMap(requestPayload)
 			rescuePayload["query"] = rescueQuery
@@ -6499,18 +7418,24 @@ func (s *server) executeRetrieval(
 	}
 
 	asyncWarmSlowSources = normalizeSourceList(asyncWarmSlowSources)
-	for _, source := range asyncWarmSlowSources {
-		continuationState, _, _ := s.scheduleOrDeferContinuation(
-			incomingHeaders,
-			requestPayload,
-			source,
-			"slow-async-warm",
-			continuationToken,
-		)
-		if continuationState == "scheduled" || continuationState == "deferred" {
-			continuationSources = append(continuationSources, source)
-		} else {
-			continuationUnavailable = append(continuationUnavailable, source)
+	if retrievalEvaluationSideEffectsSuppressed(ctx, requestPayload) {
+		if len(asyncWarmSlowSources) > 0 {
+			warnings = append(warnings, "Evaluation holdout suppressed slow-source continuation scheduling and durable fallback.")
+		}
+	} else {
+		for _, source := range asyncWarmSlowSources {
+			continuationState, _, _ := s.scheduleOrDeferContinuation(
+				incomingHeaders,
+				requestPayload,
+				source,
+				"slow-async-warm",
+				continuationToken,
+			)
+			if continuationState == "scheduled" || continuationState == "deferred" {
+				continuationSources = append(continuationSources, source)
+			} else {
+				continuationUnavailable = append(continuationUnavailable, source)
+			}
 		}
 	}
 	continuationSources = normalizeSourceList(continuationSources)
@@ -6990,6 +7915,13 @@ func (s *server) executeRetrieval(
 		// never enable capture, and caller request fields cannot enable it.
 		response["_server_proactive_observation"] = proactiveObservation
 	}
+	if recallResponseServerObservationCaptureEnabled(ctx) {
+		// Context-pack compilation receives a bounded, server-owned prefix of the
+		// complete merged retrieval attempt plus its exact pre-limit membership
+		// digest. Raw retrieval callers never receive this carrier, and the
+		// compiler strips it after building its private response snapshot.
+		response[recallResponseSourceInputKey] = recallResponseBuildSourceInput(allMerged)
+	}
 	if !objectiveCtx.empty() {
 		response["objective_context"] = objectiveCtx.toMap()
 		response["objective_hierarchy"] = objectiveCtx.withDefaults().hierarchy(
@@ -7070,6 +8002,17 @@ func (s *server) executeRetrieval(
 	}
 	if includeGrounding {
 		response["grounding"] = buildGrounding(merged)
+	}
+	response["cost_observability"] = retrievalCostObservabilityEnvelope(s, requestPayload, effectiveSources, sourceOwners, sourceRows, debug)
+	if anyToBool(requestPayload["direct_baseline_control"]) {
+		// This receipt is emitted only by the native retrieval path after the
+		// control request has forced learned ranking/preferences off. It binds the
+		// exact case and frozen direct artifact fields supplied by the evaluator;
+		// callers cannot turn a graph result into a baseline artifact.
+		response["direct_control_receipt"] = savedRecallDirectControlReceipt(requestPayload)
+	}
+	if anyToBool(requestPayload["graph_incremental_control"]) {
+		response["graph_incremental_control_receipt"] = savedRecallGraphIncrementalControlReceipt(requestPayload, response)
 	}
 	return response, http.StatusOK, nil
 }
@@ -7319,6 +8262,7 @@ func buildNativeMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/v1/agents/sessions/", s.agentsSessionsRoute)
 	mux.HandleFunc("/v1/inference/route", s.inferenceRouteHandler)
 	mux.HandleFunc("/v1/inference/chat", s.inferenceChatHandler)
+	mux.HandleFunc("/v1/inference/cancel", s.inferenceCancelHandler)
 	mux.HandleFunc("/v1/inference/runtime-policy", s.inferenceRuntimePolicyHandler)
 	mux.HandleFunc("/v1/inference/embedding-policy", s.inferenceEmbeddingPolicyHandler)
 	// Retrieval + memory engine API (go-first ingress, python fallback backend).
@@ -7358,6 +8302,7 @@ func buildNativeMux(s *server) *http.ServeMux {
 	mux.HandleFunc(frontierT4RetrievalReceiptGovernancePath, func(w http.ResponseWriter, r *http.Request) {
 		frontierT4RetrievalReceiptGovernanceRoute(s, w, r)
 	})
+	mux.HandleFunc(retrievalPromotionCanaryGovernancePath, s.retrievalPromotionCanaryGovernance)
 	mux.HandleFunc(frontierT4CausalBridgeGovernancePath, func(w http.ResponseWriter, r *http.Request) {
 		frontierT4CausalBridgeGovernanceRoute(s, w, r)
 	})
@@ -7424,6 +8369,13 @@ func buildNativeMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/feedback", s.feedbackRoute)
 	mux.HandleFunc("/agents/tasks", s.agentsTasksRoute)
 	mux.HandleFunc("/agents/tasks/", s.agentsTasksRoute)
+	// Worker identity has a stable top-level namespace as well as the legacy
+	// task-worker aliases. Keep the production launcher route registered in the
+	// native mux; route-kind support alone is not an HTTP registration.
+	mux.HandleFunc("/agents/workers", s.agentsTasksRoute)
+	mux.HandleFunc("/agents/workers/", s.agentsTasksRoute)
+	mux.HandleFunc("/v1/agents/tasks", s.agentsTasksRoute)
+	mux.HandleFunc("/v1/agents/tasks/", s.agentsTasksRoute)
 	mux.HandleFunc("/telemetry/storage", s.storageTelemetry)
 	mux.HandleFunc("/telemetry/storage/ledger", s.storageTelemetryLedger)
 	mux.HandleFunc("/telemetry/metrics", s.telemetryMetricsRoute)
@@ -7466,6 +8418,7 @@ func buildNativeMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/ops/capabilities", s.opsCapabilities)
 	mux.HandleFunc("/ops/context-boundary", s.opsContextBoundary)
 	mux.HandleFunc("/ops/native-ownership", s.opsNativeOwnership)
+	mux.HandleFunc("/ops/evaluation-cleanup/marker-cap-migration", s.opsEvaluationCleanupMarkerCapMigration)
 	mux.HandleFunc("/tools/capability_map", s.toolsCapabilityMap)
 	mux.HandleFunc("/tools/ops_queue_status", s.toolsOpsQueueStatus)
 	mux.HandleFunc("/tools/context_pack", s.toolsContextPack)
@@ -7494,6 +8447,7 @@ func buildNativeMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/v1/memory/get", s.memoryV1Get)
 	mux.HandleFunc("/v1/memory/edges", s.memoryV1Edges)
 	mux.HandleFunc("/v1/memory/edges/backfill", s.memoryV1EdgesBackfill)
+	mux.HandleFunc("/v1/memory/edges/repair", s.memoryV1EdgesRepair)
 	mux.HandleFunc("/v1/memory/neighbors", s.memoryV1Neighbors)
 	mux.HandleFunc("/v1/memory/batch-put", s.memoryBatchPut)
 	mux.HandleFunc("/migration/runtime", s.migrationRuntime)
@@ -7659,6 +8613,66 @@ func gatewayInitializing(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusServiceUnavailable, payload)
 }
 
+type gatewayStartupResult struct {
+	server *server
+	err    error
+}
+
+// startGatewayRuntime supervises construction separately from the process
+// shutdown path. A blocked constructor cannot prevent SIGTERM completion: the
+// supervisor publishes a terminal cancellation result immediately, and an
+// eventual late server is closed without ever becoming the live handler.
+func startGatewayRuntime(ctx context.Context, factory func(context.Context) *server, activate func(*server)) <-chan gatewayStartupResult {
+	terminal := make(chan gatewayStartupResult, 1)
+	constructed := make(chan gatewayStartupResult, 1)
+	go func() {
+		result := gatewayStartupResult{}
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				result.err = fmt.Errorf("gateway startup panic: %v", recovered)
+			}
+			constructed <- result
+		}()
+		result.server = factory(ctx)
+		if result.server == nil {
+			result.err = errors.New("gateway startup returned a nil server")
+		}
+	}()
+	go func() {
+		result := gatewayStartupResult{}
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				result.err = fmt.Errorf("gateway activation panic: %v", recovered)
+				if result.server != nil {
+					_ = result.server.closeTaskDeliveryRuntime()
+				}
+			}
+			terminal <- result
+		}()
+		select {
+		case result = <-constructed:
+			if result.err != nil {
+				return
+			}
+			if err := ctx.Err(); err != nil {
+				result.err = err
+				_ = result.server.closeTaskDeliveryRuntime()
+				return
+			}
+			activate(result.server)
+		case <-ctx.Done():
+			result.err = ctx.Err()
+			go func() {
+				late := <-constructed
+				if late.server != nil {
+					_ = late.server.closeTaskDeliveryRuntime()
+				}
+			}()
+		}
+	}()
+	return terminal
+}
+
 func main() {
 	if handled, exitCode := runOwnerOnlyMigrationCommand(os.Args, os.Stdout, os.Stderr); handled {
 		os.Exit(exitCode)
@@ -7687,17 +8701,25 @@ func main() {
 	}
 	log.Printf("gateway-go listening on %s (%s) phase=initializing", listenAddr, listenNetwork)
 	startupHandler := newGatewayStartupHandler()
-	go func() {
-		srv := newServer()
+	shutdownContext, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+	startupResult := startGatewayRuntime(shutdownContext, newServerWithContext, func(srv *server) {
 		srv.startQdrantPayloadIndexHardening()
 		startupHandler.activate(buildMux(srv))
 		log.Printf("gateway-go runtime handler activated")
-	}()
+	})
 	httpServer := newGatewayHTTPServer(startupHandler)
-	shutdownContext, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stopSignals()
 	if err := serveGatewayUntilShutdown(shutdownContext, httpServer, listener, gatewayShutdownTimeout()); err != nil {
 		log.Fatal(err)
+	}
+	terminal := <-startupResult
+	if terminal.server != nil {
+		if err := terminal.server.closeTaskDeliveryRuntime(); err != nil {
+			log.Printf("gateway-go task delivery runtime close failed: %v", err)
+		}
+	}
+	if terminal.err != nil && !errors.Is(terminal.err, context.Canceled) {
+		log.Printf("gateway-go startup terminated: %v", terminal.err)
 	}
 	log.Printf("gateway-go shutdown complete")
 }

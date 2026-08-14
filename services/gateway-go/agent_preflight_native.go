@@ -8,6 +8,10 @@ import (
 
 func (s *server) statusPayload() map[string]any {
 	services := s.strictRuntimeServices()
+	taskDelivery := map[string]any{"ready": false, "backend": "gateway-go", "owner": "gateway-go", "sole_authoritative_writer": true}
+	if s.taskLedger != nil {
+		taskDelivery = s.taskLedger.runtimeSnapshot(context.Background())
+	}
 	healthyServiceCount := 0
 	for _, row := range services {
 		if anyToBool(row["healthy"]) {
@@ -25,6 +29,7 @@ func (s *server) statusPayload() map[string]any {
 		"strictNoPythonRuntime":         true,
 		"sourceOwnershipMode":           s.retrieval.sourceOwnershipMode,
 		"services":                      services,
+		"taskDelivery":                  taskDelivery,
 		"serviceHealth": map[string]any{
 			"healthy": healthyServiceCount,
 			"total":   len(services),

@@ -55,10 +55,16 @@ func continuationEventWithRequest(request map[string]any, payload map[string]any
 	if topicPath := strings.TrimSpace(anyToString(request["topic_path"])); topicPath != "" {
 		event["topic_path"] = topicPath
 	}
+	if trafficClass := strings.TrimSpace(strings.ToLower(anyToString(request["traffic_class"]))); trafficClass != "" {
+		event["traffic_class"] = trafficClass
+	}
 	return event
 }
 
 func (s *server) emitContinuationSteering(request map[string]any, token string, source string, trigger map[string]any) {
+	if retrievalEvaluationSideEffectsSuppressed(nil, request) || strings.EqualFold(strings.TrimSpace(anyToString(trigger["traffic_class"])), "evaluation_holdout") || anyToBool(trigger["side_effects_suppressed"]) {
+		return
+	}
 	sessionID := continuationRequestSessionID(request)
 	if sessionID == "" {
 		return

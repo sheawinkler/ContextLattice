@@ -925,7 +925,7 @@ def update_index(text: str, contract: dict[str, Any], page_key: str) -> str:
         text = replace_once(text, pattern, replacement, f"{page_key} {label}", flags=flags)
 
     if page_key == "index":
-        release_sequence = version.rsplit(".", 1)[-1]
+        release_sequence = version.split(".", 1)[0]
         text = replace_once(
             text,
             r"      <span><strong>\d+</strong> Current: v\d+\.\d+\.\d+</span>",
@@ -1153,12 +1153,17 @@ def render_launch_config(root: Path, contract: dict[str, Any]) -> str:
     product = contract["product"]
     version = product["version"]
     tag = product["stable_tag"]
+    train = product["release_train"]
     description = product["canonical_description"]
     repo_url = "{repo_url}"
     docs_url = "{docs_url}"
     primary_url = "{primary_url}"
 
     payload["category"] = "Local-first Agent Intelligence Layer"
+    payload["product_version"] = version
+    payload["stable_tag"] = tag
+    payload["release_train"] = train
+    payload["launch_window"] = f"ContextLattice {tag} release wave (v{train} release train)"
     payload["one_liner"] = description
     payload["primary_cta"] = (
         "Install locally, then use the CLI as the canonical continuity and context path for every agent."

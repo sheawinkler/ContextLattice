@@ -100,20 +100,26 @@ type contextPackLearnedActivationDecision struct {
 	Arm                     string
 	Reason                  string
 	CanaryPercent           int
+	CanaryBasisPoints       int
 	ExposureBucket          int
 	RequestRef              string
+	AssignmentSubject       string
+	AssignmentSubjectRef    string
 	ProjectScopeRef         string
 	TaskClassScopeRef       string
 	RetrievalIntentScopeRef string
 	WorkspaceRef            string
 	PolicyRef               string
 	ImpactProofRef          string
+	SnapshotRef             string
 	ActuatorComparatorRef   string
 	ReputationSnapshotRef   string
 	ActivationReceiptID     string
 	RankingVectorDigest     string
 	AppliedCandidateCount   int
 	CandidateMultipliers    map[string]float64
+	Promotion               map[string]any
+	PromotionLease          *retrievalPromotionExposureLease
 	evaluationPhase         contextPackLearnedActivationPhase
 }
 
@@ -135,6 +141,9 @@ func contextPackLearnedCanonicalDigest(value any) string {
 
 func contextPackLearnedActivationReceiptID(decision contextPackLearnedActivationDecision) string {
 	receiptSeed := strings.Join([]string{
+		// RequestRef remains the opaque receipt identifier binding for the
+		// legacy parser; the production promotion cohort uses the signed
+		// AssignmentSubjectRef after this cheap pre-gate classifier.
 		contextPackLearnedActivationContractID, decision.RequestRef, decision.ProjectScopeRef,
 		decision.TaskClassScopeRef, decision.RetrievalIntentScopeRef, decision.WorkspaceRef, decision.PolicyRef,
 		decision.ImpactProofRef, decision.ActuatorComparatorRef, decision.ReputationSnapshotRef, strconv.Itoa(decision.CanaryPercent),
@@ -311,6 +320,11 @@ func decideContextPackLearnedActivation(input contextPackLearnedActivationInput)
 		return decision
 	}
 	decision.RequestRef = contextPackLearnedScopeRef("assignment_subject", assignmentSubject)
+	decision.AssignmentSubjectRef = decision.RequestRef
+	// Keep the server-derived opaque subject available to the promotion seam.
+	// RequestRef is a scoped digest for legacy receipts; it is not a request or
+	// query identity and must never be used as the cohort input.
+	decision.AssignmentSubject = assignmentSubject
 	if len(input.Impact) == 0 {
 		decision.Reason = "impact_canary_ineligible"
 		decision.evaluationPhase = contextPackLearnedActivationNeedsImpact
@@ -336,6 +350,7 @@ func decideContextPackLearnedActivation(input contextPackLearnedActivationInput)
 		return decision
 	}
 	decision.ImpactProofRef = contextPackLearnedDigestRef(anyToString(evidence["proof_digest"]))
+	decision.SnapshotRef = contextPackLearnedDigestRef(anyToString(evidence["snapshot_ref"]))
 	decision.ActuatorComparatorRef = contextPackLearnedDigestRef(anyToString(evidence["actuator_comparator_ref"]))
 	evaluatedReputationVectorRef := contextPackLearnedDigestRef(anyToString(evidence["reputation_vector_ref"]))
 	if decision.ActuatorComparatorRef == "" || evaluatedReputationVectorRef == "" {
@@ -375,8 +390,9 @@ func decideContextPackLearnedActivation(input contextPackLearnedActivationInput)
 	}
 	decision.CandidateMultipliers = multipliers
 	decision.CanaryPercent = clampInt(input.CanaryPercent, 1, 10)
+	decision.CanaryBasisPoints = decision.CanaryPercent * 100
 	bucketSeed := strings.Join([]string{
-		decision.RequestRef, decision.ProjectScopeRef, decision.TaskClassScopeRef,
+		decision.AssignmentSubjectRef, decision.ProjectScopeRef, decision.TaskClassScopeRef,
 		decision.RetrievalIntentScopeRef, policyAssignmentRef,
 	}, "\x00")
 	bucketRaw, err := strconv.ParseUint(sha256Hex(bucketSeed)[:8], 16, 32)
@@ -449,7 +465,41 @@ func (s *server) contextPackLearnedActivationDecision(
 		rows, project, taskClass, retrievalIntent, decision.WorkspaceRef,
 		contextPackLearnedMinimumSamples, evidenceReputationMaxEntries, now,
 	)
-	return decideContextPackLearnedActivation(input)
+	decision = decideContextPackLearnedActivation(input)
+	if !decision.Eligible {
+		return decision
+	}
+	shadow := anyMap(anyMap(input.Impact["recall_intelligence"])["comparative_shadow"])
+	trustedSigner := (*contextIdentityKeys)(nil)
+	if s.contextMesh != nil {
+		trustedSigner = s.contextMesh.identity
+	}
+	promotionStore, promotionStoreErr := s.retrievalPromotionCanaryOwner()
+	if promotionStoreErr != nil {
+		return contextPackLearnedForceControl(decision, "canary_ledger_unavailable")
+	}
+	promotionEligible, promotionReason, promotionEvidence := retrievalPromotionConfiguredActivationGateWithLedger(
+		project, taskClass, retrievalIntent, decision.WorkspaceRef, decision.PolicyRef,
+		strings.TrimSpace(input.Authority.AssignmentSubject), input.Impact, shadow, now, trustedSigner, promotionStore,
+	)
+	if !promotionEligible {
+		return contextPackLearnedForceControl(decision, promotionReason)
+	}
+	receipt, receiptOK, receiptReason := retrievalPromotionConfiguredCanaryReceiptFromStore(promotionStore, now)
+	if !receiptOK {
+		return contextPackLearnedForceControl(decision, receiptReason)
+	}
+	lease, leaseReason := promotionStore.acquireExposureLease(receipt, now)
+	if lease == nil {
+		if leaseReason == "" {
+			leaseReason = "canary_exposure_lease_unavailable"
+		}
+		return contextPackLearnedForceControl(decision, leaseReason)
+	}
+	if !retrievalPromotionApplySignedCohortToDecision(&decision, receipt, promotionEvidence, lease) {
+		return contextPackLearnedForceControl(decision, "signed_canary_cohort_invalid")
+	}
+	return decision
 }
 
 func contextPackLearnedForceControl(decision contextPackLearnedActivationDecision, reason string) contextPackLearnedActivationDecision {
@@ -459,9 +509,12 @@ func contextPackLearnedForceControl(decision contextPackLearnedActivationDecisio
 	decision.Arm = "shadow"
 	decision.Reason = reason
 	decision.ActivationReceiptID = ""
+	decision.CanaryBasisPoints = 0
 	decision.RankingVectorDigest = ""
 	decision.AppliedCandidateCount = 0
 	decision.CandidateMultipliers = map[string]float64{}
+	decision.Promotion = nil
+	decision.PromotionLease = nil
 	decision.evaluationPhase = contextPackLearnedActivationFinal
 	return decision
 }
@@ -474,6 +527,26 @@ func contextPackLearnedProtectedEvidence(item contextPackEvidenceItem) bool {
 }
 
 func applyContextPackLearnedRanking(items []contextPackEvidenceItem, decision contextPackLearnedActivationDecision) ([]contextPackEvidenceItem, contextPackLearnedActivationDecision) {
+	if !decision.Eligible || !decision.AssignedTreatment {
+		return items, decision
+	}
+	if decision.Promotion != nil {
+		if decision.PromotionLease == nil {
+			return items, contextPackLearnedForceControl(decision, "canary_exposure_lease_unavailable")
+		}
+		var ranked []contextPackEvidenceItem
+		var applied contextPackLearnedActivationDecision
+		if !decision.PromotionLease.withVerifiedHead(func() {
+			ranked, applied = applyContextPackLearnedRankingCore(items, decision)
+		}) {
+			return items, contextPackLearnedForceControl(decision, "canary_head_changed_before_ranking")
+		}
+		return ranked, applied
+	}
+	return applyContextPackLearnedRankingCore(items, decision)
+}
+
+func applyContextPackLearnedRankingCore(items []contextPackEvidenceItem, decision contextPackLearnedActivationDecision) ([]contextPackEvidenceItem, contextPackLearnedActivationDecision) {
 	if !decision.Eligible || !decision.AssignedTreatment {
 		return items, decision
 	}
@@ -559,12 +632,14 @@ func contextPackLearnedActivationReceipt(decision contextPackLearnedActivationDe
 		"canary_percent":               decision.CanaryPercent,
 		"exposure_bucket_basis_points": decision.ExposureBucket,
 		"request_ref":                  decision.RequestRef,
+		"assignment_subject_ref":       firstNonEmptyStrings(decision.AssignmentSubjectRef, contextPackLearnedScopeRef("assignment_subject", decision.AssignmentSubject)),
 		"project_scope_ref":            decision.ProjectScopeRef,
 		"task_class_scope_ref":         decision.TaskClassScopeRef,
 		"retrieval_intent_scope_ref":   decision.RetrievalIntentScopeRef,
 		"workspace_ref":                decision.WorkspaceRef,
 		"policy_ref":                   decision.PolicyRef,
 		"impact_proof_ref":             decision.ImpactProofRef,
+		"snapshot_ref":                 decision.SnapshotRef,
 		"actuator_comparator_ref":      decision.ActuatorComparatorRef,
 		"reputation_snapshot_ref":      decision.ReputationSnapshotRef,
 		"ranking_vector_digest":        decision.RankingVectorDigest,

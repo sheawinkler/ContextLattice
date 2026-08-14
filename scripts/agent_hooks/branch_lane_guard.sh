@@ -158,6 +158,7 @@ if [[ "$LANE" == "public" || "$LANE" == "public-paid" ]]; then
     justfile
     .env.example
     scripts/devnet_smoke.sh
+    scripts/agent/audit-agent-runtime-contract
   )
   distribution_text_excludes=(
     ':(exclude)docs/private/**'

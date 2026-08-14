@@ -9,10 +9,11 @@ pub struct AgentContractRef {
 }
 
 pub const AGENT_CONTRACT_REGISTRY_ID: &str = "contextlattice_agent_output_contracts";
-pub const AGENT_CONTRACT_REGISTRY_VERSION: u32 = 61;
+pub const AGENT_CONTRACT_REGISTRY_VERSION: u32 = 69;
 
 pub const A2A_READINESS_PROFILE_V1: &str = "a2a_readiness_profile.v1";
 pub const AGENT_CONTEXT_PROFILE_V1: &str = "agent_context_profile.v1";
+pub const AGENT_EXECUTION_SURFACE_V1: &str = "agent_execution_surface.v1";
 pub const AGENT_FLIGHT_RECORDER_EVENT_V1: &str = "agent_flight_recorder_event.v1";
 pub const AGENT_PACKET_V1: &str = "agent_packet.v1";
 pub const AGENT_PACKET_DELTA_V1: &str = "agent_packet_delta.v1";
@@ -23,8 +24,32 @@ pub const AGENT_PROOF_TIMELINE_V1: &str = "agent_proof_timeline.v1";
 pub const AGENT_RUN_TRACE_V1: &str = "agent_run_trace.v1";
 pub const AGENT_SESSION_ROLLUP_V1: &str = "agent_session_rollup.v1";
 pub const AGENT_SPAN_V1: &str = "agent_span.v1";
+pub const AGENT_TASK_APPROVAL_V1: &str = "agent_task_approval.v1";
+pub const AGENT_TASK_ARTIFACT_V1: &str = "agent_task_artifact.v1";
+pub const AGENT_TASK_ATTEMPT_V1: &str = "agent_task_attempt.v1";
+pub const AGENT_TASK_BLOCKING_ANSWER_V1: &str = "agent_task_blocking_answer.v1";
+pub const AGENT_TASK_DELIVERY_V1: &str = "agent_task_delivery.v1";
+pub const AGENT_TASK_INTEGRATION_V1: &str = "agent_task_integration.v1";
 pub const AGENT_TASK_LEASE_V1: &str = "agent_task_lease.v1";
+pub const AGENT_TASK_MANIFEST_V1: &str = "agent_task_manifest.v1";
+pub const AGENT_TASK_PUBLICATION_V1: &str = "agent_task_publication.v1";
+pub const AGENT_TASK_PUBLICATION_RECONCILIATION_V1: &str =
+    "agent_task_publication_reconciliation.v1";
+pub const AGENT_TASK_RECIPIENT_V1: &str = "agent_task_recipient.v1";
 pub const AGENT_TASK_RESULT_V1: &str = "agent_task_result.v1";
+pub const AGENT_TASK_RESULT_MANIFEST_V1: &str = "agent_task_result_manifest.v1";
+pub const AGENT_TASK_REVIEW_V1: &str = "agent_task_review.v1";
+pub const AGENT_TASK_REVIEWER_CLAIM_V1: &str = "agent_task_reviewer_claim.v1";
+pub const AGENT_TASK_REVISION_ENVELOPE_V1: &str = "agent_task_revision_envelope.v1";
+pub const AGENT_TASK_SCHEDULE_V1: &str = "agent_task_schedule.v1";
+pub const AGENT_TASK_WRITEBACK_INTENT_V1: &str = "agent_task_writeback_intent.v1";
+pub const AGENT_WORKER_IDENTITY_ACK_V1: &str = "agent_worker_identity_ack.v1";
+pub const AGENT_WORKER_IDENTITY_READBACK_V1: &str = "agent_worker_identity_readback.v1";
+pub const AGENT_WORKER_IDENTITY_REGISTRATION_V1: &str = "agent_worker_identity_registration.v1";
+pub const AGENT_WORKER_IDENTITY_RETIRE_V1: &str = "agent_worker_identity_retire.v1";
+pub const AGENT_WORKER_IDENTITY_RETIREMENT_RECEIPT_V1: &str =
+    "agent_worker_identity_retirement_receipt.v1";
+pub const AGENT_WORKER_IDENTITY_UPDATE_V1: &str = "agent_worker_identity_update.v1";
 pub const AGGREGATE_CONTRIBUTION_V1: &str = "aggregate_contribution.v1";
 pub const AGGREGATE_REPORT_V1: &str = "aggregate_report.v1";
 pub const ANTI_SCHEMING_PROTOCOL_V1: &str = "anti_scheming_protocol.v1";
@@ -90,10 +115,13 @@ pub const PORTABLE_CONTINUATION_STATUS_V1: &str = "portable_continuation_status.
 pub const PORTABLE_EVIDENCE_IDENTITY_V1: &str = "portable_evidence_identity.v1";
 pub const PRIVACY_ACCOUNTANT_V1: &str = "privacy_accountant.v1";
 pub const PROVENANCE_V1: &str = "provenance.v1";
+pub const RECALL_RESPONSE_INITIAL_V1: &str = "recall_response.initial.v1";
 pub const RECALL_RESPONSE_V1: &str = "recall_response.v1";
 pub const RETRIEVAL_ABLATION_V1: &str = "retrieval_ablation.v1";
 pub const RETRIEVAL_ABLATION_REPORT_V1: &str = "retrieval_ablation_report.v1";
 pub const RETRIEVAL_DECISION_TRACE_V1: &str = "retrieval_decision_trace.v1";
+pub const RETRIEVAL_INTELLIGENCE_PROMOTION_CANARY_V1: &str =
+    "retrieval_intelligence_promotion_canary.v1";
 pub const RETRIEVAL_PLAN_V1: &str = "retrieval_plan.v1";
 pub const RETRIEVAL_PROGRESS_V1: &str = "retrieval_progress.v1";
 pub const REUSABLE_SKILL_CANDIDATE_V1: &str = "reusable_skill_candidate.v1";
@@ -129,6 +157,7 @@ pub const WRITEBACK_RESULT_V1: &str = "writeback_result.v1";
 pub const AGENT_CONTRACT_IDS: &[&str] = &[
     A2A_READINESS_PROFILE_V1,
     AGENT_CONTEXT_PROFILE_V1,
+    AGENT_EXECUTION_SURFACE_V1,
     AGENT_FLIGHT_RECORDER_EVENT_V1,
     AGENT_PACKET_V1,
     AGENT_PACKET_DELTA_V1,
@@ -139,8 +168,30 @@ pub const AGENT_CONTRACT_IDS: &[&str] = &[
     AGENT_RUN_TRACE_V1,
     AGENT_SESSION_ROLLUP_V1,
     AGENT_SPAN_V1,
+    AGENT_TASK_APPROVAL_V1,
+    AGENT_TASK_ARTIFACT_V1,
+    AGENT_TASK_ATTEMPT_V1,
+    AGENT_TASK_BLOCKING_ANSWER_V1,
+    AGENT_TASK_DELIVERY_V1,
+    AGENT_TASK_INTEGRATION_V1,
     AGENT_TASK_LEASE_V1,
+    AGENT_TASK_MANIFEST_V1,
+    AGENT_TASK_PUBLICATION_V1,
+    AGENT_TASK_PUBLICATION_RECONCILIATION_V1,
+    AGENT_TASK_RECIPIENT_V1,
     AGENT_TASK_RESULT_V1,
+    AGENT_TASK_RESULT_MANIFEST_V1,
+    AGENT_TASK_REVIEW_V1,
+    AGENT_TASK_REVIEWER_CLAIM_V1,
+    AGENT_TASK_REVISION_ENVELOPE_V1,
+    AGENT_TASK_SCHEDULE_V1,
+    AGENT_TASK_WRITEBACK_INTENT_V1,
+    AGENT_WORKER_IDENTITY_ACK_V1,
+    AGENT_WORKER_IDENTITY_READBACK_V1,
+    AGENT_WORKER_IDENTITY_REGISTRATION_V1,
+    AGENT_WORKER_IDENTITY_RETIRE_V1,
+    AGENT_WORKER_IDENTITY_RETIREMENT_RECEIPT_V1,
+    AGENT_WORKER_IDENTITY_UPDATE_V1,
     AGGREGATE_CONTRIBUTION_V1,
     AGGREGATE_REPORT_V1,
     ANTI_SCHEMING_PROTOCOL_V1,
@@ -204,10 +255,12 @@ pub const AGENT_CONTRACT_IDS: &[&str] = &[
     PORTABLE_EVIDENCE_IDENTITY_V1,
     PRIVACY_ACCOUNTANT_V1,
     PROVENANCE_V1,
+    RECALL_RESPONSE_INITIAL_V1,
     RECALL_RESPONSE_V1,
     RETRIEVAL_ABLATION_V1,
     RETRIEVAL_ABLATION_REPORT_V1,
     RETRIEVAL_DECISION_TRACE_V1,
+    RETRIEVAL_INTELLIGENCE_PROMOTION_CANARY_V1,
     RETRIEVAL_PLAN_V1,
     RETRIEVAL_PROGRESS_V1,
     REUSABLE_SKILL_CANDIDATE_V1,
@@ -251,6 +304,12 @@ pub const AGENT_CONTRACTS: &[AgentContractRef] = &[
     AgentContractRef {
         schema_id: AGENT_CONTEXT_PROFILE_V1,
         payload_kind: "effective_agent_context_profile",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: AGENT_EXECUTION_SURFACE_V1,
+        payload_kind: "agent_execution_surface",
         contract_version: 1,
         required_output_mode: "json_object",
     },
@@ -315,8 +374,68 @@ pub const AGENT_CONTRACTS: &[AgentContractRef] = &[
         required_output_mode: "json_object",
     },
     AgentContractRef {
+        schema_id: AGENT_TASK_APPROVAL_V1,
+        payload_kind: "agent_task_approval",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: AGENT_TASK_ARTIFACT_V1,
+        payload_kind: "agent_task_artifact",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: AGENT_TASK_ATTEMPT_V1,
+        payload_kind: "agent_task_attempt",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: AGENT_TASK_BLOCKING_ANSWER_V1,
+        payload_kind: "agent_task_blocking_answer",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: AGENT_TASK_DELIVERY_V1,
+        payload_kind: "agent_task_delivery",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: AGENT_TASK_INTEGRATION_V1,
+        payload_kind: "agent_task_integration",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
         schema_id: AGENT_TASK_LEASE_V1,
         payload_kind: "agent_task_lease",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: AGENT_TASK_MANIFEST_V1,
+        payload_kind: "agent_task_manifest",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: AGENT_TASK_PUBLICATION_V1,
+        payload_kind: "agent_task_publication",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: AGENT_TASK_PUBLICATION_RECONCILIATION_V1,
+        payload_kind: "agent_task_publication_reconciliation",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: AGENT_TASK_RECIPIENT_V1,
+        payload_kind: "agent_task_recipient",
         contract_version: 1,
         required_output_mode: "json_object",
     },
@@ -325,6 +444,78 @@ pub const AGENT_CONTRACTS: &[AgentContractRef] = &[
         payload_kind: "agent_task_result",
         contract_version: 1,
         required_output_mode: "json_object_or_markdown_with_json_frontmatter",
+    },
+    AgentContractRef {
+        schema_id: AGENT_TASK_RESULT_MANIFEST_V1,
+        payload_kind: "agent_task_result_manifest",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: AGENT_TASK_REVIEW_V1,
+        payload_kind: "agent_task_review",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: AGENT_TASK_REVIEWER_CLAIM_V1,
+        payload_kind: "agent_task_reviewer_claim",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: AGENT_TASK_REVISION_ENVELOPE_V1,
+        payload_kind: "agent_task_revision_envelope",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: AGENT_TASK_SCHEDULE_V1,
+        payload_kind: "agent_task_schedule",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: AGENT_TASK_WRITEBACK_INTENT_V1,
+        payload_kind: "agent_task_writeback_intent",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: AGENT_WORKER_IDENTITY_ACK_V1,
+        payload_kind: "agent_worker_identity_ack",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: AGENT_WORKER_IDENTITY_READBACK_V1,
+        payload_kind: "agent_worker_identity_readback",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: AGENT_WORKER_IDENTITY_REGISTRATION_V1,
+        payload_kind: "agent_worker_identity_registration",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: AGENT_WORKER_IDENTITY_RETIRE_V1,
+        payload_kind: "agent_worker_identity_retire",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: AGENT_WORKER_IDENTITY_RETIREMENT_RECEIPT_V1,
+        payload_kind: "agent_worker_identity_retirement_receipt",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: AGENT_WORKER_IDENTITY_UPDATE_V1,
+        payload_kind: "agent_worker_identity_update",
+        contract_version: 1,
+        required_output_mode: "json_object",
     },
     AgentContractRef {
         schema_id: AGGREGATE_CONTRIBUTION_V1,
@@ -449,7 +640,7 @@ pub const AGENT_CONTRACTS: &[AgentContractRef] = &[
     AgentContractRef {
         schema_id: CONTEXT_PACK_RESPONSE_V1,
         payload_kind: "context_pack_response",
-        contract_version: 1,
+        contract_version: 2,
         required_output_mode: "json_object",
     },
     AgentContractRef {
@@ -509,7 +700,7 @@ pub const AGENT_CONTRACTS: &[AgentContractRef] = &[
     AgentContractRef {
         schema_id: CONTEXTLATTICE_LIFECYCLE_RECEIPT_V1,
         payload_kind: "contextlattice_lifecycle_receipt",
-        contract_version: 1,
+        contract_version: 2,
         required_output_mode: "json_object",
     },
     AgentContractRef {
@@ -705,6 +896,12 @@ pub const AGENT_CONTRACTS: &[AgentContractRef] = &[
         required_output_mode: "json_object",
     },
     AgentContractRef {
+        schema_id: RECALL_RESPONSE_INITIAL_V1,
+        payload_kind: "bounded_recall_response_initial_transport",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
         schema_id: RECALL_RESPONSE_V1,
         payload_kind: "bounded_proof_carrying_recall_response",
         contract_version: 1,
@@ -725,6 +922,12 @@ pub const AGENT_CONTRACTS: &[AgentContractRef] = &[
     AgentContractRef {
         schema_id: RETRIEVAL_DECISION_TRACE_V1,
         payload_kind: "bounded_retrieval_decision_receipt_trace",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: RETRIEVAL_INTELLIGENCE_PROMOTION_CANARY_V1,
+        payload_kind: "entitled_signed_retrieval_promotion_canary_governance",
         contract_version: 1,
         required_output_mode: "json_object",
     },
@@ -881,7 +1084,7 @@ pub const AGENT_CONTRACTS: &[AgentContractRef] = &[
     AgentContractRef {
         schema_id: UNIVERSAL_AGENT_ADAPTER_RESPONSE_V1,
         payload_kind: "universal_agent_adapter_response",
-        contract_version: 1,
+        contract_version: 2,
         required_output_mode: "json_object",
     },
     AgentContractRef {

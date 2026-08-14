@@ -90,12 +90,17 @@ func TestPackAutoDrainWritesNoticeToStderrWithoutCorruptingStdout(t *testing.T) 
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/agents/sessions/start":
-			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "session": map[string]any{"id": "sess-pack-drain"}})
+			var startPayload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&startPayload); err != nil {
+				t.Fatalf("decode session start: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(adapterTestAgentSessionResponse("sess-pack-drain", startPayload))
 		case "/memory/context-pack":
 			if err := json.NewDecoder(r.Body).Decode(&packPayload); err != nil {
 				t.Fatalf("decode pack request: %v", err)
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "context_pack": map[string]any{"facts": []any{}}})
+			assessment, trace := adapterTestFullRetrievalProofPair(0, "")
+			_ = json.NewEncoder(w).Encode(adapterTestContextPackResponse(assessment, trace))
 		case "/v1/agents/sessions/sess-pack-drain/rollup":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"ok": true,

@@ -25,8 +25,10 @@ on:
       - "scripts/install_orbstack_self_heal_runner.sh"
       - "scripts/orbstack_self_heal.sh"
       - "scripts/public_sync_guard.sh"
+      - "scripts/task_agent_worker.py"
       - "scripts/agent_hooks/public_leak_guard.sh"
       - "scripts/agent/audit-public-product-truth"
+      - "scripts/agent/audit-public-installer-package"
       - "scripts/agent/audit-agent-global-install-smoke"
       - "scripts/agent/audit-host-supervisor-safety"
       - "scripts/generate_commercial_truth.py"
@@ -38,10 +40,14 @@ on:
       - "scripts/tests/test_retention_runner_install.py"
       - "scripts/tests/test_public_boundary_guards.py"
       - "scripts/tests/test_public_product_truth.py"
+      - "scripts/tests/test_public_release_package_scan.py"
+      - "scripts/tests/test_public_release_workflow.py"
+      - "scripts/tests/test_task_agent_worker_claim_identity.py"
       - "scripts/tests/test_t*_public_projection.py"
       - "services/gateway-go/commercial_contract_generated.go"
       - "services/gateway-go/commercial_contract_generated_test.go"
       - ".github/workflows/release-installers.yml"
+      - ".github/workflows/public-release-installers.yml"
       - ".github/workflows/public-product-truth.yml"
   push:
     branches:
@@ -70,8 +76,10 @@ on:
       - "scripts/install_orbstack_self_heal_runner.sh"
       - "scripts/orbstack_self_heal.sh"
       - "scripts/public_sync_guard.sh"
+      - "scripts/task_agent_worker.py"
       - "scripts/agent_hooks/public_leak_guard.sh"
       - "scripts/agent/audit-public-product-truth"
+      - "scripts/agent/audit-public-installer-package"
       - "scripts/agent/audit-agent-global-install-smoke"
       - "scripts/agent/audit-host-supervisor-safety"
       - "scripts/generate_commercial_truth.py"
@@ -83,10 +91,14 @@ on:
       - "scripts/tests/test_retention_runner_install.py"
       - "scripts/tests/test_public_boundary_guards.py"
       - "scripts/tests/test_public_product_truth.py"
+      - "scripts/tests/test_public_release_package_scan.py"
+      - "scripts/tests/test_public_release_workflow.py"
+      - "scripts/tests/test_task_agent_worker_claim_identity.py"
       - "scripts/tests/test_t*_public_projection.py"
       - "services/gateway-go/commercial_contract_generated.go"
       - "services/gateway-go/commercial_contract_generated_test.go"
       - ".github/workflows/release-installers.yml"
+      - ".github/workflows/public-release-installers.yml"
       - ".github/workflows/public-product-truth.yml"
   workflow_dispatch:
 
@@ -100,6 +112,11 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+      - name: Set up Go for workflow syntax validation
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: services/gateway-go/go.mod
+          cache: false
       - name: Enforce host lifecycle PR evidence
         if: github.event_name == 'pull_request'
         env:
@@ -117,6 +134,7 @@ jobs:
           python3 -m py_compile
           scripts/generate_commercial_truth.py
           scripts/agent/audit-public-product-truth
+          scripts/agent/audit-public-installer-package
           scripts/agent/audit-host-supervisor-safety
       - name: Verify generated commercial truth
         run: python3 scripts/generate_commercial_truth.py --check
@@ -124,10 +142,24 @@ jobs:
         run: >-
           python3 -m unittest
           scripts.tests.test_public_product_truth
+          scripts.tests.test_public_release_package_scan
+          scripts.tests.test_public_release_workflow
+          scripts.tests.test_task_agent_worker_claim_identity
           scripts.tests.test_host_supervisor_safety_audit
           scripts.tests.test_retention_runner_install
           scripts.tests.test_commercial_truth.CommercialTruthTests.test_contract_decisions
           scripts.tests.test_commercial_truth.CommercialTruthTests.test_public_projection_has_no_private_paths
+      - name: Validate active release workflow syntax
+        env:
+          ACTIONLINT_VERSION: "1.7.7"
+        run: |
+          set -euo pipefail
+          actionlint_bin="$RUNNER_TEMP/actionlint-bin/actionlint"
+          GOBIN="$(dirname "$actionlint_bin")" \
+            go install "github.com/rhysd/actionlint/cmd/actionlint@v${ACTIONLINT_VERSION}"
+          "$actionlint_bin" -oneline \
+            .github/workflows/public-release-installers.yml \
+            .github/workflows/public-product-truth.yml
       - name: Prove fail-closed host supervision
         run: |
           python3 scripts/agent/audit-host-supervisor-safety --pretty

@@ -25,8 +25,19 @@ func TestRecallResponseHistoricalProjectionIgnoresFutureOnlyEvidence(t *testing.
 		"created_at": "2026-01-02T00:00:00Z", "text": "future-only mutation",
 	})
 	second := composeRecallResponse(mutated)
-	if !reflect.DeepEqual(first, second) {
-		t.Fatalf("future-only evidence changed a historical response:\nfirst=%#v\nsecond=%#v", first, second)
+	for _, key := range []string{"answer", "classification", "confidence", "conflicts", "evidence", "gaps", "state"} {
+		if !reflect.DeepEqual(first[key], second[key]) {
+			t.Fatalf("future-only evidence changed historical support field %s:\nfirst=%#v\nsecond=%#v", key, first[key], second[key])
+		}
+	}
+	futureRef := "rtc_" + strings.Repeat("f", 24)
+	if !recallResponseDisclosureRefs(second, "exclusion_refs")[futureRef] {
+		t.Fatalf("future-only evidence was not retained as a hard temporal exclusion: %#v", second["disclosure"])
+	}
+	for _, raw := range contextPackAnyList(second["evidence"]) {
+		if anyToString(anyMap(raw)["ref_id"]) == futureRef {
+			t.Fatalf("future-only evidence became support: %#v", second["evidence"])
+		}
 	}
 }
 

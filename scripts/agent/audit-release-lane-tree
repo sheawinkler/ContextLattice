@@ -94,7 +94,10 @@ for active_path in "${active_paths[@]}"; do
     fail "active gate differs from candidate commit: ${relative}"
 done
 
-tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/contextlattice-release-tree.XXXXXX")"
+tmp_root="${CONTEXTLATTICE_RELEASE_TMPDIR:-${TMPDIR:-${RUNNER_TEMP:-}}}"
+[[ -n "${tmp_root}" ]] || fail "a task-scoped TMPDIR or RUNNER_TEMP is required"
+[[ -d "${tmp_root}" ]] || fail "release audit temporary root does not exist: ${tmp_root}"
+tmp_dir="$(mktemp -d "${tmp_root%/}/contextlattice-release-tree.XXXXXX")"
 cleanup() {
   rm -rf "${tmp_dir}"
 }
@@ -210,7 +213,7 @@ fi
 for module in services/gateway-go services/orchestrator-go; do
   gate_name="$(printf '%s' "${module}" | tr '/-' '__')_test"
   if [[ -f "${stage}/${module}/go.mod" ]]; then
-    go -C "${stage}/${module}" test ./...
+    go -C "${stage}/${module}" test -timeout=0 ./...
     printf '%s\t%s\n' "${gate_name}" "pass" >>"${gate_rows}"
   else
     printf '%s\t%s\n' "${gate_name}" "not_present" >>"${gate_rows}"

@@ -124,9 +124,19 @@ func TestRecallResponseU11SyntheticSafetyAblationDoesNotReinsertModule(t *testin
 		snapshotDigest: "sha256:" + strings.Repeat("a", 64), receiptDigest: "sha256:" + strings.Repeat("b", 64),
 		canaryPolicy: zeroRecallResponseCanaryPolicy{},
 	}
+	var witnessOK bool
+	policy, witnessOK = recallResponseBindSyntheticAblationWitness(input, policy)
+	if !witnessOK {
+		t.Fatal("safety ablation did not bind its exact finalized baseline witness")
+	}
 	response := composeRecallResponseWithPolicy(input, policy)
 	if recallResponseIsV1Control(response) {
-		t.Fatalf("safety ablation invalidated unrelated selected modules: %#v", response)
+		composition := anyMap(anyMap(response["answer"])["composition"])
+		witness := anyMap(recallResponseDisclosure(response)["ablation_witness"])
+		if anyToString(composition["fallback_reason"]) != "synthetic_ablation" ||
+			!recallResponseAblationWitnessValid(response, witness) || anyToString(witness["status"]) != "accepted_control" {
+			t.Fatalf("safety ablation returned an untyped product failure: %#v", response)
+		}
 	}
 	for _, raw := range contextPackAnyList(anyMap(response["answer"])["components"]) {
 		if anyToString(anyMap(raw)["kind"]) == policy.ablation {
@@ -257,6 +267,190 @@ func TestRecallResponseU11ActionFailureStatesRemainOpaqueAndNonAuthoritative(t *
 			}
 		})
 	}
+}
+
+func TestRecallResponseU11SensitiveActionReadinessMatrixFailsClosed(t *testing.T) {
+	toolRef := "sha256:" + strings.Repeat("a", 64)
+	parameterRef := "sha256:" + strings.Repeat("b", 64)
+	for _, required := range []bool{true, false} {
+		t.Run(map[bool]string{true: "required", false: "optional"}[required], func(t *testing.T) {
+			metadata := map[string]any{
+				"tool_ref": toolRef,
+				"parameter_bindings": []any{map[string]any{
+					"parameter_ref": parameterRef, "value_state": "sensitive_unresolved",
+					"required": required, "sensitive": true,
+				}},
+				"refusal_conditions":  []any{"sensitive_value_unavailable"},
+				"recovery_conditions": []any{"verify_postcondition"},
+			}
+			if recallResponseActionMetadataReady(metadata) {
+				t.Fatal("sensitive unresolved parameter became metadata-ready")
+			}
+			payload := map[string]any{
+				"intended_tool_ref": toolRef,
+				"parameter_bindings": []any{map[string]any{
+					"parameter_ref": parameterRef, "value_state": "sensitive_unresolved",
+					"required": required, "sensitive": true,
+				}},
+				"refusal_conditions":  []any{map[string]any{"code": "sensitive_value_unavailable"}},
+				"rollback_conditions": []any{map[string]any{"code": "restore_previous_state"}},
+			}
+			if recallResponseActionPayloadReady(payload) {
+				t.Fatal("sensitive unresolved parameter became payload-ready")
+			}
+			projected := recallResponseProjectActionMetadata(map[string]any{
+				"candidate_id": "sensitive-readiness",
+				"action_evidence": map[string]any{
+					"tool_ref": toolRef,
+					"parameter_bindings": []any{map[string]any{
+						"parameter_ref": parameterRef, "value_state": "resolved",
+						"required": required, "sensitive": true,
+					}},
+					"recovery_conditions": []any{"verify_postcondition"},
+				},
+			})
+			parameters := contextPackAnyList(projected["parameter_bindings"])
+			if len(parameters) != 1 || anyToString(anyMap(parameters[0])["value_state"]) != "sensitive_unresolved" ||
+				anyToString(anyMap(parameters[0])["value_state"]) == "bound_redacted" {
+				t.Fatalf("sensitive parameter was represented as bound: %#v", projected)
+			}
+			refusals := contextPackAnyList(projected["refusal_conditions"])
+			foundRefusal := false
+			for _, raw := range refusals {
+				if anyToString(raw) == "sensitive_value_unavailable" {
+					foundRefusal = true
+				}
+			}
+			if !foundRefusal {
+				t.Fatalf("typed sensitive refusal was not preserved: %#v", projected)
+			}
+		})
+	}
+
+	input := recallResponseTestInput(false)
+	input["retrieval_intent"] = "action"
+	input["task_class"] = "action"
+	input["source_coverage"] = map[string]any{"complete": true}
+	input["context_pack"] = map[string]any{"ranked_evidence": []any{map[string]any{
+		"candidate_id": "rtc_" + strings.Repeat("a", 24), "kind": "runbook", "confidence": 0.91,
+		"status": "current", "action_evidence": map[string]any{
+			"tool_ref": toolRef,
+			"parameter_bindings": []any{map[string]any{
+				"parameter_ref": parameterRef, "value_state": "sensitive_unresolved",
+				"required": true, "sensitive": true,
+			}},
+			"recovery_conditions": []any{"verify_postcondition"},
+		},
+	}}}
+	response := composeRecallResponse(input)
+	if recallResponseIsV1Control(response) || !anyToBool(response["ok"]) {
+		t.Fatalf("sensitive status did not remain a valid product response: %#v", response)
+	}
+	module := recallResponseModuleByKind(t, response, "memory_to_action")
+	payload := anyMap(module["payload"])
+	if !anyToBool(module["primary"]) || anyToString(payload["intended_tool_ref"]) != "unresolved_tool" ||
+		len(contextPackAnyList(payload["parameter_bindings"])) != 0 || len(contextPackAnyList(payload["ordered_steps"])) != 0 ||
+		len(contextPackAnyList(payload["rollback_conditions"])) != 0 || recallResponseActionPayloadReady(payload) {
+		t.Fatalf("sensitive capability status carried executable action material: %#v", module)
+	}
+	refusalCodes := map[string]bool{}
+	refusalProof := ""
+	for _, raw := range contextPackAnyList(payload["refusal_conditions"]) {
+		row := anyMap(raw)
+		refusalCodes[anyToString(row["code"])] = true
+		if refusalProof == "" {
+			refusalProof = anyToString(row["proof_ref"])
+		} else if anyToString(row["proof_ref"]) != refusalProof {
+			t.Fatalf("sensitive status refusals did not bind one witness: %#v", payload)
+		}
+	}
+	if len(refusalCodes) != 2 || !refusalCodes["independent_authorization_required"] ||
+		!refusalCodes["sensitive_value_unavailable"] || refusalProof == "" {
+		t.Fatalf("sensitive status lost its closed refusal semantics: %#v", payload)
+	}
+	recallResponseModuleByKind(t, response, "negative_abstention")
+	proofSet := map[string]bool{}
+	for _, raw := range contextPackAnyList(module["proof_refs"]) {
+		proofSet[anyToString(raw)] = true
+	}
+	if !recallResponseActionPayloadValid(payload, proofSet, true) {
+		t.Fatalf("sensitive status payload did not satisfy the closed validator: %#v", payload)
+	}
+	if anyToBool(anyMap(response["action_boundary"])["can_act"]) ||
+		anyToBool(anyMap(response["action_boundary"])["execution_performed"]) {
+		t.Fatalf("sensitive unresolved response acquired authority: %#v", response["action_boundary"])
+	}
+}
+
+func TestRecallResponseU11SensitiveUnavailableStatusFailsClosedOnConflictOrHardExclusion(t *testing.T) {
+	toolRef := func(ch string) string { return "sha256:" + strings.Repeat(ch, 64) }
+	parameterRef := "sha256:" + strings.Repeat("f", 64)
+	actionRow := func(candidateID, tool string) map[string]any {
+		return map[string]any{
+			"candidate_id": candidateID, "kind": "runbook", "confidence": 0.91,
+			"status": "current", "state": "current", "support": "context", "content": "same advisory action",
+			"action_evidence": map[string]any{
+				"tool_ref": tool,
+				"parameter_bindings": []any{map[string]any{
+					"parameter_ref": parameterRef, "value_state": "sensitive_unresolved",
+					"required": true, "sensitive": true,
+				}},
+				"refusal_conditions": []any{"sensitive_value_unavailable"},
+			},
+		}
+	}
+	compose := func(rows []any) map[string]any {
+		input := recallResponseTestInput(false)
+		input["retrieval_intent"] = "action"
+		input["task_class"] = "action"
+		input["source_coverage"] = map[string]any{"complete": true}
+		input["context_pack"] = map[string]any{"ranked_evidence": rows}
+		return composeRecallResponse(input)
+	}
+	assertClosed := func(t *testing.T, response map[string]any) {
+		t.Helper()
+		if recallResponseIsV1Control(response) || !anyToBool(response["ok"]) {
+			t.Fatalf("conflict/exclusion did not retain a typed product response: %#v", response)
+		}
+		for _, raw := range contextPackAnyList(anyMap(response["answer"])["components"]) {
+			if anyToString(anyMap(raw)["kind"]) == "memory_to_action" {
+				t.Fatalf("conflicting or excluded sensitive action gained module membership: %#v", raw)
+			}
+		}
+		recallResponseModuleByKind(t, response, "negative_abstention")
+		if anyToBool(anyMap(response["action_boundary"])["can_act"]) ||
+			anyToBool(anyMap(response["action_boundary"])["execution_performed"]) {
+			t.Fatalf("conflicting or excluded action acquired authority: %#v", response["action_boundary"])
+		}
+	}
+
+	t.Run("conflicting eligible unavailable payloads", func(t *testing.T) {
+		response := compose([]any{
+			actionRow("rtc_"+strings.Repeat("b", 24), toolRef("1")),
+			actionRow("rtc_"+strings.Repeat("c", 24), toolRef("2")),
+		})
+		assertClosed(t, response)
+	})
+
+	t.Run("same identity hard exclusion", func(t *testing.T) {
+		eligible := actionRow("rtc_"+strings.Repeat("d", 24), toolRef("3"))
+		excluded := cloneJSONMap(eligible)
+		excluded["source"] = "excluded-copy"
+		excluded["state"] = "unknown"
+		excluded["status"] = "unknown"
+		excluded["support"] = "distractor"
+		if _, ok := recallResponseSensitiveUnavailableActionStatus([]any{eligible, excluded}); ok {
+			t.Fatal("same-identity hard exclusion did not veto sensitive status")
+		}
+		merged := mergeRowsAll(map[string][]map[string]any{
+			"eligible": {eligible},
+			"excluded": {excluded},
+		})
+		if len(merged) != 1 || merged[0]["action_evidence"] != nil || anyToString(merged[0]["status"]) != "unknown" {
+			t.Fatalf("production duplicate merge did not preserve hard exclusion: %#v", merged)
+		}
+		assertClosed(t, compose([]any{merged[0]}))
+	})
 }
 
 func TestRecallResponseU11ActionPreparationSelectsRollbackModule(t *testing.T) {

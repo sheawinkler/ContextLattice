@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func newMemoryGraphTestServer(t *testing.T, strictNoPython bool) (*server, *httptest.Server) {
@@ -96,6 +98,46 @@ func TestMemoryEdgesWriteListAndReload(t *testing.T) {
 	}
 	if len(edges) != 1 || edges[0].EdgeID != edgeID {
 		t.Fatalf("expected reloaded edge %s, got %#v", edgeID, edges)
+	}
+}
+
+func TestMemoryEdgesRejectReservedRepairAndRollbackNamespaces(t *testing.T) {
+	server, gateway := newMemoryGraphTestServer(t, true)
+	defer gateway.Close()
+	before, err := server.memoryStore.snapshotMemoryEdgeLog(0)
+	if err != nil {
+		t.Fatalf("snapshot before reserved namespace probes: %v", err)
+	}
+	probes := []struct {
+		name string
+		edge memoryEdgeEntry
+	}{
+		{name: "repair metadata", edge: memoryEdgeEntry{SourceID: "alpha::notes/a.md", TargetID: "alpha::notes/b.md", Relation: "references", Project: "alpha", Confidence: 1, Metadata: map[string]any{"repair_server_append_marker": "sha256:" + strings.Repeat("a", 64)}}},
+		{name: "rollback provenance", edge: memoryEdgeEntry{SourceID: "alpha::notes/a.md", TargetID: "alpha::notes/c.md", Relation: "references", Project: "alpha", Confidence: 1, Provenance: map[string]any{"rollback_run_id": "forged"}}},
+	}
+	for _, probe := range probes {
+		t.Run(probe.name+" direct", func(t *testing.T) {
+			if _, err := server.memoryStore.upsertMemoryEdge(context.Background(), probe.edge); err == nil || !strings.Contains(err.Error(), "reserved server repair namespace") {
+				t.Fatalf("ordinary direct write accepted reserved namespace: %v", err)
+			}
+		})
+	}
+	body := `{"source_id":"alpha::notes/a.md","target_id":"alpha::notes/d.md","relation":"references","project":"alpha","confidence":1,"metadata":{"repair_run_id":"forged","repair_server_append_marker":"sha256:forged"},"provenance":{"rollback_plan_digest":"sha256:forged"}}`
+	response, err := http.Post(gateway.URL+"/v1/memory/edges", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("post reserved namespace probe: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusUnprocessableEntity {
+		raw, _ := io.ReadAll(response.Body)
+		t.Fatalf("ordinary edge route did not reject reserved namespaces at ingress: status=%d body=%s", response.StatusCode, raw)
+	}
+	after, err := server.memoryStore.snapshotMemoryEdgeLog(0)
+	if err != nil {
+		t.Fatalf("snapshot after reserved namespace probes: %v", err)
+	}
+	if after.Generation != before.Generation || after.Digest != before.Digest || !bytes.Equal(after.Bytes, before.Bytes) {
+		t.Fatal("reserved namespace rejection mutated durable edge state")
 	}
 }
 
@@ -239,6 +281,126 @@ func TestMemoryGraphTelemetrySummarizesEdgesDocsAndRecommendations(t *testing.T)
 	}
 	if anyToInt(projectRow["quality_score"], 0) <= 0 {
 		t.Fatalf("expected project quality score, got %#v", projectRow)
+	}
+}
+
+func TestMemoryGraphTelemetryUnboundEdgesCannotInflateTopology(t *testing.T) {
+	s, gateway := newMemoryGraphTestServer(t, true)
+	defer gateway.Close()
+	for _, item := range []normalizedWrite{
+		{project: "alpha", fileName: "notes/a.md", content: "current alpha document one", topicPath: "runbooks/current"},
+		{project: "alpha", fileName: "notes/b.md", content: "current alpha document two", topicPath: "runbooks/current"},
+	} {
+		if _, _, err := s.memoryStore.put(item); err != nil {
+			t.Fatalf("seed current doc: %v", err)
+		}
+	}
+	baseline, err := s.memoryStore.memoryGraphTelemetrySnapshot(context.Background(), "alpha", false, 10, time.Time{})
+	if err != nil {
+		t.Fatalf("baseline graph telemetry: %v", err)
+	}
+	if baseline.BoundEdgeCount != 0 || baseline.ConnectedDocCount != 0 {
+		t.Fatalf("unexpected baseline topology: %#v", baseline)
+	}
+
+	const unboundEdges = 39000
+	var durable bytes.Buffer
+	for index := 0; index < unboundEdges; index++ {
+		edge := memoryEdgeEntry{
+			EdgeID:   fmt.Sprintf("edge_historical_%05d", index),
+			SourceID: fmt.Sprintf("alpha::historical/source-%05d.md", index),
+			TargetID: fmt.Sprintf("alpha::historical/target-%05d.md", index),
+			Relation: "inferred_related", Project: "alpha", Confidence: 0.91,
+			CreatedAt: "2020-01-01T00:00:00Z", Lifecycle: "durable",
+			Metadata:   map[string]any{"inferred": true},
+			Provenance: map[string]any{"kind": "inferred_memory_edge_scoring"},
+		}
+		encoded, _ := json.Marshal(edge)
+		durable.Write(encoded)
+		durable.WriteByte('\n')
+	}
+	fence, err := s.memoryStore.acquireMemoryEdgeLogFence()
+	if err != nil {
+		t.Fatalf("lock durable edge fixture: %v", err)
+	}
+	_, err = s.memoryStore.replaceMemoryEdgeLogWithFenceLocked(durable.Bytes(), "test_fixture", fence)
+	fence.release()
+	if err != nil {
+		t.Fatalf("persist durable edge fixture: %v", err)
+	}
+
+	got, err := s.memoryStore.memoryGraphTelemetrySnapshot(context.Background(), "alpha", false, 10, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("historical graph telemetry: %v", err)
+	}
+	if got.EdgeCount != unboundEdges || got.BoundEdgeCount != 0 || got.UnboundEdgeCount != unboundEdges || got.HistoricalEdgeCount != unboundEdges {
+		t.Fatalf("total and bound edge custody diverged: %#v", got)
+	}
+	if got.ConnectedDocCount != 0 || got.IsolatedDocCount != 2 || got.DensityEdgesPerDoc != 0 || got.Status != baseline.Status || got.QualityScore != baseline.QualityScore || got.QualityStatus != baseline.QualityStatus {
+		t.Fatalf("unbound evidence inflated global topology: baseline=%#v got=%#v", baseline, got)
+	}
+	if got.InferredEdgeCount != 0 || got.StaleInferredEdgeCount != 0 || got.ExplicitEdgeCount != 0 || got.TotalInferredEdgeCount != unboundEdges || got.TotalStaleInferredEdgeCount != unboundEdges {
+		t.Fatalf("unbound inferred evidence inflated topology counters: %#v", got)
+	}
+	if len(got.Relations) != 0 || len(got.Lifecycles) != 0 || len(got.TopNodes) != 0 || len(got.Recommendations) != len(baseline.Recommendations) {
+		t.Fatalf("unbound evidence inflated topology surfaces: %#v", got)
+	}
+	if strings.Contains(strings.Join(got.Recommendations, " "), "disk") {
+		t.Fatalf("telemetry recommended disk corpus for current-state connectedness: %#v", got.Recommendations)
+	}
+	if len(got.Projects) != 1 || got.Projects[0].Edges != unboundEdges || got.Projects[0].BoundEdges != 0 || got.Projects[0].ConnectedDocs != 0 || got.Projects[0].MaxNodeDegree != 0 || got.Projects[0].DensityEdgesPerDoc != 0 || len(got.Projects[0].TopRelations) != 0 {
+		t.Fatalf("project topology was inflated by unbound evidence: %#v", got.Projects)
+	}
+}
+
+func TestMemoryGraphTelemetryRequiresExactCurrentStateIndex(t *testing.T) {
+	s, gateway := newMemoryGraphTestServer(t, true)
+	defer gateway.Close()
+	if _, _, err := s.memoryStore.put(normalizedWrite{project: "alpha", fileName: "notes/a.md", content: "current state authority", topicPath: "runbooks/current"}); err != nil {
+		t.Fatalf("seed current doc: %v", err)
+	}
+
+	s.memoryStore.mu.Lock()
+	s.memoryStore.currentKeysByProject = nil
+	s.memoryStore.mu.Unlock()
+
+	if _, err := s.memoryStore.memoryGraphTelemetrySnapshot(context.Background(), "alpha", false, 10, time.Time{}); err == nil || !strings.Contains(err.Error(), "current-state") {
+		t.Fatalf("telemetry did not fail closed without exact current-state index: %v", err)
+	}
+}
+
+func TestMemoryGraphTelemetryRetiredLatestNeverContributesToTopology(t *testing.T) {
+	s, gateway := newMemoryGraphTestServer(t, true)
+	defer gateway.Close()
+	for _, file := range []string{"notes/a.md", "notes/b.md"} {
+		if _, _, err := s.memoryStore.put(normalizedWrite{project: "alpha", fileName: file, content: "retired edge fixture", topicPath: "runbooks/current"}); err != nil {
+			t.Fatalf("seed current doc: %v", err)
+		}
+	}
+	active, err := s.memoryStore.upsertMemoryEdge(context.Background(), memoryEdgeEntry{
+		EdgeID: "edge_retired_latest", SourceID: "alpha::notes/a.md", TargetID: "alpha::notes/b.md",
+		Relation: "supports", Project: "alpha", Confidence: 1, CreatedAt: "2026-08-10T00:00:00Z", Lifecycle: "durable",
+	})
+	if err != nil {
+		t.Fatalf("seed active edge: %v", err)
+	}
+	retired := active
+	retired.Lifecycle = "retired"
+	retired.CreatedAt = "2026-08-10T00:00:01Z"
+	retired.Metadata = map[string]any{"retirement_reason": "retire_stale_edge"}
+	if _, err := s.memoryStore.upsertMemoryEdge(context.Background(), retired); err != nil {
+		t.Fatalf("retire edge: %v", err)
+	}
+
+	got, err := s.memoryStore.memoryGraphTelemetrySnapshot(context.Background(), "alpha", true, 10, time.Time{})
+	if err != nil {
+		t.Fatalf("retired-edge telemetry: %v", err)
+	}
+	if got.HistoricalEdgeCount != 2 || got.RetiredEdgeCount != 1 || got.EdgeCount != 0 || got.BoundEdgeCount != 0 || got.ConnectedDocCount != 0 || got.DensityEdgesPerDoc != 0 {
+		t.Fatalf("retired latest row contributed to topology: %#v", got)
+	}
+	if got.TotalExplicitEdgeCount != 0 || len(got.Relations) != 0 || len(got.TotalRelations) != 0 || len(got.TopNodes) != 0 {
+		t.Fatalf("retired latest row contributed to edge counters: %#v", got)
 	}
 }
 
@@ -442,8 +604,8 @@ func TestRecallGraphContributionRejectsDanglingExpectedEdge(t *testing.T) {
 	if _, err := s.memoryStore.upsertMemoryEdge(context.Background(), memoryEdgeEntry{
 		SourceID: "alpha::notes/seed.md", TargetID: "alpha::notes/missing.md", Relation: "same_session",
 		Project: "alpha", TopicPath: "graph/dangling", Confidence: 0.98, CreatedAt: nowUTCISO(), Source: memoryEdgeSource,
-	}); err != nil {
-		t.Fatalf("seed dangling edge: %v", err)
+	}); err == nil {
+		t.Fatal("same_session edge with a missing endpoint must fail closed")
 	}
 	contribution := s.evaluateRecallGraphContribution(
 		context.Background(),
@@ -453,7 +615,7 @@ func TestRecallGraphContributionRejectsDanglingExpectedEdge(t *testing.T) {
 		1,
 		"alpha",
 	)
-	if anyToInt(contribution["edge_expected_match_count"], 0) != 1 || anyToInt(contribution["hydrated_expected_hit_count"], -1) != 0 || anyToBool(contribution["helped"]) {
+	if anyToInt(contribution["edge_expected_match_count"], 0) != 0 || anyToInt(contribution["hydrated_expected_hit_count"], -1) != 0 || anyToBool(contribution["helped"]) {
 		t.Fatalf("dangling edge must not count as useful graph recall: %#v", contribution)
 	}
 }
@@ -612,6 +774,44 @@ func TestMemoryEdgesBackfillInferredScoringBounded(t *testing.T) {
 	}
 }
 
+func TestMemoryEdgesBackfillRefreshesStaleDeterministicBinding(t *testing.T) {
+	s, gateway := newMemoryGraphTestServer(t, true)
+	defer gateway.Close()
+	for _, fileName := range []string{"notes/a.md", "notes/b.md"} {
+		if _, _, err := s.memoryStore.put(normalizedWrite{
+			project: "alpha", fileName: fileName, content: "initial " + fileName, topicPath: "runbooks/refresh",
+		}); err != nil {
+			t.Fatalf("seed %s: %v", fileName, err)
+		}
+	}
+	payload := `{"dry_run":false,"project":"alpha","relations":["same_topic"],"topic_peer_limit":1,"max_writes":10}`
+	first := postEdgeBackfillForTest(t, gateway.URL, payload)
+	if anyToInt(first["written"], 0) != 1 {
+		t.Fatalf("initial bound backfill did not write one edge: %#v", first)
+	}
+	edges, err := s.memoryStore.listMemoryEdges(context.Background(), memoryEdgeQuery{Project: "alpha", Relation: "same_topic", Limit: 10})
+	if err != nil || len(edges) != 1 || edges[0].Binding == nil {
+		t.Fatalf("initial current binding unavailable: edges=%#v err=%v", edges, err)
+	}
+	oldTargetEvent := edges[0].Binding.TargetEventID
+	if _, _, err := s.memoryStore.put(normalizedWrite{
+		project: "alpha", fileName: "notes/b.md", content: "updated target", topicPath: "runbooks/refresh",
+	}); err != nil {
+		t.Fatalf("update target: %v", err)
+	}
+	if edges, err := s.memoryStore.listMemoryEdges(context.Background(), memoryEdgeQuery{Project: "alpha", Relation: "same_topic", Limit: 10}); err != nil || len(edges) != 0 {
+		t.Fatalf("target update did not suppress stale edge: edges=%#v err=%v", edges, err)
+	}
+	refreshed := postEdgeBackfillForTest(t, gateway.URL, payload)
+	if anyToInt(refreshed["written"], 0) != 1 || anyToInt(refreshed["existing"], -1) != 0 {
+		t.Fatalf("stale deterministic edge id was mistaken for a current version: %#v", refreshed)
+	}
+	edges, err = s.memoryStore.listMemoryEdges(context.Background(), memoryEdgeQuery{Project: "alpha", Relation: "same_topic", Limit: 10})
+	if err != nil || len(edges) != 1 || edges[0].Binding == nil || edges[0].Binding.TargetEventID == oldTargetEvent {
+		t.Fatalf("backfill did not append the refreshed exact binding: edges=%#v err=%v", edges, err)
+	}
+}
+
 func TestMemoryEdgesBackfillDiskCorpusCoversProjectOutsideHotIndex(t *testing.T) {
 	s, gateway := newMemoryGraphTestServer(t, true)
 	defer gateway.Close()
@@ -658,8 +858,11 @@ func TestMemoryEdgesBackfillDiskCorpusCoversProjectOutsideHotIndex(t *testing.T)
 	if anyToInt(diskRun["scanned_docs"], 0) != 2 {
 		t.Fatalf("expected disk corpus to scan two docs, got %#v", diskRun)
 	}
-	if got := backfillRelationStatInt(diskRun, "inferred_related", "eligible"); got == 0 {
-		t.Fatalf("expected disk corpus inferred candidate, got %#v", diskRun)
+	if got := backfillRelationStatInt(diskRun, "inferred_related", "generated"); got == 0 || backfillRelationStatInt(diskRun, "inferred_related", "eligible") != 0 {
+		t.Fatalf("disk-only documents must remain audit candidates, got %#v", diskRun)
+	}
+	if anyToInt(diskRun["audit_only_candidates"], 0) == 0 || anyToInt(diskRun["would_write"], -1) != 0 {
+		t.Fatalf("disk-only audit candidates were presented as promotable: %#v", diskRun)
 	}
 	qualityAudit := anyMap(diskRun["quality_audit"])
 	if anyToString(qualityAudit["schema_id"]) != "memory_edge_quality_audit.v1" {
@@ -669,8 +872,12 @@ func TestMemoryEdgesBackfillDiskCorpusCoversProjectOutsideHotIndex(t *testing.T)
 		t.Fatalf("expected inferred quality counters, got %#v", qualityAudit)
 	}
 	samples, _ := asAnySlice(diskRun["samples"])
-	if len(samples) == 0 || len(anyMap(anyMap(samples[0])["quality"])) == 0 {
+	if len(samples) == 0 || len(anyMap(anyMap(samples[0])["quality"])) == 0 || !anyToBool(anyMap(samples[0])["audit_only"]) {
 		t.Fatalf("expected sample quality metadata, got %#v", diskRun["samples"])
+	}
+	writeAttempt := postEdgeBackfillForTest(t, gateway.URL, `{"dry_run":false,"project":"coldproject","corpus":"disk","relations":["inferred_related"],"include_inferred":true,"min_confidence":0.8,"inferred_min_score":0.8,"inferred_peer_limit":5,"inferred_max_token_postings":256,"sample_limit":20}`)
+	if anyToInt(writeAttempt["written"], -1) != 0 || anyToInt(writeAttempt["generated"], -1) != 0 {
+		t.Fatalf("disk-only documents crossed the current-state binding write gate: %#v", writeAttempt)
 	}
 }
 
@@ -681,7 +888,7 @@ func TestMemoryGraphPruneVolatileCompactsLegacyEdges(t *testing.T) {
 	durable, err := memoryEdgeBackfillCandidateEdge(
 		"alpha::notes/a.md",
 		"alpha::notes/b.md",
-		"same_topic",
+		"supports",
 		0.95,
 		"analysis/runs",
 		"unit",
@@ -693,7 +900,7 @@ func TestMemoryGraphPruneVolatileCompactsLegacyEdges(t *testing.T) {
 	volatile, err := memoryEdgeBackfillCandidateEdge(
 		"alpha::operating_mode__latest.json",
 		"alpha::notes/a.md",
-		"same_topic",
+		"supports",
 		0.95,
 		"analysis/runs",
 		"unit",

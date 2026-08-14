@@ -528,14 +528,18 @@ Graph quality repair is a bounded maintenance lane over that telemetry:
 scripts/agent/memory-graph-quality --all-projects --pretty
 contextlattice_memory_graph_repair --project my-project --pretty
 contextlattice_memory_graph_repair --project my-project --write --confirm-project my-project --max-writes 500 --pretty
-contextlattice_memory_graph_efficacy --refresh-cases --project my-project --graph-max-cases 3 --pretty
+contextlattice_memory_graph_efficacy --refresh-cases --project my-project --topic-prefix runbooks/cache --pretty
 make memory-graph-quality-install
 ```
 
 The job scores isolated docs, stale inferred edges, sparse density, and
 over-connected anchors. It always runs a dry-run preflight before writes, caps
 candidate and per-run write counts, scans past existing edges on later batches,
-and only writes when explicit confirmation is provided. Graph efficacy cases
+and only writes when explicit confirmation is provided. Graph efficacy uses the
+closed graph corpus evaluator (`mode=graph`, `graph_corpus=true`) and does not
+fall back to legacy saved recall. Its optional topic prefix is strict and
+single-use; omitted `--timeout` (or `--timeout 0`) means no client deadline,
+while a positive value opts into one. Graph efficacy cases
 carry separate direct seed and graph target expectations, so direct recall and
 graph lift cannot masquerade as each other. A graph hit must hydrate the target
 memory into a bounded excerpt; a dangling edge cannot pass. The launchd runner defaults to dry-run mode; set

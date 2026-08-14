@@ -5,7 +5,6 @@ import "strings"
 const (
 	recallResponseMaxModules          = 6
 	recallResponseMaxSecondaryModules = 3
-	recallResponseModuleBasis         = "server_sanitized_v1"
 	recallResponseModulePolicyVersion = "recall_response.control.v1"
 )
 
@@ -59,27 +58,20 @@ func recallResponseBuildModules(
 	}
 	primary := ordered[0]
 	scope := anyMap(response["request_scope"])
-	temporalDigest := anyToString(scope["temporal_premise_digest"])
-	snapshotDigest := anyToString(scope["snapshot_digest"])
-	receiptDigest := anyToString(scope["receipt_digest"])
 	proofRefs := recallResponseModuleProofRefs(proof)
 	modules := make([]any, 0, len(ordered))
 	for index, kind := range ordered {
 		refs := recallResponseModuleRefs(kind, response, proofRefs, source)
 		payload := recallResponseModulePayload(kind, response, refs, source)
-		binding := recallResponseModuleBinding(kind, response, policy, refs, temporalDigest, snapshotDigest, receiptDigest)
+		binding := recallResponseModuleBinding(kind, response, policy, refs)
 		module := map[string]any{
-			"component_ref":           "rrc_" + sha256Hex(anyToString(scope["scope_digest"]) + "\x00" + kind)[:24],
-			"kind":                    kind,
-			"module_type":             kind,
-			"status":                  "included",
-			"basis":                   recallResponseModuleBasis,
-			"ordinal":                 index + 1,
-			"primary":                 index == 0,
-			"proof_refs":              recallResponseAnyStrings(refs),
-			"temporal_premise_digest": temporalDigest,
-			"payload":                 payload,
-			"binding":                 binding,
+			"component_ref": "rrc_" + sha256Hex(anyToString(scope["scope_digest"]) + "\x00" + kind)[:24],
+			"kind":          kind,
+			"ordinal":       index + 1,
+			"primary":       index == 0,
+			"proof_refs":    recallResponseAnyStrings(refs),
+			"payload":       payload,
+			"binding":       binding,
 		}
 		if !recallResponseSealComponentIdentity(module) {
 			return nil, "", nil, false
@@ -112,8 +104,55 @@ func recallResponseSelectedModuleKinds(
 		if !recallResponseModuleAllowed(kind) || seen[kind] || kind == ablation {
 			continue
 		}
+		if kind == "memory_to_action" && recallResponseHasSensitiveUnavailableActionEvidence(recallResponseTemporalRows(source)) {
+			if _, ok := recallResponseSensitiveUnavailableActionStatus(recallResponseTemporalRows(source)); !ok {
+				// A legacy component hint cannot turn conflicting or excluded
+				// sensitive evidence into protected action membership.
+				continue
+			}
+		}
 		seen[kind] = true
 		requested = append(requested, kind)
+	}
+	if seen["procedure"] && seen["memory_to_action"] {
+		redundant := "procedure"
+		if requested[0] == "procedure" {
+			redundant = "memory_to_action"
+		}
+		filtered := requested[:0]
+		for _, kind := range requested {
+			if kind != redundant {
+				filtered = append(filtered, kind)
+			}
+		}
+		requested = filtered
+		delete(seen, redundant)
+	}
+	componentRows := contextPackAnyList(recallResponseDisclosure(response)["component_union"])
+	if len(componentRows) > 0 {
+		available := map[string]bool{}
+		for _, raw := range componentRows {
+			available[anyToString(anyMap(raw)["kind"])] = true
+		}
+		filtered := requested[:0]
+		for _, kind := range requested {
+			if available[kind] {
+				filtered = append(filtered, kind)
+				continue
+			}
+			delete(seen, kind)
+		}
+		requested = filtered
+	}
+	if len(requested) > 0 && ablation != "memory_to_action" && !seen["procedure"] && !seen["memory_to_action"] && recallResponseActionProjectionAllowed(source) && recallResponseHasReadyActionEvidence(recallResponseTemporalRows(source)) {
+		// A validated structured action witness is relevant regardless of the
+		// request's presentation class. Keep the classified primary first, then
+		// place the action component ahead of optional secondary layout modules
+		// so classification cannot silently remove actionable membership.
+		requested = append(requested, "")
+		copy(requested[2:], requested[1:])
+		requested[1] = "memory_to_action"
+		seen["memory_to_action"] = true
 	}
 	appendProtected := func(kind string, required bool) {
 		if required && kind != ablation && !seen[kind] {
@@ -196,10 +235,7 @@ func recallResponseModuleRefs(kind string, response map[string]any, proofRefs []
 			if !eligible || !confidenceValid {
 				continue
 			}
-			metadata := anyMap(anyMap(row["recall_metadata"])["action"])
-			if len(metadata) == 0 {
-				metadata = recallResponseProjectActionMetadata(row)
-			}
+			metadata := recallResponseProjectActionMetadata(row)
 			if len(metadata) > 0 {
 				add(recallResponseProjectedRowRef(row, response))
 			}
@@ -361,7 +397,7 @@ func recallResponseModulePayload(kind string, response map[string]any, refs []st
 	return map[string]any{}
 }
 
-func recallResponseModuleBinding(kind string, response map[string]any, policy validatedRecallResponsePolicyInput, refs []string, temporalDigest, snapshotDigest, receiptDigest string) map[string]any {
+func recallResponseModuleBinding(kind string, response map[string]any, policy validatedRecallResponsePolicyInput, refs []string) map[string]any {
 	scope := anyMap(response["request_scope"])
 	proofDigest := "sha256:" + sha256Hex(recallResponseCanonicalJSON(recallResponseAnyStrings(refs)))
 	canaryScope, scopeOK := recallResponseCanaryScopeFromResponse(response)
@@ -372,22 +408,29 @@ func recallResponseModuleBinding(kind string, response map[string]any, policy va
 		bucket = recallResponseComponentBucket(canaryScope, kind, resolved.PolicyVersion)
 	}
 	return map[string]any{
-		"condition":               policy.condition,
-		"ablation":                policy.ablation,
-		"arm":                     recallResponseComponentArm(bucket, resolved.BasisPoints),
-		"exposure_bucket":         bucket,
-		"policy_version":          resolved.PolicyVersion,
-		"proof_digest":            proofDigest,
-		"snapshot_digest":         snapshotDigest,
-		"receipt_digest":          receiptDigest,
-		"owner_ref":               anyToString(scope["owner_ref"]),
-		"task_ref":                anyToString(scope["task_ref"]),
-		"lane_ref":                anyToString(scope["execution_lane_ref"]),
-		"intent":                  anyToString(scope["retrieval_intent"]),
-		"temporal_premise_digest": temporalDigest,
-		"verifier_digest":         "sha256:" + sha256Hex(kind+"\x00"+proofDigest),
-		"component_digest":        "",
+		"condition":            policy.condition,
+		"ablation":             policy.ablation,
+		"arm":                  recallResponseComponentArm(bucket, resolved.BasisPoints),
+		"exposure_bucket":      bucket,
+		"policy_version":       resolved.PolicyVersion,
+		"proof_digest":         proofDigest,
+		"scope_binding_digest": recallResponseModuleScopeBindingDigest(scope),
+		"verifier_digest":      "sha256:" + sha256Hex(kind+"\x00"+proofDigest),
+		"component_digest":     "",
 	}
+}
+
+func recallResponseModuleScopeBindingDigest(scope map[string]any) string {
+	material := map[string]any{
+		"snapshot_digest":         scope["snapshot_digest"],
+		"receipt_digest":          scope["receipt_digest"],
+		"owner_ref":               scope["owner_ref"],
+		"task_ref":                scope["task_ref"],
+		"lane_ref":                scope["execution_lane_ref"],
+		"intent":                  scope["retrieval_intent"],
+		"temporal_premise_digest": scope["temporal_premise_digest"],
+	}
+	return "sha256:" + sha256Hex(recallResponseCanonicalJSON(material))
 }
 
 func recallResponseSafeNextMove(response map[string]any) string {
@@ -452,7 +495,6 @@ func recallResponseValidateModules(value []any, proof, scope map[string]any) boo
 			return false
 		}
 		if !recallResponseModuleRefsWithin(module["proof_refs"], proofSet) ||
-			anyToString(module["temporal_premise_digest"]) != anyToString(scope["temporal_premise_digest"]) ||
 			anyToString(module["component_ref"]) != "rrc_"+sha256Hex(anyToString(scope["scope_digest"]) + "\x00" + kind)[:24] ||
 			!recallResponseModuleBindingValid(module, scope) ||
 			!recallResponseModulePayloadValid(kind, anyMap(module["payload"]), module["proof_refs"], proof, scope) {
@@ -493,13 +535,7 @@ func recallResponseModuleBindingValid(module, scope map[string]any) bool {
 		anyToString(binding["condition"]) != anyToString(scope["condition"]) ||
 		anyToString(binding["ablation"]) != anyToString(scope["ablation"]) ||
 		anyToString(binding["proof_digest"]) != proofDigest ||
-		anyToString(binding["snapshot_digest"]) != anyToString(scope["snapshot_digest"]) ||
-		anyToString(binding["receipt_digest"]) != anyToString(scope["receipt_digest"]) ||
-		anyToString(binding["owner_ref"]) != anyToString(scope["owner_ref"]) ||
-		anyToString(binding["task_ref"]) != anyToString(scope["task_ref"]) ||
-		anyToString(binding["lane_ref"]) != anyToString(scope["execution_lane_ref"]) ||
-		anyToString(binding["intent"]) != anyToString(scope["retrieval_intent"]) ||
-		anyToString(binding["temporal_premise_digest"]) != anyToString(scope["temporal_premise_digest"]) ||
+		anyToString(binding["scope_binding_digest"]) != recallResponseModuleScopeBindingDigest(scope) ||
 		anyToString(binding["verifier_digest"]) != "sha256:"+sha256Hex(kind+"\x00"+proofDigest) ||
 		anyToString(binding["component_digest"]) != anyToString(module["component_digest"]) {
 		return false
@@ -574,19 +610,19 @@ func recallResponseModulePayloadValid(kind string, payload map[string]any, modul
 }
 
 func recallResponseModuleShape(module map[string]any) bool {
-	if module == nil || len(module) != 12 {
+	if module == nil || len(module) != 8 {
 		return false
 	}
-	for _, key := range []string{"component_ref", "kind", "module_type", "status", "basis", "ordinal", "primary", "proof_refs", "temporal_premise_digest", "payload", "binding", "component_digest"} {
+	for _, key := range []string{"component_ref", "kind", "ordinal", "primary", "proof_refs", "payload", "binding", "component_digest"} {
 		if _, ok := module[key]; !ok {
 			return false
 		}
 	}
 	kind := anyToString(module["kind"])
-	if !recallResponseModuleAllowed(kind) || anyToString(module["module_type"]) != kind || anyToString(module["status"]) != "included" || anyToString(module["basis"]) != recallResponseModuleBasis || !recallResponseExactOpaqueID(anyToString(module["component_ref"]), "rrc_") || !recallResponseValidDigest(anyToString(module["component_digest"])) || anyToString(module["component_digest"]) != recallResponseComponentDigest(module) {
+	if !recallResponseModuleAllowed(kind) || !recallResponseExactOpaqueID(anyToString(module["component_ref"]), "rrc_") || !recallResponseValidDigest(anyToString(module["component_digest"])) || anyToString(module["component_digest"]) != recallResponseComponentDigest(module) {
 		return false
 	}
-	if !recallResponseStringList(module["proof_refs"]) || len(contextPackAnyList(module["proof_refs"])) > recallResponseMaxProofRefs || !recallResponseValidDigest(anyToString(module["temporal_premise_digest"])) {
+	if !recallResponseStringList(module["proof_refs"]) || len(contextPackAnyList(module["proof_refs"])) > recallResponseMaxProofRefs {
 		return false
 	}
 	payload := anyMap(module["payload"])

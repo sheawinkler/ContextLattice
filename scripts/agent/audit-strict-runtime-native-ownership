@@ -11,8 +11,7 @@ from typing import Any
 from _common import (
     agent_contract_registry_identity,
     emit,
-    now_iso,
-    request_json,
+    request_json_for_validation,
     runtime_identity_expectation_findings,
     runtime_payload_freshness,
 )
@@ -161,7 +160,7 @@ def main() -> int:
     parser.add_argument("--pretty", action="store_true")
     args = parser.parse_args()
 
-    payload = request_json("GET", "/ops/native-ownership", None, args.timeout)
+    payload = request_json_for_validation("GET", "/ops/native-ownership", None, args.timeout)
     result = audit_payload(
         payload,
         expected_source_commit=args.expected_source_commit,

@@ -290,7 +290,7 @@ func nativeQdrantCollectionDimProbe(
 		return 0, err
 	}
 	nativeApplyQdrantHeaders(req, false)
-	resp, err := client.Do(req)
+	resp, err := retrievalHTTPDo(client, req)
 	if err != nil {
 		return 0, err
 	}
@@ -384,7 +384,7 @@ func nativeQdrantEnsureCollection(
 		return err
 	}
 	nativeApplyQdrantHeaders(req, true)
-	resp, err := client.Do(req)
+	resp, err := retrievalHTTPDo(client, req)
 	if err != nil {
 		return err
 	}
@@ -453,7 +453,9 @@ func (s *server) upsertQdrantFromWrite(
 	item normalizedWrite,
 	eventID string,
 ) (string, error) {
-	if status := s.exactStateFanoutSkipStatus(item); status != "" {
+	if status, err := s.exactStateFanoutSkipStatusChecked(ctx, item); err != nil {
+		return "failed_exact_state_validation", err
+	} else if status != "" {
 		return status, nil
 	}
 	if !nativeSourceAdapterEnabled(sourceQdrant, true) {
@@ -480,7 +482,10 @@ func (s *server) upsertQdrantFromWrite(
 	if err := nativeQdrantEnsureCollection(ctx, s.client, baseURL, collection, len(vector)); err != nil {
 		return "failed_schema", err
 	}
-	guardedItem, releasePath, skipStatus := s.acquireExactStateFanoutPath(item)
+	guardedItem, releasePath, skipStatus, err := s.acquireExactStateFanoutPathContext(ctx, item)
+	if err != nil {
+		return "failed_exact_state_validation", err
+	}
 	if skipStatus != "" {
 		return skipStatus, nil
 	}
@@ -531,7 +536,7 @@ func (s *server) upsertQdrantFromWrite(
 		return "failed_request", err
 	}
 	nativeApplyQdrantHeaders(req, true)
-	resp, err := s.client.Do(req)
+	resp, err := retrievalHTTPDo(s.client, req)
 	if err != nil {
 		return "failed_upsert", err
 	}
@@ -639,7 +644,7 @@ func (s *server) queryQdrantSource(
 		return nil, warnings, err
 	}
 	nativeApplyQdrantHeaders(req, true)
-	resp, err := s.client.Do(req)
+	resp, err := retrievalHTTPDo(s.client, req)
 	if err != nil {
 		return nil, warnings, err
 	}
@@ -801,7 +806,7 @@ func (s *server) queryWeaviateSource(
 	for key, value := range nativeWeaviateHeaders() {
 		req.Header.Set(key, value)
 	}
-	resp, err := s.client.Do(req)
+	resp, err := retrievalHTTPDo(s.client, req)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1157,7 +1162,9 @@ func (s *server) upsertPgvectorFromWrite(
 	item normalizedWrite,
 	eventID string,
 ) (string, error) {
-	if status := s.exactStateFanoutSkipStatus(item); status != "" {
+	if status, err := s.exactStateFanoutSkipStatusChecked(ctx, item); err != nil {
+		return "failed_exact_state_validation", err
+	} else if status != "" {
 		return status, nil
 	}
 	if !nativeSourceAdapterEnabled(sourcePgvector, true) {
@@ -1190,7 +1197,10 @@ func (s *server) upsertPgvectorFromWrite(
 	if err != nil {
 		return "failed_schema_introspect", err
 	}
-	guardedItem, releasePath, skipStatus := s.acquireExactStateFanoutPath(item)
+	guardedItem, releasePath, skipStatus, err := s.acquireExactStateFanoutPathContext(ctx, item)
+	if err != nil {
+		return "failed_exact_state_validation", err
+	}
 	if skipStatus != "" {
 		return skipStatus, nil
 	}
@@ -1809,7 +1819,7 @@ func (s *server) queryMemoryBankSpikeBackend(
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := s.client.Do(req)
+	resp, err := retrievalHTTPDo(s.client, req)
 	if err != nil {
 		return nil, err
 	}

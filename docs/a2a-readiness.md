@@ -12,7 +12,14 @@ dependency on the A2A SDK yet.
 - Map A2A concepts to ContextLattice boundaries before exposing any public A2A
   server:
   - Agent Card -> advertised ContextLattice capability/profile metadata.
-  - Task lifecycle -> `/agents/tasks` plus `agent_task_result.v1`.
+  - Task lifecycle -> `/agents/tasks` plus the versioned Gateway Go task
+    manifest, attempt, publication, artifact-reference, delivery, review, and
+    integration contracts. `agent_task_result.v1` remains a compatibility
+    reader for existing clients.
+  - Gateway Go with SQLite/WAL is the sole authoritative task writer. Runner
+    exit is only `execution_observed`; writeback and durable per-recipient
+    delivery rows are required before `execution_succeeded`, and review and
+    integration remain explicit, separate decisions.
   - Streaming/push -> future event bridge; do not bolt this onto writeback.
   - Opaque-agent collaboration -> no raw internal memory, prompts, tool calls,
     or secrets cross the boundary.

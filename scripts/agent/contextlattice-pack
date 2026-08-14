@@ -4,21 +4,40 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 from typing import Any
+from datetime import datetime
 
-from _common import REPO_ROOT, emit, ensure_agent_session, now_iso, read_agent_session_state, request_json, write_agent_session_state
+from _common import REPO_ROOT, emit, ensure_agent_session, now_iso, read_agent_session_state, redact_public_value, request_json_for_validation, write_agent_session_state
 
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
-from agent_contracts import attach_format_contract  # noqa: E402
+from agent_contracts import (  # noqa: E402
+    PROVIDER_OVERFLOW_PATTERNS,
+    agent_contract_envelope_attestation_valid,
+    agent_contract_json_domain_valid,
+    attach_format_contract,
+    build_objective_runtime_attestation,
+    load_agent_contracts_registry,
+    retrieval_proof_pair_valid,
+    validate_agent_contract_payload,
+)
 
 
 DEFAULT_CLIENT_TIMEOUT_SECS = 200.0
+MIN_CONTEXT_PACK_CONTRACT_BUDGET_CHARS = 8192
+MAX_CONTEXT_PACK_IDENTITY_CHARS = 256
+MAX_CONTEXT_PACK_CONTRACT_LIST_ITEMS = 64
+MAX_CONTEXT_PACK_COUNT = (1 << 63) - 1
+MAX_CONTEXT_PACK_REQUEST_BUDGET_CHARS = (1 << 63) - 1
+MAX_PUBLIC_TRACE_ID_BYTES = 47
+CANONICAL_TOKEN_BUDGET_SCHEMA_ID = "contextlattice_context_token_budget.v1"
 
 
 def client_timeout_from_env() -> float:
@@ -81,6 +100,625 @@ def encoded_len(value: Any) -> int:
     return len((json.dumps(value) + "\n").encode("utf-8"))
 
 
+def emitted_len(value: Any, *, pretty: bool = False) -> int:
+    safe = redact_public_value(value)
+    if not agent_contract_json_domain_valid(safe):
+        raise ValueError("public output is outside the JSON contract domain")
+    return len(
+        (
+            json.dumps(safe, allow_nan=False, indent=2 if pretty else None, sort_keys=pretty)
+            + "\n"
+        ).encode("utf-8")
+    )
+
+
+def stabilize_public_contract_accounting(value: Any) -> None:
+    if not isinstance(value, dict):
+        return
+    contract = value.get("format_contract")
+    if not isinstance(contract, dict):
+        return
+    for _ in range(8):
+        safe = redact_public_value(value)
+        canonical_bytes = len(
+            json.dumps(safe, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        )
+        if contract.get("actual_json_bytes") == canonical_bytes:
+            return
+        contract["actual_json_bytes"] = canonical_bytes
+
+
+def public_attached_contract(contract_id: str, value: Any) -> dict[str, Any]:
+    projected = redact_public_value(value)
+    if not isinstance(projected, dict):
+        projected = {}
+    projected = attach_format_contract(contract_id, projected)
+    projected = redact_public_value(projected)
+    if not isinstance(projected, dict):
+        return {}
+    projected = restamp_nested_public_contracts(projected, root=True)
+    stabilize_public_contract_accounting(projected)
+    return projected
+
+
+def public_run_advisor(value: Any) -> dict[str, Any]:
+    return public_attached_contract("run_advisor.v1", slim_run_advisor(value))
+
+
+def public_route(field: str, value: Any) -> str:
+    """Return an exact public product route or omit the untrusted value."""
+
+    if not isinstance(value, str):
+        return ""
+    projected = redact_public_value({field: value})
+    if isinstance(projected, dict) and projected.get(field) == value:
+        return value
+    return ""
+
+
+def attach_context_pack_contract(payload: dict[str, Any]) -> dict[str, Any]:
+    pack = payload.get("context_pack") if isinstance(payload.get("context_pack"), dict) else {}
+    reconcile_context_pack_token_budget(payload)
+    advisor = public_run_advisor(payload.get("run_advisor") or pack.get("run_advisor"))
+    payload["run_advisor"] = advisor
+    if pack and "run_advisor" in pack:
+        pack["run_advisor"] = advisor
+        payload["context_pack"] = pack
+    projected = redact_public_value(payload)
+    if not isinstance(projected, dict):
+        projected = {"ok": False}
+    payload = restamp_nested_public_contracts(projected, root=True)
+    return attach_format_contract("context_pack_response.v1", payload)
+
+
+def restamp_nested_public_contracts(value: Any, *, root: bool = False) -> Any:
+    """Refresh nested public contracts or remove metadata invalidated by projection."""
+
+    if isinstance(value, list):
+        return [restamp_nested_public_contracts(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    result = {key: restamp_nested_public_contracts(item) for key, item in value.items()}
+    if root:
+        return result
+    format_contract = result.get("format_contract")
+    contract_id = str(format_contract.get("schema_id") or "") if isinstance(format_contract, dict) else ""
+    if contract_id not in {
+        "agent_preflight_response.v1",
+        "objective_runtime_state.v1",
+        "policy_context_package.v1",
+        "run_advisor.v1",
+    }:
+        return result
+    stamped = public_attached_contract(contract_id, result)
+    contract = stamped.get("format_contract")
+    if (
+        isinstance(contract, dict)
+        and contract.get("contract_valid") is True
+        and not validate_agent_contract_payload(contract_id, stamped)
+    ):
+        return stamped
+    result.pop("format_contract", None)
+    return result
+
+
+def context_pack_output_fits(value: Any, budget_chars: int, *, pretty: bool = False) -> bool:
+    if not isinstance(value, dict):
+        return False
+    stabilize_public_contract_accounting(value)
+    contract = value.get("format_contract")
+    try:
+        actual_bytes = int(contract.get("actual_json_bytes") or 0) if isinstance(contract, dict) else 0
+        maximum_bytes = int(contract.get("max_total_json_bytes") or 0) if isinstance(contract, dict) else 0
+    except (TypeError, ValueError, OverflowError):
+        return False
+    try:
+        public_value = redact_public_value(value)
+        public_domain_valid = agent_contract_json_domain_valid(public_value)
+        public_contract_valid = (
+            isinstance(public_value, dict)
+            and not validate_agent_contract_payload("context_pack_response.v1", public_value)
+        )
+        wire_bytes = emitted_len(value, pretty=pretty) if public_domain_valid else budget_chars + 1
+    except (TypeError, ValueError, OverflowError, UnicodeEncodeError, RecursionError):
+        return False
+    return (
+        isinstance(contract, dict)
+        and contract.get("contract_valid") is True
+        and 0 < actual_bytes <= maximum_bytes
+        and public_domain_valid
+        and public_contract_valid
+        and wire_bytes <= budget_chars
+    )
+
+
+def nonnegative_int(value: Any) -> int:
+    return bounded_nonnegative_int(value)[0]
+
+
+def normalized_context_budget_chars(value: Any) -> tuple[int, bool]:
+    """Return a JSON-domain-safe requested budget and whether it was rejected."""
+
+    if isinstance(value, bool):
+        return 1, True
+    try:
+        requested = int(value or 0)
+    except (TypeError, ValueError, OverflowError):
+        return 1, True
+    if requested > MAX_CONTEXT_PACK_REQUEST_BUDGET_CHARS:
+        return 1, True
+    return max(1, requested), False
+
+
+def bounded_nonnegative_int(value: Any) -> tuple[int, bool]:
+    if value in (None, ""):
+        return 0, False
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0, True
+    if isinstance(value, float) and (not math.isfinite(value) or not value.is_integer()):
+        return 0, True
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError, OverflowError):
+        return 0, value not in (None, "")
+    if parsed < 0 or parsed > MAX_CONTEXT_PACK_COUNT:
+        return 0, True
+    return parsed, False
+
+
+def proof_exceeds_context_contract_list_limit(value: Any) -> bool:
+    if isinstance(value, dict):
+        return any(proof_exceeds_context_contract_list_limit(item) for item in value.values())
+    if isinstance(value, list):
+        return len(value) > MAX_CONTEXT_PACK_CONTRACT_LIST_ITEMS or any(
+            proof_exceeds_context_contract_list_limit(item) for item in value
+        )
+    return False
+
+
+def proof_contains_outer_boundary_mutable_text(value: Any) -> bool:
+    if isinstance(value, dict):
+        return any(proof_contains_outer_boundary_mutable_text(item) for item in value.values())
+    if isinstance(value, list):
+        return any(proof_contains_outer_boundary_mutable_text(item) for item in value)
+    if isinstance(value, str):
+        lowered = value.lower()
+        return len(value.encode("utf-8")) > 6000 or any(pattern in lowered for pattern in PROVIDER_OVERFLOW_PATTERNS)
+    return False
+
+
+def bounded_retrieval_proof(value: Any, kind: str, max_bytes: int = 1800) -> dict[str, Any]:
+    proof = dict(value) if isinstance(value, dict) else {}
+    if not proof:
+        return {}
+    if kind == "memory_trust_assessment":
+        count_fields = (
+            "assessed_count",
+            "quarantine_count",
+            "deduplicated_count",
+            "policy_omitted_count",
+            "input_truncated_count",
+        )
+        compact = {
+            "schema_id": "memory_trust_assessment.v1",
+            "canonical_path": "$.memory_trust_assessment",
+        }
+    else:
+        count_fields = ("candidate_count", "decision_count", "input_truncated_count")
+        trace_id, trace_id_omitted = public_trace_identity(proof.get("trace_id"))
+        compact = {
+            "schema_id": "retrieval_decision_trace.v1",
+            "canonical_path": "$.retrieval_decision_trace",
+            "trace_id": trace_id,
+            "coverage_complete": bool(proof.get("coverage_complete")),
+        }
+        if trace_id_omitted:
+            compact["trace_id_omitted"] = True
+    count_fields_omitted: list[str] = []
+    for field in count_fields:
+        compact[field], omitted = bounded_nonnegative_int(proof.get(field))
+        if omitted:
+            count_fields_omitted.append(field)
+    if count_fields_omitted:
+        compact["count_fields_omitted"] = count_fields_omitted
+    existing_digest = str(proof.get("canonical_digest") or "")
+    existing_bounded = (
+        proof.get("bounded_projection") is True
+        and len(existing_digest) == 71
+        and existing_digest.startswith("sha256:")
+        and existing_digest == existing_digest.lower()
+    )
+    if existing_bounded:
+        try:
+            int(existing_digest[7:], 16)
+        except ValueError:
+            existing_bounded = False
+    if existing_bounded:
+        compact.update(
+            {
+                "available": bool(proof.get("available", True)),
+                "bounded_projection": True,
+                "canonical_digest": existing_digest,
+            }
+        )
+        if proof.get("trace_id_omitted") is True:
+            compact["trace_id_omitted"] = True
+        if proof.get("count_fields_omitted"):
+            compact["count_fields_omitted"] = bounded_text_list(proof.get("count_fields_omitted"), len(count_fields), 40)
+        return compact
+    proof_list_exceeds_context_contract = proof_exceeds_context_contract_list_limit(proof)
+    proof_changes_at_public_boundary = redact_public_value(proof) != proof
+    proof_changes_at_outer_context_boundary = proof_contains_outer_boundary_mutable_text(proof)
+    if encoded_len(proof) <= max_bytes and not proof_list_exceeds_context_contract and not proof_changes_at_public_boundary and not proof_changes_at_outer_context_boundary and not count_fields_omitted and not (kind == "retrieval_decision_trace" and trace_id_omitted):
+        return proof
+    canonical = json.dumps(proof, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    compact.update(
+        {
+            "available": bool(proof.get("available", True)),
+            "bounded_projection": True,
+            "canonical_digest": "sha256:" + hashlib.sha256(canonical).hexdigest(),
+        }
+    )
+    return compact
+
+
+def exact_contract_integer(value: Any, expected: Any) -> bool:
+    return (
+        isinstance(value, int)
+        and not isinstance(value, bool)
+        and -(1 << 63) <= value <= (1 << 63) - 1
+        and isinstance(expected, int)
+        and not isinstance(expected, bool)
+        and value == expected
+    )
+
+
+def canonical_retrieval_proof(value: Any, kind: str, *, allow_reference: bool = False) -> dict[str, Any]:
+    proof = dict(value) if isinstance(value, dict) else {}
+    expected_schema = "memory_trust_assessment.v1" if kind == "memory_trust_assessment" else "retrieval_decision_trace.v1"
+    receipt_list = "assessments" if kind == "memory_trust_assessment" else "decisions"
+    if proof.get("schema_id") != expected_schema:
+        return {}
+    if receipt_list in proof:
+        full_count_fields = (
+            (
+                "version",
+                "input_candidate_count",
+                "processed_candidate_count",
+                "input_truncated_count",
+                "assessed_count",
+                "quarantine_count",
+                "deduplicated_count",
+                "policy_omitted_count",
+            )
+            if kind == "memory_trust_assessment"
+            else ("version", "candidate_count", "processed_candidate_count", "input_truncated_count", "decision_count")
+        )
+        try:
+            registry = load_agent_contracts_registry()
+        except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+            return {}
+        if (
+            isinstance(proof.get(receipt_list), list)
+            and proof.get("ok") is True
+            and proof.get("bounded") is True
+            and proof.get("version") == 1
+            and proof.get("assessed_count" if kind == "memory_trust_assessment" else "decision_count") == len(proof[receipt_list])
+            and agent_contract_envelope_attestation_valid(expected_schema, proof, registry)
+            and not validate_agent_contract_payload(expected_schema, proof)
+            and all(
+                isinstance(proof.get(field), int)
+                and not isinstance(proof.get(field), bool)
+                and 0 <= proof[field] <= MAX_CONTEXT_PACK_COUNT
+                for field in full_count_fields
+            )
+        ):
+            return proof
+        return {}
+    if proof.get("available") is False and proof.get("canonical_path") == f"$.{kind}":
+        return {
+            "schema_id": expected_schema,
+            "canonical_path": f"$.{kind}",
+            "available": False,
+            "reason": "retrieval proof was unavailable at this boundary",
+        }
+    digest = str(proof.get("canonical_digest") or "")
+    if proof.get("bounded_projection") is True and proof.get("canonical_path") == f"$.{kind}" and len(digest) == 71 and digest.startswith("sha256:") and digest == digest.lower():
+        try:
+            int(digest[7:], 16)
+        except ValueError:
+            return {}
+        count_fields = (
+            ("assessed_count", "quarantine_count", "deduplicated_count", "policy_omitted_count", "input_truncated_count")
+            if kind == "memory_trust_assessment"
+            else ("candidate_count", "decision_count", "input_truncated_count")
+        )
+        expected_fields = {
+            "schema_id",
+            "canonical_path",
+            "available",
+            "bounded_projection",
+            "canonical_digest",
+            *count_fields,
+        }
+        if proof.get("available") is not True or not all(
+            isinstance(proof.get(field), int)
+            and not isinstance(proof.get(field), bool)
+            and 0 <= proof[field] <= MAX_CONTEXT_PACK_COUNT
+            for field in count_fields
+        ):
+            return {}
+        if kind == "retrieval_decision_trace":
+            expected_fields.update(("trace_id", "coverage_complete"))
+            trace_id = proof.get("trace_id")
+            if not isinstance(proof.get("coverage_complete"), bool) or not isinstance(trace_id, str):
+                return {}
+            if proof.get("trace_id_omitted") is True:
+                expected_fields.add("trace_id_omitted")
+                if trace_id:
+                    return {}
+            else:
+                bounded_trace_id, trace_id_omitted = public_trace_identity(trace_id)
+                if trace_id_omitted or not trace_id or bounded_trace_id != trace_id:
+                    return {}
+        if set(proof) == expected_fields:
+            return proof
+        return {}
+    if allow_reference and proof.get("canonical_path") == f"$.{kind}":
+        if kind == "memory_trust_assessment":
+            required_counts = (
+                "assessed_count",
+                "quarantine_count",
+                "deduplicated_count",
+                "policy_omitted_count",
+                "input_truncated_count",
+            )
+            if set(proof) == {"schema_id", "canonical_path", *required_counts} and all(
+                isinstance(proof.get(field), int) and not isinstance(proof.get(field), bool) and 0 <= proof[field] <= MAX_CONTEXT_PACK_COUNT
+                for field in required_counts
+            ):
+                return proof
+        else:
+            required_counts = ("candidate_count", "decision_count", "input_truncated_count")
+            trace_id = proof.get("trace_id")
+            bounded_trace_id, trace_id_omitted = public_trace_identity(trace_id)
+            if (
+                set(proof) == {"schema_id", "canonical_path", "trace_id", "coverage_complete", *required_counts}
+                and isinstance(trace_id, str)
+                and not trace_id_omitted
+                and bounded_trace_id == trace_id
+                and bool(trace_id)
+                and isinstance(proof.get("coverage_complete"), bool)
+                and all(
+                    isinstance(proof.get(field), int) and not isinstance(proof.get(field), bool) and 0 <= proof[field] <= MAX_CONTEXT_PACK_COUNT
+                    for field in required_counts
+                )
+            ):
+                return proof
+    return {}
+
+
+def select_retrieval_proof_pair(
+    root: Any,
+    nested: Any,
+    compiler: Any,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    reason = "a same-origin retrieval proof pair was not available before the outer boundary"
+    unavailable = (
+        {
+            "schema_id": "memory_trust_assessment.v1",
+            "canonical_path": "$.memory_trust_assessment",
+            "available": False,
+            "reason": reason,
+        },
+        {
+            "schema_id": "retrieval_decision_trace.v1",
+            "canonical_path": "$.retrieval_decision_trace",
+            "available": False,
+            "reason": reason,
+        },
+    )
+    for owner, allow_reference in ((root, True), (nested, False), (compiler, False)):
+        if not isinstance(owner, dict):
+            continue
+        if "memory_trust_assessment" not in owner and "retrieval_decision_trace" not in owner:
+            continue
+        assessment = canonical_retrieval_proof(
+            owner.get("memory_trust_assessment"),
+            "memory_trust_assessment",
+            allow_reference=allow_reference,
+        )
+        trace = canonical_retrieval_proof(
+            owner.get("retrieval_decision_trace"),
+            "retrieval_decision_trace",
+            allow_reference=allow_reference,
+        )
+        if assessment and trace and retrieval_proof_pair_valid(assessment, trace):
+            return assessment, trace
+        return unavailable
+    return unavailable
+
+
+def reconcile_retrieval_proof_pair(
+    assessment: dict[str, Any],
+    trace: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    if not assessment or not trace:
+        return assessment, trace
+    if retrieval_proof_pair_valid(assessment, trace):
+        return assessment, trace
+    reason = "retrieval proof pair failed reconciliation before the outer boundary"
+    return (
+        {
+            "schema_id": "memory_trust_assessment.v1",
+            "canonical_path": "$.memory_trust_assessment",
+            "available": False,
+            "reason": reason,
+        },
+        {
+            "schema_id": "retrieval_decision_trace.v1",
+            "canonical_path": "$.retrieval_decision_trace",
+            "available": False,
+            "reason": reason,
+        },
+    )
+
+
+def bounded_text(value: Any, limit: int) -> str:
+    return str(value or "")[: max(0, int(limit))]
+
+
+def bounded_identity(value: Any, public_field: str = "") -> tuple[str, bool]:
+    if value in (None, ""):
+        return "", False
+    if not isinstance(value, str):
+        return "", True
+    text = value
+    try:
+        encoded_bytes = len(text.encode("utf-8"))
+    except UnicodeEncodeError:
+        return "", True
+    if len(text) > MAX_CONTEXT_PACK_IDENTITY_CHARS or encoded_bytes > MAX_CONTEXT_PACK_IDENTITY_CHARS:
+        return "", True
+    if public_field:
+        projected = redact_public_value({public_field: text})
+        if not isinstance(projected, dict) or projected.get(public_field) != text:
+            return "", True
+    return text, False
+
+
+def project_context_pack_identity_authority(
+    value: Any,
+    authoritative_fields: dict[str, str],
+    *,
+    depth: int = 0,
+    path: tuple[str, ...] = (),
+) -> Any:
+    if depth > 64:
+        return None
+    if isinstance(value, list):
+        return [
+            project_context_pack_identity_authority(item, authoritative_fields, depth=depth + 1, path=path)
+            for item in value
+        ]
+    if not isinstance(value, dict):
+        return value
+    proof_paths = {
+        ("memory_trust_assessment",),
+        ("retrieval_decision_trace",),
+        ("context_pack", "memory_trust_assessment"),
+        ("context_pack", "retrieval_decision_trace"),
+        ("context_compiler", "memory_trust_assessment"),
+        ("context_compiler", "retrieval_decision_trace"),
+        ("context_pack", "context_compiler", "memory_trust_assessment"),
+        ("context_pack", "context_compiler", "retrieval_decision_trace"),
+    }
+    if path in proof_paths:
+        return dict(value)
+    structural_forbidden = {
+        "hookspecificoutput",
+        "messages",
+        "toolcalls",
+        "functioncall",
+        "rawcontextlatticejson",
+        "rawprompt",
+    }
+    projected: dict[str, Any] = {}
+    omitted = {
+        item
+        for item in as_list(value.get("identity_omitted"))
+        if item in {"session_id", "agent_id"}
+    }
+    seen: set[str] = set()
+    for key, item in value.items():
+        canonical = "".join(character for character in str(key).lower() if character.isalnum())
+        if canonical in structural_forbidden:
+            continue
+        if canonical in {"sessionid", "agentid"}:
+            seen.add("session_id" if canonical == "sessionid" else "agent_id")
+            continue
+        if key == "identity_omitted":
+            continue
+        projected[key] = project_context_pack_identity_authority(
+            item, authoritative_fields, depth=depth + 1, path=(*path, str(key))
+        )
+    seen.update(omitted)
+    for field in seen:
+        identity = authoritative_fields.get(field, "")
+        if identity:
+            projected[field] = identity
+            omitted.discard(field)
+        else:
+            omitted.add(field)
+    if omitted:
+        projected["identity_omitted"] = sorted(omitted)
+    return projected
+
+
+def public_trace_identity(value: Any) -> tuple[str, bool]:
+    trace_id, omitted = bounded_identity(value, "trace_id")
+    if omitted or not re.fullmatch(r"rdt_[0-9a-f]{24}", trace_id) or len(trace_id.encode("utf-8")) > MAX_PUBLIC_TRACE_ID_BYTES:
+        return "", bool(value)
+    return trace_id, False
+
+
+def bounded_text_list(value: Any, limit: int, item_chars: int = 160) -> list[str]:
+    return [bounded_text(item, item_chars) for item in as_list(value)[: max(0, int(limit))] if str(item or "")]
+
+
+def compact_token_budget(value: Any) -> dict[str, Any]:
+    budget = as_dict(value)
+    if not budget:
+        return {}
+    out: dict[str, Any] = {}
+    out["schema_id"] = CANONICAL_TOKEN_BUDGET_SCHEMA_ID
+    for field in ("active", "tokenizer_exact"):
+        if isinstance(budget.get(field), bool):
+            out[field] = budget[field]
+    for field in (
+        "agent_context_budget_tokens",
+        "model_context_window_tokens",
+        "reserved_response_tokens",
+        "already_loaded_tokens",
+        "target_context_pack_tokens",
+        "ranked_evidence_budget_tokens",
+        "ranked_evidence_tokens",
+        "used_tokens_estimate",
+        "selected_count",
+        "omitted_high_value_count",
+    ):
+        if field in budget:
+            out[field], omitted = bounded_nonnegative_int(budget[field])
+            if omitted:
+                out.setdefault("numeric_fields_omitted", []).append(field)
+    for field in ("estimate_method", "calibration_grade", "tokenizer_encoding", "selection_strategy", "compression_level"):
+        if budget.get(field) not in (None, ""):
+            out[field] = bounded_text(budget[field], 96)
+    return out
+
+
+def reconcile_context_pack_token_budget(payload: dict[str, Any]) -> None:
+    context_pack = payload.get("context_pack") if isinstance(payload.get("context_pack"), dict) else {}
+    token_budget = compact_token_budget(
+        first_dict(payload.get("token_budget"), context_pack.get("token_budget"), context_pack.get("tokenBudget"))
+    )
+    payload.pop("token_budget", None)
+    context_pack.pop("token_budget", None)
+    context_pack.pop("tokenBudget", None)
+    prompt_sections = context_pack.get("prompt_sections") if isinstance(context_pack.get("prompt_sections"), dict) else {}
+    prompt_had_budget = "token_budget" in prompt_sections or "tokenBudget" in prompt_sections
+    prompt_sections.pop("token_budget", None)
+    prompt_sections.pop("tokenBudget", None)
+    if not token_budget:
+        return
+    token_budget["schema_id"] = CANONICAL_TOKEN_BUDGET_SCHEMA_ID
+    token_budget["selected_count"] = len(as_list(context_pack.get("ranked_evidence")))
+    payload["token_budget"] = dict(token_budget)
+    context_pack["token_budget"] = dict(token_budget)
+    if prompt_had_budget:
+        prompt_sections["token_budget"] = dict(token_budget)
+
+
 def compact_items(value: Any, limit: int) -> list[Any]:
     out = []
     for item in as_list(value)[:limit]:
@@ -110,24 +748,32 @@ def compact_items(value: Any, limit: int) -> list[Any]:
                 "seed_memory_id",
             ):
                 if key in item and item[key] not in ("", None):
-                    compact[key] = item[key]
-            out.append(compact or item)
+                    value = item[key]
+                    if isinstance(value, str):
+                        cap = 420 if key in {"text", "summary"} else 240
+                        value = bounded_text(value, cap)
+                    elif key == "why_selected" and isinstance(value, (list, tuple)):
+                        value = bounded_text_list(value, 6, 120)
+                    elif isinstance(value, (dict, list, tuple, set)):
+                        continue
+                    compact[key] = value
+            out.append(compact)
         else:
-            out.append(item)
+            out.append(bounded_text(item, 360))
     return out
 
 
 def slim_source_coverage(value: Any) -> dict[str, Any]:
     coverage = value if isinstance(value, dict) else {}
     return {
-        "configured": as_list(coverage.get("configured"))[:8],
-        "returned": as_list(coverage.get("returned"))[:8],
-        "pending": as_list(coverage.get("pending"))[:8],
-        "warming": as_list(coverage.get("warming"))[:8],
-        "failed": as_list(coverage.get("failed"))[:4],
-        "timed_out": as_list(coverage.get("timed_out"))[:4],
-        "budget_exceeded": as_list(coverage.get("budget_exceeded"))[:4],
-        "complete": bool(coverage.get("complete")),
+        "configured": bounded_text_list(coverage.get("configured"), 8),
+        "returned": bounded_text_list(coverage.get("returned"), 8),
+        "pending": bounded_text_list(coverage.get("pending"), 8),
+        "warming": bounded_text_list(coverage.get("warming"), 8),
+        "failed": bounded_text_list(coverage.get("failed"), 4),
+        "timed_out": bounded_text_list(coverage.get("timed_out"), 4),
+        "budget_exceeded": bounded_text_list(coverage.get("budget_exceeded"), 4),
+        "complete": coverage.get("complete") is True,
         "retrieval_lifecycle": coverage.get("retrieval_lifecycle") if isinstance(coverage.get("retrieval_lifecycle"), dict) else {},
     }
 
@@ -140,53 +786,54 @@ def slim_run_advisor(value: Any) -> dict[str, Any]:
     objective = advisor.get("objective_coherence") if isinstance(advisor.get("objective_coherence"), dict) else {}
     graph = advisor.get("graph_quality") if isinstance(advisor.get("graph_quality"), dict) else {}
     slim = {
-        "ok": bool(advisor.get("ok", True)),
+        "ok": advisor.get("ok", True) is True,
         "schema_id": "run_advisor.v1",
         "posture": str(advisor.get("posture") or "needs_retrieval")[:80],
         "prompt_quality": {
-            "score": int(prompt_quality.get("score") or 0),
+            "score": nonnegative_int(prompt_quality.get("score")),
             "state": str(prompt_quality.get("state") or "needs_context")[:80],
-            "ranked_evidence_count": int(prompt_quality.get("ranked_evidence_count") or 0),
-            "reference_prompt_chars": int(prompt_quality.get("reference_prompt_chars") or 0),
-            "returned_source_count": int(prompt_quality.get("returned_source_count") or 0),
-            "complete": bool(prompt_quality.get("complete")),
+            "ranked_evidence_count": nonnegative_int(prompt_quality.get("ranked_evidence_count")),
+            "reference_prompt_chars": nonnegative_int(prompt_quality.get("reference_prompt_chars")),
+            "returned_source_count": nonnegative_int(prompt_quality.get("returned_source_count")),
+            "complete": prompt_quality.get("complete") is True,
             "missing": as_list(prompt_quality.get("missing"))[:8],
         },
         "retrieval_advice": {
             "recommended_mode": str(retrieval.get("recommended_mode") or "balanced")[:80],
             "recommended_surface": str(retrieval.get("recommended_surface") or "cli_for_local_agents")[:120],
             "rationale": as_list(retrieval.get("rationale"))[:8],
-            "blocking_recommended": bool(retrieval.get("blocking_recommended")),
+            "blocking_recommended": retrieval.get("blocking_recommended") is True,
         },
         "continuation": {
             "status": str(continuation.get("status") or "unknown")[:80],
-            "token": str(continuation.get("token") or "")[:128],
-            "poll_url": str(continuation.get("poll_url") or "")[:240],
-            "events_url": str(continuation.get("events_url") or "")[:240],
+            "poll_url": public_route("poll_url", continuation.get("poll_url")),
+            "events_url": public_route("events_url", continuation.get("events_url")),
             "pending_sources": as_list(continuation.get("pending_sources"))[:8],
             "warming_sources": as_list(continuation.get("warming_sources"))[:8],
             "failed_sources": as_list(continuation.get("failed_sources"))[:4],
             "timed_out_sources": as_list(continuation.get("timed_out_sources"))[:4],
             "budget_exceeded_sources": as_list(continuation.get("budget_exceeded_sources"))[:4],
-            "continuation_available": bool(continuation.get("continuation_available")),
+            "continuation_available": continuation.get("continuation_available") is True,
             "modeled_progress": continuation.get("modeled_progress") if isinstance(continuation.get("modeled_progress"), dict) else {},
             "retrieval_progress": continuation.get("retrieval_progress") if isinstance(continuation.get("retrieval_progress"), dict) else {},
             "agent_visibility": continuation.get("agent_visibility") if isinstance(continuation.get("agent_visibility"), dict) else {},
             "repair_instruction": str(continuation.get("repair_instruction") or "Rerun context compilation when evidence is missing.")[:900],
             "agent_followup_command": str(continuation.get("agent_followup_command") or "")[:300],
-            "agent_followup_endpoint": str(continuation.get("agent_followup_endpoint") or "")[:240],
+            "agent_followup_endpoint": public_route(
+                "agent_followup_endpoint", continuation.get("agent_followup_endpoint")
+            ),
             "agent_followup_transport": str(continuation.get("agent_followup_transport") or "none")[:40],
         },
         "objective_coherence": {
-            "score": int(objective.get("score") or 0),
+            "score": nonnegative_int(objective.get("score")),
             "status": str(objective.get("status") or "missing")[:80],
             "signals": objective.get("signals") if isinstance(objective.get("signals"), dict) else {},
             "repair_instruction": str(objective.get("repair_instruction") or "Carry objective, goal, and mission into the next prompt packet.")[:900],
         },
         "graph_quality": {
             "status": str(graph.get("status") or "not_sampled")[:80],
-            "score": int(graph.get("score") or 0),
-            "used": bool(graph.get("used")),
+            "score": nonnegative_int(graph.get("score")),
+            "used": graph.get("used") is True,
             "skipped_reason": str(graph.get("skipped_reason") or "")[:240],
             "signals": graph.get("signals") if isinstance(graph.get("signals"), dict) else {},
             "recommendation": str(graph.get("recommendation") or "Run contextlattice_memory_topology when graph evidence matters.")[:900],
@@ -254,10 +901,110 @@ def trim_context_pack_lists(context_pack: dict[str, Any], limit: int) -> None:
                 prompt_sections[key] = prompt_sections[key][: max(0, limit)]
 
 
+def minimum_contract_envelope(
+    payload: dict[str, Any],
+    requested_budget_chars: int,
+    budget_chars: int,
+    memory_trust_assessment: dict[str, Any],
+    retrieval_decision_trace: dict[str, Any],
+) -> dict[str, Any]:
+    compiler = minimal_context_compiler("minimum_contract_envelope", 0)
+    advisor = {
+        "schema_id": "run_advisor.v1",
+        "posture": "minimal_context",
+        "prompt_quality": {},
+        "retrieval_advice": {},
+        "continuation": {},
+        "objective_coherence": {},
+    }
+    coverage = {"configured": [], "returned": [], "complete": False}
+    pack = {
+        "facts": [],
+        "results": [],
+        "citations": [],
+        "ranked_evidence": [],
+        "prompt_sections": {},
+        "context_compiler": compiler,
+        "relevant_decisions": [],
+        "files_to_read": [],
+        "files_to_avoid": [],
+        "capabilities_to_use": [],
+        "runbooks": [],
+        "known_failure_modes": [],
+        "commands": [],
+        "acceptance_criteria": [],
+    }
+    token_budget = compact_token_budget(
+        first_dict(
+            payload.get("token_budget"),
+            (payload.get("context_pack") or {}).get("token_budget")
+            if isinstance(payload.get("context_pack"), dict)
+            else {},
+        )
+    )
+    if token_budget:
+        token_budget["schema_id"] = CANONICAL_TOKEN_BUDGET_SCHEMA_ID
+        token_budget["selected_count"] = 0
+        pack["token_budget"] = dict(token_budget)
+    omitted_identity_fields = set(str(item) for item in as_list(payload.get("identity_omitted")) if str(item or ""))
+    minimum = {
+        "ok": payload.get("ok", True) is True,
+        "context_budget_chars": budget_chars,
+        "requested_context_budget_chars": requested_budget_chars,
+        "budget_floor_applied": requested_budget_chars < MIN_CONTEXT_PACK_CONTRACT_BUDGET_CHARS,
+        "clipped": True,
+        "source_coverage": coverage,
+        "context_pack": pack,
+        "context_compiler": compiler,
+        "run_advisor": advisor,
+        "reference_prompt": "",
+        "writeback_required": True,
+        "memory_trust_assessment": bounded_retrieval_proof(memory_trust_assessment, "memory_trust_assessment", 0),
+        "retrieval_decision_trace": bounded_retrieval_proof(retrieval_decision_trace, "retrieval_decision_trace", 0),
+    }
+    if token_budget:
+        minimum["token_budget"] = dict(token_budget)
+    if omitted_identity_fields:
+        minimum["identity_omitted"] = [
+            field for field in ("session_id", "agent_id") if field in omitted_identity_fields
+        ]
+    for field in ("session_id", "agent_id"):
+        if payload.get(field):
+            minimum[field] = payload[field]
+    return attach_context_pack_contract(minimum)
+
+
 def finalize_context_pack_payload(payload: dict[str, Any], budget_chars: int) -> dict[str, Any]:
-    budget_chars = max(1024, int(budget_chars or 0))
+    requested_budget_chars, budget_rejected = normalized_context_budget_chars(budget_chars)
+    if budget_rejected:
+        payload = {
+            "ok": False,
+            "structured_failure": True,
+            "status": "invalid_context_budget",
+            "warnings": ["Requested context budget was outside the supported signed-integer range."],
+        }
+    budget_chars = max(MIN_CONTEXT_PACK_CONTRACT_BUDGET_CHARS, requested_budget_chars)
+    payload["context_budget_chars"] = budget_chars
+    payload["requested_context_budget_chars"] = requested_budget_chars
+    payload["budget_floor_applied"] = requested_budget_chars < MIN_CONTEXT_PACK_CONTRACT_BUDGET_CHARS
+    prior_omitted_identity_fields = {
+        str(item) for item in as_list(payload.get("identity_omitted")) if str(item or "")
+    }
+    omitted_identity_fields: list[str] = []
+    for field in ("session_id", "agent_id"):
+        identity, omitted = bounded_identity(payload.get(field), field)
+        if identity:
+            payload[field] = identity
+        else:
+            payload.pop(field, None)
+        if omitted or (not identity and field in prior_omitted_identity_fields):
+            omitted_identity_fields.append(field)
+    if omitted_identity_fields:
+        payload["identity_omitted"] = omitted_identity_fields
+    else:
+        payload.pop("identity_omitted", None)
     context_pack = payload.get("context_pack") if isinstance(payload.get("context_pack"), dict) else {}
-    token_budget = first_dict(payload.get("token_budget"), context_pack.get("token_budget"), context_pack.get("tokenBudget"))
+    token_budget = compact_token_budget(first_dict(payload.get("token_budget"), context_pack.get("token_budget"), context_pack.get("tokenBudget")))
     omitted_high_value_refs = compact_items(
         first_list(
             payload.get("omitted_high_value_refs"),
@@ -270,14 +1017,34 @@ def finalize_context_pack_payload(payload: dict[str, Any], budget_chars: int) ->
         first_list(context_pack.get("ranked_evidence"), context_pack.get("rankedEvidence")),
         4,
     )
+    compiler_proofs = first_dict(payload.get("context_compiler"), context_pack.get("context_compiler"))
+    memory_trust_assessment, retrieval_decision_trace = select_retrieval_proof_pair(
+        payload,
+        context_pack,
+        compiler_proofs,
+    )
+    memory_trust_assessment, retrieval_decision_trace = reconcile_retrieval_proof_pair(
+        memory_trust_assessment,
+        retrieval_decision_trace,
+    )
+    if memory_trust_assessment:
+        memory_trust_assessment = bounded_retrieval_proof(memory_trust_assessment, "memory_trust_assessment")
+        payload["memory_trust_assessment"] = memory_trust_assessment
+    if retrieval_decision_trace:
+        retrieval_decision_trace = bounded_retrieval_proof(retrieval_decision_trace, "retrieval_decision_trace")
+        payload["retrieval_decision_trace"] = retrieval_decision_trace
+    payload.pop("token_budget", None)
+    payload.pop("omitted_high_value_refs", None)
+    for key in ("token_budget", "tokenBudget", "omitted_high_value_refs", "omittedHighValueRefs"):
+        context_pack.pop(key, None)
     if token_budget:
         payload["token_budget"] = token_budget
         context_pack["token_budget"] = token_budget
     if omitted_high_value_refs:
         payload["omitted_high_value_refs"] = omitted_high_value_refs
         context_pack["omitted_high_value_refs"] = omitted_high_value_refs
-    payload = attach_format_contract("context_pack_response.v1", payload)
-    if encoded_len(payload) <= budget_chars:
+    payload = attach_context_pack_contract(payload)
+    if context_pack_output_fits(payload, budget_chars):
         return payload
 
     payload["clipped"] = True
@@ -290,8 +1057,8 @@ def finalize_context_pack_payload(payload: dict[str, Any], budget_chars: int) ->
     context_pack["run_advisor"] = advisor
     payload["warnings"] = as_list(payload.get("warnings"))[:3]
     trim_context_pack_lists(context_pack, 3)
-    payload = attach_format_contract("context_pack_response.v1", payload)
-    if encoded_len(payload) <= budget_chars:
+    payload = attach_context_pack_contract(payload)
+    if context_pack_output_fits(payload, budget_chars):
         return payload
 
     context_pack = payload.get("context_pack") if isinstance(payload.get("context_pack"), dict) else {}
@@ -299,8 +1066,8 @@ def finalize_context_pack_payload(payload: dict[str, Any], budget_chars: int) ->
     context_pack["results"] = []
     context_pack["citations"] = []
     payload["warnings"] = ["ContextLattice context pack clipped to local output budget."]
-    payload = attach_format_contract("context_pack_response.v1", payload)
-    if encoded_len(payload) <= budget_chars:
+    payload = attach_context_pack_contract(payload)
+    if context_pack_output_fits(payload, budget_chars):
         return payload
 
     advisor = slim_run_advisor(payload.get("run_advisor") or context_pack.get("run_advisor"))
@@ -333,11 +1100,13 @@ def finalize_context_pack_payload(payload: dict[str, Any], budget_chars: int) ->
         "acceptance_criteria": [],
     }
     minimal = {
-        "ok": bool(payload.get("ok", True)),
+        "ok": payload.get("ok", True) is True,
         "task_summary": str(payload.get("task_summary") or "")[:240],
         "context_budget_chars": budget_chars,
+        "requested_context_budget_chars": requested_budget_chars,
+        "budget_floor_applied": requested_budget_chars < MIN_CONTEXT_PACK_CONTRACT_BUDGET_CHARS,
         "clipped": True,
-        "session_id": payload.get("session_id") or "",
+        "identity_omitted": omitted_identity_fields,
         "agent_runtime": payload.get("agent_runtime") if isinstance(payload.get("agent_runtime"), dict) else {},
         "objective_runtime": payload.get("objective_runtime") if isinstance(payload.get("objective_runtime"), dict) else {},
         "fact_count": int(payload.get("fact_count") or 0),
@@ -352,14 +1121,19 @@ def finalize_context_pack_payload(payload: dict[str, Any], budget_chars: int) ->
         "reference_prompt": "ContextLattice clipped this package to a minimal bounded payload. Rerun with a larger budget before making detailed evidence-backed claims.",
         "writeback_required": True,
     }
-    minimal = attach_format_contract("context_pack_response.v1", minimal)
-    if encoded_len(minimal) <= budget_chars:
+    for field in ("session_id", "agent_id"):
+        if payload.get(field):
+            minimal[field] = payload[field]
+    minimal["memory_trust_assessment"] = bounded_retrieval_proof(memory_trust_assessment, "memory_trust_assessment")
+    minimal["retrieval_decision_trace"] = bounded_retrieval_proof(retrieval_decision_trace, "retrieval_decision_trace")
+    minimal = attach_context_pack_contract(minimal)
+    if context_pack_output_fits(minimal, budget_chars):
         return minimal
 
     tiny_coverage = {
-        "configured": as_list(coverage.get("configured"))[:3] if isinstance(coverage, dict) else [],
-        "returned": as_list(coverage.get("returned"))[:3] if isinstance(coverage, dict) else [],
-        "complete": bool(coverage.get("complete")) if isinstance(coverage, dict) else False,
+        "configured": bounded_text_list(coverage.get("configured"), 3, 80) if isinstance(coverage, dict) else [],
+        "returned": bounded_text_list(coverage.get("returned"), 3, 80) if isinstance(coverage, dict) else [],
+        "complete": coverage.get("complete") is True if isinstance(coverage, dict) else False,
     }
     tiny_compiler = minimal_context_compiler("minimal_local_budget", 0)
     tiny_pack = {
@@ -367,15 +1141,13 @@ def finalize_context_pack_payload(payload: dict[str, Any], budget_chars: int) ->
         "retrieval_mode": str(context_pack.get("retrieval_mode") or "")[:80],
         "retrieval_intent": str(context_pack.get("retrieval_intent") or "")[:80],
         "source_coverage": tiny_coverage,
-        "token_budget": token_budget,
-        "omitted_high_value_refs": omitted_high_value_refs[:2],
         "context_compiler": tiny_compiler,
         "run_advisor": ultra_slim_run_advisor(),
         "prompt_sections": minimal_prompt_sections(
             str(context_pack.get("query") or payload.get("task_summary") or "")[:240],
             "ContextLattice returned a minimal bounded package. Rerun with a larger budget for evidence.",
         ),
-        "ranked_evidence": ranked_evidence[:1],
+        "ranked_evidence": [],
         "facts": [],
         "numeric_facts": [],
         "citations": [],
@@ -389,16 +1161,21 @@ def finalize_context_pack_payload(payload: dict[str, Any], budget_chars: int) ->
         "commands": [],
         "acceptance_criteria": [],
     }
+    if token_budget:
+        tiny_token_budget = {
+            "schema_id": CANONICAL_TOKEN_BUDGET_SCHEMA_ID,
+            "selected_count": 0,
+        }
+        tiny_pack["token_budget"] = tiny_token_budget
     tiny = {
-        "ok": bool(payload.get("ok", True)),
+        "ok": payload.get("ok", True) is True,
         "task_summary": str(payload.get("task_summary") or "")[:120],
         "context_budget_chars": budget_chars,
+        "requested_context_budget_chars": requested_budget_chars,
+        "budget_floor_applied": requested_budget_chars < MIN_CONTEXT_PACK_CONTRACT_BUDGET_CHARS,
         "clipped": True,
-        "session_id": payload.get("session_id") or "",
-        "agent_id": payload.get("agent_id") or "",
+        "identity_omitted": omitted_identity_fields,
         "source_coverage": tiny_coverage,
-        "token_budget": token_budget,
-        "omitted_high_value_refs": omitted_high_value_refs[:2],
         "warnings": ["ContextLattice context pack clipped to minimal local output budget."],
         "context_pack": tiny_pack,
         "context_compiler": tiny_compiler,
@@ -406,12 +1183,26 @@ def finalize_context_pack_payload(payload: dict[str, Any], budget_chars: int) ->
         "reference_prompt": "ContextLattice returned a minimal bounded context package. Rerun with a larger budget before making evidence-backed claims.",
         "writeback_required": True,
     }
-    tiny = attach_format_contract("context_pack_response.v1", tiny)
-    if encoded_len(tiny) <= budget_chars:
+    if token_budget:
+        tiny["token_budget"] = dict(tiny_pack["token_budget"])
+    for field in ("session_id", "agent_id"):
+        if payload.get(field):
+            tiny[field] = payload[field]
+    tiny["memory_trust_assessment"] = bounded_retrieval_proof(memory_trust_assessment, "memory_trust_assessment", 900)
+    tiny["retrieval_decision_trace"] = bounded_retrieval_proof(retrieval_decision_trace, "retrieval_decision_trace", 900)
+    tiny = attach_context_pack_contract(tiny)
+    if context_pack_output_fits(tiny, budget_chars):
         return tiny
-    for key in ("task_summary", "context_budget_chars", "clipped", "warnings"):
-        tiny.pop(key, None)
-    return attach_format_contract("context_pack_response.v1", tiny)
+    minimum = minimum_contract_envelope(
+        tiny,
+        requested_budget_chars,
+        budget_chars,
+        memory_trust_assessment,
+        retrieval_decision_trace,
+    )
+    if context_pack_output_fits(minimum, budget_chars):
+        return minimum
+    raise ValueError("context pack required contract metadata exceeds the effective local output budget")
 
 
 def minimal_context_compiler(strategy: str, ranked_count: int) -> dict[str, Any]:
@@ -462,10 +1253,40 @@ def fallback_reference_prompt(query: str, prompt_sections: dict[str, Any], ranke
     return "\n".join(lines)[:5000]
 
 
-def compact_context_pack(raw: dict[str, Any], query: str, budget_chars: int) -> dict[str, Any]:
+def compact_context_pack(
+    raw: dict[str, Any],
+    query: str,
+    budget_chars: int,
+    *,
+    identity_authority: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    requested_budget_chars, budget_rejected = normalized_context_budget_chars(budget_chars)
+    if budget_rejected:
+        return failure_payload(query, requested_budget_chars, "invalid_context_budget", 0)
+    effective_budget_chars = max(MIN_CONTEXT_PACK_CONTRACT_BUDGET_CHARS, requested_budget_chars)
+    session_source = raw.get("session_id")
+    agent_source = raw.get("agent_id")
+    if identity_authority is not None:
+        session_source = identity_authority.get("session_id")
+        agent_source = identity_authority.get("agent_id")
+    session_id, session_id_omitted = bounded_identity(session_source, "session_id")
+    agent_id, agent_id_omitted = bounded_identity(agent_source, "agent_id")
+    identity_omitted = [
+        field
+        for field, value, omitted in (
+            ("session_id", session_id, session_id_omitted),
+            ("agent_id", agent_id, agent_id_omitted),
+        )
+        if omitted or (identity_authority is not None and not value)
+    ]
+    if identity_authority is not None:
+        raw = project_context_pack_identity_authority(
+            raw,
+            {"session_id": session_id, "agent_id": agent_id},
+        )
     pack = raw.get("context_pack") if isinstance(raw.get("context_pack"), dict) else {}
     source_coverage = raw.get("source_coverage") or pack.get("sourceCoverage") or {}
-    token_budget = first_dict(raw.get("token_budget"), pack.get("token_budget"), pack.get("tokenBudget"))
+    token_budget = compact_token_budget(first_dict(raw.get("token_budget"), pack.get("token_budget"), pack.get("tokenBudget")))
     omitted_high_value_refs = compact_items(
         first_list(raw.get("omitted_high_value_refs"), pack.get("omitted_high_value_refs"), pack.get("omittedHighValueRefs")),
         8,
@@ -484,15 +1305,27 @@ def compact_context_pack(raw: dict[str, Any], query: str, budget_chars: int) -> 
     context_compiler = pack.get("context_compiler") or pack.get("contextCompiler") or raw.get("context_compiler")
     if not isinstance(context_compiler, dict):
         context_compiler = minimal_context_compiler("cli_compact_context_pack", len(ranked_evidence))
+    else:
+        context_compiler = dict(context_compiler)
+    memory_trust_assessment, retrieval_decision_trace = select_retrieval_proof_pair(
+        raw,
+        pack,
+        context_compiler,
+    )
+    memory_trust_assessment, retrieval_decision_trace = reconcile_retrieval_proof_pair(
+        memory_trust_assessment,
+        retrieval_decision_trace,
+    )
     reference_prompt = raw.get("reference_prompt")
     if not isinstance(reference_prompt, str) or not reference_prompt.strip():
         reference_prompt = fallback_reference_prompt(query, prompt_sections, ranked_evidence)
     run_advisor = raw.get("run_advisor") or pack.get("run_advisor") or pack.get("runAdvisor")
     if not isinstance(run_advisor, dict):
         run_advisor = {}
-    context_pack_quality = raw.get("context_pack_quality") or pack.get("context_pack_quality") or pack.get("contextPackQuality")
-    if not isinstance(context_pack_quality, dict):
-        context_pack_quality = {}
+    context_pack_quality = public_context_pack_quality(
+        raw.get("context_pack_quality") or pack.get("context_pack_quality") or pack.get("contextPackQuality")
+    )
+    quality_state_receipt = validated_context_pack_quality_state_receipt(context_pack_quality)
     context_pack: dict[str, Any] = {
         "query": pack.get("query") or raw.get("query") or query,
         "retrieval_mode": raw.get("retrieval_mode") or pack.get("retrievalMode"),
@@ -516,9 +1349,10 @@ def compact_context_pack(raw: dict[str, Any], query: str, budget_chars: int) -> 
     payload = {
         "ok": True,
         "task_summary": query[:240],
-        "context_budget_chars": budget_chars,
+        "context_budget_chars": effective_budget_chars,
+        "requested_context_budget_chars": requested_budget_chars,
+        "budget_floor_applied": requested_budget_chars < MIN_CONTEXT_PACK_CONTRACT_BUDGET_CHARS,
         "clipped": False,
-        "session_id": raw.get("session_id") or "",
         "agent_runtime": raw.get("agent_runtime") if isinstance(raw.get("agent_runtime"), dict) else {},
         "objective_runtime": raw.get("objective_runtime") if isinstance(raw.get("objective_runtime"), dict) else {},
         "fact_count": len(as_list(pack.get("facts"))),
@@ -533,24 +1367,34 @@ def compact_context_pack(raw: dict[str, Any], query: str, budget_chars: int) -> 
         "context_pack": context_pack,
         "writeback_required": True,
     }
+    if session_id:
+        payload["session_id"] = session_id
+    if agent_id:
+        payload["agent_id"] = agent_id
+    if identity_omitted:
+        payload["identity_omitted"] = identity_omitted
+    if memory_trust_assessment:
+        payload["memory_trust_assessment"] = bounded_retrieval_proof(memory_trust_assessment, "memory_trust_assessment")
+    if retrieval_decision_trace:
+        payload["retrieval_decision_trace"] = bounded_retrieval_proof(retrieval_decision_trace, "retrieval_decision_trace")
     if context_pack_quality:
         payload["context_pack_quality"] = context_pack_quality
-        sample_id = str(context_pack_quality.get("sample_id") or "").strip()
-        if sample_id:
+        sample_id = str(quality_state_receipt.get("sample_id") or "").strip()
+        if sample_id and session_id:
             payload["outcome_report"] = {
                 "schema_id": "contextlattice_context_pack_outcome_report.v1",
                 "sample_id": sample_id,
                 "endpoint": "/telemetry/context-pack-quality/outcome",
                 "command": (
                     "contextlattice_agent_adapter outcome "
-                    f"--session-id {json.dumps(str(raw.get('session_id') or ''))} "
+                    f"--session-id {json.dumps(session_id)} "
                     f"--context-pack-quality-sample-id {json.dumps(sample_id)} "
                     "--first-pass-success true --repair-required false --retry-count 0"
                 ),
                 "privacy": "stores compact counters only; do not send prompts, completions, source text, or secrets",
             }
-    payload = attach_format_contract("context_pack_response.v1", payload)
-    if encoded_len(payload) <= budget_chars:
+    payload = attach_context_pack_contract(payload)
+    if context_pack_output_fits(payload, effective_budget_chars):
         return payload
     payload["clipped"] = True
     context_pack["facts"] = facts[:4]
@@ -560,7 +1404,7 @@ def compact_context_pack(raw: dict[str, Any], query: str, budget_chars: int) -> 
     context_pack["graph_neighbors"] = graph_neighbors[:3]
     for snake in CAMEL_TO_SNAKE.values():
         context_pack[snake] = context_pack[snake][:6]
-    if encoded_len(payload) > budget_chars:
+    if not context_pack_output_fits(payload, effective_budget_chars):
         context_pack["ranked_evidence"] = context_pack["ranked_evidence"][:3]
         context_pack["graph_neighbors"] = context_pack["graph_neighbors"][:1]
         if isinstance(context_pack.get("prompt_sections"), dict):
@@ -569,11 +1413,15 @@ def compact_context_pack(raw: dict[str, Any], query: str, budget_chars: int) -> 
         context_pack["citations"] = []
         context_pack["facts"] = context_pack["facts"][:2]
         context_pack["numeric_facts"] = context_pack["numeric_facts"][:2]
-    return finalize_context_pack_payload(payload, budget_chars)
+    return finalize_context_pack_payload(payload, requested_budget_chars)
 
 
 def record_context_pack_quality_pending(project: str, session_id: str, agent_id: str, query: str, payload: dict[str, Any]) -> None:
-    quality = payload.get("context_pack_quality") if isinstance(payload.get("context_pack_quality"), dict) else {}
+    session_id, session_id_omitted = bounded_identity(session_id, "session_id")
+    agent_id, agent_id_omitted = bounded_identity(agent_id, "agent_id")
+    if session_id_omitted or agent_id_omitted:
+        return
+    quality = validated_context_pack_quality_state_receipt(payload.get("context_pack_quality"))
     sample_id = str(quality.get("sample_id") or "").strip()
     if not sample_id or not session_id:
         return
@@ -590,10 +1438,86 @@ def record_context_pack_quality_pending(project: str, session_id: str, agent_id:
                 "query_hash": quality.get("query_hash"),
                 "quality_score": quality.get("quality_score"),
                 "captured_at": quality.get("capturedAt") or quality.get("captured_at") or now_iso(),
+                "reported": False,
             },
         }
     )
     write_agent_session_state(project, state)
+
+
+def record_objective_runtime_attestation(
+    project: str,
+    session_id: str,
+    agent_id: str,
+    query: str,
+    raw: dict[str, Any],
+) -> None:
+    runtime = raw.get("objective_runtime") if isinstance(raw.get("objective_runtime"), dict) else {}
+    receipt = build_objective_runtime_attestation(
+        runtime,
+        session_id=session_id,
+        project=project,
+        agent_id=agent_id,
+        runtime_agent="context-pack",
+    )
+    if not receipt:
+        return
+    state = read_agent_session_state(project)
+    if (
+        state.get("session_id") != session_id
+        or state.get("project") != project
+        or state.get("agent") != "agent-cli"
+        or state.get("agent_id") != agent_id
+        or state.get("objective") != query
+    ):
+        return
+    state["latest_objective_runtime_attestation"] = receipt
+    write_agent_session_state(project, state)
+
+
+def public_context_pack_quality(value: Any) -> dict[str, Any]:
+    quality = as_dict(value)
+    if not quality:
+        return {}
+    projected = redact_public_value(quality)
+    return projected if isinstance(projected, dict) else {}
+
+
+def validated_context_pack_quality_state_receipt(value: Any) -> dict[str, Any]:
+    quality = as_dict(value)
+    sample_id = str(quality.get("sample_id") or "").strip()
+    query_hash = str(quality.get("query_hash") or "").strip().lower()
+    quality_score = quality.get("quality_score")
+    captured_at = str(quality.get("capturedAt") or quality.get("captured_at") or "").strip()
+    try:
+        sample_id_bytes = len(sample_id.encode("utf-8"))
+    except UnicodeEncodeError:
+        return {}
+    if not sample_id or len(sample_id) > 200 or sample_id_bytes > 200:
+        return {}
+    if not sample_id.startswith("cpq_") or any(ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-" for ch in sample_id):
+        return {}
+    if len(query_hash) != 16 or any(ch not in "0123456789abcdef" for ch in query_hash):
+        return {}
+    if isinstance(quality_score, bool) or not isinstance(quality_score, (int, float)):
+        return {}
+    if isinstance(quality_score, int):
+        if not 0 <= quality_score <= 100:
+            return {}
+    elif not math.isfinite(quality_score) or not 0 <= quality_score <= 100:
+        return {}
+    try:
+        parsed_at = datetime.fromisoformat(captured_at.replace("Z", "+00:00"))
+        if parsed_at.tzinfo is None:
+            return {}
+    except ValueError:
+        return {}
+    return {
+        "sample_id": sample_id,
+        "query_hash": query_hash,
+        "quality_score": quality_score,
+        "capturedAt": captured_at,
+    }
 
 
 def failure_payload(query: str, budget_chars: int, error: str, attempts: int) -> dict[str, Any]:
@@ -646,7 +1570,7 @@ def request_with_retries(path: str, payload: dict[str, Any], timeout: float, ret
     # was pre-delivery, so it must never replay the request.
     del retries, retry_delay
     try:
-        return request_json("POST", path, payload, timeout), "", 1
+        return request_json_for_validation("POST", path, payload, timeout), "", 1
     except SystemExit as exc:
         return None, str(exc.code), 1
     except Exception as exc:
@@ -699,7 +1623,21 @@ def main() -> int:
     parser.add_argument("--timeout", type=float, default=None)
     parser.add_argument("--pretty", action="store_true")
     args = parser.parse_args()
+    requested_budget_chars, budget_rejected = normalized_context_budget_chars(args.budget_chars)
+    args.budget_chars = requested_budget_chars
     request_timeout = args.timeout if args.timeout is not None else client_timeout_from_env()
+
+    if budget_rejected:
+        failed = failure_payload(args.query, args.budget_chars, "invalid_context_budget", 0)
+        effective_budget = max(
+            MIN_CONTEXT_PACK_CONTRACT_BUDGET_CHARS,
+            int(failed.get("context_budget_chars") or args.budget_chars),
+        )
+        pretty = bool(args.pretty and context_pack_output_fits(failed, effective_budget, pretty=True))
+        if not context_pack_output_fits(failed, effective_budget, pretty=pretty):
+            raise ValueError("context pack invalid-budget emission exceeds the effective local output budget")
+        emit(failed, pretty)
+        return 0 if args.soft else 1
 
     blocking_slow_sources = bool(args.blocking and not args.nonblocking)
     payload = {
@@ -753,12 +1691,74 @@ def main() -> int:
     )
     if raw is None:
         trigger_self_heal("context-pack-failure")
-        emit(failure_payload(args.query, args.budget_chars, error, attempts), args.pretty)
+        failed = failure_payload(args.query, args.budget_chars, error, attempts)
+        effective_budget = max(
+            MIN_CONTEXT_PACK_CONTRACT_BUDGET_CHARS,
+            int(failed.get("context_budget_chars") or args.budget_chars or 0),
+        )
+        pretty = bool(args.pretty and context_pack_output_fits(failed, effective_budget, pretty=True))
+        if not context_pack_output_fits(failed, effective_budget, pretty=pretty):
+            raise ValueError("context pack failure emission exceeds the effective local output budget")
+        emit(failed, pretty)
         return 0 if args.soft else 1
-    packed = compact_context_pack(raw, args.query, args.budget_chars)
-    record_context_pack_quality_pending(args.project, session_id, args.agent_id, args.query, packed)
-    emit(packed, args.pretty)
-    return 0
+    if (
+        not isinstance(raw, dict)
+        or raw.get("ok") is not True
+        or not isinstance(raw.get("context_pack"), dict)
+    ):
+        failed = failure_payload(
+            args.query,
+            args.budget_chars,
+            "gateway_context_pack_rejected_or_malformed",
+            attempts,
+        )
+        effective_budget = max(
+            MIN_CONTEXT_PACK_CONTRACT_BUDGET_CHARS,
+            int(failed.get("context_budget_chars") or args.budget_chars or 0),
+        )
+        pretty = bool(args.pretty and context_pack_output_fits(failed, effective_budget, pretty=True))
+        if not context_pack_output_fits(failed, effective_budget, pretty=pretty):
+            raise ValueError("context pack failure emission exceeds the effective local output budget")
+        emit(failed, pretty)
+        return 0 if args.soft else 1
+    try:
+        packed = compact_context_pack(
+            raw,
+            args.query,
+            args.budget_chars,
+            identity_authority={"session_id": session_id, "agent_id": args.agent_id},
+        )
+    except Exception:
+        packed = failure_payload(
+            args.query,
+            args.budget_chars,
+            "invalid_context_pack_response",
+            attempts,
+        )
+        effective_budget = max(
+            MIN_CONTEXT_PACK_CONTRACT_BUDGET_CHARS,
+            int(packed.get("context_budget_chars") or args.budget_chars or 0),
+        )
+        pretty = bool(args.pretty and context_pack_output_fits(packed, effective_budget, pretty=True))
+        if not context_pack_output_fits(packed, effective_budget, pretty=pretty):
+            raise ValueError("context pack failure emission exceeds the effective local output budget")
+        emit(packed, pretty)
+        return 0 if args.soft else 1
+    effective_budget = max(MIN_CONTEXT_PACK_CONTRACT_BUDGET_CHARS, int(packed.get("context_budget_chars") or args.budget_chars or 0))
+    pretty = bool(args.pretty and context_pack_output_fits(packed, effective_budget, pretty=True))
+    fits = context_pack_output_fits(packed, effective_budget, pretty=pretty)
+    if not fits:
+        raise ValueError("context pack emission exceeds the effective local output budget")
+    succeeded = (
+        packed.get("ok") is True
+        and isinstance(packed.get("format_contract"), dict)
+        and packed["format_contract"].get("contract_valid") is True
+    )
+    if succeeded:
+        record_objective_runtime_attestation(args.project, session_id, args.agent_id, args.query, raw)
+        record_context_pack_quality_pending(args.project, session_id, args.agent_id, args.query, packed)
+    emit(packed, pretty)
+    return 0 if succeeded or args.soft else 1
 
 
 if __name__ == "__main__":

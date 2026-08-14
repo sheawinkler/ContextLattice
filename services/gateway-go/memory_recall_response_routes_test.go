@@ -103,14 +103,19 @@ func TestRecallResponseRoutesAreStrictNativeAndClosed(t *testing.T) {
 			t.Fatalf("route resolved to unexpected mux pattern: path=%s pattern=%s", path, pattern)
 		}
 	}
-	boundary := map[string]contextBoundarySurface{}
+	boundary := map[string]map[string]contextBoundarySurface{}
 	for _, surface := range contextBoundaryRequiredSurfaces() {
-		boundary[surface.Path] = surface
+		if boundary[surface.Path] == nil {
+			boundary[surface.Path] = map[string]contextBoundarySurface{}
+		}
+		boundary[surface.Path][surface.ContractID] = surface
 	}
 	for _, path := range []string{memoryRecallResponsePath, toolsRecallResponsePath} {
-		surface, ok := boundary[path]
-		if !ok || surface.ContractID != recallResponseContractID || surface.RuntimeOwner != sourceOwnerGoNative || !surface.Required {
-			t.Fatalf("route missing bounded recall boundary row: %s %#v", path, surface)
+		for _, contractID := range []string{recallResponseContractID, recallResponseInitialContractID} {
+			surface, ok := boundary[path][contractID]
+			if !ok || surface.RuntimeOwner != sourceOwnerGoNative || !surface.Required {
+				t.Fatalf("route missing bounded recall boundary row: path=%s contract=%s surface=%#v", path, contractID, surface)
+			}
 		}
 	}
 }
@@ -176,6 +181,80 @@ func TestRecallResponseRoutesProjectOnlyBoundedOpaqueResponse(t *testing.T) {
 	}
 }
 
+func TestRecallResponseRouteServesCompactInitialAndProgressingCursor(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
+	t.Setenv("ORCH_RETRIEVAL_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "")
+	t.Setenv("GO_CONTEXT_PACK_QUALITY_LEDGER_ENABLED", "true")
+	t.Setenv("GO_CONTEXT_PACK_QUALITY_LEDGER_PATH", filepath.Join(t.TempDir(), "quality.ndjson"))
+	backend, paths := recallResponseRouteBackend(t, false)
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	requestBody := `{"project":"contextlattice","topic_path":"runbooks/recall","query":"continue the compact bounded recall","retrieval_mode":"balanced","agent_id":"compact-route-test","response_shape":"initial_compact"}`
+	resp, initial, raw := recallResponseRouteRequest(t, http.MethodPost, gateway.URL+memoryRecallResponsePath, requestBody, nil)
+	if resp.StatusCode != http.StatusOK || !validateRecallResponseInitial(initial) {
+		t.Fatalf("compact initial route failed: status=%d body=%s", resp.StatusCode, raw)
+	}
+	compactBytes, compactTokens := recallResponseCompactBudget(initial)
+	if compactBytes > recallResponseInitialMaxBytes || compactTokens > recallResponseInitialMaxTokens {
+		t.Fatalf("compact initial route exceeded its closed budget: bytes=%d tokens=%d", compactBytes, compactTokens)
+	}
+	union := anyMap(initial["union"])
+	action := anyMap(initial["continuation_action"])
+	seen := map[string]bool{}
+	traversed := 0
+	for anyToString(action["kind"]) == "continue_snapshot" {
+		body, err := json.Marshal(map[string]any{
+			"continuation_token": action["token"], "continuation_scope_digest": action["scope_digest"],
+			"continuation_request_digest": action["request_digest"], "agent_id": "compact-route-test",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		pageResp, page, pageRaw := recallResponseRouteRequest(t, http.MethodPost, gateway.URL+memoryRecallResponsePath, string(body), nil)
+		if pageResp.StatusCode != http.StatusOK || !validateRecallResponseContinuationPage(page) {
+			t.Fatalf("compact continuation failed: status=%d body=%s", pageResp.StatusCode, pageRaw)
+		}
+		for _, item := range contextPackAnyList(page["items"]) {
+			key := recallResponseTypedItemKey(anyToString(anyMap(item)["item_type"]), anyToString(anyMap(item)["item_ref"]))
+			if seen[key] {
+				t.Fatalf("compact continuation repeated typed membership %q", key)
+			}
+			seen[key] = true
+			traversed++
+		}
+		action = anyMap(page["continuation_action"])
+	}
+	if anyToString(action["kind"]) != "terminal" ||
+		traversed+anyToInt(union["initial_item_count"], -1) != anyToInt(union["item_count"], -2) {
+		t.Fatalf("compact continuation did not reach exact terminal membership: union=%#v traversed=%d action=%#v", union, traversed, action)
+	}
+	retrievalCalls := 0
+	for _, path := range *paths {
+		if path == "/v1/retrieval/query" {
+			retrievalCalls++
+		}
+	}
+	if retrievalCalls != 1 {
+		t.Fatalf("compact continuation repeated source retrieval: paths=%v", *paths)
+	}
+}
+
+func TestRecallResponseRouteRejectsUnknownResponseShape(t *testing.T) {
+	backend, paths := recallResponseRouteBackend(t, false)
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	resp, _, raw := recallResponseRouteRequest(t, http.MethodPost, gateway.URL+memoryRecallResponsePath, `{"query":"bounded","response_shape":"unknown"}`, nil)
+	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(raw, "invalid response_shape") || len(*paths) != 0 {
+		t.Fatalf("unknown response shape crossed the closed route boundary: status=%d paths=%v body=%s", resp.StatusCode, *paths, raw)
+	}
+}
+
 func TestRecallResponseRouteAbstainsWithoutEvidence(t *testing.T) {
 	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
 	t.Setenv("ORCH_RETRIEVAL_SOURCES", "qdrant")
@@ -196,6 +275,81 @@ func TestRecallResponseRouteAbstainsWithoutEvidence(t *testing.T) {
 	}
 	if anyToBool(anyMap(payload["outcome"])["attributable"]) || anyToBool(anyMap(payload["action_boundary"])["can_act"]) {
 		t.Fatalf("abstention became attributable/actionable: %#v", payload)
+	}
+}
+
+func TestRecallResponseContinuationActionTerminatesWhenSnapshotIsExhausted(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
+	t.Setenv("ORCH_RETRIEVAL_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "")
+	t.Setenv("GO_CONTEXT_PACK_QUALITY_LEDGER_ENABLED", "true")
+	t.Setenv("GO_CONTEXT_PACK_QUALITY_LEDGER_PATH", filepath.Join(t.TempDir(), "quality.ndjson"))
+	backend, paths := recallResponseRouteBackend(t, false)
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	requestBody := `{"project":"contextlattice","topic_path":"runbooks/recall","query":"continue the bounded recall","retrieval_mode":"balanced","agent_id":"continuation-roundtrip"}`
+	firstResp, first, firstRaw := recallResponseRouteRequest(t, http.MethodPost, gateway.URL+memoryRecallResponsePath, requestBody, nil)
+	if firstResp.StatusCode != http.StatusOK {
+		t.Fatalf("initial recall failed: status=%d body=%s", firstResp.StatusCode, firstRaw)
+	}
+	action := anyMap(anyMap(first["disclosure"])["continuation_action"])
+	if !recallResponseContinuationActionValid(first, action) || anyToString(action["kind"]) != "terminal" || anyToString(action["snapshot_semantics"]) != "exhausted" {
+		t.Fatalf("small snapshot did not terminate its continuation: %#v", action)
+	}
+	retrievalCalls := 0
+	for _, path := range *paths {
+		if path == "/v1/retrieval/query" {
+			retrievalCalls++
+		}
+	}
+	if retrievalCalls != 1 {
+		t.Fatalf("terminal continuation unexpectedly repeated retrieval: paths=%v", *paths)
+	}
+}
+
+func TestRecallResponseServerPolicyBindsOnlyReceiptSelectedRows(t *testing.T) {
+	selected := map[string]any{
+		"candidate_id":   "rtc_" + strings.Repeat("a", 24),
+		"source":         "qdrant",
+		"content_digest": "sha256:" + strings.Repeat("b", 64),
+		"confidence":     0.9,
+		"status":         "current",
+	}
+	forged := map[string]any{
+		"candidate_id":   "rtc_" + strings.Repeat("c", 24),
+		"source":         "qdrant",
+		"content_digest": "sha256:" + strings.Repeat("d", 64),
+		"confidence":     0.9,
+		"status":         "current",
+	}
+	composition := map[string]any{
+		"workspace_ref": "workspace-server-owned",
+		"context_pack":  map[string]any{"ranked_evidence": []any{selected, forged}},
+	}
+	receipt := contextPackSelectionReceipt([]any{map[string]any{
+		"candidate_id": selected["candidate_id"], "kind": "fact", "rank": 1,
+	}}, nil)
+	artifacts := contextPackCompilationArtifacts{Quality: map[string]any{"selection_receipt": receipt}}
+	policy := recallResponseServerPolicyInputFromCompilation(composition, artifacts, true)
+	if !policy.sourceBound || !recallResponseValidDigest(policy.snapshotDigest) || policy.receiptDigest != anyToString(receipt["receipt_digest"]) {
+		t.Fatalf("server receipt did not produce a typed policy binding: %#v", policy)
+	}
+	scopeDigest := "sha256:" + strings.Repeat("e", 64)
+	_, _, _, _, _, _, _, _, selectedAuthority, selectedBound := recallResponseEvidenceProjection(selected, 0, scopeDigest, policy)
+	_, _, _, _, _, _, _, _, forgedAuthority, forgedBound := recallResponseEvidenceProjection(forged, 1, scopeDigest, policy)
+	if !selectedBound || selectedAuthority != "server_receipt" {
+		t.Fatalf("receipt-selected row did not bind: authority=%q bound=%t", selectedAuthority, selectedBound)
+	}
+	if forgedBound || forgedAuthority != "derived" {
+		t.Fatalf("valid-looking row absent from the receipt bound itself: authority=%q bound=%t", forgedAuthority, forgedBound)
+	}
+	unbound := recallResponseServerPolicyInputFromCompilation(composition, artifacts, false)
+	_, _, _, _, _, _, _, _, unboundAuthority, unboundSource := recallResponseEvidenceProjection(selected, 0, scopeDigest, unbound)
+	if unboundSource || unboundAuthority != "derived" {
+		t.Fatalf("non-durable production input asserted binding authority: authority=%q bound=%t", unboundAuthority, unboundSource)
 	}
 }
 

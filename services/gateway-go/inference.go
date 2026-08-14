@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -56,11 +57,136 @@ type inferenceMessage struct {
 }
 
 type inferenceChatRequest struct {
-	Provider string             `json:"provider"`
-	Model    string             `json:"model"`
-	BaseURL  string             `json:"base_url"`
-	APIKey   string             `json:"api_key"`
-	Messages []inferenceMessage `json:"messages"`
+	Provider    string             `json:"provider"`
+	Model       string             `json:"model"`
+	BaseURL     string             `json:"base_url"`
+	APIKey      string             `json:"api_key"`
+	RequestID   string             `json:"request_id"`
+	TimeoutSecs float64            `json:"timeout_secs"`
+	Messages    []inferenceMessage `json:"messages"`
+}
+
+type inferenceCancelRequest struct {
+	RequestID string `json:"request_id"`
+}
+
+type inferenceCancellationEntry struct {
+	cancel context.CancelFunc
+}
+
+const (
+	inferenceCancellationIDBytes   = 32
+	inferenceCancellationActiveMax = 4096
+	// Unknown cancel-before-register tombstones have an independent quota so
+	// they cannot consume slots reserved for active inference requests.
+	inferenceCancellationTombstoneMax = 256
+	inferenceCancellationTombstoneTTL = time.Minute
+)
+
+type inferenceCancellationDisposition uint8
+
+const (
+	inferenceCancellationInvalid inferenceCancellationDisposition = iota
+	inferenceCancellationActive
+	inferenceCancellationPending
+	inferenceCancellationPendingCapacity
+)
+
+func validInferenceCancellationID(requestID string) bool {
+	if len(requestID) != inferenceCancellationIDBytes*2 {
+		return false
+	}
+	for _, char := range requestID {
+		if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *server) pruneInferenceCancellationTombstonesLocked(now time.Time) {
+	for requestID, createdAt := range s.inferenceCancellationTombstones {
+		if now.Sub(createdAt) >= inferenceCancellationTombstoneTTL {
+			delete(s.inferenceCancellationTombstones, requestID)
+		}
+	}
+}
+
+func (s *server) registerInferenceCancellation(requestID string, cancel context.CancelFunc) (*inferenceCancellationEntry, error) {
+	if !validInferenceCancellationID(requestID) || cancel == nil {
+		return nil, fmt.Errorf("invalid inference cancellation registration")
+	}
+	now := time.Now()
+	s.inferenceCancellationMu.Lock()
+	if s.inferenceCancellations == nil {
+		s.inferenceCancellations = map[string]*inferenceCancellationEntry{}
+	}
+	if s.inferenceCancellationTombstones == nil {
+		s.inferenceCancellationTombstones = map[string]time.Time{}
+	}
+	s.pruneInferenceCancellationTombstonesLocked(now)
+	existing := s.inferenceCancellations[requestID]
+	if existing != nil {
+		s.inferenceCancellationMu.Unlock()
+		return nil, fmt.Errorf("inference request_id is already active")
+	}
+	if len(s.inferenceCancellations) >= inferenceCancellationActiveMax {
+		s.inferenceCancellationMu.Unlock()
+		return nil, fmt.Errorf("inference active cancellation registry is full")
+	}
+	_, canceled := s.inferenceCancellationTombstones[requestID]
+	delete(s.inferenceCancellationTombstones, requestID)
+	entry := &inferenceCancellationEntry{cancel: cancel}
+	s.inferenceCancellations[requestID] = entry
+	s.inferenceCancellationMu.Unlock()
+	if canceled {
+		cancel()
+	}
+	return entry, nil
+}
+
+func (s *server) unregisterInferenceCancellation(requestID string, entry *inferenceCancellationEntry) {
+	if entry == nil {
+		return
+	}
+	s.inferenceCancellationMu.Lock()
+	if s.inferenceCancellations[requestID] == entry {
+		delete(s.inferenceCancellations, requestID)
+	}
+	s.inferenceCancellationMu.Unlock()
+}
+
+func (s *server) cancelInferenceRequest(requestID string) inferenceCancellationDisposition {
+	if !validInferenceCancellationID(requestID) {
+		return inferenceCancellationInvalid
+	}
+	now := time.Now()
+	var cancel context.CancelFunc
+	disposition := inferenceCancellationPending
+	s.inferenceCancellationMu.Lock()
+	if s.inferenceCancellations == nil {
+		s.inferenceCancellations = map[string]*inferenceCancellationEntry{}
+	}
+	if s.inferenceCancellationTombstones == nil {
+		s.inferenceCancellationTombstones = map[string]time.Time{}
+	}
+	s.pruneInferenceCancellationTombstonesLocked(now)
+	entry := s.inferenceCancellations[requestID]
+	if entry != nil {
+		cancel = entry.cancel
+		disposition = inferenceCancellationActive
+	} else if _, exists := s.inferenceCancellationTombstones[requestID]; !exists {
+		if len(s.inferenceCancellationTombstones) >= inferenceCancellationTombstoneMax {
+			s.inferenceCancellationMu.Unlock()
+			return inferenceCancellationPendingCapacity
+		}
+		s.inferenceCancellationTombstones[requestID] = now
+	}
+	s.inferenceCancellationMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	return disposition
 }
 
 type inferenceANEProbeCache struct {
@@ -517,6 +643,16 @@ func _inferenceAutoProbeTTL() time.Duration {
 }
 
 func _inferenceProbeProvider(provider string, baseURL string, transport string) (bool, string) {
+	return _inferenceProbeProviderWithContext(context.Background(), provider, baseURL, transport)
+}
+
+func _inferenceProbeProviderWithContext(ctx context.Context, provider string, baseURL string, transport string) (bool, string) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return false, err.Error()
+	}
 	provider = _inferenceNormalizeProvider(provider)
 	if !_inferenceAutoProbeEnabled() {
 		return true, "probe disabled"
@@ -531,6 +667,9 @@ func _inferenceProbeProvider(provider string, baseURL string, transport string) 
 	providerProbeCache.mu.Lock()
 	if cached, ok := providerProbeCache.entries[key]; ok && now.Sub(cached.checkedAt) <= ttl {
 		providerProbeCache.mu.Unlock()
+		if err := ctx.Err(); err != nil {
+			return false, err.Error()
+		}
 		return cached.healthy, cached.detail
 	}
 	providerProbeCache.mu.Unlock()
@@ -546,24 +685,44 @@ func _inferenceProbeProvider(provider string, baseURL string, transport string) 
 	healthy := false
 	detail := "unreachable"
 	for _, probeURL := range urls {
-		req, err := http.NewRequest(http.MethodGet, probeURL, nil)
+		if err := ctx.Err(); err != nil {
+			return false, err.Error()
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, probeURL, nil)
 		if err != nil {
 			detail = err.Error()
 			continue
 		}
 		resp, err := client.Do(req)
 		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return false, ctxErr.Error()
+			}
 			detail = err.Error()
 			continue
 		}
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-		_ = resp.Body.Close()
+		_, copyErr := io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+		closeErr := resp.Body.Close()
+		if copyErr != nil || closeErr != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return false, ctxErr.Error()
+			}
+			if copyErr != nil {
+				detail = copyErr.Error()
+			} else {
+				detail = closeErr.Error()
+			}
+			continue
+		}
 		if resp.StatusCode < 400 {
 			healthy = true
 			detail = "healthy via " + probeURL
 			break
 		}
 		detail = fmt.Sprintf("%s status %d", probeURL, resp.StatusCode)
+	}
+	if err := ctx.Err(); err != nil {
+		return false, err.Error()
 	}
 	providerProbeCache.mu.Lock()
 	providerProbeCache.entries[key] = inferenceProviderProbeResult{checkedAt: now, healthy: healthy, detail: detail}
@@ -811,6 +970,16 @@ func _inferenceFastembedAdapterEnabled() bool {
 }
 
 func (s *server) inferenceANESidecarProbe(force bool) (bool, string) {
+	return s.inferenceANESidecarProbeWithContext(context.Background(), force)
+}
+
+func (s *server) inferenceANESidecarProbeWithContext(ctx context.Context, force bool) (bool, string) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return false, err.Error()
+	}
 	ttl := envDurationSeconds("ORCH_ANE_SIDECAR_HEALTH_TTL_SECS", 10.0)
 	now := time.Now()
 	aneProbeCache.mu.Lock()
@@ -818,6 +987,9 @@ func (s *server) inferenceANESidecarProbe(force bool) (bool, string) {
 		healthy := aneProbeCache.healthy
 		detail := aneProbeCache.detail
 		aneProbeCache.mu.Unlock()
+		if err := ctx.Err(); err != nil {
+			return false, err.Error()
+		}
 		return healthy, detail
 	}
 	aneProbeCache.mu.Unlock()
@@ -829,7 +1001,7 @@ func (s *server) inferenceANESidecarProbe(force bool) (bool, string) {
 	apiKey := strings.TrimSpace(os.Getenv("ORCH_ANE_SIDECAR_API_KEY"))
 
 	client := _inferenceHTTPClient(timeout, connectTimeout)
-	req, err := http.NewRequest(http.MethodGet, healthURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, healthURL, nil)
 	if err != nil {
 		aneProbeCache.mu.Lock()
 		aneProbeCache.checkedAt = now
@@ -843,6 +1015,9 @@ func (s *server) inferenceANESidecarProbe(force bool) (bool, string) {
 	}
 	resp, err := client.Do(req)
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return false, ctxErr.Error()
+		}
 		aneProbeCache.mu.Lock()
 		aneProbeCache.checkedAt = now
 		aneProbeCache.healthy = false
@@ -851,7 +1026,13 @@ func (s *server) inferenceANESidecarProbe(force bool) (bool, string) {
 		return false, err.Error()
 	}
 	defer resp.Body.Close()
-	raw, _ := io.ReadAll(resp.Body)
+	raw, readErr := io.ReadAll(resp.Body)
+	if readErr != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return false, ctxErr.Error()
+		}
+		return false, readErr.Error()
+	}
 	healthy := false
 	detail := "unreachable"
 	if resp.StatusCode < 400 {
@@ -869,6 +1050,9 @@ func (s *server) inferenceANESidecarProbe(force bool) (bool, string) {
 	} else {
 		detail = fmt.Sprintf("health %d", resp.StatusCode)
 	}
+	if err := ctx.Err(); err != nil {
+		return false, err.Error()
+	}
 	aneProbeCache.mu.Lock()
 	aneProbeCache.checkedAt = now
 	aneProbeCache.healthy = healthy
@@ -878,6 +1062,16 @@ func (s *server) inferenceANESidecarProbe(force bool) (bool, string) {
 }
 
 func (s *server) resolveInferenceRoute(requestedProvider string, baseURLOverride string, apiKey string) (inferenceRoute, error) {
+	return s.resolveInferenceRouteWithContext(context.Background(), requestedProvider, baseURLOverride, apiKey)
+}
+
+func (s *server) resolveInferenceRouteWithContext(ctx context.Context, requestedProvider string, baseURLOverride string, apiKey string) (inferenceRoute, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return inferenceRoute{}, err
+	}
 	requested := _inferenceNormalizeProvider(requestedProvider)
 	providerMode := _inferenceNormalizeProvider(os.Getenv("ORCH_INFER_PROVIDER"))
 	if providerMode == "" {
@@ -941,7 +1135,10 @@ func (s *server) resolveInferenceRoute(requestedProvider string, baseURLOverride
 		if _inferenceANESidecarRequireMSeries() && !_inferenceIsMSeriesMac() {
 			return inferenceRoute{}, false
 		}
-		healthy, detail := s.inferenceANESidecarProbe(false)
+		healthy, detail := s.inferenceANESidecarProbeWithContext(ctx, false)
+		if err := ctx.Err(); err != nil {
+			return inferenceRoute{}, false
+		}
 		if !healthy {
 			return inferenceRoute{}, false
 		}
@@ -968,6 +1165,9 @@ func (s *server) resolveInferenceRoute(requestedProvider string, baseURLOverride
 		if route, ok := resolveANERoute("explicit"); ok {
 			return route, nil
 		}
+		if err := ctx.Err(); err != nil {
+			return inferenceRoute{}, err
+		}
 		if !_inferenceANESidecarFallbackEnabled() {
 			return inferenceRoute{}, fmt.Errorf("ane sidecar requested but unavailable and fallback disabled")
 		}
@@ -976,6 +1176,9 @@ func (s *server) resolveInferenceRoute(requestedProvider string, baseURLOverride
 		probeNotes := []string{}
 		priority := _inferenceProviderPriority()
 		for _, candidate := range priority {
+			if err := ctx.Err(); err != nil {
+				return inferenceRoute{}, err
+			}
 			provider := _inferenceNormalizeProvider(candidate)
 			if provider == "" {
 				continue
@@ -983,6 +1186,9 @@ func (s *server) resolveInferenceRoute(requestedProvider string, baseURLOverride
 			if provider == "ane_sidecar" {
 				if route, ok := resolveANERoute("auto"); ok {
 					return route, nil
+				}
+				if err := ctx.Err(); err != nil {
+					return inferenceRoute{}, err
 				}
 				probeNotes = append(probeNotes, "ane_sidecar unavailable")
 				continue
@@ -993,7 +1199,10 @@ func (s *server) resolveInferenceRoute(requestedProvider string, baseURLOverride
 			} else {
 				route = resolveOpenAIProvider(provider, "", "auto")
 			}
-			healthy, detail := _inferenceProbeProvider(route.Provider, route.BaseURL, route.Transport)
+			healthy, detail := _inferenceProbeProviderWithContext(ctx, route.Provider, route.BaseURL, route.Transport)
+			if err := ctx.Err(); err != nil {
+				return inferenceRoute{}, err
+			}
 			if healthy {
 				route.Reason = fmt.Sprintf("auto selected %s for %s (%s)", route.Provider, hardwareProfile, detail)
 				return route, nil
@@ -1013,6 +1222,9 @@ func (s *server) resolveInferenceRoute(requestedProvider string, baseURLOverride
 			if route, ok := resolveANERoute("auto-fallback"); ok {
 				route.Reason = reason
 				return route, nil
+			}
+			if err := ctx.Err(); err != nil {
+				return inferenceRoute{}, err
 			}
 			fallbackProvider = "ollama"
 		}
@@ -1069,6 +1281,65 @@ func normalizeInferenceChatCallOptions(options inferenceChatCallOptions) inferen
 	return options
 }
 
+func _inferenceRemainingDuration(ctx context.Context) (time.Duration, bool, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return 0, false, err
+	}
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return 0, false, nil
+	}
+	remaining := time.Until(deadline)
+	if remaining <= 0 {
+		return 0, true, context.DeadlineExceeded
+	}
+	return remaining, true, nil
+}
+
+func _inferenceBoundCallOptions(ctx context.Context, options inferenceChatCallOptions) (inferenceChatCallOptions, error) {
+	options = normalizeInferenceChatCallOptions(options)
+	remaining, bounded, err := _inferenceRemainingDuration(ctx)
+	if err != nil {
+		return options, err
+	}
+	if bounded {
+		if options.Timeout > remaining {
+			options.Timeout = remaining
+		}
+		if options.ConnectTimeout > remaining {
+			options.ConnectTimeout = remaining
+		}
+	}
+	return options, nil
+}
+
+func _inferenceWaitForRetry(ctx context.Context, delay time.Duration) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if delay <= 0 {
+		return ctx.Err()
+	}
+	remaining, bounded, err := _inferenceRemainingDuration(ctx)
+	if err != nil {
+		return err
+	}
+	if bounded && delay >= remaining {
+		return context.DeadlineExceeded
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return ctx.Err()
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 func _inferenceCallOpenAICompatible(
 	baseURL string,
 	model string,
@@ -1090,8 +1361,26 @@ func _inferenceCallOpenAICompatibleWithOptions(
 	apiKey string,
 	options inferenceChatCallOptions,
 ) (string, error) {
+	return _inferenceCallOpenAICompatibleWithOptionsContext(context.Background(), baseURL, model, messages, apiKey, options)
+}
+
+func _inferenceCallOpenAICompatibleWithOptionsContext(
+	ctx context.Context,
+	baseURL string,
+	model string,
+	messages []inferenceMessage,
+	apiKey string,
+	options inferenceChatCallOptions,
+) (string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	endpoint := _inferenceNormalizeOpenAIBase(baseURL) + "/chat/completions"
-	options = normalizeInferenceChatCallOptions(options)
+	var err error
+	options, err = _inferenceBoundCallOptions(ctx, options)
+	if err != nil {
+		return "", err
+	}
 	payload := map[string]any{
 		"model":       model,
 		"messages":    _inferenceMessagesToPayload(messages),
@@ -1105,7 +1394,7 @@ func _inferenceCallOpenAICompatibleWithOptions(
 	if err != nil {
 		return "", err
 	}
-	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(encoded))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(encoded))
 	if err != nil {
 		return "", err
 	}
@@ -1116,10 +1405,19 @@ func _inferenceCallOpenAICompatibleWithOptions(
 	client := _inferenceHTTPClient(options.Timeout, options.ConnectTimeout)
 	resp, err := client.Do(req)
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return "", ctxErr
+		}
 		return "", err
 	}
 	defer resp.Body.Close()
-	raw, _ := io.ReadAll(resp.Body)
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return "", ctxErr
+		}
+		return "", err
+	}
 	if resp.StatusCode >= 400 {
 		return "", fmt.Errorf("openai-compatible status %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
 	}
@@ -1179,8 +1477,25 @@ func _inferenceCallOllama(baseURL string, model string, messages []inferenceMess
 }
 
 func _inferenceCallOllamaWithOptions(baseURL string, model string, messages []inferenceMessage, options inferenceChatCallOptions) (string, error) {
+	return _inferenceCallOllamaWithOptionsContext(context.Background(), baseURL, model, messages, options)
+}
+
+func _inferenceCallOllamaWithOptionsContext(
+	ctx context.Context,
+	baseURL string,
+	model string,
+	messages []inferenceMessage,
+	options inferenceChatCallOptions,
+) (string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	endpoint := strings.TrimRight(baseURL, "/") + "/api/chat"
-	options = normalizeInferenceChatCallOptions(options)
+	var err error
+	options, err = _inferenceBoundCallOptions(ctx, options)
+	if err != nil {
+		return "", err
+	}
 	payload := map[string]any{
 		"model":    model,
 		"messages": _inferenceMessagesToPayload(messages),
@@ -1200,7 +1515,7 @@ func _inferenceCallOllamaWithOptions(baseURL string, model string, messages []in
 	if err != nil {
 		return "", err
 	}
-	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(encoded))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(encoded))
 	if err != nil {
 		return "", err
 	}
@@ -1208,10 +1523,19 @@ func _inferenceCallOllamaWithOptions(baseURL string, model string, messages []in
 	client := _inferenceHTTPClient(options.Timeout, options.ConnectTimeout)
 	resp, err := client.Do(req)
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return "", ctxErr
+		}
 		return "", err
 	}
 	defer resp.Body.Close()
-	raw, _ := io.ReadAll(resp.Body)
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return "", ctxErr
+		}
+		return "", err
+	}
 	if resp.StatusCode >= 400 {
 		return "", fmt.Errorf("ollama status %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
 	}
@@ -1235,6 +1559,25 @@ func (s *server) callInferenceChat(route inferenceRoute, model string, messages 
 }
 
 func (s *server) callInferenceChatWithOptions(route inferenceRoute, model string, messages []inferenceMessage, options inferenceChatCallOptions) (string, inferenceRoute, error) {
+	overallTimeout := normalizeInferenceChatCallOptions(options).Timeout
+	ctx, cancel := context.WithTimeout(context.Background(), overallTimeout)
+	defer cancel()
+	return s.callInferenceChatWithContext(ctx, route, model, messages, options)
+}
+
+func (s *server) callInferenceChatWithContext(
+	ctx context.Context,
+	route inferenceRoute,
+	model string,
+	messages []inferenceMessage,
+	options inferenceChatCallOptions,
+) (string, inferenceRoute, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return "", route, err
+	}
 	if strings.TrimSpace(model) == "" {
 		return "", route, fmt.Errorf("model is required")
 	}
@@ -1244,7 +1587,11 @@ func (s *server) callInferenceChatWithOptions(route inferenceRoute, model string
 	rawOptions := options
 	options = normalizeInferenceChatCallOptions(options)
 	if route.Transport == "ollama" {
-		content, err := _inferenceCallOllamaWithOptions(route.BaseURL, model, messages, options)
+		callOptions, err := _inferenceBoundCallOptions(ctx, options)
+		if err != nil {
+			return "", route, err
+		}
+		content, err := _inferenceCallOllamaWithOptionsContext(ctx, route.BaseURL, model, messages, callOptions)
 		return content, route, err
 	}
 	timeout := options.Timeout
@@ -1272,15 +1619,22 @@ func (s *server) callInferenceChatWithOptions(route inferenceRoute, model string
 	callOptions.Timeout = timeout
 	callOptions.ConnectTimeout = connectTimeout
 	for attempt := 0; attempt <= retries; attempt++ {
-		content, err := _inferenceCallOpenAICompatibleWithOptions(route.BaseURL, model, messages, route.APIKey, callOptions)
+		attemptOptions, budgetErr := _inferenceBoundCallOptions(ctx, callOptions)
+		if budgetErr != nil {
+			return "", route, budgetErr
+		}
+		content, err := _inferenceCallOpenAICompatibleWithOptionsContext(ctx, route.BaseURL, model, messages, route.APIKey, attemptOptions)
 		if err == nil {
 			return content, route, nil
+		}
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return "", route, ctxErr
 		}
 		lastErr = err
 		if attempt < retries {
 			sleepFor := backoff * time.Duration(1<<attempt)
-			if sleepFor > 0 {
-				time.Sleep(sleepFor)
+			if err := _inferenceWaitForRetry(ctx, sleepFor); err != nil {
+				return "", route, err
 			}
 		}
 	}
@@ -1294,7 +1648,14 @@ func (s *server) callInferenceChatWithOptions(route inferenceRoute, model string
 			CoreMLEnabled:     false,
 			SidecarEnabled:    false,
 		}
-		content, err := _inferenceCallOllamaWithOptions(fallbackRoute.BaseURL, model, messages, options)
+		fallbackOptions, budgetErr := _inferenceBoundCallOptions(ctx, options)
+		if budgetErr != nil {
+			return "", route, budgetErr
+		}
+		content, err := _inferenceCallOllamaWithOptionsContext(ctx, fallbackRoute.BaseURL, model, messages, fallbackOptions)
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return "", fallbackRoute, ctxErr
+		}
 		return content, fallbackRoute, err
 	}
 	if lastErr == nil {
@@ -1323,7 +1684,7 @@ func (s *server) inferenceRouteHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	route, err := s.resolveInferenceRoute(payload.Provider, payload.BaseURL, payload.APIKey)
+	route, err := s.resolveInferenceRouteWithContext(r.Context(), payload.Provider, payload.BaseURL, payload.APIKey)
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": err.Error()})
 		return
@@ -1359,12 +1720,39 @@ func (s *server) inferenceChatHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "messages are required"})
 		return
 	}
-	route, err := s.resolveInferenceRoute(payload.Provider, payload.BaseURL, payload.APIKey)
+	if payload.TimeoutSecs < 0 || payload.TimeoutSecs > 24*60*60 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "timeout_secs is outside the supported range"})
+		return
+	}
+	requestID := strings.TrimSpace(payload.RequestID)
+	if requestID != "" && !validInferenceCancellationID(requestID) {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "request_id must be 64 lowercase hexadecimal characters"})
+		return
+	}
+	callOptions := inferenceChatCallOptions{}
+	if payload.TimeoutSecs > 0 {
+		callOptions.Timeout = time.Duration(payload.TimeoutSecs * float64(time.Second))
+		if callOptions.Timeout <= 0 {
+			callOptions.Timeout = time.Nanosecond
+		}
+	}
+	callOptions = normalizeInferenceChatCallOptions(callOptions)
+	ctx, cancel := context.WithTimeout(r.Context(), callOptions.Timeout)
+	defer cancel()
+	if requestID != "" {
+		cancellationEntry, registerErr := s.registerInferenceCancellation(requestID, cancel)
+		if registerErr != nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": registerErr.Error()})
+			return
+		}
+		defer s.unregisterInferenceCancellation(requestID, cancellationEntry)
+	}
+	route, err := s.resolveInferenceRouteWithContext(ctx, payload.Provider, payload.BaseURL, payload.APIKey)
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
-	content, activeRoute, err := s.callInferenceChat(route, payload.Model, payload.Messages)
+	content, activeRoute, err := s.callInferenceChatWithContext(ctx, route, payload.Model, payload.Messages, callOptions)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]any{
 			"ok":    false,
@@ -1379,6 +1767,41 @@ func (s *server) inferenceChatHandler(w http.ResponseWriter, r *http.Request) {
 		"content": content,
 		"route":   activeRoute,
 	})
+}
+
+func (s *server) inferenceCancelHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+		return
+	}
+	if _, ok := s.prepareAuthorizedHeaders(w, r); !ok {
+		return
+	}
+	rawBody, err := readRequestBody(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "failed to read request body"})
+		return
+	}
+	payload := inferenceCancelRequest{}
+	if err := json.Unmarshal(rawBody, &payload); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid json"})
+		return
+	}
+	requestID := strings.TrimSpace(payload.RequestID)
+	if !validInferenceCancellationID(requestID) {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "request_id must be 64 lowercase hexadecimal characters"})
+		return
+	}
+	disposition := s.cancelInferenceRequest(requestID)
+	if disposition == inferenceCancellationPendingCapacity {
+		writeJSON(w, http.StatusTooManyRequests, map[string]any{"ok": false, "error": "inference cancellation tombstone capacity reached"})
+		return
+	}
+	if disposition == inferenceCancellationInvalid {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid inference cancellation request"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "canceled": true})
 }
 
 func _inferenceProviderUseCase(provider string) string {

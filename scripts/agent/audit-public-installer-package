@@ -1,0 +1,2129 @@
+#!/usr/bin/env python3
+"""Audit final public installer package contents with native format validators."""
+
+from __future__ import annotations
+
+import argparse
+import errno
+import hashlib
+import json
+import os
+import re
+import shutil
+import stat
+import subprocess
+import sys
+import tarfile
+import tempfile
+from collections.abc import Callable
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from public_release_material_scan import (  # noqa: E402
+    PublicReleaseMaterialError,
+    _finding,
+)
+from public_release_package_scan import (  # noqa: E402
+    ArchiveContentContract,
+    PackageScanLimits,
+    PublicPackageScanner,
+    archive_contract_sha256,
+    build_public_payload_contract,
+)
+from release_installer_outer import (  # noqa: E402
+    ALLOWED_MSI_TABLES,
+    REQUIRED_EMPTY_MSI_TABLES,
+    SCHEMA_ID as OUTER_CONTRACT_SCHEMA_ID,
+    OuterContractError,
+    contract_sha256,
+    validate_linux_archive,
+    validate_msi_table_closure,
+    validate_tree,
+)
+
+
+PACKAGE_AUDIT_RECEIPT_SCHEMA_ID = "contextlattice_public_installer_package_audit.v2"
+PACKAGE_AUDIT_RECEIPT_VERSION = "2"
+PACKAGE_CONTRACT_VERSION = "public-payload-contract.v1"
+SCANNER_CONTRACT_VERSION = "public-package-scanner.v1"
+OUTER_CONTRACT_VERSION = "installer-outer-contract.v1"
+MSI_TOOL_TIMEOUT_SECONDS = 30
+MSI_TOOL_OUTPUT_LIMIT = 8 * 1024 * 1024
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+EXPECTED_INSTALLER_NAMES = {
+    "linux": "ContextLattice-linux-bootstrap.tar.gz",
+    "macos": "ContextLattice-macOS-universal.dmg",
+    "windows": "ContextLattice-windows-x64.msi",
+}
+PUBLIC_PAYLOAD_METADATA_FIELDS = {
+    "approved_source_ref",
+    "approved_source_repository",
+    "build_channel",
+    "commit",
+    "forbidden_paid_marker_paths",
+    "forbidden_paid_runtime_paths",
+    "frontier_t1_eval_ledger_sha256",
+    "frontier_t1_private_proof_commit",
+    "frontier_t1_provenance_blob_sha1",
+    "frontier_t1_release_gate",
+    "frontier_t1_reviewed_source_commit",
+    "frontier_t1_reviewed_source_tree",
+    "frontier_t1_tested_source_manifest_sha256",
+    "frontier_t2_release_gate",
+    "installer_outer_contract_schema_id",
+    "installer_outer_contract_sha256",
+    "lane",
+    "payload_root",
+    "release_ref",
+    "required_paid_markers",
+    "required_paid_runtime_files",
+    "runtime_version",
+    "schema_id",
+    "source",
+    "source_tree",
+    "tag",
+}
+PACKAGE_SCAN_FIELDS = {
+    "archive_count",
+    "expanded_byte_count",
+    "file_count",
+    "finding_count",
+    "max_archive_depth",
+    "member_count",
+    "ok",
+    "raw_byte_count",
+    "schema_id",
+    "truncated",
+}
+RECEIPT_FIELDS = {
+    "artifact",
+    "contracts",
+    "kind",
+    "lane",
+    "normalized_scan_sha256",
+    "receipt_version",
+    "schema_id",
+    "scan",
+    "source",
+    "tag",
+    "tools",
+}
+
+
+def _open_regular(path: Path, *, artifact_name: str, maximum: int | None = None):
+    """Open one descriptor and bind all later reads to its fstat identity."""
+    try:
+        descriptor = os.open(
+            path,
+            os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK,
+        )
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) or (maximum is not None and info.st_size > maximum):
+            os.close(descriptor)
+            raise ValueError("unsafe regular file")
+        return descriptor, info
+    except (OSError, ValueError) as exc:
+        raise _sanitized_error(
+            "package.file_unsafe",
+            artifact_name,
+            type(exc).__name__.encode("ascii", errors="replace"),
+        ) from exc
+
+
+def _file_identity(info: os.stat_result) -> tuple[int, ...]:
+    return (
+        info.st_dev,
+        info.st_ino,
+        info.st_uid,
+        info.st_gid,
+        info.st_mode,
+        info.st_size,
+        info.st_mtime_ns,
+        info.st_ctime_ns,
+    )
+
+
+def _copy_regular_file(path: Path, *, temp_root: Path, artifact_name: str) -> tuple[Path, dict[str, object]]:
+    """Make an owner-only immutable audit copy from one already-open fd."""
+    descriptor, before = _open_regular(path, artifact_name=artifact_name)
+    digest = hashlib.sha256()
+    try:
+        temp_root = _temp_root(str(temp_root))
+        temp_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        copy_directory = Path(
+            tempfile.mkdtemp(prefix="public-package-audit-copy-", dir=temp_root)
+        )
+        destination = copy_directory / artifact_name
+        output_fd = os.open(
+            destination,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC,
+            0o600,
+        )
+        try:
+            with os.fdopen(descriptor, "rb", closefd=False) as source, os.fdopen(
+                output_fd, "wb", closefd=True
+            ) as target:
+                while True:
+                    chunk = source.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    digest.update(chunk)
+                    target.write(chunk)
+                target.flush()
+                os.fsync(target.fileno())
+            after = os.fstat(descriptor)
+            if _file_identity(before) != _file_identity(after):
+                raise ValueError("artifact changed while copying")
+        except BaseException:
+            shutil.rmtree(copy_directory, ignore_errors=True)
+            raise
+    finally:
+        os.close(descriptor)
+    try:
+        destination.chmod(0o400)
+    except BaseException:
+        shutil.rmtree(destination.parent, ignore_errors=True)
+        raise
+    return destination, {
+        "size_bytes": before.st_size,
+        "sha256": digest.hexdigest(),
+    }
+
+
+def sha256_file(path: Path) -> str:
+    descriptor, before = _open_regular(path, artifact_name=path.name)
+    digest = hashlib.sha256()
+    try:
+        with os.fdopen(descriptor, "rb", closefd=False) as source:
+            for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                digest.update(chunk)
+        after = os.fstat(descriptor)
+        if _file_identity(before) != _file_identity(after):
+            raise ValueError("artifact changed while hashing")
+    finally:
+        os.close(descriptor)
+    return digest.hexdigest()
+
+
+def _artifact_binding(path: Path, *, artifact_name: str) -> dict[str, object]:
+    descriptor, before = _open_regular(path, artifact_name=artifact_name)
+    digest = hashlib.sha256()
+    try:
+        with os.fdopen(descriptor, "rb", closefd=False) as source:
+            for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                digest.update(chunk)
+        after = os.fstat(descriptor)
+        if _file_identity(before) != _file_identity(after):
+            raise ValueError("artifact changed while binding")
+        return {
+            "name": artifact_name,
+            "size_bytes": before.st_size,
+            "sha256": digest.hexdigest(),
+        }
+    finally:
+        os.close(descriptor)
+
+
+def _assert_artifact_binding(
+    path: Path,
+    expected: dict[str, object],
+    *,
+    artifact_name: str,
+) -> None:
+    observed = _artifact_binding(path, artifact_name=artifact_name)
+    if observed != {
+        "name": artifact_name,
+        "size_bytes": expected.get("size_bytes"),
+        "sha256": expected.get("sha256"),
+    }:
+        raise _sanitized_error("package.audit_copy_changed", artifact_name)
+
+
+def _sanitized_error(code: str, artifact_name: str, evidence: bytes = b"") -> PublicReleaseMaterialError:
+    finding = _finding(code, artifact_name, evidence or code.encode("ascii"))
+    return PublicReleaseMaterialError(
+        {
+            "schema_id": "contextlattice_public_release_package_scan.v1",
+            "ok": False,
+            "finding_count": 1,
+            "truncated": False,
+            "findings": [finding],
+        }
+    )
+
+
+def _run_checked(
+    argv: list[str],
+    *,
+    code: str,
+    artifact_name: str,
+    cwd: Path | None = None,
+    env: dict[str, str] | None = None,
+) -> None:
+    try:
+        result = subprocess.run(
+            argv,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            cwd=str(cwd) if cwd is not None else None,
+            env=env,
+        )
+    except OSError as exc:
+        raise _sanitized_error(
+            "package.verifier_unavailable",
+            artifact_name,
+            type(exc).__name__.encode("ascii", errors="replace"),
+        ) from exc
+    if result.returncode != 0:
+        raise _sanitized_error(code, artifact_name, str(result.returncode).encode("ascii"))
+
+
+def _git_value(source_root: Path, *arguments: str) -> str:
+    result = subprocess.run(
+        ["git", "-C", str(source_root), *arguments],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise ValueError("reviewed source identity cannot be resolved")
+    try:
+        return result.stdout.decode("ascii").strip()
+    except UnicodeError as exc:
+        raise ValueError("reviewed source identity is malformed") from exc
+
+
+def _committed_file_sha256(source_root: Path, relative_path: str) -> str:
+    """Hash a release tool only from the reviewed commit, never the worktree."""
+    result = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(source_root),
+            "cat-file",
+            "blob",
+            f"HEAD:{relative_path}",
+        ],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise ValueError("reviewed source tool is absent from the committed tree")
+    return hashlib.sha256(result.stdout).hexdigest()
+
+
+def _source_identity(source_root: Path, *, tag: str) -> dict[str, object]:
+    """Resolve release identity only from a clean, committed Git checkout."""
+    status = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(source_root),
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=all",
+            "--no-renames",
+        ],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if status.returncode != 0 or status.stdout:
+        raise ValueError("reviewed source worktree is not clean")
+    head = _git_value(source_root, "rev-parse", "--verify", "HEAD^{commit}")
+    tag_commit = _git_value(source_root, "rev-parse", "--verify", f"refs/tags/{tag}^{{commit}}")
+    source_tree = _git_value(source_root, "rev-parse", "--verify", f"{head}^{{tree}}")
+    if not re.fullmatch(r"[0-9a-f]{40}", head) or tag_commit != head:
+        raise ValueError("reviewed source tag and commit do not match")
+    expected_sha = os.environ.get("RELEASE_COMMIT", "").strip()
+    if expected_sha and (
+        not re.fullmatch(r"[0-9a-f]{40}", expected_sha) or expected_sha != head
+    ):
+        raise ValueError("reviewed source commit does not match RELEASE_COMMIT")
+    if not re.fullmatch(r"[0-9a-f]{40}", source_tree):
+        raise ValueError("reviewed source tree is malformed")
+    return {
+        "commit": head,
+        "tree": source_tree,
+        "clean_tree": True,
+        "release_ref": f"refs/tags/{tag}",
+    }
+
+
+def _validate_relative_path_list(value: object) -> bool:
+    if not isinstance(value, list) or value != sorted(set(value)):
+        return False
+    for item in value:
+        if (
+            not isinstance(item, str)
+            or not item
+            or item.startswith(("/", "\\"))
+            or "\\" in item
+            or any(part in {"", ".", ".."} for part in item.split("/"))
+        ):
+            return False
+    return True
+
+
+def _validate_public_payload_metadata(
+    metadata_bytes: bytes,
+    *,
+    source_root: Path,
+    tag: str,
+    artifact_name: str,
+) -> tuple[str, dict[str, object]]:
+    try:
+        if not metadata_bytes or len(metadata_bytes) > 4096:
+            raise ValueError("size")
+        metadata = json.loads(metadata_bytes)
+        if not isinstance(metadata, dict) or set(metadata) != PUBLIC_PAYLOAD_METADATA_FIELDS:
+            raise ValueError("fields")
+        canonical = (json.dumps(metadata, indent=2, sort_keys=True) + "\n").encode("utf-8")
+        if metadata_bytes != canonical:
+            raise ValueError("canonical")
+        identity = _source_identity(source_root, tag=tag)
+        head = str(identity["commit"])
+        source_tree = str(identity["tree"])
+        runtime_tag = re.sub(r"-public$", "", tag)
+        runtime_version = runtime_tag.removeprefix("v")
+        if (
+            not re.fullmatch(r"[0-9a-f]{40}", head)
+            or metadata.get("schema_id") != "contextlattice_release_payload.v2"
+            or metadata.get("lane") != "public"
+            or metadata.get("tag") != tag
+            or metadata.get("commit") != head
+            or metadata.get("source_tree") != source_tree
+            or metadata.get("runtime_version") != runtime_version
+            or metadata.get("build_channel") != ("candidate" if "-" in runtime_version else "stable")
+            or metadata.get("release_ref") != f"refs/tags/{tag}"
+            or metadata.get("source") != "approved_lane_tagged_checkout"
+            or metadata.get("approved_source_repository") != "sheawinkler/ContextLattice"
+            or metadata.get("approved_source_ref") != "refs/heads/main"
+            or metadata.get("payload_root") != "contextlattice"
+            or metadata.get("installer_outer_contract_schema_id") != OUTER_CONTRACT_SCHEMA_ID
+            or metadata.get("installer_outer_contract_sha256")
+            != contract_sha256(source_root, "public", tag)
+            or metadata.get("frontier_t1_release_gate") != "not_applicable"
+            or metadata.get("frontier_t2_release_gate") != "not_applicable"
+            or any(
+                metadata.get(field) != ""
+                for field in (
+                    "frontier_t1_eval_ledger_sha256",
+                    "frontier_t1_private_proof_commit",
+                    "frontier_t1_provenance_blob_sha1",
+                    "frontier_t1_reviewed_source_commit",
+                    "frontier_t1_reviewed_source_tree",
+                    "frontier_t1_tested_source_manifest_sha256",
+                )
+            )
+            or metadata.get("required_paid_markers") != []
+            or metadata.get("required_paid_runtime_files") != []
+            or not _validate_relative_path_list(metadata.get("forbidden_paid_marker_paths"))
+            or not _validate_relative_path_list(metadata.get("forbidden_paid_runtime_paths"))
+        ):
+            raise ValueError("identity")
+    except (OSError, TypeError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
+        raise _sanitized_error(
+            "package.payload_metadata_invalid",
+            artifact_name,
+            type(exc).__name__.encode("ascii", errors="replace"),
+        ) from exc
+    return head, metadata
+
+
+def _payload_contract(
+    metadata_bytes: bytes,
+    *,
+    source_root: Path,
+    tag: str,
+    kind: str,
+    artifact_name: str,
+) -> tuple[str, ArchiveContentContract]:
+    commit, metadata = _validate_public_payload_metadata(
+        metadata_bytes,
+        source_root=source_root,
+        tag=tag,
+        artifact_name=artifact_name,
+    )
+    archive_format = "zip" if kind == "windows" else "tar.gz"
+    try:
+        contract = build_public_payload_contract(
+            source_root,
+            commit=commit,
+            metadata_bytes=metadata_bytes,
+            archive_format=archive_format,
+        )
+        post_identity = _source_identity(source_root, tag=tag)
+        if post_identity["commit"] != commit or post_identity["tree"] != metadata["source_tree"]:
+            raise ValueError("reviewed source changed while building payload contract")
+    except (OSError, TypeError, UnicodeError, ValueError, tarfile.TarError) as exc:
+        raise _sanitized_error(
+            "package.payload_contract_invalid",
+            artifact_name,
+            type(exc).__name__.encode("ascii", errors="replace"),
+        ) from exc
+    return archive_format, contract
+
+
+def _scanner_for_payload(
+    metadata_bytes: bytes,
+    *,
+    source_root: Path,
+    tag: str,
+    kind: str,
+    artifact_name: str,
+) -> PublicPackageScanner:
+    archive_format, contract = _payload_contract(
+        metadata_bytes,
+        source_root=source_root,
+        tag=tag,
+        kind=kind,
+        artifact_name=artifact_name,
+    )
+    payload_name = f"contextlattice-payload.{archive_format}"
+    if kind == "linux":
+        path = f"ContextLattice-linux-bootstrap/payload/{payload_name}"
+    elif kind == "windows":
+        path = f"payload/{payload_name}"
+    else:
+        path = f"ContextLattice.app/Contents/Resources/payload/{payload_name}"
+    return PublicPackageScanner(archive_contracts={path: contract})
+
+
+def _temp_root(value: str) -> Path:
+    candidate = value or os.environ.get("RUNNER_TEMP") or os.environ.get("TMPDIR", "")
+    if not candidate:
+        raise ValueError("a task-scoped temporary directory is required")
+    raw_root = Path(candidate)
+    if raw_root.is_symlink():
+        raise ValueError("the task-scoped temporary directory is unsafe or missing")
+    root = raw_root.resolve()
+    if not root.is_dir() or root.is_symlink():
+        raise ValueError("the task-scoped temporary directory is unsafe or missing")
+    return root
+
+
+def _validate_identity(artifact: Path, *, kind: str) -> str:
+    expected_name = EXPECTED_INSTALLER_NAMES[kind]
+    if artifact.name != expected_name:
+        raise _sanitized_error("package.name_invalid", expected_name, artifact.name.encode("utf-8"))
+    descriptor, info = _open_regular(
+        artifact,
+        artifact_name=expected_name,
+        maximum=PackageScanLimits().max_archive_bytes,
+    )
+    try:
+        if info.st_size <= 0:
+            raise _sanitized_error("package.file_unsafe", expected_name)
+    finally:
+        os.close(descriptor)
+    return expected_name
+
+
+def _read_regular_bytes(path: Path, *, maximum: int, artifact_name: str) -> bytes:
+    descriptor = None
+    try:
+        descriptor, before = _open_regular(path, artifact_name=artifact_name, maximum=maximum)
+        with os.fdopen(descriptor, "rb", closefd=False) as source:
+            content = source.read(maximum + 1)
+        after = os.fstat(descriptor)
+        if len(content) != before.st_size or _file_identity(before) != _file_identity(after):
+            raise ValueError("changed")
+    except (OSError, ValueError) as exc:
+        raise _sanitized_error(
+            "package.payload_metadata_invalid",
+            artifact_name,
+            type(exc).__name__.encode("ascii", errors="replace"),
+        ) from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+    return content
+
+
+def _read_receipt(path: Path, *, artifact_name: str) -> dict[str, object]:
+    descriptor = None
+    try:
+        descriptor, before = _open_regular(
+            path,
+            artifact_name=artifact_name,
+            maximum=4 * 1024 * 1024,
+        )
+        with os.fdopen(descriptor, "rb", closefd=False) as source:
+            content = source.read(4 * 1024 * 1024 + 1)
+        after = os.fstat(descriptor)
+        if len(content) != before.st_size or _file_identity(before) != _file_identity(after):
+            raise ValueError("receipt changed")
+        receipt = json.loads(content.decode("utf-8"))
+        if not isinstance(receipt, dict):
+            raise ValueError("receipt object")
+        return receipt
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def _preflight_prepared_tree(root: Path, *, artifact_name: str) -> None:
+    limits = PackageScanLimits()
+    members = 0
+    files = 0
+    expanded = 0
+    def walk(directory_fd: int) -> None:
+        nonlocal members, files, expanded
+        for name in sorted(os.listdir(directory_fd)):
+            try:
+                child_fd = os.open(
+                    name,
+                    os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK,
+                    dir_fd=directory_fd,
+                )
+            except OSError as exc:
+                if exc.errno == errno.ELOOP:
+                    raise ValueError("symlink") from exc
+                raise
+            try:
+                members += 1
+                if members > limits.max_members:
+                    raise ValueError("members")
+                before = os.fstat(child_fd)
+                if stat.S_ISDIR(before.st_mode):
+                    walk(child_fd)
+                    continue
+                if not stat.S_ISREG(before.st_mode):
+                    raise ValueError("entry")
+                if before.st_nlink != 1:
+                    raise ValueError("hardlink")
+                files += 1
+                expanded += before.st_size
+                if (
+                    files > limits.max_files
+                    or before.st_size > limits.max_member_bytes
+                    or expanded > limits.max_expanded_bytes
+                ):
+                    raise ValueError("bounds")
+                after = os.fstat(child_fd)
+                if _file_identity(before) != _file_identity(after):
+                    raise ValueError("changed")
+            finally:
+                os.close(child_fd)
+
+    try:
+        root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW)
+        try:
+            if not stat.S_ISDIR(os.fstat(root_fd).st_mode):
+                raise ValueError("root")
+            walk(root_fd)
+        finally:
+            os.close(root_fd)
+    except (OSError, ValueError) as exc:
+        raise _sanitized_error(
+            "package.tree_bounds_invalid",
+            artifact_name,
+            type(exc).__name__.encode("ascii", errors="replace"),
+        ) from exc
+
+
+def _copy_prepared_tree(
+    source_root: Path,
+    destination_root: Path,
+    *,
+    artifact_name: str,
+) -> Path:
+    """Copy an extracted tree through descriptor-bound, no-follow reads."""
+    limits = PackageScanLimits()
+    try:
+        source_fd = os.open(
+            source_root,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW,
+        )
+        if not stat.S_ISDIR(os.fstat(source_fd).st_mode):
+            os.close(source_fd)
+            raise ValueError("root")
+        destination_root.mkdir(mode=0o700)
+
+        def copy_directory(source_directory_fd: int, destination_directory: Path) -> None:
+            before_directory = os.fstat(source_directory_fd)
+            for name in sorted(os.listdir(source_directory_fd)):
+                source_child_fd = None
+                try:
+                    source_child_fd = os.open(
+                        name,
+                        os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK,
+                        dir_fd=source_directory_fd,
+                    )
+                except OSError as exc:
+                    if exc.errno == errno.ELOOP:
+                        raise ValueError("symlink") from exc
+                    raise
+                try:
+                    source_info = os.fstat(source_child_fd)
+                    destination = destination_directory / name
+                    if stat.S_ISDIR(source_info.st_mode):
+                        destination.mkdir(mode=stat.S_IMODE(source_info.st_mode))
+                        copy_directory(source_child_fd, destination)
+                        continue
+                    if not stat.S_ISREG(source_info.st_mode) or source_info.st_nlink != 1:
+                        raise ValueError("entry")
+                    if source_info.st_size > limits.max_member_bytes:
+                        raise ValueError("member-size")
+                    output_fd = os.open(
+                        destination,
+                        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC,
+                        0o600,
+                    )
+                    try:
+                        with os.fdopen(source_child_fd, "rb", closefd=False) as source, os.fdopen(
+                            output_fd, "wb", closefd=True
+                        ) as output:
+                            remaining = source_info.st_size
+                            while remaining:
+                                chunk = source.read(min(1024 * 1024, remaining))
+                                if not chunk:
+                                    raise ValueError("truncated")
+                                output.write(chunk)
+                                remaining -= len(chunk)
+                            output.flush()
+                            os.fsync(output.fileno())
+                        after = os.fstat(source_child_fd)
+                        if _file_identity(source_info) != _file_identity(after):
+                            raise ValueError("changed")
+                    finally:
+                        os.chmod(destination, stat.S_IMODE(source_info.st_mode))
+                finally:
+                    if source_child_fd is not None:
+                        os.close(source_child_fd)
+            after_directory = os.fstat(source_directory_fd)
+            if _file_identity(before_directory) != _file_identity(after_directory):
+                raise ValueError("directory-changed")
+
+        try:
+            copy_directory(source_fd, destination_root)
+        finally:
+            os.close(source_fd)
+    except (OSError, ValueError) as exc:
+        shutil.rmtree(destination_root, ignore_errors=True)
+        raise _sanitized_error(
+            "package.tree_copy_invalid",
+            artifact_name,
+            type(exc).__name__.encode("ascii", errors="replace"),
+        ) from exc
+    return destination_root
+
+
+def _validate_msi_tables_output(
+    tables_output: bytes,
+    *,
+    artifact_name: str,
+    export_table: Callable[[str], bytes],
+) -> None:
+    try:
+        tables = {value.strip() for value in tables_output.decode("utf-8").splitlines() if value.strip()}
+        if not tables:
+            raise ValueError("tables")
+        unexpected = sorted(tables.difference(ALLOWED_MSI_TABLES))
+        if unexpected:
+            raise ValueError("unexpected-tables")
+        populated_required_empty: list[str] = []
+        for table in sorted(tables.intersection(REQUIRED_EMPTY_MSI_TABLES)):
+            lines = export_table(table).decode("utf-8").splitlines()
+            rows = [value for value in lines[3:] if value.strip()]
+            if rows:
+                populated_required_empty.append(table)
+        if populated_required_empty:
+            raise ValueError("populated-required-empty")
+    except (UnicodeError, ValueError) as exc:
+        raise _sanitized_error(
+            "package.msi_tables_invalid",
+            artifact_name,
+            type(exc).__name__.encode("ascii", errors="replace"),
+        ) from exc
+
+
+def _preflight_msi_file_table(
+    result: bytes,
+    *,
+    artifact_name: str,
+) -> None:
+    try:
+        lines = result.decode("utf-8").splitlines()
+        if len(lines) < 3:
+            raise ValueError("header")
+        columns = lines[0].split("\t")
+        size_index = columns.index("FileSize")
+        limits = PackageScanLimits()
+        file_count = 0
+        expanded = 0
+        for line in lines[3:]:
+            if not line:
+                continue
+            values = line.split("\t")
+            if len(values) != len(columns):
+                raise ValueError("row")
+            size = int(values[size_index])
+            file_count += 1
+            expanded += size
+            if (
+                size < 0
+                or size > limits.max_member_bytes
+                or file_count > limits.max_files
+                or expanded > limits.max_expanded_bytes
+            ):
+                raise ValueError("bounds")
+        if file_count == 0:
+            raise ValueError("empty")
+    except (UnicodeError, ValueError) as exc:
+        raise _sanitized_error(
+            "package.msi_file_table_invalid",
+            artifact_name,
+            type(exc).__name__.encode("ascii", errors="replace"),
+        ) from exc
+
+
+def _snapshot_writable_tree(root: Path) -> dict[str, tuple[int, int, int, int]]:
+    """Snapshot a bounded containment root without following symlinks."""
+    snapshot: dict[str, tuple[int, int, int, int]] = {}
+
+    def record(relative: str, info: os.stat_result) -> None:
+        snapshot[relative] = (
+            info.st_mode,
+            info.st_size,
+            info.st_mtime_ns,
+            info.st_ino,
+        )
+
+    def walk(directory_fd: int, relative: str) -> None:
+        for name in sorted(os.listdir(directory_fd)):
+            entry_relative = f"{relative}/{name}" if relative else name
+            try:
+                info = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+            except OSError as exc:
+                if exc.errno == errno.ENOENT:
+                    continue
+                raise
+            # Record regular files, symlinks, sockets, FIFOs, and devices from
+            # metadata only. Opening a live Unix socket can return ENXIO on a
+            # shared CI temp parent even though it is harmless containment
+            # state, and no non-directory entry needs traversal.
+            record(entry_relative, info)
+            if not stat.S_ISDIR(info.st_mode):
+                continue
+            try:
+                child_fd = os.open(
+                    name,
+                    os.O_RDONLY
+                    | os.O_DIRECTORY
+                    | os.O_CLOEXEC
+                    | os.O_NOFOLLOW,
+                    dir_fd=directory_fd,
+                )
+            except OSError as exc:
+                if exc.errno in {errno.ENOENT, errno.ENOTDIR, errno.ELOOP}:
+                    continue
+                if exc.errno in {errno.EACCES, errno.EPERM}:
+                    try:
+                        writable = os.access(
+                            name,
+                            os.W_OK | os.X_OK,
+                            dir_fd=directory_fd,
+                            follow_symlinks=False,
+                        )
+                    except (NotImplementedError, TypeError):
+                        writable = True
+                    # A pre-existing sibling that this process cannot enter or
+                    # write cannot be an extractor escape target. Keep its
+                    # metadata in the snapshot, but do not let a root-owned CI
+                    # temp directory make the audit environment-dependent.
+                    if not writable:
+                        continue
+                raise
+            try:
+                opened = os.fstat(child_fd)
+                record(entry_relative, opened)
+                walk(child_fd, entry_relative)
+            finally:
+                os.close(child_fd)
+
+    try:
+        root_fd = os.open(
+            root,
+            os.O_RDONLY
+            | os.O_DIRECTORY
+            | os.O_CLOEXEC
+            | os.O_NOFOLLOW,
+        )
+    except OSError:
+        return snapshot
+    try:
+        walk(root_fd, "")
+    finally:
+        os.close(root_fd)
+    return snapshot
+
+
+def _assert_containment_snapshot(
+    before: dict[str, tuple[int, int, int, int]],
+    after: dict[str, tuple[int, int, int, int]],
+    *,
+    allowed_prefix: str,
+    artifact_name: str,
+    error_code: str = "package.msi_extraction_escape",
+) -> None:
+    changed: list[str] = []
+    for relative in sorted(set(before) | set(after)):
+        if relative == allowed_prefix or relative.startswith(allowed_prefix + "/"):
+            continue
+        # A shared system temp parent may legitimately receive unrelated
+        # writes while the extractor runs.  New/deleted entries are still a
+        # deterministic escape signal; metadata churn on an existing sibling
+        # is not sufficient evidence of extractor ownership.
+        if (relative not in before) != (relative not in after):
+            changed.append(relative)
+    if changed:
+        raise _sanitized_error(
+            error_code,
+            artifact_name,
+            "\0".join(changed[:8]).encode("utf-8", errors="replace"),
+        )
+
+
+def _containment_tool(value: str) -> str | None:
+    candidate = value or shutil.which("bwrap") or ""
+    if not candidate:
+        return None
+    resolved = shutil.which(candidate) if "/" not in candidate else candidate
+    if not resolved:
+        return None
+    raw_path = Path(resolved)
+    if raw_path.is_symlink() or not raw_path.is_file():
+        return None
+    path = raw_path.resolve()
+    if path.is_symlink() or not os.access(path, os.X_OK):
+        return None
+    try:
+        result = subprocess.run(
+            [str(path), "--version"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    return str(path)
+
+
+def _run_bounded(
+    argv: list[str],
+    *,
+    code: str,
+    artifact_name: str,
+    cwd: Path | None = None,
+    env: dict[str, str] | None = None,
+) -> bytes:
+    """Run an untrusted native parser with bounded time and captured output."""
+    try:
+        result = subprocess.run(
+            argv,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            cwd=str(cwd) if cwd is not None else None,
+            env=env,
+            timeout=MSI_TOOL_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise _sanitized_error(
+            "package.msi_parser_timeout",
+            artifact_name,
+            str(MSI_TOOL_TIMEOUT_SECONDS).encode("ascii"),
+        ) from exc
+    except OSError as exc:
+        raise _sanitized_error(
+            "package.verifier_unavailable",
+            artifact_name,
+            type(exc).__name__.encode("ascii", errors="replace"),
+        ) from exc
+    if len(result.stdout) > MSI_TOOL_OUTPUT_LIMIT or len(result.stderr) > MSI_TOOL_OUTPUT_LIMIT:
+        raise _sanitized_error("package.msi_parser_output_bounds", artifact_name)
+    if result.returncode != 0:
+        raise _sanitized_error(code, artifact_name, str(result.returncode).encode("ascii"))
+    return result.stdout
+
+
+def _runtime_bind_arguments() -> list[str]:
+    """Expose only executable runtime trees, never the host root."""
+    arguments: list[str] = []
+    for path in ("/usr", "/bin", "/sbin", "/lib", "/lib64"):
+        if Path(path).is_dir():
+            arguments.extend(("--ro-bind", path, path))
+    return arguments
+
+
+def _confined_bwrap_command(
+    *,
+    bwrap_path: str,
+    tool_path: str,
+    artifact: Path,
+    output_root: Path,
+    tool_arguments: list[str],
+) -> list[str]:
+    resolved_tool = str(Path(tool_path).resolve())
+    runtime_paths = ("/usr", "/bin", "/sbin", "/lib", "/lib64")
+    if any(resolved_tool == path or resolved_tool.startswith(path + "/") for path in runtime_paths):
+        isolated_tool = resolved_tool
+        tool_mount: list[str] = []
+    else:
+        isolated_tool = "/opt/contextlattice/native-tool"
+        tool_mount = [
+            "--dir",
+            "/opt",
+            "--dir",
+            "/opt/contextlattice",
+            "--ro-bind",
+            resolved_tool,
+            isolated_tool,
+        ]
+    return [
+        bwrap_path,
+        "--die-with-parent",
+        "--new-session",
+        "--unshare-all",
+        "--clearenv",
+        *_runtime_bind_arguments(),
+        "--dir",
+        "/input",
+        "--dir",
+        "/etc",
+        "--dir",
+        "/home",
+        "--dir",
+        "/root",
+        "--ro-bind",
+        str(artifact),
+        "/input/contextlattice.msi",
+        "--bind",
+        str(output_root),
+        "/output",
+        "--tmpfs",
+        "/tmp",
+        "--proc",
+        "/proc",
+        "--dev",
+        "/dev",
+        "--dir",
+        "/tmp/home",
+        *tool_mount,
+        "--setenv",
+        "PATH",
+        "/usr/bin:/bin",
+        "--setenv",
+        "HOME",
+        "/tmp/home",
+        "--setenv",
+        "TMPDIR",
+        "/tmp",
+        "--setenv",
+        "LC_ALL",
+        "C",
+        "--chdir",
+        "/output",
+        isolated_tool,
+        *tool_arguments,
+    ]
+
+
+def _msiinfo_arguments(arguments: tuple[str, ...]) -> list[str]:
+    if not arguments or arguments[0] not in {"tables", "export"}:
+        raise ValueError("unsupported msiinfo operation")
+    if arguments[0] == "tables" and len(arguments) == 1:
+        return ["tables", "/input/contextlattice.msi"]
+    if arguments[0] == "export" and len(arguments) == 2 and arguments[1] in {
+        *REQUIRED_EMPTY_MSI_TABLES,
+        "Directory",
+        "Component",
+        "File",
+    }:
+        return ["export", "/input/contextlattice.msi", arguments[1]]
+    raise ValueError("unsupported msiinfo operation")
+
+
+def _run_confined_msiinfo(
+    *,
+    artifact: Path,
+    msiinfo: str,
+    arguments: tuple[str, ...],
+    output_root: Path,
+    artifact_name: str,
+    containment_tool: str,
+) -> bytes:
+    tool_path = shutil.which(msiinfo) if "/" not in msiinfo else msiinfo
+    if not tool_path:
+        raise _sanitized_error("package.verifier_unavailable", artifact_name, b"msiinfo")
+    command_arguments = _msiinfo_arguments(arguments)
+    output_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if sys.platform != "linux":
+        # Non-Linux MSI support is test-harness-only.  It still receives a
+        # closed environment and a private cwd; the caller snapshots the
+        # entire parent to detect any attempted escape.
+        test_env = {
+            "PATH": ":".join(filter(None, (str(Path(tool_path).parent), "/usr/bin", "/bin"))),
+            "HOME": str(output_root / "home"),
+            "TMPDIR": str(output_root / "tmp"),
+            "LC_ALL": "C",
+        }
+        (output_root / "home").mkdir(mode=0o700, exist_ok=True)
+        (output_root / "tmp").mkdir(mode=0o700, exist_ok=True)
+        local_arguments = [
+            command_arguments[0],
+            str(artifact),
+            *command_arguments[2:],
+        ]
+        return _run_bounded(
+            [str(Path(tool_path).resolve()), *local_arguments],
+            code="package.msi_parser_failed",
+            artifact_name=artifact_name,
+            cwd=output_root,
+            env=test_env,
+        )
+    bwrap_path = _containment_tool(containment_tool)
+    if bwrap_path is None:
+        raise _sanitized_error("package.verifier_unavailable", artifact_name, b"containment")
+    return _run_bounded(
+        _confined_bwrap_command(
+            bwrap_path=bwrap_path,
+            tool_path=str(Path(tool_path).resolve()),
+            artifact=artifact,
+            output_root=output_root,
+            tool_arguments=command_arguments,
+        ),
+        code="package.msi_parser_failed",
+        artifact_name=artifact_name,
+        env={"PATH": "/usr/bin:/bin"},
+    )
+
+
+def _run_confined_msiextract(
+    *,
+    artifact: Path,
+    extracted: Path,
+    msiextract: str,
+    containment_tool: str,
+    artifact_name: str,
+) -> None:
+    tool_path = shutil.which(msiextract) if "/" not in msiextract else msiextract
+    if not tool_path:
+        raise _sanitized_error("package.verifier_unavailable", artifact_name, b"msiextract")
+    tool_path = str(Path(tool_path).resolve())
+    bwrap_path = _containment_tool(containment_tool)
+    if bwrap_path is None:
+        raise _sanitized_error("package.verifier_unavailable", artifact_name, b"containment")
+    _run_bounded(
+        _confined_bwrap_command(
+            bwrap_path=bwrap_path,
+            tool_path=tool_path,
+            artifact=artifact,
+            output_root=extracted,
+            tool_arguments=["-C", "/output", "/input/contextlattice.msi"],
+        ),
+        code="package.msi_extract_failed",
+        artifact_name=artifact_name,
+        env={"PATH": "/usr/bin:/bin", "HOME": "/tmp/home", "TMPDIR": "/tmp"},
+    )
+
+
+def _directory_names(root: Path, components: tuple[str, ...], *, artifact_name: str) -> list[str]:
+    descriptor = None
+    try:
+        descriptor = os.open(
+            root,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW,
+        )
+        for component in components:
+            child = os.open(
+                component,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW,
+                dir_fd=descriptor,
+            )
+            os.close(descriptor)
+            descriptor = child
+        return sorted(os.listdir(descriptor))
+    except (OSError, ValueError) as exc:
+        raise _sanitized_error(
+            "package.msi_unexpected_path",
+            artifact_name,
+            "/".join(components).encode("utf-8", errors="replace"),
+        ) from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def _validate_closed_msi_tree(extracted: Path, *, artifact_name: str) -> Path:
+    """Require the complete native extraction to have the reviewed root set."""
+    _preflight_prepared_tree(extracted, artifact_name=artifact_name)
+    root_names = _directory_names(extracted, (), artifact_name=artifact_name)
+    if root_names != ["Program Files"]:
+        raise _sanitized_error(
+            "package.msi_unexpected_path",
+            artifact_name,
+            "\0".join(root_names).encode("utf-8", errors="replace"),
+        )
+    program_files = extracted / "Program Files"
+    program_names = _directory_names(extracted, ("Program Files",), artifact_name=artifact_name)
+    if program_names != ["ContextLattice"]:
+        raise _sanitized_error(
+            "package.msi_unexpected_path",
+            artifact_name,
+            "Program Files/".encode("ascii")
+            + "\0".join(program_names).encode("utf-8", errors="replace"),
+        )
+    return program_files / "ContextLattice"
+
+
+def _scan_prepared_tree(
+    scanner: PublicPackageScanner,
+    *,
+    source_root: Path,
+    prepared_root: Path,
+    audit_root: Path,
+    kind: str,
+    tag: str,
+    artifact_name: str,
+) -> None:
+    _preflight_prepared_tree(prepared_root, artifact_name=artifact_name)
+    immutable_root = _copy_prepared_tree(
+        prepared_root,
+        audit_root,
+        artifact_name=artifact_name,
+    )
+    try:
+        validate_tree(source_root, immutable_root, kind, "public", tag)
+    except (OSError, OuterContractError, UnicodeError, ValueError) as exc:
+        raise _sanitized_error(
+            "package.contract_invalid",
+            artifact_name,
+            str(exc).encode("utf-8", errors="replace"),
+        ) from exc
+    scanner.scan_tree(immutable_root, asset=artifact_name)
+
+
+def audit_linux(
+    artifact: Path,
+    *,
+    source_root: Path,
+    tag: str,
+    temp_root: Path | None = None,
+    metadata_out: dict[str, bytes] | None = None,
+) -> dict[str, object]:
+    artifact_name = _validate_identity(artifact, kind="linux")
+    scratch = _temp_root(str(temp_root or source_root.parent))
+    copied_artifact, copied_identity = _copy_regular_file(
+        artifact,
+        temp_root=scratch,
+        artifact_name=artifact_name,
+    )
+    try:
+        try:
+            validate_linux_archive(source_root, copied_artifact, "public", tag)
+        except (OSError, OuterContractError, UnicodeError, ValueError) as exc:
+            raise _sanitized_error(
+                "package.contract_invalid",
+                artifact_name,
+                str(exc).encode("utf-8", errors="replace"),
+            ) from exc
+        try:
+            with tarfile.open(copied_artifact, mode="r:gz") as archive:
+                metadata_member = archive.extractfile(
+                    "ContextLattice-linux-bootstrap/payload/contextlattice-release.json"
+                )
+                if metadata_member is None:
+                    raise ValueError("missing")
+                metadata_bytes = metadata_member.read(4097)
+        except (OSError, ValueError, tarfile.TarError) as exc:
+            raise _sanitized_error(
+                "package.payload_metadata_invalid",
+                artifact_name,
+                type(exc).__name__.encode("ascii", errors="replace"),
+            ) from exc
+        if metadata_out is not None:
+            metadata_out["metadata_bytes"] = metadata_bytes
+        scanner = _scanner_for_payload(
+            metadata_bytes,
+            source_root=source_root,
+            tag=tag,
+            kind="linux",
+            artifact_name=artifact_name,
+        )
+        scanner.scan_archive_path(copied_artifact, archive_format="tar.gz", asset=artifact_name)
+        _assert_artifact_binding(copied_artifact, copied_identity, artifact_name=artifact_name)
+        return scanner.report()
+    finally:
+        shutil.rmtree(copied_artifact.parent, ignore_errors=True)
+
+
+def audit_windows(
+    artifact: Path,
+    *,
+    source_root: Path,
+    tag: str,
+    temp_root: Path,
+    msiinfo: str = "msiinfo",
+    msiextract: str = "msiextract",
+    containment_tool: str = "",
+    metadata_out: dict[str, bytes] | None = None,
+) -> dict[str, object]:
+    artifact_name = _validate_identity(artifact, kind="windows")
+    if shutil.which(msiinfo) is None or shutil.which(msiextract) is None:
+        raise _sanitized_error("package.verifier_unavailable", artifact_name, b"msitools")
+    if sys.platform == "linux":
+        for command, label in ((msiinfo, "msiinfo"), (msiextract, "msiextract")):
+            identity = _tool_identity(command, label=label)
+            if not identity["sha256"] or identity["version"] in {"unavailable", "unsafe"}:
+                raise _sanitized_error("package.verifier_unavailable", artifact_name, label.encode("ascii"))
+    copied_artifact, copied_identity = _copy_regular_file(
+        artifact,
+        temp_root=temp_root,
+        artifact_name=artifact_name,
+    )
+    try:
+        audit_artifact = copied_artifact
+        explicit_test_tools = "/" in msiinfo and "/" in msiextract
+        if sys.platform == "linux" and _containment_tool(containment_tool) is None:
+            raise _sanitized_error("package.verifier_unavailable", artifact_name, b"containment")
+        if sys.platform != "linux" and not explicit_test_tools:
+            raise _sanitized_error("package.verifier_unavailable", artifact_name, b"msi-sandbox")
+        scratch = _temp_root(str(temp_root))
+        containment_parent = scratch.parent
+        before_parent = _snapshot_writable_tree(containment_parent)
+        with tempfile.TemporaryDirectory(prefix="public-msi-audit-", dir=scratch) as temporary:
+            allowed_prefix = Path(temporary).relative_to(containment_parent).as_posix()
+            parser_output = Path(temporary) / "parser-output"
+            parser_output.mkdir(mode=0o700)
+
+            def run_msiinfo(arguments: tuple[str, ...]) -> bytes:
+                return _run_confined_msiinfo(
+                    artifact=audit_artifact,
+                    msiinfo=msiinfo,
+                    arguments=arguments,
+                    output_root=parser_output,
+                    artifact_name=artifact_name,
+                    containment_tool=containment_tool,
+                )
+
+            try:
+                _validate_msi_tables_output(
+                    run_msiinfo(("tables",)),
+                    artifact_name=artifact_name,
+                    export_table=lambda table: run_msiinfo(("export", table)),
+                )
+                file_output = run_msiinfo(("export", "File"))
+                _preflight_msi_file_table(file_output, artifact_name=artifact_name)
+                validate_msi_table_closure(
+                    source_root,
+                    run_msiinfo(("export", "Directory")),
+                    run_msiinfo(("export", "Component")),
+                    file_output,
+                )
+            except (OSError, OuterContractError, UnicodeError, ValueError) as exc:
+                raise _sanitized_error(
+                    "package.contract_invalid",
+                    artifact_name,
+                    str(exc).encode("utf-8", errors="replace"),
+                ) from exc
+            _assert_containment_snapshot(
+                before_parent,
+                _snapshot_writable_tree(containment_parent),
+                allowed_prefix=allowed_prefix,
+                artifact_name=artifact_name,
+                error_code="package.msi_parser_escape",
+            )
+            shutil.rmtree(parser_output, ignore_errors=True)
+
+            extracted = Path(temporary) / "extracted"
+            extracted.mkdir(mode=0o700)
+            if sys.platform == "linux":
+                before_extraction = _snapshot_writable_tree(containment_parent)
+                _run_confined_msiextract(
+                    artifact=audit_artifact,
+                    extracted=extracted,
+                    msiextract=msiextract,
+                    containment_tool=containment_tool,
+                    artifact_name=artifact_name,
+                )
+            else:
+                # Explicit paths are an injected local test harness.  They still
+                # receive a minimal environment and a dedicated output directory;
+                # the parent snapshot proves that a malicious fake extractor did
+                # not write beside the allowed root.  Production defaults above
+                # always require the OS containment tool on Linux.
+                test_home = Path(temporary) / "home"
+                test_tmp = Path(temporary) / "tmp"
+                test_home.mkdir(mode=0o700)
+                test_tmp.mkdir(mode=0o700)
+                before_extraction = _snapshot_writable_tree(containment_parent)
+                test_env = {
+                    "PATH": ":".join(filter(None, (str(Path(msiextract).parent), "/usr/bin", "/bin"))),
+                    "HOME": str(test_home),
+                    "TMPDIR": str(test_tmp),
+                    "LC_ALL": "C",
+                }
+                _run_bounded(
+                    [msiextract, "-C", str(extracted), str(audit_artifact)],
+                    code="package.msi_extract_failed",
+                    artifact_name=artifact_name,
+                    cwd=extracted,
+                    env=test_env,
+                )
+            after_parent = _snapshot_writable_tree(containment_parent)
+            extraction_prefix = Path(temporary, "extracted").relative_to(containment_parent).as_posix()
+            _assert_containment_snapshot(
+                before_extraction,
+                after_parent,
+                allowed_prefix=extraction_prefix,
+                artifact_name=artifact_name,
+            )
+            prepared_root = _validate_closed_msi_tree(
+                extracted,
+                artifact_name=artifact_name,
+            )
+            metadata_bytes = _read_regular_bytes(
+                prepared_root / "payload/contextlattice-release.json",
+                maximum=4096,
+                artifact_name=artifact_name,
+            )
+            if metadata_out is not None:
+                metadata_out["metadata_bytes"] = metadata_bytes
+            scanner = _scanner_for_payload(
+                metadata_bytes,
+                source_root=source_root,
+                tag=tag,
+                kind="windows",
+                artifact_name=artifact_name,
+            )
+            scanner.scan_raw_path(audit_artifact, asset=artifact_name)
+            _scan_prepared_tree(
+                scanner,
+                source_root=source_root,
+                prepared_root=prepared_root,
+                audit_root=Path(temporary) / "immutable-tree",
+                kind="windows",
+                tag=tag,
+                artifact_name=artifact_name,
+            )
+            _assert_containment_snapshot(
+                before_parent,
+                _snapshot_writable_tree(containment_parent),
+                allowed_prefix=allowed_prefix,
+                artifact_name=artifact_name,
+            )
+        _assert_artifact_binding(audit_artifact, copied_identity, artifact_name=artifact_name)
+        return scanner.report()
+    finally:
+        shutil.rmtree(copied_artifact.parent, ignore_errors=True)
+
+
+def audit_macos(
+    artifact: Path,
+    *,
+    source_root: Path,
+    tag: str,
+    temp_root: Path,
+    hdiutil: str = "/usr/bin/hdiutil",
+    metadata_out: dict[str, bytes] | None = None,
+) -> dict[str, object]:
+    artifact_name = _validate_identity(artifact, kind="macos")
+    if sys.platform != "darwin" or shutil.which(hdiutil) is None:
+        raise _sanitized_error("package.verifier_unavailable", artifact_name, b"hdiutil")
+    scratch = _temp_root(str(temp_root))
+    copied_artifact, copied_identity = _copy_regular_file(
+        artifact,
+        temp_root=scratch,
+        artifact_name=artifact_name,
+    )
+    try:
+        _run_checked(
+            [hdiutil, "verify", str(copied_artifact)],
+            code="package.dmg_verify_failed",
+            artifact_name=artifact_name,
+        )
+        with tempfile.TemporaryDirectory(prefix="public-dmg-audit-", dir=scratch) as temporary:
+            mountpoint = Path(temporary) / "mounted"
+            mountpoint.mkdir(mode=0o700)
+            attached = False
+            try:
+                _run_checked(
+                    [
+                        hdiutil,
+                        "attach",
+                        "-readonly",
+                        "-nobrowse",
+                        "-mountpoint",
+                        str(mountpoint),
+                        str(copied_artifact),
+                        "-quiet",
+                    ],
+                    code="package.dmg_attach_failed",
+                    artifact_name=artifact_name,
+                )
+                attached = True
+                metadata_bytes = _read_regular_bytes(
+                    mountpoint / "contextlattice-release.json",
+                    maximum=4096,
+                    artifact_name=artifact_name,
+                )
+                if metadata_out is not None:
+                    metadata_out["metadata_bytes"] = metadata_bytes
+                scanner = _scanner_for_payload(
+                    metadata_bytes,
+                    source_root=source_root,
+                    tag=tag,
+                    kind="macos",
+                    artifact_name=artifact_name,
+                )
+                scanner.scan_raw_path(copied_artifact, asset=artifact_name)
+                _scan_prepared_tree(
+                    scanner,
+                    source_root=source_root,
+                    prepared_root=mountpoint,
+                    audit_root=Path(temporary) / "immutable-tree",
+                    kind="macos",
+                    tag=tag,
+                    artifact_name=artifact_name,
+                )
+            finally:
+                if attached:
+                    result = subprocess.run(
+                        [hdiutil, "detach", str(mountpoint), "-quiet"],
+                        stdin=subprocess.DEVNULL,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        check=False,
+                    )
+                    if result.returncode != 0:
+                        raise _sanitized_error(
+                            "package.dmg_detach_failed",
+                            artifact_name,
+                            str(result.returncode).encode("ascii"),
+                        )
+        _assert_artifact_binding(copied_artifact, copied_identity, artifact_name=artifact_name)
+        return scanner.report()
+    finally:
+        shutil.rmtree(copied_artifact.parent, ignore_errors=True)
+
+
+def _canonical_digest(value: object) -> str:
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+    ).hexdigest()
+
+
+def _tool_identity(
+    command: str,
+    *,
+    label: str,
+    version_args: tuple[str, ...] = ("--version",),
+) -> dict[str, str]:
+    resolved = shutil.which(command) if "/" not in command else command
+    if not resolved:
+        return {"id": label, "version": "unavailable", "sha256": ""}
+    raw_path = Path(resolved)
+    if raw_path.is_symlink() or not raw_path.is_file():
+        return {"id": label, "version": "unsafe", "sha256": ""}
+    path = raw_path.resolve()
+    if path.is_symlink():
+        return {"id": label, "version": "unsafe", "sha256": ""}
+    try:
+        digest = sha256_file(path)
+        result = subprocess.run(
+            [str(path), *version_args],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+            timeout=5,
+        )
+        version = result.stdout.decode("utf-8", errors="replace").strip().splitlines()
+        version_text = version[0][:256] if version else "unknown"
+    except (OSError, ValueError, subprocess.SubprocessError):
+        digest = ""
+        version_text = "unavailable"
+    return {"id": label, "version": version_text, "sha256": digest}
+
+
+def _validate_receipt_tools(
+    tools: object,
+    *,
+    kind: str,
+    native_tools: dict[str, str],
+) -> dict[str, dict[str, str]]:
+    if not isinstance(tools, dict):
+        raise ValueError("receipt tools are not an object")
+    expected_names = {
+        "package_audit",
+        "package_scanner",
+        "outer_contract",
+        *native_tools,
+    }
+    expected_ids = {
+        "package_audit": "audit-public-installer-package",
+        "package_scanner": SCANNER_CONTRACT_VERSION,
+        "outer_contract": OUTER_CONTRACT_SCHEMA_ID,
+        **{name: name for name in native_tools},
+    }
+    if set(tools) != expected_names:
+        raise ValueError("receipt tool set is not closed")
+    validated: dict[str, dict[str, str]] = {}
+    for name, row in tools.items():
+        if (
+            not isinstance(name, str)
+            or not isinstance(row, dict)
+            or set(row) != {"id", "version", "sha256"}
+            or row.get("id") != expected_ids.get(name)
+            or not isinstance(row.get("version"), str)
+            or not row["version"]
+            or len(row["version"]) > 256
+            or not isinstance(row.get("sha256"), str)
+            or not SHA256_RE.fullmatch(row["sha256"])
+        ):
+            raise ValueError("receipt tool identity is not canonical")
+        validated[name] = {
+            "id": row["id"],
+            "version": row["version"],
+            "sha256": row["sha256"],
+        }
+    return validated
+
+
+def _native_tool_identities(
+    native_tools: dict[str, str],
+) -> dict[str, dict[str, str]]:
+    return {
+        name: _tool_identity(
+            command,
+            label=name,
+            version_args=("help",) if name == "hdiutil" else ("--version",),
+        )
+        for name, command in sorted(native_tools.items())
+    }
+
+
+def _receipt_metadata_bytes(artifact: Path, *, kind: str) -> bytes | None:
+    if kind != "linux":
+        return None
+    descriptor = None
+    try:
+        descriptor, before = _open_regular(artifact, artifact_name=artifact.name)
+        with os.fdopen(descriptor, "rb", closefd=False) as source:
+            with tarfile.open(fileobj=source, mode="r:gz") as archive:
+                member = archive.extractfile(
+                    "ContextLattice-linux-bootstrap/payload/contextlattice-release.json"
+                )
+                metadata = None if member is None else member.read(4097)
+        after = os.fstat(descriptor)
+        if _file_identity(before) != _file_identity(after):
+            return None
+        return metadata
+    except (OSError, ValueError, tarfile.TarError):
+        return None
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def build_receipt(
+    artifact: Path,
+    *,
+    kind: str,
+    tag: str,
+    scan: dict[str, object],
+    source_root: Path | None = None,
+    native_tools: dict[str, str] | None = None,
+    metadata_bytes: bytes | None = None,
+) -> dict[str, object]:
+    if source_root is None:
+        raise ValueError("a source-bound checkout is required for a closed receipt")
+    if metadata_bytes is None:
+        metadata_bytes = _receipt_metadata_bytes(artifact, kind=kind)
+    if metadata_bytes is None:
+        raise ValueError("payload metadata is required for a closed receipt")
+    source: dict[str, object]
+    package_contract: dict[str, object] = {
+        "version": PACKAGE_CONTRACT_VERSION,
+        "schema_id": "contextlattice_release_payload.v2",
+        "sha256": "",
+    }
+    _archive_format, contract = _payload_contract(
+        metadata_bytes,
+        source_root=source_root,
+        tag=tag,
+        kind=kind,
+        artifact_name=artifact.name,
+    )
+    source_identity = _source_identity(source_root, tag=tag)
+    source = {
+        "commit": source_identity["commit"],
+        "tree": source_identity["tree"],
+        "clean_tree": True,
+        "release_ref": source_identity["release_ref"],
+    }
+    package_contract["sha256"] = archive_contract_sha256(contract)
+    committed_tool_digests = {
+        "package_audit": _committed_file_sha256(
+            source_root, "scripts/agent/audit-public-installer-package"
+        ),
+        "package_scanner": _committed_file_sha256(
+            source_root, "scripts/public_release_package_scan.py"
+        ),
+        "outer_contract": _committed_file_sha256(
+            source_root, "scripts/release_installer_outer.py"
+        ),
+    }
+    tools = {
+        "package_audit": {
+            "id": "audit-public-installer-package",
+            "version": PACKAGE_AUDIT_RECEIPT_VERSION,
+            "sha256": committed_tool_digests["package_audit"],
+        },
+        "package_scanner": {
+            "id": SCANNER_CONTRACT_VERSION,
+            "version": "1",
+            "sha256": committed_tool_digests["package_scanner"],
+        },
+        "outer_contract": {
+            "id": OUTER_CONTRACT_SCHEMA_ID,
+            "version": OUTER_CONTRACT_VERSION,
+            "sha256": committed_tool_digests["outer_contract"],
+        },
+    }
+    tools.update(_native_tool_identities(native_tools or {}))
+    artifact_binding = _artifact_binding(artifact, artifact_name=artifact.name)
+    artifact_size = int(artifact_binding["size_bytes"])
+    return {
+        "schema_id": PACKAGE_AUDIT_RECEIPT_SCHEMA_ID,
+        "receipt_version": PACKAGE_AUDIT_RECEIPT_VERSION,
+        "kind": kind,
+        "lane": "public",
+        "tag": tag,
+        "source": source,
+        "contracts": {
+            "package": package_contract,
+            "outer": {
+                "version": OUTER_CONTRACT_VERSION,
+                "schema_id": OUTER_CONTRACT_SCHEMA_ID,
+                "sha256": contract_sha256(source_root, "public", tag),
+            },
+            "scanner": {
+                "version": SCANNER_CONTRACT_VERSION,
+                "schema_id": "contextlattice_public_release_package_scan.v1",
+                "sha256": committed_tool_digests["package_scanner"],
+            },
+        },
+        "tools": tools,
+        "artifact": {
+            "name": artifact.name,
+            "kind": kind,
+            "size_bytes": artifact_size,
+            "sha256": artifact_binding["sha256"],
+        },
+        "scan": scan,
+        "normalized_scan_sha256": _canonical_digest(scan),
+    }
+
+
+def write_receipt(path: Path, receipt: dict[str, object]) -> None:
+    content = (json.dumps(receipt, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError as exc:
+        raise ValueError("refusing to overwrite an existing package audit receipt") from exc
+    with os.fdopen(descriptor, "wb") as handle:
+        handle.write(content)
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def _receipt_native_tool_placeholders(kind: str) -> dict[str, str]:
+    if kind == "windows":
+        return {"msiinfo": "", "msiextract": "", "containment": ""}
+    if kind == "macos":
+        return {"hdiutil": ""}
+    return {}
+
+
+def verify_receipt_binding(
+    path: Path,
+    artifact: Path,
+    *,
+    kind: str,
+    tag: str,
+    source_root: Path | None = None,
+) -> dict[str, object]:
+    """Verify portable artifact/source/contract binding without native re-audit."""
+    artifact_name = EXPECTED_INSTALLER_NAMES[kind]
+    try:
+        receipt = _read_receipt(path, artifact_name=artifact_name)
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError, PublicReleaseMaterialError) as exc:
+        raise _sanitized_error(
+            "package.receipt_invalid",
+            artifact_name,
+            type(exc).__name__.encode("ascii", errors="replace"),
+        ) from exc
+    if set(receipt) != RECEIPT_FIELDS:
+        raise _sanitized_error("package.receipt_invalid", artifact_name, b"fields")
+    artifact_row = receipt.get("artifact")
+    scan = receipt.get("scan")
+    try:
+        artifact_binding = _artifact_binding(artifact, artifact_name=artifact_name)
+    except (OSError, ValueError, PublicReleaseMaterialError) as exc:
+        raise _sanitized_error("package.receipt_invalid", artifact_name, b"artifact") from exc
+    if (
+        receipt.get("schema_id") != PACKAGE_AUDIT_RECEIPT_SCHEMA_ID
+        or receipt.get("receipt_version") != PACKAGE_AUDIT_RECEIPT_VERSION
+        or receipt.get("kind") != kind
+        or receipt.get("lane") != "public"
+        or receipt.get("tag") != tag
+        or not isinstance(artifact_row, dict)
+        or set(artifact_row) != {"name", "kind", "size_bytes", "sha256"}
+        or artifact_row
+        != {
+            "name": artifact_name,
+            "kind": kind,
+            "size_bytes": artifact_binding["size_bytes"],
+            "sha256": artifact_binding["sha256"],
+        }
+        or not isinstance(scan, dict)
+        or set(scan) != PACKAGE_SCAN_FIELDS
+        or scan.get("schema_id") != "contextlattice_public_release_package_scan.v1"
+        or scan.get("ok") is not True
+        or scan.get("truncated") is not False
+        or scan.get("finding_count") != 0
+        or any(
+            not isinstance(scan.get(field), int)
+            or isinstance(scan.get(field), bool)
+            or scan[field] < 0
+            for field in PACKAGE_SCAN_FIELDS - {"schema_id", "ok", "truncated"}
+        )
+        or receipt.get("normalized_scan_sha256") != _canonical_digest(scan)
+        or not isinstance(receipt.get("source"), dict)
+        or not isinstance(receipt.get("contracts"), dict)
+        or not isinstance(receipt.get("tools"), dict)
+    ):
+        raise _sanitized_error("package.receipt_invalid", artifact_name, b"binding")
+    if source_root is None:
+        raise _sanitized_error("package.receipt_source_unbound", artifact_name)
+    try:
+        identity = _source_identity(source_root, tag=tag)
+        committed_tool_digests = {
+            "package_audit": _committed_file_sha256(
+                source_root, "scripts/agent/audit-public-installer-package"
+            ),
+            "package_scanner": _committed_file_sha256(
+                source_root, "scripts/public_release_package_scan.py"
+            ),
+            "outer_contract": _committed_file_sha256(
+                source_root, "scripts/release_installer_outer.py"
+            ),
+        }
+        receipt_tools = _validate_receipt_tools(
+            receipt.get("tools"),
+            kind=kind,
+            native_tools=_receipt_native_tool_placeholders(kind),
+        )
+    except (OSError, ValueError, TypeError) as exc:
+        raise _sanitized_error("package.receipt_invalid", artifact_name, b"source-tools") from exc
+    if receipt["source"] != {
+        "commit": identity["commit"],
+        "tree": identity["tree"],
+        "clean_tree": True,
+        "release_ref": f"refs/tags/{tag}",
+    }:
+        raise _sanitized_error("package.receipt_invalid", artifact_name, b"source-binding")
+    contracts = receipt["contracts"]
+    package_contract = contracts.get("package") if isinstance(contracts, dict) else None
+    if (
+        set(contracts) != {"package", "outer", "scanner"}
+        or not isinstance(package_contract, dict)
+        or set(package_contract) != {"version", "schema_id", "sha256"}
+        or package_contract.get("version") != PACKAGE_CONTRACT_VERSION
+        or package_contract.get("schema_id") != "contextlattice_release_payload.v2"
+        or not isinstance(package_contract.get("sha256"), str)
+        or not SHA256_RE.fullmatch(package_contract["sha256"])
+        or contracts.get("outer")
+        != {
+            "version": OUTER_CONTRACT_VERSION,
+            "schema_id": OUTER_CONTRACT_SCHEMA_ID,
+            "sha256": contract_sha256(source_root, "public", tag),
+        }
+        or contracts.get("scanner")
+        != {
+            "version": SCANNER_CONTRACT_VERSION,
+            "schema_id": "contextlattice_public_release_package_scan.v1",
+            "sha256": committed_tool_digests["package_scanner"],
+        }
+        or receipt_tools.get("package_audit")
+        != {
+            "id": "audit-public-installer-package",
+            "version": PACKAGE_AUDIT_RECEIPT_VERSION,
+            "sha256": committed_tool_digests["package_audit"],
+        }
+        or receipt_tools.get("package_scanner")
+        != {
+            "id": SCANNER_CONTRACT_VERSION,
+            "version": "1",
+            "sha256": committed_tool_digests["package_scanner"],
+        }
+        or receipt_tools.get("outer_contract")
+        != {
+            "id": OUTER_CONTRACT_SCHEMA_ID,
+            "version": OUTER_CONTRACT_VERSION,
+            "sha256": committed_tool_digests["outer_contract"],
+        }
+    ):
+        raise _sanitized_error("package.receipt_invalid", artifact_name, b"contract-binding")
+    return receipt
+
+
+def verify_receipt(
+    path: Path,
+    artifact: Path,
+    *,
+    kind: str,
+    tag: str,
+    source_root: Path | None = None,
+    temp_root: Path | None = None,
+    msiinfo: str = "msiinfo",
+    msiextract: str = "msiextract",
+    containment_tool: str = "",
+    hdiutil: str = "/usr/bin/hdiutil",
+) -> dict[str, object]:
+    artifact_name = EXPECTED_INSTALLER_NAMES[kind]
+    receipt = verify_receipt_binding(
+        path,
+        artifact,
+        kind=kind,
+        tag=tag,
+        source_root=source_root,
+    )
+    artifact_row = receipt["artifact"]
+    if kind == "windows":
+        native = {
+            "msiinfo": msiinfo,
+            "msiextract": msiextract,
+            "containment": containment_tool or "bwrap",
+        }
+    elif kind == "macos":
+        native = {"hdiutil": hdiutil}
+    else:
+        native = {}
+    try:
+        receipt_tools = _validate_receipt_tools(
+            receipt.get("tools"),
+            kind=kind,
+            native_tools=native,
+        )
+        observed_native_tools = _native_tool_identities(native)
+        for name, observed in observed_native_tools.items():
+            if receipt_tools[name] != observed:
+                raise ValueError("installed native tool identity differs")
+    except (OSError, ValueError, TypeError) as exc:
+        raise _sanitized_error("package.receipt_invalid", artifact_name, b"tools") from exc
+    if temp_root is None:
+        temp_root = source_root.parent
+    try:
+        copied_artifact, copied_identity = _copy_regular_file(
+            artifact,
+            temp_root=temp_root,
+            artifact_name=artifact_name,
+        )
+        if copied_identity != {
+            "size_bytes": artifact_row["size_bytes"],
+            "sha256": artifact_row["sha256"],
+        }:
+            raise ValueError("artifact copy mismatch")
+        if kind == "linux":
+            metadata_context: dict[str, bytes] = {}
+            recomputed = audit_linux(
+                copied_artifact,
+                source_root=source_root,
+                tag=tag,
+                temp_root=temp_root,
+                metadata_out=metadata_context,
+            )
+        elif kind == "windows":
+            metadata_context = {}
+            recomputed = audit_windows(
+                copied_artifact,
+                source_root=source_root,
+                tag=tag,
+                temp_root=temp_root,
+                msiinfo=msiinfo,
+                msiextract=msiextract,
+                containment_tool=containment_tool,
+                metadata_out=metadata_context,
+            )
+        else:
+            metadata_context = {}
+            recomputed = audit_macos(
+                copied_artifact,
+                source_root=source_root,
+                tag=tag,
+                temp_root=temp_root,
+                hdiutil=hdiutil,
+                metadata_out=metadata_context,
+            )
+        expected = build_receipt(
+            artifact,
+            kind=kind,
+            tag=tag,
+            scan=recomputed,
+            source_root=source_root,
+            native_tools=native,
+            metadata_bytes=metadata_context.get("metadata_bytes"),
+        )
+    except (OSError, OuterContractError, PublicReleaseMaterialError, TypeError, UnicodeError, ValueError) as exc:
+        raise _sanitized_error("package.receipt_invalid", artifact_name, type(exc).__name__.encode("ascii")) from exc
+    finally:
+        if "copied_artifact" in locals():
+            shutil.rmtree(copied_artifact.parent, ignore_errors=True)
+    if receipt != expected:
+        raise _sanitized_error("package.receipt_invalid", artifact_name, b"recomputed")
+    return receipt
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--kind", required=True, choices=sorted(EXPECTED_INSTALLER_NAMES))
+    parser.add_argument("--artifact", required=True)
+    parser.add_argument("--root", default=".")
+    parser.add_argument("--lane", required=True, choices=["public"])
+    parser.add_argument("--tag", required=True)
+    parser.add_argument("--temp-dir", default="")
+    parser.add_argument("--msiinfo", default="msiinfo")
+    parser.add_argument("--msiextract", default="msiextract")
+    parser.add_argument("--containment-tool", default="")
+    parser.add_argument("--hdiutil", default="/usr/bin/hdiutil")
+    parser.add_argument("--receipt-out", default="")
+    parser.add_argument("--receipt-in", default="")
+    parser.add_argument("--verify-receipt-only", action="store_true")
+    parser.add_argument("--verify-receipt-binding-only", action="store_true")
+    return parser
+
+
+def audit(args: argparse.Namespace) -> dict[str, object]:
+    artifact = Path(args.artifact).resolve()
+    source_root = Path(args.root).resolve()
+    _validate_identity(artifact, kind=args.kind)
+    if args.verify_receipt_only and args.verify_receipt_binding_only:
+        raise ValueError("receipt verification modes are mutually exclusive")
+    if args.receipt_in:
+        if args.verify_receipt_binding_only:
+            receipt = verify_receipt_binding(
+                Path(args.receipt_in),
+                artifact,
+                kind=args.kind,
+                tag=args.tag,
+                source_root=source_root,
+            )
+        else:
+            receipt = verify_receipt(
+                Path(args.receipt_in),
+                artifact,
+                kind=args.kind,
+                tag=args.tag,
+                source_root=source_root,
+                temp_root=_temp_root(args.temp_dir or str(source_root.parent)),
+                msiinfo=args.msiinfo,
+                msiextract=args.msiextract,
+                containment_tool=args.containment_tool,
+                hdiutil=args.hdiutil,
+            )
+        if args.verify_receipt_only or args.verify_receipt_binding_only:
+            return {"ok": True, "receipt_verified": True, "receipt": receipt}
+    elif args.verify_receipt_only or args.verify_receipt_binding_only:
+        raise ValueError("receipt verification requires --receipt-in")
+
+    metadata_context: dict[str, bytes] = {}
+    if args.kind == "linux":
+        scan = audit_linux(
+            artifact,
+            source_root=source_root,
+            tag=args.tag,
+            temp_root=_temp_root(args.temp_dir or str(source_root.parent)),
+            metadata_out=metadata_context,
+        )
+    elif args.kind == "windows":
+        scan = audit_windows(
+            artifact,
+            source_root=source_root,
+            tag=args.tag,
+            temp_root=_temp_root(args.temp_dir),
+            msiinfo=args.msiinfo,
+            msiextract=args.msiextract,
+            containment_tool=args.containment_tool,
+            metadata_out=metadata_context,
+        )
+    else:
+        scan = audit_macos(
+            artifact,
+            source_root=source_root,
+            tag=args.tag,
+            temp_root=_temp_root(args.temp_dir),
+            hdiutil=args.hdiutil,
+            metadata_out=metadata_context,
+        )
+    native_tools = {}
+    if args.kind == "windows":
+        native_tools = {
+            "msiinfo": args.msiinfo,
+            "msiextract": args.msiextract,
+            "containment": args.containment_tool or "bwrap",
+        }
+    elif args.kind == "macos":
+        native_tools = {"hdiutil": args.hdiutil}
+    receipt = build_receipt(
+        artifact,
+        kind=args.kind,
+        tag=args.tag,
+        scan=scan,
+        source_root=source_root,
+        native_tools=native_tools,
+        metadata_bytes=metadata_context.get("metadata_bytes"),
+    )
+    if args.receipt_out:
+        write_receipt(Path(args.receipt_out), receipt)
+    return {"ok": True, "receipt_verified": bool(args.receipt_in), "receipt": receipt}
+
+
+def main() -> None:
+    args = _parser().parse_args()
+    try:
+        print(json.dumps(audit(args), sort_keys=True))
+    except PublicReleaseMaterialError as exc:
+        print(f"public installer package audit: ERROR: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+    except (OSError, OuterContractError, TypeError, UnicodeError, ValueError) as exc:
+        sanitized = _sanitized_error(
+            "package.audit_failed",
+            EXPECTED_INSTALLER_NAMES.get(args.kind, "installer"),
+            type(exc).__name__.encode("ascii", errors="replace"),
+        )
+        print(f"public installer package audit: ERROR: {sanitized}", file=sys.stderr)
+        raise SystemExit(1) from exc
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,147 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contextlattice.local/schemas/recall-response-live-eval.v1.schema.json",
+  "title": "Provider-free production recall response evaluation ledger",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_id",
+    "version",
+    "ok",
+    "status",
+    "route",
+    "local_only",
+    "provider_free",
+    "provider_free_status",
+    "provider_free_blockers",
+    "promotion_policy",
+    "dataset",
+    "labels",
+    "runtime_identity",
+    "cases",
+    "metrics",
+    "semantic_metrics",
+    "reproducibility",
+    "failure_ledger",
+    "promotion"
+  ],
+  "properties": {
+    "schema_id": {"const": "recall_response.live_production_eval.v1"},
+    "version": {"const": 1},
+    "ok": {"type": "boolean"},
+    "status": {"type": "string"},
+    "route": {"enum": ["/memory/recall/response", "/tools/recall_response"]},
+    "local_only": {"const": true},
+    "provider_free": {"type": "boolean"},
+    "provider_free_status": {"enum": ["unproven", "proven_zero"]},
+    "provider_free_blockers": {"type": "array", "items": {"type": "string"}},
+    "promotion_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_id", "version", "thresholds"],
+      "properties": {
+        "schema_id": {"const": "recall_response.live_promotion.v1"},
+        "version": {"const": 1},
+        "thresholds": {"type": "object", "additionalProperties": {"type": "number"}}
+      }
+    },
+    "dataset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_id", "source", "synthetic", "case_set_digest", "source_snapshot_digest", "custody_metadata_digest", "artifact_digest", "all_case_ids_digest", "holdout_case_ids_digest", "holdout_cases_digest", "train_count", "holdout_count", "graph_claimed", "graph_holdout_count"],
+      "properties": {
+        "schema_id": {"const": "saved_recall_eval_case_set.v3"},
+        "source": {"type": "string"},
+        "synthetic": {"const": false},
+        "case_set_digest": {"$ref": "#/$defs/digest"},
+        "source_snapshot_digest": {"$ref": "#/$defs/digest"},
+        "custody_metadata_digest": {"$ref": "#/$defs/digest"},
+        "artifact_digest": {"$ref": "#/$defs/digest"},
+        "all_case_ids_digest": {"$ref": "#/$defs/digest"},
+        "holdout_case_ids_digest": {"$ref": "#/$defs/digest"},
+        "holdout_cases_digest": {"$ref": "#/$defs/digest"},
+        "snapshot_digest_validation": {"$ref": "#/$defs/digestValidation"},
+        "custody_digest_validation": {"$ref": "#/$defs/digestValidation"},
+        "train_count": {"type": "integer", "minimum": 1},
+        "holdout_count": {"type": "integer", "minimum": 1},
+        "graph_claimed": {"type": "boolean"},
+        "graph_holdout_count": {"type": "integer", "minimum": 0}
+      }
+    },
+    "labels": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["available", "labels_digest", "custody_metadata_digest"],
+      "properties": {
+        "available": {"type": "boolean"},
+        "labels_digest": {"anyOf": [{"$ref": "#/$defs/digest"}, {"type": "null"}]},
+        "custody_metadata_digest": {"anyOf": [{"$ref": "#/$defs/digest"}, {"type": "null"}]}
+      }
+    },
+    "runtime_identity": {
+      "anyOf": [
+        {"type": "null"},
+        {"type": "object", "additionalProperties": false, "required": ["identity", "memory_store", "identity_digest"], "properties": {"identity": {"type": "object"}, "memory_store": {"type": "object"}, "identity_digest": {"$ref": "#/$defs/digest"}}}
+      ]
+    },
+    "cases": {"type": "array", "items": {"$ref": "#/$defs/case"}},
+    "metrics": {"type": "object"},
+    "semantic_metrics": {"type": "object"},
+    "reproducibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requested", "status", "exact_replay_count", "mismatch_count", "exact_digest_rate", "exact_snapshot_rate"],
+      "properties": {"requested": {"type": "boolean"}, "status": {"type": "string"}, "exact_replay_count": {"type": "integer", "minimum": 0}, "mismatch_count": {"type": "integer", "minimum": 0}, "exact_digest_rate": {"anyOf": [{"type": "number", "minimum": 0, "maximum": 1}, {"type": "null"}]}, "exact_snapshot_rate": {"anyOf": [{"type": "number", "minimum": 0, "maximum": 1}, {"type": "null"}]}}
+    },
+    "failure_ledger": {"type": "object", "required": ["total", "by_code"], "properties": {"total": {"type": "integer", "minimum": 0}, "by_code": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}}}},
+    "promotion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["promotion_eligible", "activation_eligible", "blocked_reasons", "answer_quality_claim_allowed", "answer_quality_claim_blockers"],
+      "properties": {
+        "promotion_eligible": {"type": "boolean"},
+        "activation_eligible": {"type": "boolean"},
+        "blocked_reasons": {"type": "array", "items": {"type": "string"}},
+        "answer_quality_claim_allowed": {"const": false},
+        "answer_quality_claim_blockers": {"type": "array", "items": {"type": "string"}}
+      }
+    }
+  },
+  "$defs": {
+    "digest": {"type": "string", "pattern": "^sha256:[0-9a-fA-F]{64}$"},
+    "digestValidation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": {"enum": ["provenance_bound", "canonical_validated", "invalid"]},
+        "provenance_bound_fields": {"type": "array", "items": {"type": "string"}},
+        "algorithm": {"type": "string"},
+        "canonicalization": {"type": "string"},
+        "rule_id": {"type": ["string", "null"]},
+        "excluded_fields": {"type": "array", "items": {"type": "string"}},
+        "expected_digest": {"$ref": "#/$defs/digest"}
+      }
+    },
+    "case": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["case_id_digest", "case_digest", "request_digest", "source_snapshot_digest", "attempted", "contract_valid", "proof_binding_valid", "temporal_binding_valid", "fail_closed", "failures"],
+      "properties": {
+        "case_id_digest": {"$ref": "#/$defs/digest"},
+        "case_digest": {"$ref": "#/$defs/digest"},
+        "request_digest": {"$ref": "#/$defs/digest"},
+        "source_snapshot_digest": {"$ref": "#/$defs/digest"},
+        "runtime_snapshot_digest": {"anyOf": [{"$ref": "#/$defs/digest"}, {"type": "null"}]},
+        "receipt_digest": {"anyOf": [{"$ref": "#/$defs/digest"}, {"type": "null"}]},
+        "response_digest": {"anyOf": [{"$ref": "#/$defs/digest"}, {"type": "null"}]},
+        "attempted": {"type": "boolean"},
+        "contract_valid": {"type": "boolean"},
+        "proof_binding_valid": {"type": "boolean"},
+        "temporal_binding_valid": {"type": "boolean"},
+        "fail_closed": {"type": "boolean"},
+        "failures": {"type": "array", "items": {"type": "object", "required": ["code"], "properties": {"code": {"type": "string"}, "detail": {"type": "string"}}}}
+      }
+    }
+  }
+}

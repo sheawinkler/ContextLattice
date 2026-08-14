@@ -8,7 +8,12 @@ RELEASE_LANE="${RELEASE_LANE:-}"
 RELEASE_TAG="${RELEASE_TAG:-}"
 RELEASE_COMMIT="${RELEASE_COMMIT:-}"
 PAYLOAD_FORMATS="${PAYLOAD_FORMATS:-tar.gz zip}"
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/contextlattice-payload.XXXXXX")"
+TMP_ROOT="${CONTEXTLATTICE_RELEASE_TMPDIR:-${TMPDIR:-${RUNNER_TEMP:-}}}"
+if [[ -z "${TMP_ROOT}" || ! -d "${TMP_ROOT}" ]]; then
+  echo "ERROR: a task-scoped TMPDIR or RUNNER_TEMP is required for release payload builds." >&2
+  exit 1
+fi
+TMP_DIR="$(mktemp -d "${TMP_ROOT%/}/contextlattice-payload.XXXXXX")"
 STAGE_DIR="${TMP_DIR}/stage"
 BUILD_OUT_DIR="${TMP_DIR}/out"
 METADATA_NAME="contextlattice-release.json"
@@ -472,7 +477,8 @@ print(
             "tag": tag,
             "commit": commit,
             "formats": formats,
-            "output_dir": str(out),
+            # Receipts are portable; the caller already owns the output path.
+            "output_dir": out.name,
         },
         sort_keys=True,
     )

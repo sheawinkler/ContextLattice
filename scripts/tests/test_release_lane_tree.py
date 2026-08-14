@@ -32,6 +32,17 @@ def commit_all(root: Path, message: str) -> str:
 
 
 class ReleaseLaneTreeTests(unittest.TestCase):
+    def test_full_module_matrix_disables_the_go_default_timeout(self) -> None:
+        source = AUDIT.read_text(encoding="utf-8")
+        self.assertIn(
+            'go -C "${stage}/${module}" test -timeout=0 ./...',
+            source,
+        )
+        self.assertNotIn(
+            'go -C "${stage}/${module}" test ./...',
+            source,
+        )
+
     def test_public_gate_compiles_exact_commit_and_emits_tree_bound_proof(self) -> None:
         with tempfile.TemporaryDirectory(prefix="release-lane-tree-") as tmp:
             repo = Path(tmp) / "repo"
@@ -190,6 +201,25 @@ func TestFrontierT2SharedProofRetentionLatencyHoldout(t *testing.T) {
             headless_env = {
                 "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
                 "TMPDIR": tmp,
+                # Keep fixture Go/Python work on the caller's task-scoped
+                # external storage instead of silently falling back to the
+                # operator's home caches.
+                **{
+                    key: os.environ[key]
+                    for key in (
+                        "GOCACHE",
+                        "GOMODCACHE",
+                        "GOTMPDIR",
+                        "PYTHONPYCACHEPREFIX",
+                        "CARGO_TARGET_DIR",
+                        "GOPROXY",
+                        "GOSUMDB",
+                        "GONOSUMDB",
+                        "GOTOOLCHAIN",
+                        "PYTHONDONTWRITEBYTECODE",
+                    )
+                    if key in os.environ
+                },
             }
 
             failed = run(

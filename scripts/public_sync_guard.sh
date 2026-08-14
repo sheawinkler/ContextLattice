@@ -192,11 +192,18 @@ fi
 if [[ "$TARGET_REMOTE" == "public" || "$TARGET_REMOTE" == "public-paid" ]]; then
   # Block dangling private-helper references even when only a shared launcher
   # was selected for propagation and the helper path itself was excluded.
+  launcher_hits="$(mktemp "${TMPDIR:-/tmp}/contextlattice_private_dev_launcher_hits.XXXXXX")" || {
+    echo "[guard] failed to create launcher scan receipt" >&2
+    exit 2
+  }
+  trap 'rm -f "$launcher_hits"' EXIT
   if rg -n 'private_dev_posture' launch.sh scripts/compose_v4_balanced.sh \
-      >/tmp/contextlattice_private_dev_launcher_hits.txt 2>/dev/null; then
-    cat /tmp/contextlattice_private_dev_launcher_hits.txt >&2
+      >"$launcher_hits" 2>/dev/null; then
+    cat "$launcher_hits" >&2
     blocked=1
   fi
+  rm -f "$launcher_hits"
+  trap - EXIT
 fi
 
 if [ "$blocked" -ne 0 ]; then

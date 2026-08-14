@@ -99,39 +99,48 @@ func recallResponseCLIFieldSet(fields ...string) map[string]bool {
 }
 
 var recallResponseCLIClosedFields = map[string]map[string]bool{
-	"":                               recallResponseCLIAllowedFields,
-	"request_scope":                  recallResponseCLIFieldSet("scope_digest", "query_digest", "owner_ref", "workspace_ref", "project_ref", "topic_ref", "agent_ref", "session_ref", "task_ref", "task_identity_ref", "execution_lane_ref", "retrieval_intent", "as_of", "task_class", "temporal_premise_digest", "snapshot_digest", "receipt_digest", "condition", "ablation"),
-	"classification":                 recallResponseCLIFieldSet("jobs", "objects", "temporal_mode", "evidence_state", "consequence", "posture", "facets"),
-	"classification.facets":          recallResponseCLIFieldSet("jobs", "memory_objects", "temporal_state", "evidence_state", "consequence"),
-	"answer":                         recallResponseCLIFieldSet("summary", "answer_mode", "basis", "claim_refs", "components", "progressive_disclosure", "proof_spine", "composition"),
-	"answer.progressive_disclosure":  recallResponseCLIFieldSet("level", "available_levels", "next_level_requires"),
-	"answer.proof_spine":             recallResponseCLIFieldSet("primary_result", "as_of", "temporal_premise_digest", "proof_refs", "confidence_basis", "conflict_refs", "gap_refs", "memory_boundary", "next_move", "receipt_refs", "disclosure", "coverage"),
-	"answer.proof_spine.coverage[]":  recallResponseCLIFieldSet("obligation", "status", "proof_refs"),
-	"answer.composition":             recallResponseCLIFieldSet("condition", "ablation", "primary_module", "ordered_modules", "proof_strategy", "coverage_status", "fallback_reason"),
-	"answer.components[]":            recallResponseCLIFieldSet("component_ref", "kind", "module_type", "status", "basis", "ordinal", "primary", "proof_refs", "temporal_premise_digest", "payload", "binding", "component_digest"),
-	"answer.components[].binding":    recallResponseCLIFieldSet("condition", "ablation", "arm", "exposure_bucket", "policy_version", "proof_digest", "snapshot_digest", "receipt_digest", "owner_ref", "task_ref", "lane_ref", "intent", "temporal_premise_digest", "verifier_digest", "component_digest"),
-	"state":                          recallResponseCLIFieldSet("status", "source_complete", "evidence_count", "conflict_count", "gap_count", "retrieval_mode"),
-	"confidence":                     recallResponseCLIFieldSet("label", "score", "basis", "calibrated"),
-	"next_action":                    recallResponseCLIFieldSet("kind", "label", "reason", "requires_verification", "authority", "execution_performed"),
-	"action_boundary":                recallResponseCLIFieldSet("can_act", "requires_confirmation", "allowed", "forbidden", "reason", "execution_performed"),
-	"disclosure":                     recallResponseCLIFieldSet("bounded", "raw_retrieval_included", "raw_prompt_included", "paths_included", "secrets_included", "inference_boundary", "omission_policy"),
-	"outcome":                        recallResponseCLIFieldSet("status", "attributable", "receipt_id", "execution_performed"),
-	"evidence[]":                     recallResponseCLIFieldSet("ref_id", "kind", "role", "status", "confidence", "source_ref", "content_digest"),
-	"conflicts[]":                    recallResponseCLIFieldSet("conflict_id", "kind", "status", "support_refs", "opposition_refs", "resolution"),
-	"gaps[]":                         recallResponseCLIFieldSet("code", "material", "reason", "required_for_action", "refs"),
-	"inferences[]":                   recallResponseCLIFieldSet("inference_id", "claim_ref", "basis_refs", "status", "confidence", "disclosure"),
-	"receipt_refs[]":                 recallResponseCLIFieldSet("ref_id", "kind", "status"),
-	"format_contract":                recallResponseCLIFieldSet("registry_id", "registry_version", "schema_id", "contract_version", "required_output_mode", "validator", "forbidden_fields", "contract_valid", "truncated", "omitted_counts", "actual_json_bytes", "max_total_json_bytes", "max_string_bytes", "max_list_items", "max_bytes_by_path", "validation", "json_bytes_before_boundary", "json_bytes_after_boundary"),
-	"format_contract.omitted_counts": recallResponseCLIFieldSet("strings_clipped", "lists_clipped", "optional_fields_compacted", "boundary_passes", "json_bytes_reduced"),
-	"format_contract.validation":     recallResponseCLIFieldSet("status", "errors"),
-	"answer.components[].payload.unknown_periods[]":     recallResponseCLIFieldSet("start", "end", "basis_ref", "reason"),
-	"answer.components[].payload.bridge_claims[]":       recallResponseCLIFieldSet("proof_refs", "basis"),
-	"answer.components[].payload.coverage_receipt":      recallResponseCLIFieldSet("basis_digest", "complete", "reason", "receipt_digest"),
-	"answer.components[].payload.parameter_bindings[]":  recallResponseCLIFieldSet("parameter_ref", "value_state", "proof_ref", "required", "sensitive"),
-	"answer.components[].payload.ordered_steps[]":       recallResponseCLIFieldSet("ordinal", "step_ref", "proof_ref", "requires_confirmation"),
-	"answer.components[].payload.refusal_conditions[]":  recallResponseCLIFieldSet("code", "proof_ref"),
-	"answer.components[].payload.recovery_conditions[]": recallResponseCLIFieldSet("code", "proof_ref"),
-	"answer.components[].payload.rollback_conditions[]": recallResponseCLIFieldSet("code", "proof_ref"),
+	"":                              recallResponseCLIAllowedFields,
+	"request_scope":                 recallResponseCLIFieldSet("scope_digest", "query_digest", "owner_ref", "workspace_ref", "project_ref", "topic_ref", "agent_ref", "session_ref", "task_ref", "task_identity_ref", "execution_lane_ref", "retrieval_intent", "as_of", "task_class", "temporal_premise_digest", "snapshot_digest", "receipt_digest", "source_bound", "condition", "ablation"),
+	"classification":                recallResponseCLIFieldSet("jobs", "objects", "temporal_mode", "evidence_state", "consequence", "posture", "facets"),
+	"classification.facets":         recallResponseCLIFieldSet("jobs", "memory_objects", "temporal_state", "evidence_state", "consequence"),
+	"answer":                        recallResponseCLIFieldSet("summary", "answer_mode", "basis", "claim_refs", "components", "progressive_disclosure", "proof_spine", "composition"),
+	"answer.progressive_disclosure": recallResponseCLIFieldSet("level", "available_levels", "next_level_requires"),
+	"answer.proof_spine":            recallResponseCLIFieldSet("primary_result", "as_of", "temporal_premise_digest", "proof_refs", "confidence_basis", "conflict_refs", "gap_refs", "memory_boundary", "next_move", "receipt_refs", "disclosure", "coverage"),
+	"answer.proof_spine.coverage[]": recallResponseCLIFieldSet("obligation", "status", "proof_refs"),
+	"answer.composition":            recallResponseCLIFieldSet("condition", "ablation", "primary_module", "ordered_modules", "proof_strategy", "coverage_status", "fallback_reason"),
+	"answer.components[]":           recallResponseCLIFieldSet("component_ref", "kind", "module_type", "status", "basis", "ordinal", "primary", "proof_refs", "temporal_premise_digest", "payload", "binding", "component_digest"),
+	"answer.components[].binding":   recallResponseCLIFieldSet("condition", "ablation", "arm", "exposure_bucket", "policy_version", "proof_digest", "scope_binding_digest", "verifier_digest", "component_digest"),
+	"state":                         recallResponseCLIFieldSet("status", "source_complete", "evidence_count", "conflict_count", "gap_count", "retrieval_mode"),
+	"confidence":                    recallResponseCLIFieldSet("label", "score", "basis", "calibrated"),
+	"next_action":                   recallResponseCLIFieldSet("kind", "label", "reason", "requires_verification", "authority", "execution_performed"),
+	"action_boundary":               recallResponseCLIFieldSet("can_act", "requires_confirmation", "allowed", "forbidden", "reason", "execution_performed"),
+	"disclosure":                    recallResponseCLIFieldSet("bounded", "raw_retrieval_included", "raw_prompt_included", "paths_included", "secrets_included", "inference_boundary", "omission_policy", "union_schema", "evidence_union", "proof_union", "component_union", "omission_ledger", "union_digest", "exclusion_refs", "union_truncated", "source_counts", "source_truncated", "union_counts", "omitted_counts", "continuation_digest", "continuation_ref", "continuation_action", "ablation_witness", "control_union_digest", "control_proof_identity_digest", "control_receipt"),
+	"disclosure.evidence_union[]":   recallResponseCLIFieldSet("ref_id", "item_type", "kind", "role", "status", "confidence", "protected", "evidence_binding"),
+	"disclosure.evidence_union[].evidence_binding":              recallResponseCLIFieldSet("source_ref", "content_digest", "binding_authority", "source_bound"),
+	"disclosure.component_union[]":                              recallResponseCLIFieldSet("component_ref", "kind", "protected", "binding_digest"),
+	"disclosure.omission_ledger[]":                              recallResponseCLIFieldSet("item_ref", "item_type", "reason", "protected", "evidence_binding", "same_snapshot_counterfactual"),
+	"disclosure.omission_ledger[].evidence_binding":             recallResponseCLIFieldSet("proof_refs", "union_digest", "continuation_digest"),
+	"disclosure.omission_ledger[].same_snapshot_counterfactual": recallResponseCLIFieldSet("verified", "outcome", "comparison_digest"),
+	"disclosure.continuation_action":                            recallResponseCLIFieldSet("kind", "method", "route", "snapshot_semantics", "request_contract", "scope_digest", "request_digest", "token", "page"),
+	"disclosure.ablation_witness":                               recallResponseCLIFieldSet("schema_id", "status", "component_ref", "baseline_component_ref", "component_kind", "baseline_union_digest", "baseline_response_identity", "omission_receipt_digest", "expected_failure_stage", "observed_failure_stage", "witness_digest"),
+	"disclosure.control_receipt":                                recallResponseCLIFieldSet("snapshot_digest", "receipt_digest", "union_digest", "proof_identity_digest", "source_bound", "artifact_digest"),
+	"outcome":                                                   recallResponseCLIFieldSet("status", "attributable", "receipt_id", "execution_performed"),
+	"evidence[]":                                                recallResponseCLIFieldSet("ref_id", "kind", "role", "status", "confidence", "source_ref", "content_digest"),
+	"conflicts[]":                                               recallResponseCLIFieldSet("conflict_id", "kind", "status", "support_refs", "opposition_refs", "resolution"),
+	"gaps[]":                                                    recallResponseCLIFieldSet("code", "material", "reason", "required_for_action", "refs"),
+	"inferences[]":                                              recallResponseCLIFieldSet("inference_id", "claim_ref", "basis_refs", "status", "confidence", "disclosure"),
+	"receipt_refs[]":                                            recallResponseCLIFieldSet("ref_id", "kind", "status"),
+	"format_contract":                                           recallResponseCLIFieldSet("registry_id", "registry_version", "schema_id", "contract_version", "required_output_mode", "validator", "forbidden_fields", "contract_valid", "truncated", "omitted_counts", "actual_json_bytes", "max_total_json_bytes", "max_string_bytes", "max_list_items", "max_bytes_by_path", "validation", "json_bytes_before_boundary", "json_bytes_after_boundary"),
+	"format_contract.omitted_counts":                            recallResponseCLIFieldSet("strings_clipped", "lists_clipped", "optional_fields_compacted", "boundary_passes", "json_bytes_reduced"),
+	"format_contract.validation":                                recallResponseCLIFieldSet("status", "errors"),
+	"answer.components[].payload.unknown_periods[]":             recallResponseCLIFieldSet("start", "end", "basis_ref", "reason"),
+	"answer.components[].payload.bridge_claims[]":               recallResponseCLIFieldSet("proof_refs", "basis"),
+	"answer.components[].payload.coverage_receipt":              recallResponseCLIFieldSet("basis_digest", "complete", "reason", "receipt_digest"),
+	"answer.components[].payload.parameter_bindings[]":          recallResponseCLIFieldSet("parameter_ref", "value_state", "proof_ref", "required", "sensitive"),
+	"answer.components[].payload.ordered_steps[]":               recallResponseCLIFieldSet("ordinal", "step_ref", "proof_ref", "requires_confirmation"),
+	"answer.components[].payload.refusal_conditions[]":          recallResponseCLIFieldSet("code", "proof_ref"),
+	"answer.components[].payload.recovery_conditions[]":         recallResponseCLIFieldSet("code", "proof_ref"),
+	"answer.components[].payload.rollback_conditions[]":         recallResponseCLIFieldSet("code", "proof_ref"),
 }
 
 var recallResponseCLIComponentPayloadFields = map[string][]string{
@@ -565,20 +574,22 @@ func compactRecallResponse(raw map[string]any) (map[string]any, error) {
 		projected[key] = value
 	}
 	for path, fields := range map[string][]string{
-		"request_scope":                 {"scope_digest", "query_digest", "owner_ref", "workspace_ref", "project_ref", "topic_ref", "agent_ref", "session_ref", "task_ref", "task_identity_ref", "execution_lane_ref", "retrieval_intent", "as_of", "task_class", "temporal_premise_digest", "snapshot_digest", "receipt_digest", "condition", "ablation"},
-		"classification":                {"jobs", "objects", "temporal_mode", "evidence_state", "consequence", "posture", "facets"},
-		"classification.facets":         {"jobs", "memory_objects", "temporal_state", "evidence_state", "consequence"},
-		"answer":                        {"summary", "answer_mode", "basis", "claim_refs", "components", "progressive_disclosure", "proof_spine", "composition"},
-		"answer.proof_spine":            {"primary_result", "as_of", "temporal_premise_digest", "proof_refs", "confidence_basis", "conflict_refs", "gap_refs", "memory_boundary", "next_move", "receipt_refs", "disclosure", "coverage"},
-		"answer.composition":            {"condition", "ablation", "primary_module", "ordered_modules", "proof_strategy", "coverage_status", "fallback_reason"},
-		"answer.progressive_disclosure": {"level", "available_levels", "next_level_requires"},
-		"state":                         {"status", "source_complete", "evidence_count", "conflict_count", "gap_count", "retrieval_mode"},
-		"confidence":                    {"label", "score", "basis", "calibrated"},
-		"next_action":                   {"kind", "label", "reason", "requires_verification", "authority", "execution_performed"},
-		"action_boundary":               {"can_act", "requires_confirmation", "allowed", "forbidden", "reason", "execution_performed"},
-		"disclosure":                    {"bounded", "raw_retrieval_included", "raw_prompt_included", "paths_included", "secrets_included", "inference_boundary", "omission_policy"},
-		"outcome":                       {"status", "attributable", "receipt_id", "execution_performed"},
-		"format_contract":               {"registry_id", "registry_version", "schema_id", "contract_version", "required_output_mode", "validator", "contract_valid", "truncated", "omitted_counts", "actual_json_bytes", "max_total_json_bytes", "max_string_bytes", "max_list_items", "validation"},
+		"request_scope":                  {"scope_digest", "query_digest", "owner_ref", "workspace_ref", "project_ref", "topic_ref", "agent_ref", "session_ref", "task_ref", "task_identity_ref", "execution_lane_ref", "retrieval_intent", "as_of", "task_class", "temporal_premise_digest", "snapshot_digest", "receipt_digest", "source_bound", "condition", "ablation"},
+		"classification":                 {"jobs", "objects", "temporal_mode", "evidence_state", "consequence", "posture", "facets"},
+		"classification.facets":          {"jobs", "memory_objects", "temporal_state", "evidence_state", "consequence"},
+		"answer":                         {"summary", "answer_mode", "basis", "claim_refs", "components", "progressive_disclosure", "proof_spine", "composition"},
+		"answer.proof_spine":             {"primary_result", "as_of", "temporal_premise_digest", "proof_refs", "confidence_basis", "conflict_refs", "gap_refs", "memory_boundary", "next_move", "receipt_refs", "disclosure", "coverage"},
+		"answer.composition":             {"condition", "ablation", "primary_module", "ordered_modules", "proof_strategy", "coverage_status", "fallback_reason"},
+		"answer.progressive_disclosure":  {"level", "available_levels", "next_level_requires"},
+		"state":                          {"status", "source_complete", "evidence_count", "conflict_count", "gap_count", "retrieval_mode"},
+		"confidence":                     {"label", "score", "basis", "calibrated"},
+		"next_action":                    {"kind", "label", "reason", "requires_verification", "authority", "execution_performed"},
+		"action_boundary":                {"can_act", "requires_confirmation", "allowed", "forbidden", "reason", "execution_performed"},
+		"disclosure":                     {"bounded", "raw_retrieval_included", "raw_prompt_included", "paths_included", "secrets_included", "inference_boundary", "omission_policy", "union_schema", "evidence_union", "proof_union", "component_union", "omission_ledger", "union_digest", "exclusion_refs", "union_truncated", "source_counts", "source_truncated", "union_counts", "omitted_counts", "continuation_digest", "continuation_ref", "continuation_action", "ablation_witness", "control_union_digest", "control_proof_identity_digest", "control_receipt"},
+		"disclosure.continuation_action": {"kind", "method", "route", "snapshot_semantics", "request_contract", "scope_digest", "request_digest", "token", "page"},
+		"disclosure.ablation_witness":    {"schema_id", "status", "component_ref", "baseline_component_ref", "component_kind", "baseline_union_digest", "baseline_response_identity", "omission_receipt_digest", "expected_failure_stage", "observed_failure_stage", "witness_digest"},
+		"outcome":                        {"status", "attributable", "receipt_id", "execution_performed"},
+		"format_contract":                {"registry_id", "registry_version", "schema_id", "contract_version", "required_output_mode", "validator", "contract_valid", "truncated", "omitted_counts", "actual_json_bytes", "max_total_json_bytes", "max_string_bytes", "max_list_items", "validation"},
 	} {
 		if err := recallResponseCLIRequireObjectFields(projected, path, fields...); err != nil {
 			return nil, err
@@ -664,6 +675,15 @@ func failureRecallResponse() map[string]any {
 	snapshotDigest := "sha256:" + fmt.Sprintf("%x", sha256Sum([]byte("recall-response-cli-unavailable\x00snapshot")))
 	receiptDigest := "sha256:" + fmt.Sprintf("%x", sha256Sum([]byte("recall-response-cli-unavailable\x00receipt")))
 	gapRef := scopeRef("gap")
+	ablationWitness := map[string]any{
+		"schema_id": "recall_response.synthetic_ablation_witness.v1", "status": "not_applicable",
+		"component_ref": "", "baseline_component_ref": "", "component_kind": "",
+		"baseline_union_digest": "", "baseline_response_identity": "", "omission_receipt_digest": "",
+		"expected_failure_stage": "none", "observed_failure_stage": "none", "witness_digest": "",
+	}
+	delete(ablationWitness, "witness_digest")
+	witnessMaterial, _ := json.Marshal(ablationWitness)
+	ablationWitness["witness_digest"] = "sha256:" + fmt.Sprintf("%x", sha256Sum(witnessMaterial))
 	response := map[string]any{
 		"ok": true, "schema_id": recallResponseContractID, "version": 1,
 		"request_scope": map[string]any{
@@ -672,7 +692,8 @@ func failureRecallResponse() map[string]any {
 			"session_ref": scopeRef("session"), "task_ref": scopeRef("task"), "task_identity_ref": scopeRef("task_identity"),
 			"execution_lane_ref": scopeRef("execution_lane"), "retrieval_intent": "decision", "as_of": asOf, "task_class": "general",
 			"temporal_premise_digest": temporalPremiseDigest, "snapshot_digest": snapshotDigest, "receipt_digest": receiptDigest,
-			"condition": "compositional_router", "ablation": "none",
+			"source_bound": false,
+			"condition":    "compositional_router", "ablation": "none",
 		},
 		"classification": map[string]any{
 			"jobs": []any{"verify"}, "objects": []any{"durable_memory"}, "temporal_mode": "current_or_unknown", "evidence_state": "degraded", "consequence": "high_stakes", "posture": "abstain",
@@ -700,7 +721,7 @@ func failureRecallResponse() map[string]any {
 		"inferences":      []any{map[string]any{"inference_id": "inf_" + fmt.Sprintf("%x", sha256Sum([]byte("unavailable")))[:24], "claim_ref": "response_state", "basis_refs": []any{}, "status": "deterministic_metadata_only", "confidence": 0.0, "disclosure": "This is response-state metadata, not a memory fact."}},
 		"next_action":     map[string]any{"kind": "retrieve_or_verify", "label": "Recover recall response availability, then retrieve or verify", "reason": "The response is advisory-only and does not authorize external mutation.", "requires_verification": true, "authority": "advisory_only", "execution_performed": false},
 		"action_boundary": map[string]any{"can_act": false, "requires_confirmation": true, "allowed": []any{"retrieve_missing_sources"}, "forbidden": []any{"external_mutation", "credential_access", "raw_memory_export"}, "reason": "Recall responses provide evidence and advice only; an agent must independently authorize and execute any mutation.", "execution_performed": false},
-		"disclosure":      map[string]any{"bounded": true, "raw_retrieval_included": false, "raw_prompt_included": false, "paths_included": false, "secrets_included": false, "inference_boundary": "Only deterministic response metadata and opaque proof references are returned.", "omission_policy": "Unavailable evidence is disclosed as a gap and never becomes implicit support."},
+		"disclosure":      map[string]any{"bounded": true, "raw_retrieval_included": false, "raw_prompt_included": false, "paths_included": false, "secrets_included": false, "inference_boundary": "Metadata and opaque proof references only.", "omission_policy": "Unavailable evidence is disclosed as a gap and never becomes implicit support.", "union_schema": "recall_response.non_exclusion.v1", "evidence_union": []any{}, "proof_union": []any{gapRef}, "component_union": []any{}, "omission_ledger": []any{}, "union_digest": "sha256:" + strings.Repeat("0", 64), "exclusion_refs": []any{}, "union_truncated": false, "source_counts": map[string]any{"evidence": 0, "temporal": 0, "proof": 0, "conflicts": 0}, "source_truncated": false, "union_counts": map[string]any{"evidence": 0, "exclusions": 0, "proof": 1, "components": 0}, "omitted_counts": map[string]any{"source": 0, "evidence": 0, "exclusions": 0, "proof": 0, "components": 0}, "continuation_digest": "sha256:" + strings.Repeat("0", 64), "continuation_ref": "ref_continuation_" + strings.Repeat("0", 24), "continuation_action": map[string]any{"kind": "owner_cursor_unavailable", "method": "", "route": "", "snapshot_semantics": "not_served", "request_contract": "none", "scope_digest": scopeRef("scope"), "request_digest": "", "token": "", "page": 0}, "ablation_witness": ablationWitness, "control_union_digest": "sha256:" + strings.Repeat("0", 64), "control_proof_identity_digest": "sha256:" + strings.Repeat("0", 64), "control_receipt": map[string]any{"snapshot_digest": "sha256:" + strings.Repeat("0", 64), "receipt_digest": "sha256:" + strings.Repeat("0", 64), "union_digest": "sha256:" + strings.Repeat("0", 64), "proof_identity_digest": "sha256:" + strings.Repeat("0", 64), "source_bound": false, "artifact_digest": "sha256:" + strings.Repeat("0", 64)}},
 		"receipt_refs":    []any{}, "outcome": map[string]any{"status": "not_attributable", "attributable": false, "receipt_id": "", "execution_performed": false}, "writeback_required": true,
 	}
 	response["response_id"] = cliRecallResponseID(response)

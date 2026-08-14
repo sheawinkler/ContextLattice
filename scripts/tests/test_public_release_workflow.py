@@ -7,6 +7,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github/workflows/public-release-installers.yml"
+PRODUCT_TRUTH_WORKFLOW = ROOT / ".github/workflows/public-product-truth.yml"
+AGENT_CONTEXT_WORKFLOW = ROOT / ".github/workflows/agent-context-gate.yml"
 PAYLOAD_BUILDER = ROOT / "scripts/build_release_payload.sh"
 OUTER_CONTRACT = ROOT / "scripts/release_installer_outer.py"
 PAYLOAD_POLICY = ROOT / "scripts/release_payload_policy.py"
@@ -72,9 +74,7 @@ class PublicReleaseWorkflowTests(unittest.TestCase):
 
     def test_release_workflow_observes_latency_on_shared_runners(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
-        mode = "CONTEXTLATTICE_RELEASE_PERFORMANCE_MODE: shared_runner"
-
-        self.assertEqual(workflow.count(mode), 1)
+        self.assertNotIn("CONTEXTLATTICE_RELEASE_PERFORMANCE_MODE", workflow)
         self.assertIn("scripts/agent/audit-release-lane-tree", workflow)
 
     def test_publisher_downloads_only_the_three_installers(self) -> None:
@@ -88,10 +88,11 @@ class PublicReleaseWorkflowTests(unittest.TestCase):
             publish,
         )
 
-        self.assertNotIn("pattern: public-release-*", publish)
-        self.assertNotIn("merge-multiple:", publish)
+        self.assertNotRegex(publish, r"(?m)^\s+pattern: public-release-\*\s*$")
+        self.assertIn("pattern: public-release-*-package-audit*", publish)
+        self.assertIn("merge-multiple: true", publish)
         self.assertNotIn("public-release-tree-proof", publish)
-        self.assertEqual(publish.count("uses: actions/download-artifact@v8"), 3)
+        self.assertEqual(publish.count("uses: actions/download-artifact@v8"), 4)
         self.assertEqual(
             downloads,
             [
@@ -100,6 +101,45 @@ class PublicReleaseWorkflowTests(unittest.TestCase):
                 ("public-release-msi", "dist"),
             ],
         )
+
+    def test_fresh_build_jobs_bind_the_approved_public_remote(self) -> None:
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        for job_name in ("build-macos-dmg", "build-linux-and-msi"):
+            with self.subTest(job=job_name):
+                job = workflow_job(workflow, job_name)
+                self.assertIn("Bind approved public source authority", job)
+                self.assertIn('git remote add public "https://github.com/${APPROVED_SOURCE_REPOSITORY}.git"', job)
+                self.assertIn('"+${APPROVED_SOURCE_REF}:${APPROVED_SOURCE_TRACKING_REF}"', job)
+                self.assertIn('git merge-base --is-ancestor "$EXPECTED_RELEASE_COMMIT" "$source_ref_tip"', job)
+                self.assertLess(job.index("Bind approved public source authority"), job.index("Build public"))
+
+    def test_public_alias_never_becomes_latest_release(self) -> None:
+        promotion = workflow_job(WORKFLOW.read_text(encoding="utf-8"), "promote-release")
+        self.assertIn('latest_flag=(--latest)', promotion)
+        self.assertIn('if [[ "$RELEASE_TAG" == *-public ]]; then', promotion)
+        self.assertIn('latest_flag=(--latest=false)', promotion)
+        self.assertIn('"${latest_flag[@]}"', promotion)
+
+    def test_active_release_workflow_is_truth_gated_and_actionlint_checked(self) -> None:
+        product_truth = PRODUCT_TRUTH_WORKFLOW.read_text(encoding="utf-8")
+        agent_context = AGENT_CONTEXT_WORKFLOW.read_text(encoding="utf-8")
+        for workflow in (product_truth, agent_context):
+            self.assertIn('.github/workflows/public-release-installers.yml', workflow)
+            self.assertIn('scripts/task_agent_worker.py', workflow)
+            self.assertIn('scripts/tests/test_task_agent_worker_claim_identity.py', workflow)
+        self.assertIn('.github/workflows/release-installers.yml', product_truth)
+        self.assertGreaterEqual(product_truth.count('scripts/task_agent_worker.py'), 2)
+        self.assertGreaterEqual(product_truth.count('scripts/tests/test_task_agent_worker_claim_identity.py'), 2)
+        for required in (
+            "scripts/agent/audit-public-installer-package",
+            "scripts/tests/test_public_release_package_scan.py",
+            "scripts/tests/test_public_release_workflow.py",
+            "scripts.tests.test_public_release_package_scan",
+            "scripts.tests.test_public_release_workflow",
+            "scripts.tests.test_task_agent_worker_claim_identity",
+            "actionlint",
+        ):
+            self.assertIn(required, product_truth)
 
 
 if __name__ == "__main__":

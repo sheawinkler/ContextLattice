@@ -28,20 +28,22 @@ type writeIngressPolicy struct {
 }
 
 type normalizedWrite struct {
-	project        string
-	fileName       string
-	content        string
-	topicPath      string
-	agentID        string
-	sessionID      string
-	tags           []string
-	createdAt      string
-	lifecycle      string
-	storageTier    string
-	dataClass      string
-	itemID         string
-	idempotencyKey string
-	raw            map[string]any
+	project         string
+	fileName        string
+	content         string
+	topicPath       string
+	agentID         string
+	sessionID       string
+	tags            []string
+	createdAt       string
+	lifecycle       string
+	storageTier     string
+	dataClass       string
+	itemID          string
+	idempotencyKey  string
+	taskAttribution map[string]any
+	references      []memoryStructuredReference
+	raw             map[string]any
 }
 
 func loadWriteIngressPolicy() writeIngressPolicy {
@@ -139,6 +141,7 @@ func csvLowerListEnv(name string, fallback string) []string {
 
 func normalizeWritePayload(path string, payload map[string]any) (normalizedWrite, error) {
 	item := normalizedWrite{raw: payload}
+	var err error
 	switch path {
 	case "/memory/write":
 		item.project = strings.TrimSpace(anyToString(payload["projectName"]))
@@ -164,6 +167,10 @@ func normalizeWritePayload(path string, payload map[string]any) (normalizedWrite
 	item.tags = meta.tags
 	item.createdAt = meta.createdAt
 	item.lifecycle = meta.lifecycle
+	item.references, err = normalizeMemoryStructuredReferences(item.raw)
+	if err != nil {
+		return normalizedWrite{}, err
+	}
 	return item, nil
 }
 
@@ -177,6 +184,7 @@ func normalizeWriteBatchPayload(path string, payload map[string]any) ([]normaliz
 		return nil, errors.New("items must contain at least one write")
 	}
 	rows := make([]normalizedWrite, 0, len(list))
+	var err error
 	for idx, raw := range list {
 		itemMap, ok := raw.(map[string]any)
 		if !ok {
@@ -212,6 +220,10 @@ func normalizeWriteBatchPayload(path string, payload map[string]any) ([]normaliz
 		item.tags = meta.tags
 		item.createdAt = meta.createdAt
 		item.lifecycle = meta.lifecycle
+		item.references, err = normalizeMemoryStructuredReferences(item.raw)
+		if err != nil {
+			return nil, fmt.Errorf("item %d: %w", idx, err)
+		}
 		rows = append(rows, item)
 	}
 	return rows, nil

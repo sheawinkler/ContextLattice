@@ -1,0 +1,54 @@
+#!/usr/bin/env python3
+"""Verify a downloaded release archive against an immutable SHA256 pin."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import hmac
+import json
+import re
+import sys
+from pathlib import Path
+
+
+FULL_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
+
+
+class ArchiveVerificationError(RuntimeError):
+    """The archive is unsafe or does not match the release pin."""
+
+
+def verify(archive: Path, expected_sha256: str) -> dict[str, object]:
+    if FULL_SHA256.fullmatch(expected_sha256) is None:
+        raise ArchiveVerificationError("expected archive SHA256 pin is invalid")
+    if archive.is_symlink() or not archive.is_file() or archive.stat().st_size <= 0:
+        raise ArchiveVerificationError(
+            f"archive is missing, empty, or not a regular file: {archive.name}"
+        )
+    digest = hashlib.sha256()
+    with archive.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    actual_sha256 = digest.hexdigest()
+    if not hmac.compare_digest(actual_sha256, expected_sha256):
+        raise ArchiveVerificationError(
+            f"archive SHA256 mismatch: expected {expected_sha256}, got {actual_sha256}"
+        )
+    return {"ok": True, "archive": archive.name, "sha256": actual_sha256}
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--archive", required=True)
+    parser.add_argument("--sha256", required=True)
+    args = parser.parse_args()
+    try:
+        print(json.dumps(verify(Path(args.archive), args.sha256), sort_keys=True))
+    except (OSError, ArchiveVerificationError, TypeError, ValueError) as exc:
+        print(f"release archive verification: ERROR: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+
+
+if __name__ == "__main__":
+    main()

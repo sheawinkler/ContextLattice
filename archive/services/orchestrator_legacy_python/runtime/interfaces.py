@@ -40,6 +40,19 @@ class TaskSubmitRequest:
     payload: dict[str, Any] | None
     run_after: str | None = None
     max_attempts: int | None = None
+    task_id: str | None = None
+    objective: str | None = None
+    acceptance_criteria: list[str] | None = None
+    task_class: str | None = None
+    execution_profile: str | None = None
+    risk_level: str | None = None
+    approval_policy: dict[str, Any] | None = None
+    context_request: dict[str, Any] | None = None
+    recipients: list[dict[str, Any]] | None = None
+    review_owner: str | None = None
+    workspace_id: str | None = None
+    requesting_agent_id: str | None = None
+    idempotency_key: str | None = None
 
 
 @dataclass(slots=True)
@@ -48,6 +61,13 @@ class TaskStatusRequest:
     status: str
     message: str | None = None
     metadata: dict[str, Any] | None = None
+    attempt_id: str | None = None
+    lease_id: str | None = None
+    worker_id: str | None = None
+    worker_instance_id: str | None = None
+    generation: int | None = None
+    runner_status: str | None = None
+    exit_code: int | None = None
 
 
 @dataclass(slots=True)

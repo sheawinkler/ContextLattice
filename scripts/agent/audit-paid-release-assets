@@ -1,0 +1,405 @@
+#!/usr/bin/env python3
+"""Audit the complete paid release asset set at the promotion boundary."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import re
+import subprocess
+import sys
+from collections.abc import Mapping
+from pathlib import Path
+from typing import Any
+
+sys.dont_write_bytecode = True
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from release_artifact_manifest import (  # noqa: E402
+    INTEGRITY_RECEIPT_SCHEMA_ID,
+    ReleaseMetadataError,
+    _read_json,
+    _walk_metadata,
+    sha256_file,
+    verify_manifest,
+    verify_sha_sums,
+)
+
+
+INSTALLERS = (
+    "ContextLattice-macOS-universal.dmg",
+    "ContextLattice-windows-x64.msi",
+    "ContextLattice-linux-bootstrap.tar.gz",
+)
+RELEASE_ARTIFACTS = INSTALLERS + (
+    "ContextLattice-release-tree-proof.json",
+    "ContextLattice-public-paid-source-manifest.json",
+    "ContextLattice-release-provenance-resolution.json",
+    "ContextLattice-signer-registry-proof.json",
+)
+MANIFESTS = (
+    "ContextLattice-release-manifest-stable.json",
+    "ContextLattice-release-manifest-canary.json",
+)
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--dist-dir", default="dist")
+    parser.add_argument("--tag", required=True)
+    parser.add_argument("--commit", required=True)
+    parser.add_argument("--approved-source-repository", required=True)
+    parser.add_argument("--approved-source-ref", required=True)
+    parser.add_argument("--approved-private-source-commit", required=True)
+    parser.add_argument("--approved-private-source-tree", required=True)
+    parser.add_argument("--approved-source-ref-tip", default="")
+    parser.add_argument("--performance-mode", default="shared_runner")
+    return parser
+
+
+def _fail(message: str) -> None:
+    raise ReleaseMetadataError(message)
+
+
+def _sha256(value: bytes) -> str:
+    return hashlib.sha256(value).hexdigest()
+
+
+def _git(root: Path, *args: str) -> str:
+    try:
+        return subprocess.check_output(
+            ["git", *args], cwd=root, text=True, stderr=subprocess.PIPE
+        ).strip()
+    except (OSError, subprocess.CalledProcessError) as exc:
+        _fail(f"git identity lookup failed: {' '.join(args)}")
+        raise AssertionError from exc
+
+
+def _commit_tree(root: Path, commit: str) -> str:
+    if not re.fullmatch(r"[0-9a-f]{40}", commit):
+        _fail("paid release commit is not a canonical lowercase SHA-1")
+    tree = _git(root, "rev-parse", "--verify", f"{commit}^{{tree}}")
+    if not re.fullmatch(r"[0-9a-f]{40}", tree):
+        _fail("paid release source tree is not a canonical lowercase SHA-1")
+    return tree
+
+
+def _regular_closed_set(dist_dir: Path) -> None:
+    if not dist_dir.is_dir() or dist_dir.is_symlink():
+        _fail("paid release directory is not a regular directory")
+    actual: set[str] = set()
+    for entry in dist_dir.iterdir():
+        if entry.is_symlink() or not entry.is_file():
+            _fail(f"paid release directory contains a non-file entry: {entry.name}")
+        actual.add(entry.name)
+    expected = {
+        *RELEASE_ARTIFACTS,
+        *MANIFESTS,
+        "ContextLattice-SHA256SUMS.txt",
+        *(f"{name}.integrity.json" for name in INSTALLERS),
+        *(f"{name}.sbom.spdx.json" for name in INSTALLERS),
+    }
+    asc = dist_dir / "ContextLattice-linux-bootstrap.tar.gz.asc"
+    if asc.exists():
+        if asc.is_symlink() or not asc.is_file():
+            _fail("paid release signature is not a regular file")
+        expected.add(asc.name)
+    if actual != expected:
+        _fail(
+            "paid release asset set is not closed: "
+            f"missing={sorted(expected - actual)} extra={sorted(actual - expected)}"
+        )
+
+
+def _validate_source_manifest(
+    source_manifest: Mapping[str, Any], *, commit: str, tree: str, approved_commit: str, approved_tree: str
+) -> None:
+    if source_manifest.get("schema_id") not in {
+        "frontier_t1_tested_source_manifest.v1",
+        "frontier_tested_source_manifest.v1",
+    }:
+        _fail("paid source manifest schema is invalid")
+    if source_manifest.get("lane") != "public-paid":
+        _fail("paid source manifest lane is invalid")
+    if source_manifest.get("tested_commit") != commit or source_manifest.get("source_tree") != tree:
+        _fail("paid source manifest is not bound to the release commit/tree")
+    source_set = source_manifest.get("source_set")
+    if not isinstance(source_set, Mapping) or source_set.get("closed_world") is not True:
+        _fail("paid source manifest is not a closed-world source contract")
+    approved = source_manifest.get("approved_private_source")
+    if not isinstance(approved, Mapping):
+        _fail("paid source manifest has no approved private source binding")
+    if approved.get("commit") != approved_commit or approved.get("source_tree") != approved_tree:
+        _fail("paid source manifest approved private source binding differs")
+
+
+def _validate_signer_and_resolution(
+    root: Path,
+    *,
+    dist_dir: Path,
+    tag: str,
+    commit: str,
+    tree: str,
+    approved_repository: str,
+    approved_ref: str,
+    approved_ref_tip: str,
+    approved_commit: str,
+    approved_tree: str,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
+    registry_path = root / "config/runtime-license/public_keys.json"
+    registry_bytes = registry_path.read_bytes()
+    registry = _read_json(registry_path)
+    signer = _read_json(dist_dir / "ContextLattice-signer-registry-proof.json")
+    source_manifest = _read_json(dist_dir / "ContextLattice-public-paid-source-manifest.json")
+    resolution = _read_json(dist_dir / "ContextLattice-release-provenance-resolution.json")
+    expected_signer = {
+        "schema_id": "contextlattice_signer_registry_proof.v1",
+        "lane": "paid",
+        "registry_schema_id": registry.get("schema_id"),
+        "registry_issuer": registry.get("issuer"),
+        "registry_sha256": _sha256(registry_bytes),
+        "approved_source_repository": approved_repository,
+        "approved_source_ref": approved_ref,
+        "release_ref": f"refs/tags/{tag}",
+        "source_commit": commit,
+        "private_key_recorded": False,
+    }
+    for key, value in expected_signer.items():
+        if signer.get(key) != value:
+            _fail(f"signer-registry proof mismatch for {key}")
+    key_id = signer.get("key_id")
+    if not isinstance(key_id, str) or key_id not in registry.get("keys", {}):
+        _fail("signer-registry proof key is absent from the reviewed registry")
+    if signer.get("approved_private_source_commit") != approved_commit:
+        _fail("signer-registry proof approved private commit differs")
+    signer_tip = signer.get("approved_source_ref_tip")
+    if not isinstance(signer_tip, str) or not re.fullmatch(r"[0-9a-f]{40}", signer_tip):
+        _fail("signer-registry proof source ref tip is invalid")
+    if approved_ref_tip and signer_tip != approved_ref_tip:
+        _fail("signer-registry proof source ref tip differs from the approved tip")
+    if resolution.get("schema_id") != "contextlattice_frontier_release_source_resolution.v1":
+        _fail("paid source resolution schema is invalid")
+    if resolution.get("source_commit") != commit:
+        _fail("paid source resolution commit differs")
+    if resolution.get("approved_private_source_commit") != approved_commit:
+        _fail("paid source resolution approved private commit differs")
+    if resolution.get("approved_private_source_tree") != approved_tree:
+        _fail("paid source resolution approved private tree differs")
+    approved = source_manifest.get("approved_private_source")
+    if not isinstance(approved, Mapping) or approved.get("commit") != approved_commit:
+        _fail("source manifest and source resolution disagree")
+    _validate_source_manifest(
+        source_manifest,
+        commit=commit,
+        tree=tree,
+        approved_commit=approved_commit,
+        approved_tree=approved_tree,
+    )
+    return signer, source_manifest, resolution, registry
+
+
+def _validate_tree_proof(
+    root: Path, *, dist_dir: Path, tag: str, commit: str, tree: str, performance_mode: str
+) -> dict[str, Any]:
+    proof = _read_json(dist_dir / "ContextLattice-release-tree-proof.json")
+    expected = {
+        "schema_id": "contextlattice_release_tree_proof.v1",
+        "lane": "public-paid",
+        "source_commit": commit,
+        "source_tree": tree,
+        "release_ref": f"refs/tags/{tag}",
+        "source_ref": f"refs/tags/{tag}",
+        "materialization": "temporary_git_index_checkout",
+        "performance_mode": performance_mode,
+    }
+    for key, value in expected.items():
+        if proof.get(key) != value:
+            _fail(f"release-tree proof mismatch for {key}")
+    rows = proof.get("required_blobs")
+    if not isinstance(rows, list) or not rows:
+        _fail("release-tree proof has no required blobs")
+    seen: set[str] = set()
+    for row in rows:
+        if not isinstance(row, Mapping):
+            _fail("release-tree proof contains a malformed blob row")
+        path = row.get("path")
+        oid = row.get("oid")
+        size = row.get("size")
+        if not isinstance(path, str) or not path or path in seen or path.startswith("/") or ".." in Path(path).parts:
+            _fail("release-tree proof contains an unsafe or duplicate path")
+        if not isinstance(oid, str) or not re.fullmatch(r"[0-9a-f]{40}", oid) or not isinstance(size, int) or size < 0:
+            _fail(f"release-tree proof blob identity is invalid: {path}")
+        seen.add(path)
+        expected_oid = _git(root, "rev-parse", "--verify", f"{commit}:{path}")
+        expected_size = int(_git(root, "cat-file", "-s", expected_oid))
+        if oid != expected_oid or size != expected_size:
+            _fail(f"release-tree required blob mismatch: {path}")
+    gates = proof.get("gates")
+    if not isinstance(gates, Mapping):
+        _fail("release-tree proof gates are missing")
+    shared = {
+        "frontier_t2_item2_isolated_performance",
+        "frontier_t2_item24_isolated_proof_timeline",
+        "frontier_t2_item24_shared_retention",
+    }
+    invalid = {
+        name: status
+        for name, status in gates.items()
+        if status not in {"pass", "not_present"}
+        and not (performance_mode == "shared_runner" and name in shared and status == "correctness_pass_latency_observed")
+    }
+    if invalid:
+        _fail(f"release-tree proof contains failed gates: {invalid}")
+    for required in ("branch_lane_guard", "services_gateway_go_test", "services_orchestrator_go_test", "commercial_truth_generation"):
+        if gates.get(required) != "pass":
+            _fail(f"release-tree proof missing required pass: {required}")
+    return proof
+
+
+def _validate_sbom(dist_dir: Path, name: str, artifact_row: Mapping[str, Any]) -> None:
+    path = dist_dir / f"{name}.sbom.spdx.json"
+    payload = _read_json(path)
+    if not isinstance(payload.get("spdxVersion"), str) or not payload["spdxVersion"].startswith("SPDX-"):
+        _fail(f"paid SBOM SPDX version is invalid: {path.name}")
+    creation_info = payload.get("creationInfo")
+    creators = creation_info.get("creators", []) if isinstance(creation_info, Mapping) else []
+    if not isinstance(creators, list) or not any(
+        isinstance(creator, str) and creator.lower().startswith("tool: syft") for creator in creators
+    ):
+        _fail(f"paid SBOM is not identified as Syft output: {path.name}")
+    if not isinstance(payload.get("packages"), list) or not all(isinstance(row, Mapping) for row in payload["packages"]):
+        _fail(f"paid SBOM package set is invalid: {path.name}")
+    serialized = json.dumps(payload, sort_keys=True)
+    if any(forbidden in serialized for forbidden in ("/Users/", "/Volumes/", "file://")):
+        _fail(f"paid SBOM contains a machine path: {path.name}")
+    file_entries = payload.get("files")
+    if not isinstance(file_entries, list):
+        _fail(f"paid SBOM file set is invalid: {path.name}")
+    binding = False
+    for file_row in file_entries:
+        if not isinstance(file_row, Mapping) or Path(str(file_row.get("fileName", ""))).name != name:
+            continue
+        for checksum in file_row.get("checksums", []):
+            if isinstance(checksum, Mapping) and checksum.get("algorithm") == "SHA256" and checksum.get("checksumValue") == artifact_row.get("sha256"):
+                binding = True
+                break
+    if not binding:
+        _fail(f"paid SBOM does not bind final digest: {path.name}")
+
+
+def _validate_receipts(dist_dir: Path, rows: Mapping[str, Mapping[str, Any]], *, tag: str, commit: str) -> None:
+    for name in INSTALLERS:
+        receipt_path = dist_dir / f"{name}.integrity.json"
+        receipt = _read_json(receipt_path)
+        _walk_metadata(receipt, public_safe=False)
+        if set(receipt) != {"schema_id", "lane", "tag", "release_ref", "commit", "artifact", "sbom"}:
+            _fail(f"paid integrity receipt fields are invalid: {receipt_path.name}")
+        if receipt.get("schema_id") != INTEGRITY_RECEIPT_SCHEMA_ID or receipt.get("lane") != "paid" or receipt.get("tag") != tag or receipt.get("release_ref") != f"refs/tags/{tag}" or receipt.get("commit") != commit:
+            _fail(f"paid integrity receipt identity mismatch: {receipt_path.name}")
+        if receipt.get("artifact") != rows[name]:
+            _fail(f"paid integrity receipt does not bind final bytes: {receipt_path.name}")
+        sbom_path = dist_dir / f"{name}.sbom.spdx.json"
+        expected_sbom = {"name": sbom_path.name, "size_bytes": sbom_path.stat().st_size, "sha256": sha256_file(sbom_path)}
+        if receipt.get("sbom") != expected_sbom:
+            _fail(f"paid integrity receipt does not bind final SBOM: {receipt_path.name}")
+        _validate_sbom(dist_dir, name, rows[name])
+
+
+def audit(args: argparse.Namespace) -> dict[str, object]:
+    dist_dir = Path(args.dist_dir).resolve()
+    _regular_closed_set(dist_dir)
+    root = ROOT
+    tree = _commit_tree(root, args.commit)
+    signer, source_manifest, resolution, _registry = _validate_signer_and_resolution(
+        root,
+        dist_dir=dist_dir,
+        tag=args.tag,
+        commit=args.commit,
+        tree=tree,
+        approved_repository=args.approved_source_repository,
+        approved_ref=args.approved_source_ref,
+        approved_ref_tip=args.approved_source_ref_tip,
+        approved_commit=args.approved_private_source_commit,
+        approved_tree=args.approved_private_source_tree,
+    )
+    tree_proof = _validate_tree_proof(
+        root,
+        dist_dir=dist_dir,
+        tag=args.tag,
+        commit=args.commit,
+        tree=tree,
+        performance_mode=args.performance_mode,
+    )
+    rows_by_channel: dict[str, list[dict[str, object]]] = {}
+    for channel, manifest_name in (("stable", MANIFESTS[0]), ("canary", MANIFESTS[1])):
+        manifest = _read_json(dist_dir / manifest_name)
+        rows = verify_manifest(
+            manifest,
+            dist_dir,
+            expected_lane="paid",
+            expected_channel=channel,
+            expected_tag=args.tag,
+            expected_commit=args.commit,
+            expected_names=set(RELEASE_ARTIFACTS),
+            public_safe=False,
+        )
+        verify_sha_sums(dist_dir / "ContextLattice-SHA256SUMS.txt", dist_dir, rows)
+        provenance = manifest.get("provenance")
+        if not isinstance(provenance, Mapping):
+            _fail(f"paid release manifest provenance is missing: {manifest_name}")
+        expected_fields = {
+            "schema_id": "contextlattice_release_provenance.v1",
+            "lane": "paid",
+            "approved_source_repository": args.approved_source_repository,
+            "approved_source_ref": args.approved_source_ref,
+            "release_ref": f"refs/tags/{args.tag}",
+            "source_commit": args.commit,
+            "artifact_integrity_gate": "audit-paid-artifact-integrity --artifacts-only",
+        }
+        for key, value in expected_fields.items():
+            if provenance.get(key) != value:
+                _fail(f"paid release provenance mismatch for {manifest_name}:{key}")
+        tip = provenance.get("approved_source_ref_tip")
+        if not isinstance(tip, str) or not re.fullmatch(r"[0-9a-f]{40}", tip):
+            _fail(f"paid release provenance source ref tip is invalid: {manifest_name}")
+        if args.approved_source_ref_tip and tip != args.approved_source_ref_tip:
+            _fail(f"paid release provenance source ref tip differs: {manifest_name}")
+        if provenance.get("release_source_resolution") != resolution or provenance.get("release_tree_gate") != tree_proof or provenance.get("runtime_license_signer") != signer:
+            _fail(f"paid release provenance nested proof mismatch: {manifest_name}")
+        rows_by_channel[channel] = rows
+    if rows_by_channel["stable"] != rows_by_channel["canary"]:
+        _fail("paid stable and canary manifests disagree on final artifact rows")
+    rows = {str(row["name"]): row for row in rows_by_channel["stable"]}
+    _validate_receipts(dist_dir, rows, tag=args.tag, commit=args.commit)
+    return {
+        "ok": True,
+        "lane": "paid",
+        "tag": args.tag,
+        "commit": args.commit,
+        "source_tree": tree,
+        "closed_asset_set": True,
+        "semantic_audit": {
+            "metadata": True,
+            "manifests": ["stable", "canary"],
+            "provenance": True,
+            "signer_registry": True,
+            "tree_proof": True,
+            "sbom": True,
+            "installer_rows": len(rows),
+        },
+    }
+
+
+def main() -> None:
+    try:
+        print(json.dumps(audit(_parser().parse_args()), sort_keys=True))
+    except (OSError, ReleaseMetadataError, TypeError, ValueError) as exc:
+        print(f"paid release asset audit: ERROR: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+
+
+if __name__ == "__main__":
+    main()

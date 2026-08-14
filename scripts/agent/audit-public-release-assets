@@ -1,0 +1,226 @@
+#!/usr/bin/env python3
+"""Audit the closed public installer asset set, material, and final-byte proofs."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+from typing import Any, Mapping
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from public_release_material_scan import (  # noqa: E402
+    PublicReleaseMaterialError,
+    scan_public_release_files,
+)
+from release_artifact_manifest import (  # noqa: E402
+    DEFAULT_ARTIFACTS,
+    INTEGRITY_RECEIPT_SCHEMA_ID,
+    PROVENANCE_SCHEMA_ID,
+    ReleaseMetadataError,
+    _manifest_name,
+    _portable_asset_name,
+    _read_json,
+    _walk_metadata,
+    sha256_file,
+    verify_manifest,
+    verify_sha_sums,
+)
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--dist-dir", default="dist")
+    parser.add_argument("--lane", required=True, choices=["public"])
+    parser.add_argument("--channel", default="stable", choices=["stable", "canary"])
+    parser.add_argument("--tag", required=True)
+    parser.add_argument("--commit", required=True)
+    parser.add_argument("--manifest-name", default="")
+    parser.add_argument("--sha-sums-name", default="ContextLattice-SHA256SUMS.txt")
+    parser.add_argument("--provenance-name", default="ContextLattice-release-provenance.json")
+    return parser
+
+
+def _reject_public_keys(value: Any, location: str = "metadata") -> None:
+    if isinstance(value, Mapping):
+        for key, child in value.items():
+            if str(key).lower() in {"path", "absolute_path", "output_dir", "root_dir", "workspace"}:
+                raise ReleaseMetadataError(f"public metadata contains a machine-path field: {location}.{key}")
+            _reject_public_keys(child, f"{location}.{key}")
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            _reject_public_keys(child, f"{location}[{index}]")
+
+
+def audit(args: argparse.Namespace) -> dict[str, object]:
+    dist_dir = Path(args.dist_dir).resolve()
+    if not dist_dir.is_dir():
+        raise ReleaseMetadataError(f"public release directory does not exist: {dist_dir}")
+    manifest_name = _portable_asset_name(args.manifest_name or _manifest_name(args.channel))
+    sums_name = _portable_asset_name(args.sha_sums_name)
+    provenance_name = _portable_asset_name(args.provenance_name)
+    integrity_names = {f"{name}.integrity.json" for name in DEFAULT_ARTIFACTS}
+    sbom_names = {f"{name}.sbom.spdx.json" for name in DEFAULT_ARTIFACTS}
+    expected_files = (
+        set(DEFAULT_ARTIFACTS)
+        | {manifest_name, sums_name, provenance_name}
+        | integrity_names
+        | sbom_names
+    )
+    actual_files: set[str] = set()
+    for entry in dist_dir.iterdir():
+        if entry.is_symlink() or not entry.is_file():
+            raise ReleaseMetadataError(f"public release directory contains a non-file entry: {entry.name}")
+        actual_files.add(entry.name)
+    if actual_files != expected_files:
+        raise ReleaseMetadataError(
+            f"public release asset set is not closed: missing={sorted(expected_files - actual_files)} "
+            f"extra={sorted(actual_files - expected_files)}"
+        )
+    material_scan = scan_public_release_files(
+        dist_dir / name for name in sorted(expected_files)
+    )
+
+    manifest = _read_json(dist_dir / manifest_name)
+    rows = verify_manifest(
+        manifest,
+        dist_dir,
+        expected_lane="public",
+        expected_channel=args.channel,
+        expected_tag=args.tag,
+        expected_commit=args.commit,
+        expected_names=set(DEFAULT_ARTIFACTS),
+        public_safe=True,
+    )
+    verify_sha_sums(dist_dir / sums_name, dist_dir, rows)
+
+    provenance = _read_json(dist_dir / provenance_name)
+    _walk_metadata(provenance, public_safe=True)
+    _reject_public_keys(provenance)
+    if provenance.get("schema_id") != PROVENANCE_SCHEMA_ID:
+        raise ReleaseMetadataError("public release provenance input schema is invalid")
+    for key, expected in {
+        "lane": "public",
+        "channel": args.channel,
+        "tag": args.tag,
+        "release_ref": f"refs/tags/{args.tag}",
+        "commit": args.commit,
+    }.items():
+        if provenance.get(key) != expected:
+            raise ReleaseMetadataError(f"public release provenance mismatch for {key}")
+    manifest_ref = provenance.get("manifest")
+    if not isinstance(manifest_ref, Mapping):
+        raise ReleaseMetadataError("public release provenance manifest binding is missing")
+    if manifest_ref.get("name") != manifest_name or manifest_ref.get("sha256") != sha256_file(dist_dir / manifest_name):
+        raise ReleaseMetadataError("public release provenance does not bind the final manifest")
+    provenance_rows = provenance.get("artifacts")
+    if provenance_rows != rows:
+        raise ReleaseMetadataError("public release provenance does not bind the final artifact rows")
+
+    for row in rows:
+        receipt_path = dist_dir / f"{row['name']}.integrity.json"
+        receipt = _read_json(receipt_path)
+        _walk_metadata(receipt, public_safe=True)
+        _reject_public_keys(receipt)
+        if receipt.get("schema_id") != INTEGRITY_RECEIPT_SCHEMA_ID:
+            raise ReleaseMetadataError(f"public integrity receipt schema is invalid: {receipt_path.name}")
+        if set(receipt) != {
+            "schema_id",
+            "lane",
+            "tag",
+            "release_ref",
+            "commit",
+            "artifact",
+            "sbom",
+        }:
+            raise ReleaseMetadataError(f"public integrity receipt fields are invalid: {receipt_path.name}")
+        if (
+            receipt.get("lane") != "public"
+            or receipt.get("tag") != args.tag
+            or receipt.get("release_ref") != f"refs/tags/{args.tag}"
+            or receipt.get("commit") != args.commit
+        ):
+            raise ReleaseMetadataError(f"public integrity receipt identity mismatch: {receipt_path.name}")
+        if receipt.get("artifact") != row:
+            raise ReleaseMetadataError(f"public integrity receipt does not bind final bytes: {receipt_path.name}")
+
+        sbom_path = dist_dir / f"{row['name']}.sbom.spdx.json"
+        expected_sbom = {
+            "name": sbom_path.name,
+            "size_bytes": sbom_path.stat().st_size,
+            "sha256": sha256_file(sbom_path),
+        }
+        if receipt.get("sbom") != expected_sbom:
+            raise ReleaseMetadataError(f"public integrity receipt does not bind final SBOM: {receipt_path.name}")
+        sbom = _read_json(sbom_path)
+        _walk_metadata(sbom, public_safe=True)
+        _reject_public_keys(sbom)
+        spdx_version = sbom.get("spdxVersion")
+        if not isinstance(spdx_version, str) or not spdx_version.startswith("SPDX-"):
+            raise ReleaseMetadataError(f"public SBOM SPDX version is invalid: {sbom_path.name}")
+        packages = sbom.get("packages")
+        if not isinstance(packages, list) or not all(isinstance(package, Mapping) for package in packages):
+            raise ReleaseMetadataError(f"public SBOM package set is invalid: {sbom_path.name}")
+        creation_info = sbom.get("creationInfo")
+        creators = creation_info.get("creators") if isinstance(creation_info, Mapping) else None
+        if not isinstance(creators, list) or not any(
+            isinstance(creator, str) and creator.lower().startswith("tool: syft")
+            for creator in creators
+        ):
+            raise ReleaseMetadataError(f"public SBOM is not identified as Syft output: {sbom_path.name}")
+        file_binding = False
+        file_entries = sbom.get("files")
+        if not isinstance(file_entries, list):
+            raise ReleaseMetadataError(f"public SBOM file set is invalid: {sbom_path.name}")
+        for file_entry in file_entries or []:
+            if not isinstance(file_entry, Mapping) or Path(str(file_entry.get("fileName", ""))).name != row["name"]:
+                continue
+            checksums = file_entry.get("checksums")
+            if isinstance(checksums, list) and any(
+                isinstance(checksum, Mapping)
+                and checksum.get("algorithm") == "SHA256"
+                and checksum.get("checksumValue") == row["sha256"]
+                for checksum in checksums
+            ):
+                file_binding = True
+                break
+        if not file_binding:
+            raise ReleaseMetadataError(f"public SBOM does not bind final digest: {sbom_path.name}")
+
+    return {
+        "ok": True,
+        "lane": "public",
+        "channel": args.channel,
+        "tag": args.tag,
+        "release_ref": f"refs/tags/{args.tag}",
+        "installer_count": len(DEFAULT_ARTIFACTS),
+        "metadata_count": len(expected_files) - len(DEFAULT_ARTIFACTS),
+        "integrity_receipt_count": len(integrity_names),
+        "sbom_count": len(sbom_names),
+        "closed_asset_set": True,
+        "final_bytes_verified": True,
+        "public_material_scan": material_scan,
+        "overwrite_allowed": False,
+    }
+
+
+def main() -> None:
+    args = _parser().parse_args()
+    try:
+        print(json.dumps(audit(args), sort_keys=True))
+    except (
+        OSError,
+        PublicReleaseMaterialError,
+        ReleaseMetadataError,
+        TypeError,
+        ValueError,
+    ) as exc:
+        print(f"public release asset audit: ERROR: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+
+
+if __name__ == "__main__":
+    main()

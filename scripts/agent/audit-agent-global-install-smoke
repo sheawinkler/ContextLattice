@@ -161,6 +161,14 @@ def main() -> int:
     for rel in REQUIRED_RUNTIME_FILES:
         path = global_home / rel
         checks.append(check(f"hook_runtime:{rel}", path.is_file(), path=str(path)))
+    candidate_only_runtime = global_home / "scripts" / "task_agent_execution.py"
+    checks.append(
+        check(
+            "candidate_only_runtime_absent:scripts/task_agent_execution.py",
+            not candidate_only_runtime.exists(),
+            path=str(candidate_only_runtime),
+        )
+    )
     launchd_plist = test_home / "Library" / "LaunchAgents" / f"{smoke_launchd_label}.plist"
     checks.append(
         check(

@@ -47,6 +47,7 @@ func recallResponseProjectEvidenceMetadata(source map[string]any) map[string]any
 
 func recallResponseProjectTemporalMetadata(source map[string]any) map[string]any {
 	raw := anyMap(source["temporal_evidence"])
+	lifecycle := recallResponseProjectLifecycleMetadata(source)
 	status := recallResponseSafeStatus(firstNonEmptyStrings(anyToString(raw["status"]), anyToString(source["status"]), anyToString(source["proof_status"])))
 	supersedes := contextPackAnyList(raw["supersedes"])
 	if len(supersedes) == 0 {
@@ -55,7 +56,7 @@ func recallResponseProjectTemporalMetadata(source map[string]any) map[string]any
 	transitions := recallResponseProjectedTransitions(firstPresentAny(raw["transitions"], source["status_transitions"]))
 	validFrom := recallResponseProjectedTime(firstNonEmptyStrings(anyToString(raw["valid_from"]), anyToString(source["valid_from"])))
 	validTo := recallResponseProjectedTime(firstNonEmptyStrings(anyToString(raw["valid_to"]), anyToString(source["valid_to"])))
-	if status == "unknown" && len(supersedes) == 0 && len(transitions) == 0 && validFrom == "" && validTo == "" {
+	if status == "unknown" && len(supersedes) == 0 && len(transitions) == 0 && validFrom == "" && validTo == "" && len(lifecycle) == 0 {
 		return nil
 	}
 	out := map[string]any{
@@ -67,6 +68,64 @@ func recallResponseProjectTemporalMetadata(source map[string]any) map[string]any
 	}
 	if status != "unknown" {
 		out["status"] = status
+	}
+	for key, value := range lifecycle {
+		out[key] = value
+	}
+	return out
+}
+
+// recallResponseProjectLifecycleMetadata carries only closed lifecycle and
+// freshness fields across the retrieval-to-context-pack boundary. Raw
+// recall_metadata is not trusted or copied wholesale, but omitting these
+// server-owned markers would let a row that looks current at the top level
+// lose its retired, forgotten, or test classification before response policy
+// sees it.
+func recallResponseProjectLifecycleMetadata(source map[string]any) map[string]any {
+	if source == nil {
+		return nil
+	}
+	fields := []string{
+		"lifecycle", "lifecycle_status", "revocation_status", "forgetting_status", "quarantine_status",
+		"state", "trust_class", "safety_class", "sensitivity", "freshness", "temporal_state",
+		"memory_type", "record_type", "memory_class", "classification", "data_class",
+		"is_test", "test", "test_memory", "synthetic", "fixture", "forgotten", "retired",
+	}
+	out := map[string]any{}
+	for _, values := range recallResponseLifecycleCarrierMaps(source) {
+		for _, key := range fields {
+			value, present := values[key]
+			if !present {
+				continue
+			}
+			switch typed := value.(type) {
+			case bool:
+				// Exclusion flags are monotonic across carriers. A copied false
+				// value cannot erase an authoritative true value found elsewhere.
+				out[key] = anyToBool(out[key]) || typed
+			case string:
+				if strings.TrimSpace(typed) != "" {
+					out[key] = strings.TrimSpace(typed)
+				}
+			}
+		}
+	}
+	lifecycle := recallResponseCanonicalLifecycle(source)
+	if lifecycle.hard {
+		out["lifecycle"] = lifecycle.canonical
+		switch lifecycle.canonical {
+		case "test":
+			out["test"] = true
+		case "forgotten":
+			out["forgotten"] = true
+		case "retired":
+			if lifecycle.retirement {
+				out["retired"] = true
+			}
+		}
+	}
+	if len(out) == 0 {
+		return nil
 	}
 	return out
 }
@@ -96,23 +155,66 @@ func recallResponseProjectedTime(value string) string {
 	return parsed.UTC().Format(time.RFC3339Nano)
 }
 
+// recallResponseAgreedRawActionMetadata resolves every action alias consumed by
+// the production compiler, including the already-projected nested carrier. A
+// row is an action witness only when all present non-empty aliases are exact
+// canonical matches. Malformed, partial-vs-complete, or conflicting aliases
+// fail closed instead of relying on alias precedence.
+func recallResponseAgreedRawActionMetadata(source map[string]any) (map[string]any, bool, bool) {
+	type carrier struct {
+		value   any
+		present bool
+	}
+	carriers := make([]carrier, 0, 4)
+	for _, key := range []string{"action_evidence", "structured_action", "action"} {
+		value, present := source[key]
+		carriers = append(carriers, carrier{value: value, present: present})
+	}
+	metadata := anyMap(source["recall_metadata"])
+	nested, nestedPresent := metadata["action"]
+	carriers = append(carriers, carrier{value: nested, present: nestedPresent})
+
+	var selected map[string]any
+	canonical := ""
+	present := false
+	for _, candidate := range carriers {
+		if !candidate.present || candidate.value == nil {
+			continue
+		}
+		payload := anyMap(candidate.value)
+		if len(payload) == 0 {
+			// Empty maps and blank strings are absence, matching the historical
+			// optional aliases. Any other non-map value is an invalid carrier.
+			switch typed := candidate.value.(type) {
+			case map[string]any:
+				continue
+			case string:
+				if strings.TrimSpace(typed) == "" {
+					continue
+				}
+			}
+			return nil, true, false
+		}
+		encoded := recallResponseCanonicalJSON(payload)
+		if encoded == "{}" {
+			return nil, true, false
+		}
+		if !present {
+			selected = cloneJSONMap(payload)
+			canonical = encoded
+			present = true
+			continue
+		}
+		if encoded != canonical {
+			return nil, true, false
+		}
+	}
+	return selected, present, true
+}
+
 func recallResponseProjectActionMetadata(source map[string]any) map[string]any {
-	raw := anyMap(source["action_evidence"])
-	if len(raw) == 0 {
-		raw = anyMap(source["structured_action"])
-	}
-	if len(raw) == 0 {
-		raw = anyMap(source["action"])
-	}
-	if len(raw) == 0 {
-		// A previous server-owned compiler may already have projected the
-		// action into recall_metadata. Re-project that closed shape rather than
-		// dropping it at the next context-pack compilation boundary. This keeps
-		// the bridge additive while still passing every value through the same
-		// opaque-reference sanitizer below.
-		raw = anyMap(anyMap(source["recall_metadata"])["action"])
-	}
-	if len(raw) == 0 {
+	raw, present, valid := recallResponseAgreedRawActionMetadata(source)
+	if !present || !valid || len(raw) == 0 {
 		return nil
 	}
 	namespace := firstNonEmptyStrings(anyToString(source["candidate_id"]), anyToString(source["memory_id"]), anyToString(source["id"]), "bounded_action")
@@ -190,10 +292,7 @@ func recallResponseHasStructuredActionEvidence(items []any) bool {
 		if !eligible || !confidenceValid {
 			continue
 		}
-		action := anyMap(anyMap(row["recall_metadata"])["action"])
-		if len(action) == 0 {
-			action = recallResponseProjectActionMetadata(row)
-		}
+		action := recallResponseProjectActionMetadata(row)
 		if len(action) > 0 {
 			return true
 		}
@@ -209,15 +308,105 @@ func recallResponseHasReadyActionEvidence(items []any) bool {
 		if !eligible || !confidenceValid {
 			continue
 		}
-		action := anyMap(anyMap(row["recall_metadata"])["action"])
-		if len(action) == 0 {
-			action = recallResponseProjectActionMetadata(row)
-		}
+		action := recallResponseProjectActionMetadata(row)
 		if recallResponseActionMetadataReady(action) {
 			return true
 		}
 	}
 	return false
+}
+
+func recallResponseHasSensitiveUnavailableActionEvidence(items []any) bool {
+	for _, raw := range items {
+		row := anyMap(raw)
+		_, eligible := recallResponseEvidenceStatus(row)
+		_, confidenceValid := recallResponseEvidenceConfidence(row["confidence"])
+		if !eligible || !confidenceValid {
+			continue
+		}
+		action := recallResponseProjectActionMetadata(row)
+		if len(action) == 0 {
+			continue
+		}
+		if recallResponseActionHasSensitiveUnavailableRefusal(action["refusal_conditions"]) {
+			return true
+		}
+		for _, parameter := range contextPackAnyList(action["parameter_bindings"]) {
+			if strings.EqualFold(strings.TrimSpace(anyToString(anyMap(parameter)["value_state"])), "sensitive_unresolved") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// recallResponseSensitiveUnavailableActionStatus returns one deterministic
+// eligible witness only when every eligible action carrier agrees on the same
+// complete projected action payload. The witness remains memory-as-data: this
+// helper establishes a non-executable capability/status disclosure, never an
+// executable action. An excluded copy of the same source identity vetoes the
+// status, while an unrelated quarantined row remains typed exclusion evidence
+// and cannot erase an independent eligible witness.
+func recallResponseSensitiveUnavailableActionStatus(items []any) (map[string]any, bool) {
+	excludedIdentities := map[string]bool{}
+	eligibleIdentities := map[string]bool{}
+	rows := make([]map[string]any, 0, len(items))
+	for _, raw := range items {
+		row := anyMap(raw)
+		if len(row) == 0 {
+			continue
+		}
+		rows = append(rows, row)
+		identity := recallResponseCanonicalSourceRef(row, "evidence")
+		_, eligible := recallResponseEvidenceStatus(row)
+		_, confidenceValid := recallResponseEvidenceConfidence(row["confidence"])
+		if identity != "" && (!eligible || !confidenceValid) {
+			excludedIdentities[identity] = true
+		}
+	}
+
+	canonical := ""
+	var selected map[string]any
+	selectedIdentity := ""
+	var selectedAction map[string]any
+	for _, row := range rows {
+		_, eligible := recallResponseEvidenceStatus(row)
+		_, confidenceValid := recallResponseEvidenceConfidence(row["confidence"])
+		if !eligible || !confidenceValid {
+			continue
+		}
+		action := recallResponseProjectActionMetadata(row)
+		if len(action) == 0 {
+			continue
+		}
+		encoded := recallResponseCanonicalJSON(action)
+		if encoded == "{}" || (canonical != "" && encoded != canonical) {
+			return nil, false
+		}
+		if canonical == "" {
+			canonical = encoded
+			selectedAction = action
+		}
+		identity := recallResponseCanonicalSourceRef(row, "evidence")
+		if identity != "" {
+			eligibleIdentities[identity] = true
+		}
+		if selected == nil || identity < selectedIdentity {
+			selected = row
+			selectedIdentity = identity
+		}
+	}
+	if selected == nil || len(selectedAction) == 0 ||
+		(!recallResponseActionHasSensitiveUnavailableBinding(selectedAction["parameter_bindings"]) &&
+			!recallResponseActionHasSensitiveUnavailableRefusal(selectedAction["refusal_conditions"])) {
+		return nil, false
+	}
+	for identity := range eligibleIdentities {
+		if excludedIdentities[identity] {
+			return nil, false
+		}
+	}
+	return selected, true
 }
 
 // recallResponseActionProjectionAllowed is the production action-preparation
@@ -258,10 +447,7 @@ func recallResponseActionProjectionAllowed(source map[string]any) bool {
 		if !eligible || !confidenceValid {
 			continue
 		}
-		action := anyMap(anyMap(row["recall_metadata"])["action"])
-		if len(action) == 0 {
-			action = recallResponseProjectActionMetadata(row)
-		}
+		action := recallResponseProjectActionMetadata(row)
 		if len(action) > 0 {
 			return true
 		}
@@ -274,13 +460,8 @@ func recallResponseActionMetadataReady(action map[string]any) bool {
 	if toolRef == "unresolved_tool" || !recallResponseValidDigest(toolRef) {
 		return false
 	}
-	for _, raw := range contextPackAnyList(action["parameter_bindings"]) {
-		row := anyMap(raw)
-		if anyToBool(row["required"]) && anyToString(row["value_state"]) != "bound_redacted" && anyToString(row["value_state"]) != "sensitive_unresolved" {
-			return false
-		}
-	}
-	return true
+	return recallResponseActionParameterBindingsReady(action["parameter_bindings"]) &&
+		!recallResponseActionHasSensitiveUnavailableRefusal(action["refusal_conditions"])
 }
 
 func recallResponseActionPayloadReady(payload map[string]any) bool {
@@ -288,19 +469,57 @@ func recallResponseActionPayloadReady(payload map[string]any) bool {
 	if toolRef == "unresolved_tool" || !recallResponseValidDigest(toolRef) {
 		return false
 	}
-	for _, raw := range contextPackAnyList(payload["parameter_bindings"]) {
-		row := anyMap(raw)
-		if anyToBool(row["required"]) && anyToString(row["value_state"]) != "bound_redacted" && anyToString(row["value_state"]) != "sensitive_unresolved" {
-			return false
-		}
+	if !recallResponseActionParameterBindingsReady(payload["parameter_bindings"]) {
+		return false
 	}
 	for _, raw := range contextPackAnyList(payload["refusal_conditions"]) {
 		switch anyToString(anyMap(raw)["code"]) {
-		case "credential_access", "missing_required_parameter", "proof_mismatch":
+		case "credential_access", "missing_required_parameter", "sensitive_value_unavailable", "proof_mismatch":
 			return false
 		}
 	}
 	return true
+}
+
+// recallResponseActionParameterBindingsReady is the execution/selectability
+// gate for an already projected action. Sensitive values are never available
+// at this boundary: a sensitive unresolved binding is therefore not ready
+// even when optional, and an unsafe binding can never be treated as bound.
+// Ordinary optional unresolved values remain explainable without authorizing
+// execution; required ordinary unresolved values remain not ready.
+func recallResponseActionParameterBindingsReady(value any) bool {
+	for _, raw := range contextPackAnyList(value) {
+		row := anyMap(raw)
+		state := strings.ToLower(strings.TrimSpace(anyToString(row["value_state"])))
+		if state == "sensitive_unresolved" || state == "unsafe" {
+			return false
+		}
+		if anyToBool(row["required"]) && state != "bound_redacted" {
+			return false
+		}
+	}
+	return true
+}
+
+func recallResponseActionHasSensitiveUnavailableBinding(value any) bool {
+	for _, raw := range contextPackAnyList(value) {
+		row := anyMap(raw)
+		state := strings.ToLower(strings.TrimSpace(anyToString(row["value_state"])))
+		if state == "sensitive_unresolved" || (anyToBool(row["sensitive"]) && state != "bound_redacted") {
+			return true
+		}
+	}
+	return false
+}
+
+func recallResponseActionHasSensitiveUnavailableRefusal(value any) bool {
+	for _, raw := range contextPackAnyList(value) {
+		if anyToString(anyMap(raw)["code"]) == "sensitive_value_unavailable" ||
+			strings.ToLower(strings.TrimSpace(anyToString(raw))) == "sensitive_value_unavailable" {
+			return true
+		}
+	}
+	return false
 }
 
 func recallResponseProjectedConditionCodes(value any, requireAuthorization bool) []any {
@@ -333,6 +552,23 @@ func recallResponseActionPayload(kind string, response map[string]any, refs []st
 			}
 		}
 	}
+	if kind == "memory_to_action" {
+		if row, ok := recallResponseSensitiveUnavailableActionStatus(recallResponseTemporalRows(source)); ok {
+			proofRef := recallResponseProjectedRowRef(row, response)
+			if !containsString(refs, proofRef) {
+				proofRef = ""
+			}
+			return map[string]any{
+				"intended_tool_ref":  "unresolved_tool",
+				"parameter_bindings": []any{},
+				"ordered_steps":      []any{},
+				"refusal_conditions": recallResponseActionConditions(
+					[]any{"independent_authorization_required", "sensitive_value_unavailable"}, proofRef, false,
+				),
+				"rollback_conditions": []any{},
+			}
+		}
+	}
 	action := map[string]any{}
 	proofRef := ""
 	if !recallResponseActionProjectionAllowed(source) {
@@ -360,10 +596,7 @@ func recallResponseActionPayload(kind string, response map[string]any, refs []st
 		if rowRef == "" || !containsString(refs, rowRef) {
 			continue
 		}
-		metadata := anyMap(anyMap(row["recall_metadata"])["action"])
-		if len(metadata) == 0 {
-			metadata = recallResponseProjectActionMetadata(row)
-		}
+		metadata := recallResponseProjectActionMetadata(row)
 		if len(metadata) > 0 {
 			action = metadata
 			proofRef = rowRef
@@ -480,6 +713,12 @@ func recallResponseActionPayloadValid(payload map[string]any, proofSet map[strin
 		return false
 	}
 	if memoryToAction {
+		if recallResponseActionHasSensitiveUnavailableBinding(payload["parameter_bindings"]) {
+			return false
+		}
+		if recallResponseActionHasSensitiveUnavailableRefusal(payload["refusal_conditions"]) {
+			return recallResponseSensitiveUnavailableActionPayloadValid(payload, proofSet)
+		}
 		// A memory-to-action component is admissible only when its mandatory
 		// independent-authorization refusal is bound to the selected action
 		// witness. An unresolved tool is still safe, but an unproved action
@@ -493,6 +732,33 @@ func recallResponseActionPayloadValid(payload map[string]any, proofSet map[strin
 		return false
 	}
 	return true
+}
+
+func recallResponseSensitiveUnavailableActionPayloadValid(payload map[string]any, proofSet map[string]bool) bool {
+	if anyToString(payload["intended_tool_ref"]) != "unresolved_tool" ||
+		len(contextPackAnyList(payload["parameter_bindings"])) != 0 ||
+		len(contextPackAnyList(payload["ordered_steps"])) != 0 ||
+		len(contextPackAnyList(payload["rollback_conditions"])) != 0 {
+		return false
+	}
+	refusals := contextPackAnyList(payload["refusal_conditions"])
+	if len(refusals) != 2 {
+		return false
+	}
+	seen := map[string]bool{}
+	proofRef := ""
+	for _, raw := range refusals {
+		row := anyMap(raw)
+		code := anyToString(row["code"])
+		ref := anyToString(row["proof_ref"])
+		if !recallResponseOneOf(code, "independent_authorization_required", "sensitive_value_unavailable") ||
+			seen[code] || ref == "" || !proofSet[ref] || (proofRef != "" && ref != proofRef) {
+			return false
+		}
+		seen[code] = true
+		proofRef = ref
+	}
+	return seen["independent_authorization_required"] && seen["sensitive_value_unavailable"]
 }
 
 func recallResponseActionConditionsValid(value any, proofSet map[string]bool, requireAuthorization bool) bool {

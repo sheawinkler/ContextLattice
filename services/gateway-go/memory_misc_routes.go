@@ -301,13 +301,42 @@ func (s *server) memoryRecallEvalCasesRefresh(w http.ResponseWriter, r *http.Req
 			return
 		}
 	}
+	if anyToBool(payload["graph_corpus"]) || strings.EqualFold(strings.TrimSpace(anyToString(payload["corpus"])), "graph") {
+		s.memoryRecallGraphCorpusRefresh(w, r, payload)
+		return
+	}
 	maxCases := clampInt(anyToInt(payload["max_cases"], savedRecallEvalV3MaxCases), 1, savedRecallEvalV3MaxCases)
 	minHits := clampInt(anyToInt(payload["min_hits"], 1), 1, 1000)
 	project := strings.TrimSpace(anyToString(payload["project"]))
 	topicPrefix := strings.TrimSpace(anyToString(payload["topic_prefix"]))
 	includeGraphCases := anyToBool(payload["include_graph_cases"])
-	graphMaxCases := clampInt(anyToInt(payload["graph_max_cases"], 3), 0, savedRecallEvalV3MaxGraphCases)
+	graphMaxCases := clampInt(anyToInt(payload["graph_max_cases"], 100), 0, savedRecallEvalV3MaxGraphCases)
 	refreshed := s.buildRefreshedRecallEvalCaseSetWithGraphContext(r.Context(), maxCases, minHits, project, topicPrefix, includeGraphCases, graphMaxCases)
+	if includeGraphCases && graphMaxCases >= savedRecallEvalV3MinGraphReferences {
+		population := anyMap(refreshed["graph_reference_population"])
+		if !anyToBool(population["ready"]) {
+			previousPath := resolveRecallEvalCasesPath()
+			previous := defaultSavedRecallEvalConfig(previousPath)
+			previousErr := error(nil)
+			if _, statErr := os.Stat(previousPath); statErr == nil {
+				previous, previousErr = loadSavedRecallEvalConfig()
+			}
+			preserved := previousErr == nil && len(previous.Cases) > 0
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"ok":                          false,
+				"code":                        "insufficient_current_state_bound_reference_population",
+				"error":                       "refresh did not produce the required current-state-bound graph reference holdout; the existing case set was preserved",
+				"graph_reference_population":  population,
+				"preserved_existing_case_set": preserved,
+				"existing_case_set": map[string]any{
+					"case_set_digest": previous.CaseSetDigest,
+					"updatedAt":       previous.UpdatedAt,
+					"count":           len(previous.Cases),
+				},
+			})
+			return
+		}
+	}
 	path := resolveRecallEvalCasesPath()
 	raw, err := json.MarshalIndent(refreshed, "", "  ")
 	if err != nil {
@@ -372,6 +401,64 @@ func (s *server) memoryRecallEvalCasesRefresh(w http.ResponseWriter, r *http.Req
 	writeJSON(w, http.StatusOK, response)
 }
 
+// memoryRecallGraphCorpusRefresh persists a separate closed graph benchmark.
+// It intentionally does not replace the direct saved-recall v3 artifact.
+func (s *server) memoryRecallGraphCorpusRefresh(w http.ResponseWriter, r *http.Request, payload map[string]any) {
+	s.graphRecallCorpusRefreshMu.Lock()
+	defer s.graphRecallCorpusRefreshMu.Unlock()
+	project := strings.TrimSpace(anyToString(payload["project"]))
+	topicPrefix := strings.TrimSpace(anyToString(payload["topic_prefix"]))
+	seed := firstNonEmptyStrings(strings.TrimSpace(anyToString(payload["seed"])), "graph-v1")
+	artifact := s.buildSavedRecallGraphCorpus(r.Context(), project, topicPrefix, seed)
+	path := resolveSavedRecallGraphCorpusPath()
+	health, persisted, validationErr := saveSavedRecallGraphCorpusArtifactIfHealthy(path, artifact)
+	if validationErr != nil {
+		log.Printf("graph recall corpus validation failed: %v", validationErr)
+		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "failed to validate graph recall corpus", "code": "validation_error"})
+		return
+	}
+	if !persisted {
+		if err := saveSavedRecallGraphCorpusAttemptReceipt(path, artifact, health); err != nil {
+			log.Printf("graph recall corpus attempt receipt persist failed: %v", err)
+			writeJSON(w, http.StatusBadGateway, map[string]any{"error": "failed to persist graph recall corpus attempt receipt", "code": "storage_io_error", "case_set_health": health})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok":                    false,
+			"schema_id":             savedRecallGraphCorpusSchemaID,
+			"graph_corpus":          true,
+			"case_set_health":       health,
+			"insufficiency_receipt": cloneJSONMap(anyMap(artifact["insufficiency_receipt"])),
+			"canonical_replaced":    false,
+			"attempt_receipt_saved": true,
+		})
+		return
+	}
+	validationReceipt := graphRecallCorpusValidationReceipt(savedRecallGraphCorpusConfigFromArtifact(path, artifact), health)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":                    anyToBool(health["valid"]),
+		"schema_id":             savedRecallGraphCorpusSchemaID,
+		"graph_corpus":          true,
+		"case_set_health":       health,
+		"validation_receipt":    validationReceipt,
+		"insufficiency_receipt": cloneJSONMap(anyMap(artifact["insufficiency_receipt"])),
+		"savedCaseSet": map[string]any{
+			"case_set_id":        ownerOnlyStoreRef("recall_graph_corpus"),
+			"schema_id":          artifact["schema_id"],
+			"version":            artifact["version"],
+			"count":              len(anyToMapSlice(artifact["cases"])),
+			"development_count":  len(anyToMapSlice(artifact["development_cases"])),
+			"holdout_count":      len(anyToMapSlice(artifact["holdout_cases"])),
+			"case_set_digest":    artifact["case_set_digest"],
+			"manifest_digest":    anyToString(anyMap(artifact["manifest"])["digest"]),
+			"topology_counts":    artifact["topology_counts"],
+			"incremental_needed": len(anyToMapSlice(artifact["incremental_needed_cases"])),
+			"custody":            artifact["custody"],
+			"cost":               artifact["cost"],
+		},
+	})
+}
+
 func (s *server) memoryRecallEvaluateSaved(w http.ResponseWriter, r *http.Request) {
 	s.memoryRecallEvaluateSavedNative(w, r)
 }
@@ -408,7 +495,14 @@ func (s *server) buildRefreshedRecallEvalCaseSetWithGraphContext(ctx context.Con
 		for _, candidate := range eligible {
 			candidateDocs = append(candidateDocs, candidate.doc)
 		}
-		graphCases = s.recallEvalGraphCasesFromDocs(ctx, candidateDocs, cases, graphMaxCases)
+		// Graph seeds are drawn from the complete bounded eligible population.
+		// Restricting them to the direct sample can report zero references even
+		// when the current-state graph has enough valid positives outside that
+		// sample. The source population is already capped by
+		// savedRecallEvalV3MaxSourceDocs, and graph generation stops at its
+		// requested bound.
+		graphSeeds := recallEvalCasesFromCandidates(eligible, project)
+		graphCases = s.recallEvalGraphCasesFromDocs(ctx, candidateDocs, graphSeeds, graphMaxCases)
 	}
 	if len(graphCases) > 0 {
 		directCount := maxInt(0, maxCases-len(graphCases))
@@ -443,9 +537,23 @@ func (s *server) buildRefreshedRecallEvalCaseSetWithGraphContext(ctx context.Con
 		"temporal_holdout":    temporal,
 	}
 	populationMetadata := recallEvalPopulationMetadata(eligible, cases)
+	graphReferenceCount := 0
+	for _, graphCase := range graphCases {
+		if anyToString(graphCase["graph_label_kind"]) == "current_state_bound_reference" {
+			graphReferenceCount++
+		}
+	}
+	graphReferenceReady := graphReferenceCount >= savedRecallEvalV3MinGraphReferences
 	snapshot["population"] = populationMetadata["population"]
 	snapshot["sample"] = populationMetadata["sample"]
 	snapshot["diversity"] = populationMetadata["diversity"]
+	snapshot["graph_reference_population"] = map[string]any{
+		"available":    graphReferenceCount,
+		"requested":    graphMaxCases,
+		"minimum":      savedRecallEvalV3MinGraphReferences,
+		"ready":        graphReferenceReady,
+		"truth_source": "current_state_bound_reference_edges",
+	}
 	snapshot["source_stats"] = cloneAnyMap(sourceStats)
 	custody := map[string]any{
 		"schema_id":              savedRecallEvalV3CustodySchemaID,
@@ -484,6 +592,13 @@ func (s *server) buildRefreshedRecallEvalCaseSetWithGraphContext(ctx context.Con
 		"cases":             cases,
 		"graphCaseCount":    len(graphCases),
 		"graphCasesEnabled": includeGraph,
+		"graph_reference_population": map[string]any{
+			"available":    graphReferenceCount,
+			"requested":    graphMaxCases,
+			"minimum":      savedRecallEvalV3MinGraphReferences,
+			"ready":        graphReferenceReady,
+			"truth_source": "current_state_bound_reference_edges",
+		},
 	}
 }
 
@@ -574,6 +689,10 @@ func (s *server) recallEvalGraphCasesFromDocs(ctx context.Context, docs []memory
 			docsByID[strings.ToLower(memoryID)] = doc
 		}
 	}
+	// New reference labels are limited to explicit, current-state-bound
+	// references. The legacy association branch is retained only so an
+	// already-frozen graph case can be read without being silently rewritten;
+	// it is marked separately and is not part of the reference population.
 	allowedRelations := map[string]struct{}{"references": {}, "same_session": {}, "same_topic": {}}
 	seenEdges := map[string]struct{}{}
 	graphCases := make([]map[string]any, 0, maxCases)
@@ -592,6 +711,9 @@ func (s *server) recallEvalGraphCasesFromDocs(ctx context.Context, docs []memory
 			continue
 		}
 		for _, edge := range edges {
+			if edge.Relation == "references" && !memoryReferenceBindingValid(edge.Binding) {
+				continue
+			}
 			if edge.Confidence < 0.95 {
 				continue
 			}
@@ -622,6 +744,11 @@ func (s *server) recallEvalGraphCasesFromDocs(ctx context.Context, docs []memory
 			graphCase["graph_expected_files"] = []string{target.FileName}
 			graphCase["graph_expected_relations"] = []string{edge.Relation}
 			graphCase["graph_min_confidence"] = 0.95
+			if edge.Relation == "references" {
+				graphCase["graph_label_kind"] = "current_state_bound_reference"
+			} else {
+				graphCase["graph_label_kind"] = "legacy_association"
+			}
 			graphCases = append(graphCases, graphCase)
 			break
 		}
@@ -669,6 +796,11 @@ func recallEvalExpectedFilesFromTopic(row map[string]any) []string {
 			add(anyToString(partition["file"]))
 		}
 	}
+	if partitions, ok := row["filePartitions"].([]map[string]any); ok {
+		for _, partition := range partitions {
+			add(anyToString(partition["file"]))
+		}
+	}
 	if len(files) > 5 {
 		files = files[:5]
 	}
@@ -690,20 +822,24 @@ func recallEvalQueryFromDoc(doc memoryStoreDoc) string {
 }
 
 func recallEvalRedactFileTokens(value string, fileName string) string {
-	text := strings.ToLower(strings.TrimSpace(value))
-	if text == "" {
+	if strings.TrimSpace(value) == "" {
 		return ""
 	}
 	cleanName := strings.ToLower(strings.Trim(strings.TrimSpace(strings.ReplaceAll(fileName, "\\", "/")), "/"))
 	baseName := filepath.Base(cleanName)
-	for _, token := range []string{cleanName, baseName} {
-		if len(token) < 3 {
+	stem := strings.TrimSuffix(baseName, filepath.Ext(baseName))
+	fileTokens := graphCorpusMeaningfulOverlapTokens(stem, nil)
+	if len(fileTokens) == 0 {
+		return strings.Join(graphCorpusLexicalTokens(value), " ")
+	}
+	kept := make([]string, 0)
+	for _, token := range graphCorpusLexicalTokens(value) {
+		if _, leaked := fileTokens[token]; leaked {
 			continue
 		}
-		text = strings.ReplaceAll(text, token, " ")
+		kept = append(kept, token)
 	}
-	fields := strings.Fields(text)
-	return strings.Join(fields, " ")
+	return strings.Join(kept, " ")
 }
 
 func recallEvalCaseID(seed string, idx int) string {
@@ -818,11 +954,13 @@ func (s *server) memoryFilesByProject(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) agentsTasksRoute(w http.ResponseWriter, r *http.Request) {
-	if !methodAllowed(r.Method, http.MethodGet, http.MethodPost, http.MethodPatch, http.MethodDelete, http.MethodPut) {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+	if s == nil || s.taskLedger == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "authoritative Gateway task ledger unavailable"})
 		return
 	}
-	s.forwardJSONAny(w, r, r.URL.Path)
+	// Every live task read and mutation uses the SQLite-WAL delivery ledger.
+	// The legacy backend is never a second task writer.
+	s.agentTaskDeliveryRoute(w, r)
 }
 
 func (s *server) telemetryRoute(w http.ResponseWriter, r *http.Request) {

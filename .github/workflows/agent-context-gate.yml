@@ -21,10 +21,15 @@ on:
       - "scripts/agent_hooks/**"
       - "scripts/generate_commercial_truth.py"
       - "scripts/public_sync_guard.sh"
+      - "scripts/task_agent_worker.py"
       - "scripts/tests/test_release_lane_tree.py"
+      - "scripts/tests/test_public_release_package_scan.py"
+      - "scripts/tests/test_public_release_workflow.py"
+      - "scripts/tests/test_task_agent_worker_claim_identity.py"
       - "scripts/install_global_agent_tools.sh"
       - "scripts/install_global_agent_tools.ps1"
       - ".github/workflows/agent-context-gate.yml"
+      - ".github/workflows/public-release-installers.yml"
 
 permissions:
   contents: read

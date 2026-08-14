@@ -15,6 +15,10 @@ const (
 
 type recallResponseModuleType string
 
+type recallResponseValidatedEvidenceBinding struct {
+	authority string
+}
+
 // recallResponseFrozenSnapshot is the only input accepted by the local
 // condition projector. The fixture loader is responsible for converting the
 // synthetic policy input into Input once; this seam then proves that every
@@ -30,12 +34,15 @@ type recallResponseFrozenSnapshot struct {
 }
 
 type validatedRecallResponsePolicyInput struct {
-	condition      string
-	ablation       string
-	synthetic      bool
-	snapshotDigest string
-	receiptDigest  string
-	canaryPolicy   recallResponseCanaryPolicy
+	condition        string
+	ablation         string
+	synthetic        bool
+	sourceBound      bool
+	snapshotDigest   string
+	receiptDigest    string
+	evidenceBindings map[string]recallResponseValidatedEvidenceBinding
+	ablationWitness  map[string]any
+	canaryPolicy     recallResponseCanaryPolicy
 }
 
 func recallResponseProductionPolicyInput() validatedRecallResponsePolicyInput {
@@ -75,11 +82,13 @@ func validateRecallResponseFrozenSnapshot(
 	if snapshot.InputDigest != "sha256:"+sha256Hex(recallResponseCanonicalJSON(identity)) {
 		return validatedRecallResponsePolicyInput{}, false
 	}
-	return validatedRecallResponsePolicyInput{
-		condition: conditionValue, ablation: ablation, synthetic: true,
+	policy := validatedRecallResponsePolicyInput{
+		condition: conditionValue, ablation: ablation, synthetic: true, sourceBound: true,
 		snapshotDigest: snapshot.SnapshotDigest, receiptDigest: snapshot.ReceiptDigest,
 		canaryPolicy: zeroRecallResponseCanaryPolicy{},
-	}, true
+	}
+	policy.evidenceBindings = recallResponseValidatedEvidenceBindings(snapshot.Input, "validated_policy", nil)
+	return policy, true
 }
 
 // projectRecallResponseCondition is a synthetic evaluator seam. Its unexported
@@ -94,7 +103,79 @@ func projectRecallResponseCondition(
 	if !ok || !policy.synthetic {
 		return nil
 	}
+	if policy.ablation != "none" {
+		var witnessOK bool
+		policy, witnessOK = recallResponseBindSyntheticAblationWitness(snapshot.Input, policy)
+		if !witnessOK {
+			return nil
+		}
+	}
 	return composeRecallResponseWithPolicy(cloneJSONMap(snapshot.Input), policy)
+}
+
+func recallResponseBindSyntheticAblationWitness(
+	input map[string]any,
+	policy validatedRecallResponsePolicyInput,
+) (validatedRecallResponsePolicyInput, bool) {
+	if !policy.synthetic || policy.ablation == "" || policy.ablation == "none" {
+		return policy, false
+	}
+	baselinePolicy := policy
+	baselinePolicy.ablation = "none"
+	baselinePolicy.ablationWitness = nil
+	baseline := composeRecallResponseWithPolicy(cloneJSONMap(input), baselinePolicy)
+	if baseline == nil || recallResponseIsV1Control(baseline) || !validateRecallResponseU2(baseline) {
+		return policy, false
+	}
+	componentRef := ""
+	for _, raw := range contextPackAnyList(recallResponseDisclosure(baseline)["component_union"]) {
+		row := anyMap(raw)
+		if anyToString(row["kind"]) == policy.ablation {
+			componentRef = anyToString(row["component_ref"])
+			break
+		}
+	}
+	if strings.TrimSpace(componentRef) == "" {
+		return policy, false
+	}
+	expectedStage, stageOK := recallResponseSyntheticAblationExpectedStage(input, policy)
+	if !stageOK {
+		return policy, false
+	}
+	policy.ablationWitness = map[string]any{
+		"baseline_component_ref":     componentRef,
+		"component_kind":             policy.ablation,
+		"baseline_union_digest":      anyToString(recallResponseDisclosure(baseline)["union_digest"]),
+		"baseline_response_identity": anyToString(baseline["response_id"]),
+		"expected_failure_stage":     expectedStage,
+	}
+	return policy, recallResponseValidDigest(anyToString(policy.ablationWitness["baseline_union_digest"])) &&
+		recallResponseExactOpaqueID(anyToString(policy.ablationWitness["baseline_response_identity"]), "rr_")
+}
+
+// recallResponseSyntheticAblationExpectedStage derives only the product stage
+// selected by removing one component. The baseline identity comes from the
+// actual evaluated seam; this probe cannot substitute a locally composed
+// baseline for a route-owned response.
+func recallResponseSyntheticAblationExpectedStage(
+	input map[string]any,
+	policy validatedRecallResponsePolicyInput,
+) (string, bool) {
+	if !policy.synthetic || policy.ablation == "" || policy.ablation == "none" {
+		return "", false
+	}
+	probePolicy := policy
+	probePolicy.synthetic = false
+	probePolicy.ablationWitness = nil
+	probe := composeRecallResponseWithPolicy(cloneJSONMap(input), probePolicy)
+	if recallResponseIsV1Control(probe) {
+		productStage := anyToString(anyMap(probe[recallResponseFallbackStageReceiptKey])["stage"])
+		if !recallResponseFallbackStages[productStage] {
+			return "", false
+		}
+		return recallResponseAblationExpectedStage(productStage), true
+	}
+	return "none", true
 }
 
 func recallResponseEvalConditionAllowed(value string) bool {

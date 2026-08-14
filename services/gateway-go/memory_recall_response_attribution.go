@@ -232,7 +232,7 @@ func recallResponseComponentDigest(component map[string]any) string {
 }
 
 func recallResponseIDForResponse(response map[string]any) string {
-	material := cloneJSONMap(response)
+	material := recallResponseStableIdentityMaterial(response)
 	delete(material, "response_id")
 	delete(material, "response_digest")
 	delete(material, "format_contract")

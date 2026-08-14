@@ -75,6 +75,10 @@ func (s *server) memoryRecallEvaluateSavedNative(w http.ResponseWriter, r *http.
 	}
 	comparatorAuthority := contextPackLearnedComparatorAuthorityForRequest(s, r, payload)
 	mode := strings.ToLower(strings.TrimSpace(anyToString(payload["mode"])))
+	if mode == "graph" || anyToBool(payload["graph_corpus"]) {
+		s.memoryRecallEvaluateGraphCorpusNative(w, r, payload, incomingHeaders)
+		return
+	}
 	if mode == "derive" {
 		maxRows := clampInt(anyToInt(payload["max_rows"], derivedRegressionDefaultMaxRows), 1, derivedRegressionMaxRows)
 		maxProposals := clampInt(anyToInt(payload["max_proposals"], derivedRegressionMaxProposals), 1, derivedRegressionMaxProposals)
@@ -140,6 +144,28 @@ func (s *server) memoryRecallEvaluateSavedNative(w http.ResponseWriter, r *http.
 	}
 	evaluationCfg := cfg
 	evaluationCfg.Cases = evaluationCases
+	captureDirectBaseline := anyToBool(payload["capture_direct_baseline"])
+	directBaselineCases, directBaselineSplit := savedRecallDirectBaselineCases(cfg)
+	directBaselineBinding := graphCorpusDirectBaselineBinding(cfg)
+	if captureDirectBaseline {
+		if anyToBool(payload["candidate_allocation_active"]) || anyToBool(payload["treatment_active"]) || anyToBool(payload["graph_results_used"]) {
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"error": "direct baseline capture is unavailable after candidate treatment or graph allocation",
+				"code":  "direct_baseline_capture_post_treatment",
+			})
+			return
+		}
+		actualSplit := firstNonEmptyStrings(evaluationSplit, "all")
+		if actualSplit != directBaselineSplit || len(evaluationCases) != len(directBaselineCases) {
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"error": "direct baseline capture requires the frozen direct holdout cohort",
+				"code":  "direct_baseline_capture_cohort_mismatch", "expected_split": directBaselineSplit,
+				"expected_case_count": len(directBaselineCases), "actual_split": actualSplit,
+				"actual_case_count": len(evaluationCases), "case_set_health": caseSetHealth,
+			})
+			return
+		}
+	}
 	actuatorRows := []map[string]any{}
 	if s != nil && s.contextPackQuality != nil {
 		actuatorRows, _ = s.contextPackQuality.receiptDurableOutcomeRows(evidenceReputationMaxRows)
@@ -167,6 +193,15 @@ func (s *server) memoryRecallEvaluateSavedNative(w http.ResponseWriter, r *http.
 	includeRetrievalDebug := anyToBool(payload["include_retrieval_debug"])
 	includePreferences := anyToBool(payload["include_preferences"])
 	userID := strings.TrimSpace(anyToString(payload["user_id"]))
+	if captureDirectBaseline {
+		// The direct baseline is a native control. Caller-selected learned
+		// treatment, preferences, identity-scoped allocation, diagnostic headers,
+		// and debug shaping are excluded from the fixed pre-treatment profile.
+		includePreferences = false
+		includeRetrievalDebug = false
+		userID = ""
+		incomingHeaders = nil
+	}
 	if comparatorAuthority.Authorized {
 		// The authority artifact is evaluated only through the fixed, server-owned
 		// profile. Preserve the caller's diagnostic options on every other run.
@@ -198,6 +233,7 @@ func (s *server) memoryRecallEvaluateSavedNative(w http.ResponseWriter, r *http.
 	caseReports := make([]map[string]any, 0, len(evaluationCases))
 	ablationReports := make([]map[string]any, 0, len(evaluationCases))
 	ablationRowsUsed := 0
+	directControlReceipts := make([]map[string]any, 0, len(evaluationCases))
 
 	// Keep tiny diagnostic fixtures sequential so legacy test/inspection
 	// backends that intentionally use unsynchronized capture variables retain
@@ -207,7 +243,7 @@ func (s *server) memoryRecallEvaluateSavedNative(w http.ResponseWriter, r *http.
 		// Retrieval remains parallel, but ablation rows are materialized in this
 		// deterministic aggregation lane so max_ablation_rows is a global cap,
 		// never a per-case multiplier.
-		parallelResults := evaluateSavedRecallCasesConcurrently(r.Context(), s, evaluationCases, k, incomingHeaders, includeRetrievalDebug, includePreferences, userID)
+		parallelResults := evaluateSavedRecallCasesConcurrently(r.Context(), s, evaluationCases, k, incomingHeaders, includeRetrievalDebug, includePreferences, userID, captureDirectBaseline, directBaselineBinding, firstNonEmptyStrings(map[bool]string{true: "evaluation_holdout", false: "synthetic"}[captureDirectBaseline], "synthetic"))
 		for _, result := range parallelResults {
 			if strings.TrimSpace(anyToString(result.rawCase["query"])) != "" {
 				latencyValues = append(latencyValues, result.latencyMs)
@@ -223,6 +259,9 @@ func (s *server) memoryRecallEvaluateSavedNative(w http.ResponseWriter, r *http.
 				}
 			}
 			caseReports = append(caseReports, result.report)
+			if receipt := anyMap(result.searchResponse["direct_control_receipt"]); len(receipt) > 0 {
+				directControlReceipts = append(directControlReceipts, receipt)
+			}
 			if result.retrievalFailed {
 				impactComparison.invalidateCase(result.rawCase, "retrieval_failed")
 				continue
@@ -321,6 +360,9 @@ func (s *server) memoryRecallEvaluateSavedNative(w http.ResponseWriter, r *http.
 				"callback_url":            "",
 				"traffic_class":           "synthetic",
 			}
+			if captureDirectBaseline {
+				applySavedRecallDirectControl(reqPayload, rawCase, directBaselineBinding)
+			}
 			applySavedRecallEvalCaseOptionalRetrievalFlags(reqPayload, rawCase)
 			if strings.TrimSpace(anyToString(reqPayload["retrieval_intent"])) == "" {
 				reqPayload["retrieval_intent"] = "decision"
@@ -356,12 +398,17 @@ func (s *server) memoryRecallEvaluateSavedNative(w http.ResponseWriter, r *http.
 					"source_diversity":    0,
 					"latency_ms":          roundFloat(latencyMs, 3),
 					"graph_contribution":  recallGraphContributionUnavailable("retrieval failed"),
-					"warnings":            []string{"retrieval failed: " + execErr.Error()},
-					"retrieval_mode":      reqPayload["retrieval_mode"],
-					"agent_id":            reqPayload["agent_id"],
-					"status_code":         status,
+					// Keep provider/path details owner-only; this report is part of the
+					// public saved-evaluation surface.
+					"warnings":       []string{graphRecallExecutionErrorCode(status, execErr)},
+					"retrieval_mode": reqPayload["retrieval_mode"],
+					"agent_id":       reqPayload["agent_id"],
+					"status_code":    status,
 				})
 				continue
+			}
+			if receipt := anyMap(searchResp["direct_control_receipt"]); len(receipt) > 0 {
+				directControlReceipts = append(directControlReceipts, receipt)
 			}
 
 			results := parseRows(searchResp["results"])
@@ -378,27 +425,30 @@ func (s *server) memoryRecallEvaluateSavedNative(w http.ResponseWriter, r *http.
 				graphExpectedFiles = expectedFiles
 				graphExpectedTerms = expectedTerms
 			}
-			matchedFiles := matchedExpectedFilesWithinK(results, expectedFiles, k)
+			matchedFiles := matchedExpectedFilesWithinKProject(results, expectedFiles, k, strings.TrimSpace(anyToString(reqPayload["project"])))
 			caseCitationCoverage := 1.0
 			if len(expectedFiles) > 0 {
 				caseCitationCoverage = float64(len(matchedFiles)) / float64(len(expectedFiles))
 			}
 			caseSources := uniqueSourcesWithinK(results, k)
-			graphContribution := s.evaluateRecallGraphContribution(
-				r.Context(),
-				results,
-				graphExpectedFiles,
-				graphExpectedTerms,
-				k,
-				strings.TrimSpace(anyToString(reqPayload["project"])),
-			)
+			graphContribution := recallGraphContributionUnavailable("direct baseline graph-disabled control")
+			if !captureDirectBaseline {
+				graphContribution = s.evaluateRecallGraphContribution(
+					r.Context(),
+					results,
+					graphExpectedFiles,
+					graphExpectedTerms,
+					k,
+					strings.TrimSpace(anyToString(reqPayload["project"])),
+				)
+			}
 			if hasExplicitGraphExpectations {
 				graphContribution["expectation_mode"] = "explicit_graph"
 			} else {
 				graphContribution["expectation_mode"] = "direct_fallback"
 			}
 
-			matchedRank := matchRankWithinK(results, expectedFiles, expectedTerms, k)
+			matchedRank := matchRankWithinKProject(results, expectedFiles, expectedTerms, k, strings.TrimSpace(anyToString(reqPayload["project"])))
 			hit := matchedRank != nil
 			reciprocalRank := 0.0
 			if matchedRank != nil && *matchedRank > 0 {
@@ -418,7 +468,7 @@ func (s *server) memoryRecallEvaluateSavedNative(w http.ResponseWriter, r *http.
 					lowConfidenceCases += 1
 				}
 				sourceDiversitySum += float64(len(caseSources))
-				graphEligible := hasExplicitGraphExpectations
+				graphEligible := hasExplicitGraphExpectations && !captureDirectBaseline
 				if graphEligible {
 					graphEvaluatedCases += 1
 					graphSeedCount += anyToInt(graphContribution["seed_count"], 0)
@@ -455,7 +505,7 @@ func (s *server) memoryRecallEvaluateSavedNative(w http.ResponseWriter, r *http.
 				"graph_expected_substrings":           reportedGraphExpectedTerms,
 				"graph_effective_expected_files":      sortedKeys(graphExpectedFiles),
 				"graph_effective_expected_substrings": graphExpectedTerms,
-				"graph_expectations_explicit":         hasExplicitGraphExpectations,
+				"graph_expectations_explicit":         hasExplicitGraphExpectations && !captureDirectBaseline,
 				"expected_numeric":                    expectedNumeric,
 				"matched_numeric":                     numericMatches,
 				"matched_files":                       matchedFiles,
@@ -495,14 +545,8 @@ func (s *server) memoryRecallEvaluateSavedNative(w http.ResponseWriter, r *http.
 		recallAtK = float64(recallHits) / float64(evaluatedCases)
 		mrr = reciprocalRankSum / float64(evaluatedCases)
 	}
-	numericExactness := 1.0
-	if numericExpectedTotal > 0 {
-		numericExactness = float64(numericMatchedTotal) / float64(numericExpectedTotal)
-	}
-	citationCoverage := 1.0
-	if citationExpectedTotal > 0 {
-		citationCoverage = float64(citationMatchedTotal) / float64(citationExpectedTotal)
-	}
+	numericExactness := ratioWithEmptyDenominator(numericMatchedTotal, numericExpectedTotal)
+	citationCoverage := ratioWithEmptyDenominator(citationMatchedTotal, citationExpectedTotal)
 	avgSourceDiversity := 0.0
 	noHitRate := 0.0
 	lowConfidenceRate := 0.0
@@ -523,6 +567,7 @@ func (s *server) memoryRecallEvaluateSavedNative(w http.ResponseWriter, r *http.
 	directPassed := evaluatedCases > 0 && recallAtK >= gate.MinRecallAtK && mrr >= gate.MinMRR && numericExactness >= gate.MinNumericExactly
 	graphEfficacyStatus := "unmeasured"
 	graphPassed := false
+	graphActive := s.memoryGraphBackend() != nil
 	if graphEvaluatedCases > 0 {
 		graphEfficacyStatus = "failed"
 		graphPassed = graphHelpedCases > 0 && graphAddedExpectedHitCount > 0 && graphLift > 0
@@ -530,7 +575,13 @@ func (s *server) memoryRecallEvaluateSavedNative(w http.ResponseWriter, r *http.
 			graphEfficacyStatus = "passed"
 		}
 	}
-	graphRequired := graphExplicitCases > 0
+	// An active graph store with no explicit graph cases is unmeasured graph
+	// efficacy, not a pass.  Keep the direct metrics unchanged, but block the
+	// combined promotion result until the graph denominator is present.
+	if graphActive && graphExplicitCases == 0 {
+		graphEfficacyStatus = "blocked_no_explicit_cases"
+	}
+	graphRequired := graphActive || graphExplicitCases > 0
 	passed := directPassed && (!graphRequired || graphPassed)
 	qualityStatus := recallEvalQualityStatus(passed, evaluatedCases, recallAtK, mrr, numericExactness)
 	metrics := map[string]any{
@@ -585,7 +636,7 @@ func (s *server) memoryRecallEvaluateSavedNative(w http.ResponseWriter, r *http.
 			"required":               graphRequired,
 			"status":                 graphEfficacyStatus,
 			"neighborLimitPerSeed":   recallEvalGraphNeighborLimit(),
-			"memoryGraphStoreActive": s.memoryGraphBackend() != nil,
+			"memoryGraphStoreActive": graphActive,
 		},
 	}
 	recommendations := recallEvalRecommendations(metrics, gate, passed)
@@ -628,6 +679,31 @@ func (s *server) memoryRecallEvaluateSavedNative(w http.ResponseWriter, r *http.
 		s.writeRecallEvalPersistenceUnavailable(w)
 		return
 	}
+	var directBaselineCapture map[string]any
+	if captureDirectBaseline {
+		authoritativeDirectPassed := evaluatedCases == len(directBaselineCases) && evaluatedCases > 0 && k == cfg.K && recallAtK >= cfg.Gate.MinRecallAtK && mrr >= cfg.Gate.MinMRR && numericExactness >= cfg.Gate.MinNumericExactly
+		if firstNonEmptyStrings(evaluationSplit, "all") != directBaselineSplit || evaluatedCases != len(directBaselineCases) || !authoritativeDirectPassed {
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"error":           "direct baseline capture requires a complete, passing, frozen direct control evaluation",
+				"code":            "direct_baseline_capture_not_eligible",
+				"metrics":         metrics,
+				"case_set_health": caseSetHealth,
+			})
+			return
+		}
+		control := graphRecallDirectControlCohortReceipt(directControlReceipts, directBaselineCases, directBaselineBinding)
+		var captureErr error
+		directBaselineCapture, captureErr = captureSavedRecallDirectBaseline(cfg, metrics, control)
+		if captureErr != nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+				"error":                   "authoritative direct baseline capture failed",
+				"code":                    "direct_baseline_capture_failed",
+				"direct_baseline_capture": directBaselineCapture,
+				"metrics":                 metrics,
+			})
+			return
+		}
+	}
 
 	response := map[string]any{
 		"ok":                              true,
@@ -664,6 +740,9 @@ func (s *server) memoryRecallEvaluateSavedNative(w http.ResponseWriter, r *http.
 			"authorized": comparatorAuthority.Authorized,
 			"reason":     comparatorAuthority.Reason,
 		},
+	}
+	if directBaselineCapture != nil {
+		response["direct_baseline_capture"] = directBaselineCapture
 	}
 	if includeAblation {
 		response["mode"] = "ablation"
@@ -733,6 +812,23 @@ type savedRecallEvalCaseResult struct {
 	graphHelped        bool
 }
 
+func applySavedRecallDirectControl(requestPayload, rawCase, binding map[string]any) {
+	if requestPayload == nil || rawCase == nil || binding == nil {
+		return
+	}
+	requestPayload["direct_baseline_control"] = true
+	requestPayload["direct_baseline_case_id"] = strings.TrimSpace(anyToString(rawCase["id"]))
+	requestPayload["direct_baseline_case_set_digest"] = strings.TrimSpace(anyToString(binding["case_set_digest"]))
+	requestPayload["direct_baseline_snapshot_digest"] = strings.TrimSpace(anyToString(binding["snapshot_digest"]))
+	requestPayload["direct_baseline_k"] = anyToInt(binding["k"], 0)
+	requestPayload["rerank_with_learning"] = false
+	requestPayload["include_preferences"] = false
+	requestPayload["user_id"] = ""
+	requestPayload["candidate_allocation_active"] = false
+	requestPayload["treatment_active"] = false
+	requestPayload["traffic_class"] = "evaluation_holdout"
+}
+
 func evaluateSavedRecallCasesConcurrently(
 	ctx context.Context,
 	s *server,
@@ -742,6 +838,9 @@ func evaluateSavedRecallCasesConcurrently(
 	includeRetrievalDebug bool,
 	includePreferences bool,
 	userID string,
+	directBaselineControl bool,
+	directBaselineBinding map[string]any,
+	trafficClass string,
 ) []savedRecallEvalCaseResult {
 	if len(cases) == 0 {
 		return []savedRecallEvalCaseResult{}
@@ -755,7 +854,7 @@ func evaluateSavedRecallCasesConcurrently(
 		go func() {
 			defer workers.Done()
 			for idx := range jobs {
-				results <- evaluateSavedRecallCase(ctx, s, idx, cases[idx], k, incomingHeaders, includeRetrievalDebug, includePreferences, userID)
+				results <- evaluateSavedRecallCase(ctx, s, idx, cases[idx], k, incomingHeaders, includeRetrievalDebug, includePreferences, userID, directBaselineControl, directBaselineBinding, trafficClass)
 			}
 		}()
 	}
@@ -791,6 +890,9 @@ func evaluateSavedRecallCase(
 	includeRetrievalDebug bool,
 	includePreferences bool,
 	userID string,
+	directBaselineControl bool,
+	directBaselineBinding map[string]any,
+	trafficClass string,
 ) savedRecallEvalCaseResult {
 	result := savedRecallEvalCaseResult{index: idx, rawCase: rawCase}
 	caseID := strings.TrimSpace(anyToString(rawCase["id"]))
@@ -825,7 +927,10 @@ func evaluateSavedRecallCase(
 		"include_grounding": true, "include_preferences": includePreferences,
 		"user_id": userID, "agent_id": strings.TrimSpace(anyToString(rawCase["agent_id"])),
 		"auto_escalate": anyToBool(rawCase["auto_escalate"]), "deep_async": false,
-		"callback_url": "", "traffic_class": "synthetic",
+		"callback_url": "", "traffic_class": firstNonEmptyStrings(trafficClass, "synthetic"),
+	}
+	if directBaselineControl {
+		applySavedRecallDirectControl(reqPayload, rawCase, directBaselineBinding)
 	}
 	applySavedRecallEvalCaseOptionalRetrievalFlags(reqPayload, rawCase)
 	if strings.TrimSpace(anyToString(reqPayload["retrieval_intent"])) == "" {
@@ -844,8 +949,10 @@ func evaluateSavedRecallCase(
 			"citation_coverage": 0.0, "source_diversity": 0,
 			"latency_ms":         roundFloat(result.latencyMs, 3),
 			"graph_contribution": recallGraphContributionUnavailable("retrieval failed"),
-			"warnings":           []string{"retrieval failed: " + execErr.Error()},
-			"retrieval_mode":     reqPayload["retrieval_mode"], "agent_id": reqPayload["agent_id"],
+			// Keep provider/path details owner-only; this report is part of the
+			// public saved-evaluation surface.
+			"warnings":       []string{graphRecallExecutionErrorCode(status, execErr)},
+			"retrieval_mode": reqPayload["retrieval_mode"], "agent_id": reqPayload["agent_id"],
 			"status_code": status,
 		}
 		return result
@@ -866,20 +973,23 @@ func evaluateSavedRecallCase(
 		graphExpectedFiles = expectedFiles
 		graphExpectedTerms = expectedTerms
 	}
-	matchedFiles := matchedExpectedFilesWithinK(result.results, expectedFiles, k)
+	matchedFiles := matchedExpectedFilesWithinKProject(result.results, expectedFiles, k, strings.TrimSpace(anyToString(reqPayload["project"])))
 	caseCitationCoverage := 1.0
 	if len(expectedFiles) > 0 {
 		caseCitationCoverage = float64(len(matchedFiles)) / float64(len(expectedFiles))
 	}
 	caseSources := uniqueSourcesWithinK(result.results, k)
-	graphContribution := s.evaluateRecallGraphContribution(ctx, result.results, graphExpectedFiles, graphExpectedTerms, k, strings.TrimSpace(anyToString(reqPayload["project"])))
+	graphContribution := recallGraphContributionUnavailable("direct baseline graph-disabled control")
+	if !directBaselineControl {
+		graphContribution = s.evaluateRecallGraphContribution(ctx, result.results, graphExpectedFiles, graphExpectedTerms, k, strings.TrimSpace(anyToString(reqPayload["project"])))
+	}
 	if hasExplicitGraphExpectations {
 		graphContribution["expectation_mode"] = "explicit_graph"
 	} else {
 		graphContribution["expectation_mode"] = "direct_fallback"
 	}
 	result.graphContribution = graphContribution
-	matchedRank := matchRankWithinK(result.results, expectedFiles, expectedTerms, k)
+	matchedRank := matchRankWithinKProject(result.results, expectedFiles, expectedTerms, k, strings.TrimSpace(anyToString(reqPayload["project"])))
 	result.hit = matchedRank != nil
 	if matchedRank != nil && *matchedRank > 0 {
 		result.reciprocalRank = 1.0 / float64(*matchedRank)
@@ -892,8 +1002,8 @@ func evaluateSavedRecallCase(
 	result.noHit = result.hasExpectations && !result.hit
 	result.lowConfidence = result.hasExpectations && topResultScore(result.results) > 0 && topResultScore(result.results) < 0.45
 	result.sourceDiversity = len(caseSources)
-	result.graphExplicit = hasExplicitGraphExpectations
-	result.graphEligible = hasExplicitGraphExpectations
+	result.graphExplicit = hasExplicitGraphExpectations && !directBaselineControl
+	result.graphEligible = hasExplicitGraphExpectations && !directBaselineControl
 	result.graphHelped = anyToBool(graphContribution["helped"])
 	report := map[string]any{
 		"id": caseID, "query": query, "k": k, "hit": result.hit, "matched_rank": matchedRank,
@@ -1301,7 +1411,8 @@ func recallEvalNormalizeCaseTopic(value string) string {
 
 func recallEvalCaseSetAgentInstructions() []string {
 	return []string{
-		"Refresh up to 300 saved recall cases from the bounded live indexed memory store: POST /memory/recall/eval-cases/refresh with {\"project\":\"<project>\",\"topic_prefix\":\"<topic/path>\",\"max_cases\":300,\"min_hits\":1,\"include_graph_cases\":true,\"graph_max_cases\":3}.",
+		"Refresh up to 300 saved recall cases from the bounded live indexed memory store: POST /memory/recall/eval-cases/refresh with {\"project\":\"<project>\",\"topic_prefix\":\"<topic/path>\",\"max_cases\":300,\"min_hits\":1,\"include_graph_cases\":true,\"graph_max_cases\":100}.",
+		"A graph refresh reports graph_reference_population from current-state-bound reference edges; if the requested 90-reference minimum is unavailable, the refresh fails truthfully and preserves the existing saved case set.",
 		"If refresh has no eligible memory, write durable memory first: POST /memory/write with projectName, fileName, topicPath, and content, then refresh the saved eval cases.",
 		"Each saved recall eval case must include project, topic_path, query, limit, and exactly one expected_files item naming the file the query should recover.",
 		"Do not use built-in fallback case IDs, synthetic cases, empty project, topic_path root, or broad rollup cases with multiple expected_files.",
@@ -1915,6 +2026,10 @@ func normalizeExpectedNumeric(raw any) []string {
 }
 
 func matchRankWithinK(results []map[string]any, expectedFiles map[string]struct{}, expectedTerms []string, k int) *int {
+	return matchRankWithinKProject(results, expectedFiles, expectedTerms, k, "")
+}
+
+func matchRankWithinKProject(results []map[string]any, expectedFiles map[string]struct{}, expectedTerms []string, k int, project string) *int {
 	if len(expectedFiles) == 0 && len(expectedTerms) == 0 {
 		return nil
 	}
@@ -1923,7 +2038,7 @@ func matchRankWithinK(results []map[string]any, expectedFiles map[string]struct{
 		if idx >= maxRank {
 			break
 		}
-		if resultHitsExpectations(row, expectedFiles, expectedTerms) {
+		if resultHitsExpectationsForProject(row, expectedFiles, expectedTerms, project) {
 			rank := idx + 1
 			return &rank
 		}
@@ -1932,6 +2047,13 @@ func matchRankWithinK(results []map[string]any, expectedFiles map[string]struct{
 }
 
 func resultHitsExpectations(row map[string]any, expectedFiles map[string]struct{}, expectedTerms []string) bool {
+	return resultHitsExpectationsForProject(row, expectedFiles, expectedTerms, "")
+}
+
+func resultHitsExpectationsForProject(row map[string]any, expectedFiles map[string]struct{}, expectedTerms []string, project string) bool {
+	if strings.TrimSpace(project) != "" && !strings.EqualFold(strings.TrimSpace(anyToString(row["project"])), strings.TrimSpace(project)) {
+		return false
+	}
 	rowFile := strings.Trim(strings.TrimSpace(strings.ToLower(anyToString(row["file"]))), "/")
 	if rowFile != "" && len(expectedFiles) > 0 {
 		for candidate := range expectedFiles {
@@ -1955,6 +2077,10 @@ func resultHitsExpectations(row map[string]any, expectedFiles map[string]struct{
 }
 
 func matchedExpectedFilesWithinK(results []map[string]any, expectedFiles map[string]struct{}, k int) []string {
+	return matchedExpectedFilesWithinKProject(results, expectedFiles, k, "")
+}
+
+func matchedExpectedFilesWithinKProject(results []map[string]any, expectedFiles map[string]struct{}, k int, project string) []string {
 	if len(expectedFiles) == 0 {
 		return []string{}
 	}
@@ -1963,6 +2089,9 @@ func matchedExpectedFilesWithinK(results []map[string]any, expectedFiles map[str
 	for idx, row := range results {
 		if idx >= maxRank {
 			break
+		}
+		if strings.TrimSpace(project) != "" && !strings.EqualFold(strings.TrimSpace(anyToString(row["project"])), strings.TrimSpace(project)) {
+			continue
 		}
 		rowFile := strings.Trim(strings.TrimSpace(strings.ToLower(anyToString(row["file"]))), "/")
 		if rowFile == "" {
@@ -2055,7 +2184,36 @@ func (s *server) evaluateRecallGraphContribution(
 	k int,
 	project string,
 ) map[string]any {
-	if len(expectedFiles) == 0 && len(expectedTerms) == 0 {
+	return s.evaluateRecallGraphContributionInternal(ctx, results, expectedFiles, expectedTerms, k, project, false)
+}
+
+func (s *server) evaluateRecallGraphContributionInternal(
+	ctx context.Context,
+	results []map[string]any,
+	expectedFiles map[string]struct{},
+	expectedTerms []string,
+	k int,
+	project string,
+	allowEmptyExpectations bool,
+) map[string]any {
+	return s.evaluateRecallGraphContributionForSeed(ctx, results, expectedFiles, expectedTerms, k, project, "", allowEmptyExpectations)
+}
+
+// evaluateRecallGraphContributionForSeed is used by the sealed hard-negative
+// oracle. Absence is meaningful only for the exact seed memory in the case;
+// expanding whichever unrelated direct rows happened to be returned would
+// prove the wrong adjacency pair.
+func (s *server) evaluateRecallGraphContributionForSeed(
+	ctx context.Context,
+	results []map[string]any,
+	expectedFiles map[string]struct{},
+	expectedTerms []string,
+	k int,
+	project string,
+	requiredSeedID string,
+	allowEmptyExpectations bool,
+) map[string]any {
+	if len(expectedFiles) == 0 && len(expectedTerms) == 0 && !allowEmptyExpectations {
 		return recallGraphContributionUnavailable("no expectations")
 	}
 	backend := s.memoryGraphBackend()
@@ -2085,6 +2243,16 @@ func (s *server) evaluateRecallGraphContribution(
 	if len(seedIDs) == 0 {
 		return recallGraphContributionUnavailable("top results have no memory ids")
 	}
+	if strings.TrimSpace(requiredSeedID) != "" {
+		_, _, canonicalRequired, _, err := canonicalMemoryID(requiredSeedID)
+		if err != nil {
+			return recallGraphContributionUnavailable("sealed hard-negative seed id invalid")
+		}
+		if _, present := topIDs[canonicalRequired]; !present {
+			return recallGraphContributionUnavailable("sealed hard-negative seed absent from direct top-k")
+		}
+		seedIDs = []string{canonicalRequired}
+	}
 
 	limit := recallEvalGraphNeighborLimit()
 	relationCounts := map[string]int{}
@@ -2099,13 +2267,35 @@ func (s *server) evaluateRecallGraphContribution(
 		if err != nil {
 			continue
 		}
-		edges, err := backend.listMemoryEdges(ctx, memoryEdgeQuery{
-			MemoryID: canonicalSeed,
-			Project:  project,
-			Limit:    limit,
-		})
-		if err != nil {
-			continue
+		var edges []memoryEdgeEntry
+		if allowEmptyExpectations {
+			// Hard-negative evaluation must not infer absence from the ordinary
+			// neighbor cap. Require the same complete bounded adjacency seam used
+			// when the sealed corpus was generated; an adapter without that seam
+			// is ineligible for the exact negative gate.
+			completeBackend, completeOK := backend.(interface {
+				listMemoryEdgesComplete(context.Context, memoryEdgeQuery, int) ([]memoryEdgeEntry, bool, error)
+			})
+			if !completeOK {
+				return recallGraphContributionUnavailable("hard-negative adjacency completeness unavailable")
+			}
+			var complete bool
+			edges, complete, err = completeBackend.listMemoryEdgesComplete(ctx, memoryEdgeQuery{
+				MemoryID: canonicalSeed,
+				Project:  project,
+			}, savedRecallGraphCorpusMaxSnapshotEdges)
+			if err != nil || !complete {
+				return recallGraphContributionUnavailable("hard-negative adjacency snapshot incomplete")
+			}
+		} else {
+			edges, err = backend.listMemoryEdges(ctx, memoryEdgeQuery{
+				MemoryID: canonicalSeed,
+				Project:  project,
+				Limit:    limit,
+			})
+			if err != nil {
+				continue
+			}
 		}
 		for _, edge := range edges {
 			relation := strings.TrimSpace(edge.Relation)
@@ -2145,11 +2335,17 @@ func (s *server) evaluateRecallGraphContribution(
 
 	matchedCandidateIDs := make([]string, 0)
 	addedMatchedCandidateIDs := make([]string, 0)
+	candidateIDs := make([]string, 0, len(candidateRows))
+	addedCandidateIDs := make([]string, 0, len(candidateRows))
 	edgeExpectedMatchCount := 0
 	hydratedExpectedHitCount := 0
 	addedHydratedExpectedHitCount := 0
 	for candidateID, row := range candidateRows {
-		if !resultHitsExpectations(row, expectedFiles, expectedTerms) {
+		candidateIDs = append(candidateIDs, candidateID)
+		if _, inTop := topIDs[candidateID]; !inTop {
+			addedCandidateIDs = append(addedCandidateIDs, candidateID)
+		}
+		if !resultHitsExpectationsForProject(row, expectedFiles, expectedTerms, project) {
 			continue
 		}
 		edgeExpectedMatchCount += 1
@@ -2169,6 +2365,8 @@ func (s *server) evaluateRecallGraphContribution(
 	}
 	sortStrings(matchedCandidateIDs)
 	sortStrings(addedMatchedCandidateIDs)
+	sortStrings(candidateIDs)
+	sortStrings(addedCandidateIDs)
 	relations := make([]string, 0, len(relationCounts))
 	for relation := range relationCounts {
 		relations = append(relations, relation)
@@ -2189,6 +2387,8 @@ func (s *server) evaluateRecallGraphContribution(
 		"relation_counts":                   relationCounts,
 		"matched_memory_ids":                matchedCandidateIDs,
 		"added_matched_memory_ids":          addedMatchedCandidateIDs,
+		"candidate_memory_ids":              candidateIDs,
+		"added_candidate_memory_ids":        addedCandidateIDs,
 	}
 }
 

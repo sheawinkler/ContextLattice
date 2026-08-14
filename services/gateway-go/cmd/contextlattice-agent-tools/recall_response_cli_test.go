@@ -180,7 +180,7 @@ func TestRecallResponseCLIRefusesRedirectWithoutCredentialResend(t *testing.T) {
 	c.baseURL = source.URL
 	c.apiKey = "must-not-cross-redirect"
 	err := c.run([]string{"contextlattice_recall_response", "redirect task", "--no-auto-session", "--retries", "0", "--raw"})
-	if err == nil || !strings.Contains(err.Error(), "redirect") {
+	if err == nil || err.Error() != "ContextLattice gateway request failed" {
 		t.Fatalf("redirect was not refused: %v", err)
 	}
 	if sourceCalls.Load() != 1 || destinationCalls.Load() != 0 || destinationAPIKey != "" {

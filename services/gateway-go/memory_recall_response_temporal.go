@@ -108,6 +108,10 @@ func recallResponseTemporalValidAt(item map[string]any, cutoff time.Time) bool {
 }
 
 func recallResponseTemporalStatusAt(item map[string]any, cutoff time.Time) (string, bool) {
+	lifecycle := recallResponseCanonicalLifecycle(item)
+	if lifecycle.hard {
+		return lifecycle.canonical, false
+	}
 	metadata := recallResponseTemporalMetadata(item)
 	transitions := contextPackAnyList(metadata["transitions"])
 	if len(transitions) == 0 {
@@ -152,7 +156,7 @@ func recallResponseTemporalStatusAt(item map[string]any, cutoff time.Time) (stri
 		return status, eligible
 	}
 	status := recallResponseSafeStatus(rawStatus)
-	if status == "superseded" || status == "retracted" || status == "revoked" || status == "expired" {
+	if status == "superseded" || status == "retracted" || status == "revoked" || status == "retired" || status == "expired" {
 		// A present-day retired label does not establish when retirement began.
 		return "unknown", false
 	}
@@ -173,6 +177,16 @@ func recallResponseTemporalRows(source map[string]any) []any {
 		pack = anyMap(source["contextPack"])
 	}
 	rows := []any{}
+	// The private carrier is the complete server-owned source snapshot. It is
+	// preferred for action/lifecycle inspection because ranked evidence is a
+	// presentation view and may already be clipped.
+	rows = append(rows, contextPackAnyList(pack["_recall_response_source_rows"])...)
+	if graphRows, present := pack[recallResponseGraphRowsKey]; present {
+		rows = append(rows, contextPackAnyList(graphRows)...)
+	} else {
+		rows = append(rows, contextPackAnyList(pack["graph_neighbors"])...)
+		rows = append(rows, contextPackAnyList(pack["graphNeighbors"])...)
+	}
 	rows = append(rows, contextPackAnyList(pack["ranked_evidence"])...)
 	rows = append(rows, contextPackAnyList(pack["rankedEvidence"])...)
 	rows = append(rows, contextPackAnyList(pack["temporal_claims"])...)
@@ -186,10 +200,30 @@ func recallResponseTemporalRows(source map[string]any) []any {
 func recallResponseTemporalHasRetirement(source map[string]any) bool {
 	for _, raw := range recallResponseTemporalRows(source) {
 		row := anyMap(raw)
+		lifecycle := recallResponseCanonicalLifecycle(row)
+		if lifecycle.hard && lifecycle.retirement && !lifecycle.test {
+			return true
+		}
+		// Test/fixture rows are deliberately non-supporting, including when an
+		// adversarial fixture copies a retired status. They cannot establish a
+		// selective-forgetting or retirement proof for production history.
+		if lifecycle.canonical == "test" {
+			continue
+		}
 		metadata := recallResponseTemporalMetadata(row)
 		status := recallResponseSafeStatus(firstNonEmptyStrings(anyToString(metadata["status"]), anyToString(row["status"]), anyToString(row["proof_status"])))
-		if status == "superseded" || status == "retracted" || status == "revoked" || status == "expired" ||
+		if status == "superseded" || status == "retracted" || status == "revoked" || status == "retired" || status == "expired" ||
 			anyToInt(metadata["supersedes_count"], len(contextPackAnyList(row["supersedes"]))) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func recallResponseTemporalHasUnknownLifecycle(source map[string]any) bool {
+	for _, raw := range recallResponseTemporalRows(source) {
+		lifecycle := recallResponseCanonicalLifecycle(anyMap(raw))
+		if lifecycle.hard && lifecycle.unknown && lifecycle.canonical == "unknown" && !lifecycle.test {
 			return true
 		}
 	}
@@ -313,7 +347,7 @@ func recallResponseSupersessionTargetsProven(rows []any, targets []string) bool 
 			}
 			metadata := recallResponseTemporalMetadata(row)
 			status := recallResponseSafeStatus(firstNonEmptyStrings(anyToString(metadata["status"]), anyToString(row["status"]), anyToString(row["proof_status"])))
-			if (status == "superseded" || status == "retracted" || status == "revoked" || status == "expired") &&
+			if (status == "superseded" || status == "retracted" || status == "revoked" || status == "retired" || status == "expired") &&
 				anyToBool(metadata["transition_history_complete"]) {
 				proven = true
 				break
@@ -327,6 +361,17 @@ func recallResponseSupersessionTargetsProven(rows []any, targets []string) bool 
 }
 
 func recallResponseProjectedRowRef(row, response map[string]any) string {
+	// Evidence projection now uses the server-owned canonical source identity
+	// for every row, including ordinary/non-opaque candidate IDs. Resolve that
+	// exact identity first so temporal proof cannot silently lose a winner when
+	// a row's presentation identity is normalized at the response boundary.
+	if canonical := recallResponseCanonicalSourceRef(row, "evidence"); canonical != "" {
+		for _, raw := range contextPackAnyList(response["evidence"]) {
+			if anyToString(anyMap(raw)["ref_id"]) == canonical {
+				return canonical
+			}
+		}
+	}
 	identity := firstNonEmptyStrings(
 		anyToString(row["candidate_id"]), anyToString(row["ref_id"]),
 		anyToString(row["claim_id"]), anyToString(row["memory_id"]),
@@ -353,7 +398,7 @@ func recallResponseProjectedRowRef(row, response map[string]any) string {
 }
 
 func recallResponseUnknownPeriods(response map[string]any, refs []string, source map[string]any) []any {
-	if !recallResponseTemporalHasRetirement(source) || len(refs) == 0 {
+	if (!recallResponseTemporalHasRetirement(source) && !recallResponseTemporalHasUnknownLifecycle(source)) || len(refs) == 0 {
 		return []any{}
 	}
 	for _, raw := range recallResponseTemporalRows(source) {
