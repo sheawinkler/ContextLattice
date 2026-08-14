@@ -789,6 +789,27 @@ class PublicReleasePackageScanTests(unittest.TestCase):
             ),
             {"directories": 4, "components": 8, "files": 8},
         )
+        wixl_directory = exports["Directory"].replace(
+            b"ProgramFilesFolder\tTARGETDIR\tPFiles",
+            b"ProgramFilesFolder\tTARGETDIR\t.",
+        )
+        self.assertEqual(
+            OUTER.validate_msi_table_closure(
+                self.source_repo(), wixl_directory, exports["Component"], exports["File"]
+            ),
+            {"directories": 4, "components": 8, "files": 8},
+        )
+        unsafe_authored_directory = exports["Directory"].replace(
+            b"INSTALLDIR\tProgramFilesFolder\tContextLattice",
+            b"INSTALLDIR\tProgramFilesFolder\t.",
+        )
+        with self.assertRaises(OUTER.OuterContractError):
+            OUTER.validate_msi_table_closure(
+                self.source_repo(),
+                unsafe_authored_directory,
+                exports["Component"],
+                exports["File"],
+            )
         invalid_tables = (
             exports["Directory"].replace(
                 b"INSTALLDIR\tProgramFilesFolder\tContextLattice",

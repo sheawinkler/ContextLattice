@@ -1091,13 +1091,21 @@ def validate_msi_table_closure(
         expected_parent = expected_row["parent"] or ""
         if parent != expected_parent:
             raise OuterContractError("MSI Directory parent differs from reviewed WXS")
-        default_name = _msi_long_name(row.get("DefaultDir", ""), description="directory")
+        raw_default_name = row.get("DefaultDir", "").strip()
+        # wixl serializes the standard ProgramFilesFolder alias with `.` as
+        # its DefaultDir.  That value is safe only for this exact MSI-owned
+        # directory identifier; ordinary authored destinations must still
+        # pass the strict long-name validator below.
+        if directory_id == "ProgramFilesFolder" and raw_default_name == ".":
+            default_name = raw_default_name
+        else:
+            default_name = _msi_long_name(raw_default_name, description="directory")
         if directory_id == "TARGETDIR":
             if default_name != "SourceDir":
                 raise OuterContractError("MSI TARGETDIR name differs from reviewed WXS")
             actual_path = ""
         elif directory_id == "ProgramFilesFolder":
-            if default_name not in {"PFiles", "Program Files"}:
+            if default_name not in {".", "PFiles", "Program Files"}:
                 raise OuterContractError(
                     "MSI ProgramFilesFolder name differs from reviewed WXS"
                 )

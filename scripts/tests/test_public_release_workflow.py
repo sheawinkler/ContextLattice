@@ -51,6 +51,16 @@ class PublicReleaseWorkflowTests(unittest.TestCase):
         self.assertIn('release_installer_outer.py" build-linux-archive \\', linux_builder)
         self.assertIn('release_installer_outer.py" validate-linux-archive \\', linux_builder)
 
+    def test_public_payload_zip_emits_the_contracted_root_directory(self) -> None:
+        payload_builder = PAYLOAD_BUILDER.read_text(encoding="utf-8")
+
+        self.assertIn(
+            'root = zipfile.ZipInfo("contextlattice/", date_time=date_time)',
+            payload_builder,
+        )
+        self.assertIn('root.external_attr = (0o755 << 16) | 0x10', payload_builder)
+        self.assertIn('zf.writestr(root, b"")', payload_builder)
+
     def test_runtime_guard_allows_disabled_t1_compatibility_status_only(self) -> None:
         builder = PAYLOAD_BUILDER.read_text(encoding="utf-8")
         match = re.search(r"public_runtime_marker='([^']+)'", builder)
