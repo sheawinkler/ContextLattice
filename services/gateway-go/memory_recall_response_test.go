@@ -43,6 +43,16 @@ func recallResponseTestInput(withEvidence bool) map[string]any {
 	return input
 }
 
+func recallResponseServerOwnedSourcePack(pack map[string]any, sourceRows []any) map[string]any {
+	pack = cloneJSONMap(pack)
+	pack["_recall_response_source_rows"] = cloneJSONValue(sourceRows)
+	// Use the same private carrier refresh as the served route. Temporal
+	// preparation derives and validates the closed partition receipt from this
+	// snapshot before authoritative policy or a cursor can be issued.
+	recallResponseRefreshSourceCarrier(pack, nil)
+	return pack
+}
+
 func TestComposeRecallResponseIsDeterministicAndContractBounded(t *testing.T) {
 	input := recallResponseTestInput(true)
 	first := composeRecallResponse(input)

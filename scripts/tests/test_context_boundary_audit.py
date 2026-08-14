@@ -2,8 +2,13 @@ from __future__ import annotations
 
 import importlib.machinery
 import importlib.util
+import io
+import json
 import sys
 import unittest
+from contextlib import redirect_stdout
+from datetime import datetime, timezone
+from unittest import mock
 from pathlib import Path
 
 
@@ -60,7 +65,7 @@ def valid_payload() -> dict[str, object]:
     return {
         "ok": True,
         "schema_id": audit_context_boundary.SCHEMA_ID,
-        "generatedAt": audit_context_boundary.now_iso(),
+        "generatedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "build": {
             "schema_id": "contextlattice_build_identity.v1",
             "version": "3.19.0-rc.1",
@@ -80,6 +85,18 @@ def valid_payload() -> dict[str, object]:
 
 
 class ContextBoundaryAuditTests(unittest.TestCase):
+    def test_cli_requests_exact_payload_before_safe_emission(self) -> None:
+        payload = valid_payload()
+        stdout = io.StringIO()
+        with mock.patch.object(
+            audit_context_boundary, "request_json_for_validation", return_value=payload
+        ) as request, mock.patch.object(sys, "argv", ["audit-context-boundary"]), redirect_stdout(stdout):
+            self.assertEqual(audit_context_boundary.main(), 0)
+        request.assert_called_once_with("GET", "/ops/context-boundary", None, 10)
+        emitted = json.loads(stdout.getvalue())
+        self.assertTrue(emitted["ok"])
+        self.assertEqual(emitted["build"]["source_commit"], "[REDACTED_TOKEN]")
+
     def test_expected_runtime_identity_matches(self) -> None:
         result = audit_context_boundary.audit_payload(valid_payload(), **expected_identity())
         self.assertTrue(result["ok"], result["findings"])

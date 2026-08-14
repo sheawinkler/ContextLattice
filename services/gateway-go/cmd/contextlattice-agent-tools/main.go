@@ -19,11 +19,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 )
 
 const (
@@ -34,6 +36,11 @@ const (
 	defaultAgentPacketTargetTokens         = 2000
 	defaultAgentPacketHardTokens           = 4000
 	maxAgentPacketCLIFileBytes             = 64 << 10
+	maxAdapterResponseJSONBytes            = 120000
+	maxContextPackResponseJSONBytes        = 120000
+	minimumContextPackContractBudgetChars  = 8192
+	adapterContextPackOutcomeSchemaID      = "contextlattice_context_pack_outcome_report.v1"
+	adapterContextPackOutcomeRoute         = "/telemetry/context-pack-quality/outcome"
 	runtimeAuditMaximumAge                 = 2 * time.Minute
 	runtimeAuditMaximumFutureSkew          = 30 * time.Second
 	retrievalGovernanceContractID          = "frontier_t4_retrieval_governance.v1"
@@ -93,6 +100,9 @@ var nativeToolNames = map[string]string{
 	"contextlattice_memory_topology":                 "memory-topology",
 	"contextlattice_memory_graph_repair":             "memory-graph-repair",
 	"contextlattice_memory_graph_efficacy":           "memory-graph-efficacy",
+	"contextlattice_memory_graph_corpus":             "memory-graph-corpus",
+	"contextlattice_memory_graph_evaluation":         "memory-graph-evaluation",
+	"contextlattice_marker_cap_migration":            "marker-cap-migration",
 	"contextlattice_skills_index":                    "skills-index",
 	"contextlattice_async_inbox_drain":               "async-inbox-drain",
 	"contextlattice_agent_fit":                       "agent-fit",
@@ -184,10 +194,7 @@ type cliRequestError struct {
 }
 
 func (e *cliRequestError) Error() string {
-	if e == nil || e.Cause == nil {
-		return "ContextLattice request failed"
-	}
-	return e.Cause.Error()
+	return "ContextLattice gateway request failed"
 }
 
 func (e *cliRequestError) Unwrap() error {
@@ -221,9 +228,14 @@ type parsedArgs struct {
 	pos    []string
 }
 
+var errCLIReportedFailure = errors.New("command failed after emitting a structured response")
+
 func main() {
 	c := newCLI(os.Stdout, os.Stderr)
 	if err := c.run(os.Args); err != nil {
+		if errors.Is(err, errCLIReportedFailure) {
+			os.Exit(1)
+		}
 		fmt.Fprintln(c.stderr, err.Error())
 		os.Exit(1)
 	}
@@ -254,6 +266,9 @@ func cliArgPresent(args []string, names ...string) bool {
 		wanted[strings.TrimLeft(strings.TrimSpace(name), "-")] = struct{}{}
 	}
 	for _, arg := range args {
+		if arg == "--" {
+			break
+		}
 		if !strings.HasPrefix(arg, "-") || arg == "-" {
 			continue
 		}
@@ -295,7 +310,18 @@ func applyCLIOutputDefaults(command string, args []string, terminal bool, config
 			}
 		}
 	}
-	return append(append([]string{}, args...), "--pretty")
+	separator := len(args)
+	for index, arg := range args {
+		if arg == "--" {
+			separator = index
+			break
+		}
+	}
+	out := make([]string, 0, len(args)+1)
+	out = append(out, args[:separator]...)
+	out = append(out, "--pretty")
+	out = append(out, args[separator:]...)
+	return out
 }
 
 func (c *cli) run(argv []string) error {
@@ -446,6 +472,12 @@ func (c *cli) run(argv []string) error {
 		return c.cmdMemoryGraphRepair(args)
 	case "memory-graph-efficacy":
 		return c.cmdMemoryGraphEfficacy(args)
+	case "memory-graph-corpus":
+		return c.cmdMemoryGraphCorpus(args)
+	case "memory-graph-evaluation":
+		return c.cmdMemoryGraphEvaluation(args)
+	case "marker-cap-migration":
+		return c.cmdMarkerCapMigration(args)
 	case "skills-index":
 		return c.cmdSkillsIndex(args)
 	case "async-inbox-drain":
@@ -536,6 +568,8 @@ Advanced/compatibility commands:
   memory-topology                audit /telemetry/storage memory topology
   memory-graph-repair            audit or apply bounded identity-first hot-corpus edges
   memory-graph-efficacy          refresh graph holdouts and prove measured graph contribution
+  memory-graph-corpus            generate the closed 200-development/100-holdout graph corpus
+  marker-cap-migration            operator-authorized marker-index cap extension or rollback
   skills-index                   active search plus quarantine-first source management
 	  async-inbox-drain              bounded async continuation inbox drain for any agent
 	  agent-fit                      steering, advisory selection, profiles, and context preparation
@@ -991,13 +1025,35 @@ func parseArgs(args []string, stringNames map[string]string, boolNames map[strin
 			out.pos = append(out.pos, token)
 			continue
 		}
-		if value == "" && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
-			i++
-			value = args[i]
+		if value == "" && i+1 < len(args) {
+			next := args[i+1]
+			if !strings.HasPrefix(next, "-") || (canonical == "budget_chars" && signedDecimalCLIInteger(next)) {
+				i++
+				value = args[i]
+			}
 		}
 		out.values[canonical] = value
 	}
 	return out
+}
+
+func signedDecimalCLIInteger(raw string) bool {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return false
+	}
+	if raw[0] == '+' || raw[0] == '-' {
+		raw = raw[1:]
+	}
+	if raw == "" {
+		return false
+	}
+	for _, character := range raw {
+		if character < '0' || character > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func commonStringFlags() map[string]string {
@@ -1106,6 +1162,18 @@ func boundedCLIInt(parsed parsedArgs, name string, fallback, minimum, maximum in
 	return value, nil
 }
 
+func explicitPackCommandBudget(parsed parsedArgs) (int, error) {
+	raw, ok := parsed.values["budget_chars"]
+	if !ok || strings.TrimSpace(raw) == "" {
+		return 0, errors.New("--budget-chars requires a positive signed-integer value")
+	}
+	value, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+	if err != nil || value < 1 || uint64(value) > uint64(^uint(0)>>1) {
+		return 0, errors.New("--budget-chars must be a positive signed-integer value")
+	}
+	return int(value), nil
+}
+
 func (a parsedArgs) boolString(name string) (bool, bool, error) {
 	raw, ok := a.values[name]
 	if !ok {
@@ -1151,6 +1219,543 @@ func clientTimeoutFor(parsed parsedArgs) float64 {
 
 func finitePositiveFloat(value float64) bool {
 	return value > 0 && !math.IsNaN(value) && !math.IsInf(value, 0)
+}
+
+func rejectDuplicateCLIFlag(args []string, name string) error {
+	wanted := strings.TrimLeft(strings.TrimSpace(name), "-")
+	count := 0
+	for _, arg := range args {
+		if !strings.HasPrefix(arg, "-") || arg == "-" {
+			continue
+		}
+		candidate := strings.TrimLeft(arg, "-")
+		if index := strings.IndexByte(candidate, '='); index >= 0 {
+			candidate = candidate[:index]
+		}
+		if candidate == wanted {
+			count++
+		}
+	}
+	if count > 1 {
+		return fmt.Errorf("--%s may be supplied only once", wanted)
+	}
+	return nil
+}
+
+func strictGraphTopicPrefix(parsed parsedArgs) (string, error) {
+	if !parsed.has("topic_prefix") {
+		return "", nil
+	}
+	raw := parsed.values["topic_prefix"]
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return "", errors.New("--topic-prefix must be non-empty when supplied")
+	}
+	if raw != value {
+		return "", errors.New("--topic-prefix must not have surrounding whitespace")
+	}
+	if strings.HasPrefix(value, "/") || strings.HasSuffix(value, "/") || strings.Contains(value, "//") || strings.Contains(value, "\\") {
+		return "", errors.New("--topic-prefix must be a slash-separated relative prefix")
+	}
+	for _, part := range strings.Split(value, "/") {
+		if part == "" || part == "." || part == ".." || strings.TrimSpace(part) != part {
+			return "", errors.New("--topic-prefix contains an invalid path component")
+		}
+		for _, r := range part {
+			if r < 0x20 || r == 0x7f {
+				return "", errors.New("--topic-prefix contains a control character")
+			}
+		}
+	}
+	return value, nil
+}
+
+// Graph corpus/evaluation jobs are operator-selected long-running work.  An
+// omitted timeout means no client-imposed deadline; a deadline is present
+// only when the operator explicitly supplies a finite positive value.
+func graphEvaluationClientTimeout(parsed parsedArgs) (float64, error) {
+	if !parsed.has("timeout") {
+		return 0, nil
+	}
+	value, err := strconv.ParseFloat(strings.TrimSpace(parsed.values["timeout"]), 64)
+	if err != nil || math.IsNaN(value) || math.IsInf(value, 0) || value < 0 {
+		return 0, errors.New("--timeout must be a finite non-negative number when supplied")
+	}
+	return value, nil
+}
+
+const (
+	graphEfficacyCorpusSchemaID     = "saved_recall_graph_corpus.v1"
+	graphEfficacyValidationSchemaID = "saved_recall_graph_validation.v1"
+	graphEfficacyCorpusVersion      = 1
+	graphEfficacyDevelopmentCases   = 200
+	graphEfficacyHoldoutCases       = 100
+	graphEfficacyTotalCases         = graphEfficacyDevelopmentCases + graphEfficacyHoldoutCases
+	graphEfficacyMinIncremental     = 30
+)
+
+func graphCorpusReceiptInt(row map[string]any, key string) (int, bool) {
+	value, present := row[key]
+	if !present {
+		return 0, false
+	}
+	switch typed := value.(type) {
+	case int:
+		return typed, typed >= 0
+	case int8:
+		return int(typed), typed >= 0
+	case int16:
+		return int(typed), typed >= 0
+	case int32:
+		return int(typed), typed >= 0
+	case int64:
+		if typed < 0 || uint64(typed) > uint64(^uint(0)>>1) {
+			return 0, false
+		}
+		return int(typed), true
+	case uint:
+		if typed > ^uint(0)>>1 {
+			return 0, false
+		}
+		return int(typed), true
+	case uint8:
+		return int(typed), true
+	case uint16:
+		return int(typed), true
+	case uint32:
+		if uint64(typed) > uint64(^uint(0)>>1) {
+			return 0, false
+		}
+		return int(typed), true
+	case uint64:
+		if typed > uint64(^uint(0)>>1) {
+			return 0, false
+		}
+		return int(typed), true
+	case float64:
+		if math.IsNaN(typed) || math.IsInf(typed, 0) || typed < 0 || math.Trunc(typed) != typed || typed > 9007199254740991 || typed > float64(^uint(0)>>1) {
+			return 0, false
+		}
+		return int(typed), true
+	case json.Number:
+		parsed, err := strconv.ParseInt(string(typed), 10, 64)
+		if err != nil || parsed < 0 || uint64(parsed) > uint64(^uint(0)>>1) {
+			return 0, false
+		}
+		return int(parsed), true
+	default:
+		return 0, false
+	}
+}
+
+func graphCorpusReceiptBool(row map[string]any, key string) (bool, bool) {
+	value, present := row[key]
+	if !present {
+		return false, false
+	}
+	parsed, ok := value.(bool)
+	return parsed, ok
+}
+
+func graphCorpusReceiptString(row map[string]any, key string) (string, bool) {
+	value, present := row[key]
+	if !present {
+		return "", false
+	}
+	parsed, ok := value.(string)
+	parsed = strings.TrimSpace(parsed)
+	return parsed, ok && parsed != ""
+}
+
+func graphCorpusReceiptMap(row map[string]any, key string) (map[string]any, bool) {
+	value, present := row[key]
+	if !present {
+		return nil, false
+	}
+	parsed, ok := value.(map[string]any)
+	return parsed, ok
+}
+
+func graphCorpusReceiptArrayLength(row map[string]any, key string) (int, bool) {
+	value, present := row[key]
+	if !present {
+		return 0, false
+	}
+	switch parsed := value.(type) {
+	case []any:
+		return len(parsed), true
+	case []map[string]any:
+		return len(parsed), true
+	default:
+		return 0, false
+	}
+}
+
+func graphCorpusReceiptRequireInt(row map[string]any, key string, expected int) error {
+	actual, ok := graphCorpusReceiptInt(row, key)
+	if !ok || actual != expected {
+		return fmt.Errorf("%s must be exactly %d", key, expected)
+	}
+	return nil
+}
+
+func graphCorpusReceiptRequireMinimum(row map[string]any, key string, minimum int) error {
+	actual, ok := graphCorpusReceiptInt(row, key)
+	if !ok || actual < minimum {
+		return fmt.Errorf("%s must be at least %d", key, minimum)
+	}
+	return nil
+}
+
+func graphCorpusReceiptRequireBool(row map[string]any, key string, expected bool) error {
+	actual, ok := graphCorpusReceiptBool(row, key)
+	if !ok || actual != expected {
+		return fmt.Errorf("%s must be %t", key, expected)
+	}
+	return nil
+}
+
+func graphCorpusReceiptRequireString(row map[string]any, key, expected string) error {
+	actual, ok := graphCorpusReceiptString(row, key)
+	if !ok || (expected != "" && actual != expected) {
+		if expected == "" {
+			return fmt.Errorf("%s must be non-empty", key)
+		}
+		return fmt.Errorf("%s must be %q", key, expected)
+	}
+	return nil
+}
+
+func graphCorpusReceiptRequireDigestEqual(row map[string]any, key, expected string) error {
+	actual, ok := graphCorpusReceiptString(row, key)
+	if !ok || !strings.EqualFold(actual, strings.TrimSpace(expected)) {
+		return fmt.Errorf("%s must bind digest %q", key, expected)
+	}
+	return nil
+}
+
+func graphCorpusReceiptRequireTopology(row map[string]any, key string, expected map[string]int) error {
+	topology, ok := graphCorpusReceiptMap(row, key)
+	if !ok {
+		return fmt.Errorf("%s must be a complete topology receipt", key)
+	}
+	if len(topology) != len(expected) {
+		return fmt.Errorf("%s must contain exactly the frozen relation counts", key)
+	}
+	for relation, count := range expected {
+		if err := graphCorpusReceiptRequireInt(topology, relation, count); err != nil {
+			return fmt.Errorf("%s.%w", key, err)
+		}
+	}
+	for relation := range topology {
+		if _, expectedRelation := expected[relation]; !expectedRelation {
+			return fmt.Errorf("%s contains an unexpected relation %q", key, relation)
+		}
+	}
+	return nil
+}
+
+func graphCorpusReceiptRequireCustody(custody map[string]any, caseSetDigest, manifestDigest string) error {
+	if err := graphCorpusReceiptRequireString(custody, "schema_id", "saved_recall_graph_custody.v1"); err != nil {
+		return err
+	}
+	if err := graphCorpusReceiptRequireString(custody, "owner", "gateway-go"); err != nil {
+		return err
+	}
+	if err := graphCorpusReceiptRequireString(custody, "mode", "frozen_live_index"); err != nil {
+		return err
+	}
+	for key, expected := range map[string]bool{
+		"synthetic":                  false,
+		"sealed_holdout":             true,
+		"promotional_claims_allowed": false,
+		"oracle_separated":           true,
+	} {
+		if err := graphCorpusReceiptRequireBool(custody, key, expected); err != nil {
+			return err
+		}
+	}
+	if err := graphCorpusReceiptRequireDigestEqual(custody, "case_set_digest", caseSetDigest); err != nil {
+		return err
+	}
+	return graphCorpusReceiptRequireDigestEqual(custody, "manifest_digest", manifestDigest)
+}
+
+func graphCorpusRefreshBinding(refresh map[string]any) (map[string]any, error) {
+	if err := graphCorpusReceiptRequireBool(refresh, "ok", true); err != nil {
+		return nil, fmt.Errorf("graph corpus refresh receipt invalid: %w", err)
+	}
+	if err := graphCorpusReceiptRequireBool(refresh, "graph_corpus", true); err != nil {
+		return nil, fmt.Errorf("graph corpus refresh receipt invalid: %w", err)
+	}
+	if err := graphCorpusReceiptRequireString(refresh, "schema_id", graphEfficacyCorpusSchemaID); err != nil {
+		return nil, fmt.Errorf("graph corpus refresh receipt invalid: %w", err)
+	}
+	health, ok := graphCorpusReceiptMap(refresh, "case_set_health")
+	if !ok {
+		return nil, errors.New("graph corpus refresh receipt invalid: case_set_health is required")
+	}
+	for key, expected := range map[string]int{
+		"case_count":        graphEfficacyTotalCases,
+		"development_count": graphEfficacyDevelopmentCases,
+		"holdout_count":     graphEfficacyHoldoutCases,
+	} {
+		if err := graphCorpusReceiptRequireInt(health, key, expected); err != nil {
+			return nil, fmt.Errorf("graph corpus refresh health invalid: %w", err)
+		}
+	}
+	for key, expected := range map[string]bool{"valid": true, "benchmark_eligible": true} {
+		if err := graphCorpusReceiptRequireBool(health, key, expected); err != nil {
+			return nil, fmt.Errorf("graph corpus refresh health invalid: %w", err)
+		}
+	}
+	if err := graphCorpusReceiptRequireString(health, "status", "healthy"); err != nil {
+		return nil, fmt.Errorf("graph corpus refresh health invalid: %w", err)
+	}
+	if issues, present := graphCorpusReceiptArrayLength(health, "issues"); !present || issues != 0 {
+		return nil, errors.New("graph corpus refresh health invalid: issues must be an empty array")
+	}
+	if err := graphCorpusReceiptRequireTopology(health, "topology_cases", map[string]int{"references": 90, "same_session": 90, "same_topic": 90, "hard_negative": 30}); err != nil {
+		return nil, fmt.Errorf("graph corpus refresh health invalid: %w", err)
+	}
+	if err := graphCorpusReceiptRequireTopology(health, "holdout_topology", map[string]int{"references": 30, "same_session": 30, "same_topic": 30, "hard_negative": 10}); err != nil {
+		return nil, fmt.Errorf("graph corpus refresh health invalid: %w", err)
+	}
+	if err := graphCorpusReceiptRequireMinimum(health, "incremental_needed", graphEfficacyMinIncremental); err != nil {
+		return nil, fmt.Errorf("graph corpus refresh health invalid: %w", err)
+	}
+	if err := graphCorpusReceiptRequireMinimum(health, "holdout_incremental_needed", graphEfficacyMinIncremental); err != nil {
+		return nil, fmt.Errorf("graph corpus refresh health invalid: %w", err)
+	}
+	population, ok := graphCorpusReceiptMap(health, "population")
+	if !ok {
+		return nil, errors.New("graph corpus refresh health invalid: population is required")
+	}
+	for key, minimum := range map[string]int{"projects": 5, "agent_families": 5, "sessions": 20} {
+		if err := graphCorpusReceiptRequireMinimum(population, key, minimum); err != nil {
+			return nil, fmt.Errorf("graph corpus refresh health invalid: %w", err)
+		}
+	}
+	caseSetDigest, ok := graphCorpusReceiptString(health, "case_set_digest")
+	if !ok {
+		return nil, errors.New("graph corpus refresh health invalid: case_set_digest is required")
+	}
+	manifestDigest, ok := graphCorpusReceiptString(health, "manifest_digest")
+	if !ok {
+		return nil, errors.New("graph corpus refresh health invalid: manifest_digest is required")
+	}
+	custody, ok := graphCorpusReceiptMap(health, "custody")
+	if !ok {
+		return nil, errors.New("graph corpus refresh health invalid: custody is required")
+	}
+	if err := graphCorpusReceiptRequireCustody(custody, caseSetDigest, manifestDigest); err != nil {
+		return nil, fmt.Errorf("graph corpus refresh custody invalid: %w", err)
+	}
+	saved, ok := graphCorpusReceiptMap(refresh, "savedCaseSet")
+	if !ok {
+		return nil, errors.New("graph corpus refresh receipt invalid: savedCaseSet is required")
+	}
+	if err := graphCorpusReceiptRequireString(saved, "case_set_id", ""); err != nil {
+		return nil, fmt.Errorf("graph corpus refresh savedCaseSet invalid: %w", err)
+	}
+	if err := graphCorpusReceiptRequireString(saved, "schema_id", graphEfficacyCorpusSchemaID); err != nil {
+		return nil, fmt.Errorf("graph corpus refresh savedCaseSet invalid: %w", err)
+	}
+	if err := graphCorpusReceiptRequireInt(saved, "version", graphEfficacyCorpusVersion); err != nil {
+		return nil, fmt.Errorf("graph corpus refresh savedCaseSet invalid: %w", err)
+	}
+	for key, expected := range map[string]int{"count": graphEfficacyTotalCases, "development_count": graphEfficacyDevelopmentCases, "holdout_count": graphEfficacyHoldoutCases} {
+		if err := graphCorpusReceiptRequireInt(saved, key, expected); err != nil {
+			return nil, fmt.Errorf("graph corpus refresh savedCaseSet invalid: %w", err)
+		}
+	}
+	if err := graphCorpusReceiptRequireDigestEqual(saved, "case_set_digest", caseSetDigest); err != nil {
+		return nil, fmt.Errorf("graph corpus refresh savedCaseSet invalid: %w", err)
+	}
+	if err := graphCorpusReceiptRequireDigestEqual(saved, "manifest_digest", manifestDigest); err != nil {
+		return nil, fmt.Errorf("graph corpus refresh savedCaseSet invalid: %w", err)
+	}
+	if err := graphCorpusReceiptRequireTopology(saved, "topology_counts", map[string]int{"references": 90, "same_session": 90, "same_topic": 90, "hard_negative": 30}); err != nil {
+		return nil, fmt.Errorf("graph corpus refresh savedCaseSet invalid: %w", err)
+	}
+	if err := graphCorpusReceiptRequireMinimum(saved, "incremental_needed", graphEfficacyMinIncremental); err != nil {
+		return nil, fmt.Errorf("graph corpus refresh savedCaseSet invalid: %w", err)
+	}
+	savedCustody, ok := graphCorpusReceiptMap(saved, "custody")
+	if !ok {
+		return nil, errors.New("graph corpus refresh savedCaseSet invalid: custody is required")
+	}
+	if err := graphCorpusReceiptRequireCustody(savedCustody, caseSetDigest, manifestDigest); err != nil {
+		return nil, fmt.Errorf("graph corpus refresh savedCaseSet custody invalid: %w", err)
+	}
+	validation, ok := graphCorpusReceiptMap(refresh, "validation_receipt")
+	if !ok {
+		return nil, errors.New("graph corpus refresh receipt invalid: validation_receipt is required")
+	}
+	for key, expected := range map[string]string{"schema_id": graphEfficacyValidationSchemaID, "authority": "gateway-go"} {
+		if err := graphCorpusReceiptRequireString(validation, key, expected); err != nil {
+			return nil, fmt.Errorf("graph corpus validation receipt invalid: %w", err)
+		}
+	}
+	for key, expected := range map[string]bool{"server_owned": true, "valid": true, "benchmark_eligible": true} {
+		if err := graphCorpusReceiptRequireBool(validation, key, expected); err != nil {
+			return nil, fmt.Errorf("graph corpus validation receipt invalid: %w", err)
+		}
+	}
+	if err := graphCorpusReceiptRequireInt(validation, "version", 1); err != nil {
+		return nil, fmt.Errorf("graph corpus validation receipt invalid: %w", err)
+	}
+	if err := graphCorpusReceiptRequireInt(validation, "case_count", graphEfficacyTotalCases); err != nil {
+		return nil, fmt.Errorf("graph corpus validation receipt invalid: %w", err)
+	}
+	if err := graphCorpusReceiptRequireDigestEqual(validation, "case_set_digest", caseSetDigest); err != nil {
+		return nil, fmt.Errorf("graph corpus validation receipt invalid: %w", err)
+	}
+	if err := graphCorpusReceiptRequireDigestEqual(validation, "manifest_digest", manifestDigest); err != nil {
+		return nil, fmt.Errorf("graph corpus validation receipt invalid: %w", err)
+	}
+	if err := graphCorpusReceiptRequireDigestEqual(validation, "custody_case_set_digest", caseSetDigest); err != nil {
+		return nil, fmt.Errorf("graph corpus validation receipt invalid: %w", err)
+	}
+	if err := graphCorpusReceiptRequireString(validation, "captured_at", ""); err != nil {
+		return nil, fmt.Errorf("graph corpus validation receipt invalid: %w", err)
+	}
+	if err := graphCorpusReceiptRequireString(validation, "digest", ""); err != nil {
+		return nil, fmt.Errorf("graph corpus validation receipt invalid: %w", err)
+	}
+	return map[string]any{
+		"case_set_id":               firstString(saved["case_set_id"]),
+		"schema_id":                 graphEfficacyCorpusSchemaID,
+		"version":                   graphEfficacyCorpusVersion,
+		"count":                     graphEfficacyTotalCases,
+		"development_count":         graphEfficacyDevelopmentCases,
+		"holdout_count":             graphEfficacyHoldoutCases,
+		"case_set_digest":           caseSetDigest,
+		"manifest_digest":           manifestDigest,
+		"validation_receipt_digest": firstString(validation["digest"]),
+		"custody":                   savedCustody,
+		"validation_receipt":        validation,
+	}, nil
+}
+
+func graphCorpusEvaluationBinding(evaluation map[string]any) (map[string]any, error) {
+	if err := graphCorpusReceiptRequireString(evaluation, "mode", "graph"); err != nil {
+		return nil, fmt.Errorf("graph evaluation binding invalid: %w", err)
+	}
+	saved, ok := graphCorpusReceiptMap(evaluation, "savedCaseSet")
+	if !ok {
+		return nil, errors.New("graph evaluation binding invalid: savedCaseSet is required")
+	}
+	if err := graphCorpusReceiptRequireString(saved, "case_set_id", ""); err != nil {
+		return nil, fmt.Errorf("graph evaluation savedCaseSet invalid: %w", err)
+	}
+	if err := graphCorpusReceiptRequireString(saved, "schema_id", graphEfficacyCorpusSchemaID); err != nil {
+		return nil, fmt.Errorf("graph evaluation savedCaseSet invalid: %w", err)
+	}
+	if err := graphCorpusReceiptRequireInt(saved, "version", graphEfficacyCorpusVersion); err != nil {
+		return nil, fmt.Errorf("graph evaluation savedCaseSet invalid: %w", err)
+	}
+	for key, expected := range map[string]int{"count": graphEfficacyTotalCases, "evaluation_count": graphEfficacyHoldoutCases} {
+		if err := graphCorpusReceiptRequireInt(saved, key, expected); err != nil {
+			return nil, fmt.Errorf("graph evaluation savedCaseSet invalid: %w", err)
+		}
+	}
+	if err := graphCorpusReceiptRequireString(saved, "evaluation_split", "holdout"); err != nil {
+		return nil, fmt.Errorf("graph evaluation savedCaseSet invalid: %w", err)
+	}
+	caseSetDigest, ok := graphCorpusReceiptString(saved, "case_set_digest")
+	if !ok {
+		return nil, errors.New("graph evaluation savedCaseSet invalid: case_set_digest is required")
+	}
+	manifest, ok := graphCorpusReceiptMap(saved, "manifest")
+	if !ok {
+		return nil, errors.New("graph evaluation savedCaseSet invalid: manifest is required")
+	}
+	manifestDigest, ok := graphCorpusReceiptString(manifest, "digest")
+	if !ok {
+		return nil, errors.New("graph evaluation savedCaseSet invalid: manifest.digest is required")
+	}
+	custody, ok := graphCorpusReceiptMap(saved, "custody")
+	if !ok {
+		return nil, errors.New("graph evaluation savedCaseSet invalid: custody is required")
+	}
+	if err := graphCorpusReceiptRequireCustody(custody, caseSetDigest, manifestDigest); err != nil {
+		return nil, fmt.Errorf("graph evaluation savedCaseSet custody invalid: %w", err)
+	}
+	return map[string]any{
+		"case_set_id":      firstString(saved["case_set_id"]),
+		"schema_id":        graphEfficacyCorpusSchemaID,
+		"version":          graphEfficacyCorpusVersion,
+		"count":            graphEfficacyTotalCases,
+		"evaluation_count": graphEfficacyHoldoutCases,
+		"evaluation_split": "holdout",
+		"case_set_digest":  caseSetDigest,
+		"manifest_digest":  manifestDigest,
+		"custody":          custody,
+	}, nil
+}
+
+func graphCorpusBindingsEqual(expected, actual map[string]any) error {
+	for _, key := range []string{"case_set_id", "schema_id", "version", "count", "case_set_digest", "manifest_digest"} {
+		switch key {
+		case "version", "count":
+			expectedValue, expectedOK := graphCorpusReceiptInt(expected, key)
+			actualValue, actualOK := graphCorpusReceiptInt(actual, key)
+			if !expectedOK || !actualOK || expectedValue != actualValue {
+				return fmt.Errorf("%s differs between refreshed and evaluated graph corpus", key)
+			}
+		default:
+			expectedValue, expectedOK := graphCorpusReceiptString(expected, key)
+			actualValue, actualOK := graphCorpusReceiptString(actual, key)
+			if !expectedOK || !actualOK || !strings.EqualFold(expectedValue, actualValue) {
+				return fmt.Errorf("%s differs between refreshed and evaluated graph corpus", key)
+			}
+		}
+	}
+	for _, key := range []string{"synthetic", "sealed_holdout", "promotional_claims_allowed", "oracle_separated"} {
+		expectedValue, expectedOK := graphCorpusReceiptBool(asMap(expected["custody"]), key)
+		actualValue, actualOK := graphCorpusReceiptBool(asMap(actual["custody"]), key)
+		if !expectedOK || !actualOK || expectedValue != actualValue {
+			return fmt.Errorf("custody.%s differs between refreshed and evaluated graph corpus", key)
+		}
+	}
+	for _, key := range []string{"case_set_digest", "manifest_digest"} {
+		expectedValue, expectedOK := graphCorpusReceiptString(asMap(expected["custody"]), key)
+		actualValue, actualOK := graphCorpusReceiptString(asMap(actual["custody"]), key)
+		if !expectedOK || !actualOK || !strings.EqualFold(expectedValue, actualValue) {
+			return fmt.Errorf("custody.%s differs between refreshed and evaluated graph corpus", key)
+		}
+	}
+	return nil
+}
+
+func graphEfficacyGatesPass(evaluation map[string]any, metrics, graph map[string]any) bool {
+	evaluationOK, present := graphCorpusReceiptBool(evaluation, "ok")
+	if !present || !evaluationOK {
+		return false
+	}
+	evaluationPassed, present := graphCorpusReceiptBool(evaluation, "passed")
+	if !present || !evaluationPassed {
+		return false
+	}
+	promotion, present := graphCorpusReceiptMap(evaluation, "promotion")
+	if !present {
+		return false
+	}
+	promotionEligible, present := graphCorpusReceiptBool(promotion, "promotion_eligible")
+	if !present || !promotionEligible {
+		return false
+	}
+	directPassed, present := graphCorpusReceiptBool(metrics, "directPassed")
+	if !present || !directPassed {
+		return false
+	}
+	graphStatus, present := graphCorpusReceiptString(metrics, "graphEfficacyStatus")
+	if !present || graphStatus != "passed" {
+		return false
+	}
+	contributionStatus, present := graphCorpusReceiptString(graph, "status")
+	return present && contributionStatus == "passed"
 }
 
 func apiKeyFromEnv() string {
@@ -1215,6 +1820,11 @@ func (c *cli) requestJSON(ctx context.Context, method, path string, payload any,
 	return parsed, status, err
 }
 
+func (c *cli) requestJSONForValidation(ctx context.Context, method, path string, payload any, timeout float64) (map[string]any, int, error) {
+	parsed, status, _, err := c.requestJSONWithHeadersMode(ctx, method, path, payload, timeout, nil, true)
+	return parsed, status, err
+}
+
 func cliRequestFailure(method, path string, status int, cause error, wroteRequest, gotConnection bool) error {
 	if cause == nil {
 		return nil
@@ -1241,8 +1851,15 @@ func cliRequestFailure(method, path string, status int, cause error, wroteReques
 }
 
 func (c *cli) requestJSONWithHeaders(ctx context.Context, method, path string, payload any, timeout float64, requestHeaders http.Header) (map[string]any, int, http.Header, error) {
-	ctx, cancel := context.WithTimeout(ctx, time.Duration(maxFloat(timeout, 1))*time.Second)
-	defer cancel()
+	return c.requestJSONWithHeadersMode(ctx, method, path, payload, timeout, requestHeaders, false)
+}
+
+func (c *cli) requestJSONWithHeadersMode(ctx context.Context, method, path string, payload any, timeout float64, requestHeaders http.Header, useNumber bool) (map[string]any, int, http.Header, error) {
+	if finitePositiveFloat(timeout) {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(timeout*float64(time.Second)))
+		defer cancel()
+	}
 	var body io.Reader
 	if payload != nil {
 		raw, err := json.Marshal(payload)
@@ -1288,20 +1905,103 @@ func (c *cli) requestJSONWithHeaders(ctx context.Context, method, path string, p
 		return nil, 0, nil, cliRequestFailure(method, path, 0, err, wroteRequest.Load(), gotConnection.Load())
 	}
 	defer resp.Body.Close()
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	const maximumGatewayResponseBytes = 8 << 20
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maximumGatewayResponseBytes+1))
 	if err != nil {
 		return nil, resp.StatusCode, resp.Header.Clone(), cliRequestFailure(method, path, resp.StatusCode, err, true, true)
 	}
+	if len(raw) > maximumGatewayResponseBytes {
+		return nil, resp.StatusCode, resp.Header.Clone(), cliRequestFailure(method, path, resp.StatusCode, errors.New("gateway response exceeds bounded transport limit"), true, true)
+	}
 	parsed := map[string]any{}
 	if len(bytes.TrimSpace(raw)) > 0 {
-		if err := json.Unmarshal(raw, &parsed); err != nil {
-			return nil, resp.StatusCode, resp.Header.Clone(), cliRequestFailure(method, path, resp.StatusCode, fmt.Errorf("decode %s: %w: %s", path, err, string(raw[:minInt(len(raw), 1000)])), true, true)
+		if !utf8.Valid(raw) {
+			return nil, resp.StatusCode, resp.Header.Clone(), cliRequestFailure(method, path, resp.StatusCode, errors.New("gateway response is not valid UTF-8 JSON"), true, true)
+		}
+		if !jsonEscapedSurrogatesValid(raw) {
+			return nil, resp.StatusCode, resp.Header.Clone(), cliRequestFailure(method, path, resp.StatusCode, errors.New("gateway response contains an invalid escaped Unicode scalar"), true, true)
+		}
+		decoder := json.NewDecoder(bytes.NewReader(raw))
+		if useNumber {
+			decoder.UseNumber()
+		}
+		if err := decoder.Decode(&parsed); err != nil {
+			return nil, resp.StatusCode, resp.Header.Clone(), cliRequestFailure(method, path, resp.StatusCode, errors.New("gateway response is not valid JSON"), true, true)
+		}
+		var trailing any
+		if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+			return nil, resp.StatusCode, resp.Header.Clone(), cliRequestFailure(method, path, resp.StatusCode, errors.New("gateway response contains trailing JSON data"), true, true)
 		}
 	}
 	if resp.StatusCode >= 400 {
-		return parsed, resp.StatusCode, resp.Header.Clone(), cliRequestFailure(method, path, resp.StatusCode, fmt.Errorf("%s %s returned status=%d payload=%s", method, path, resp.StatusCode, compactJSON(parsed)), true, true)
+		return parsed, resp.StatusCode, resp.Header.Clone(), cliRequestFailure(method, path, resp.StatusCode, errors.New("gateway returned a non-success status"), true, true)
 	}
 	return parsed, resp.StatusCode, resp.Header.Clone(), nil
+}
+
+func jsonEscapedSurrogatesValid(raw []byte) bool {
+	inString := false
+	for index := 0; index < len(raw); index++ {
+		if !inString {
+			if raw[index] == '"' {
+				inString = true
+			}
+			continue
+		}
+		switch raw[index] {
+		case '"':
+			inString = false
+		case '\\':
+			if index+1 >= len(raw) {
+				return false
+			}
+			if raw[index+1] != 'u' {
+				index++
+				continue
+			}
+			code, ok := jsonEscapedHex16(raw, index+2)
+			if !ok {
+				return false
+			}
+			switch {
+			case code >= 0xD800 && code <= 0xDBFF:
+				if index+11 >= len(raw) || raw[index+6] != '\\' || raw[index+7] != 'u' {
+					return false
+				}
+				low, lowOK := jsonEscapedHex16(raw, index+8)
+				if !lowOK || low < 0xDC00 || low > 0xDFFF {
+					return false
+				}
+				index += 11
+			case code >= 0xDC00 && code <= 0xDFFF:
+				return false
+			default:
+				index += 5
+			}
+		}
+	}
+	return !inString
+}
+
+func jsonEscapedHex16(raw []byte, start int) (uint16, bool) {
+	if start < 0 || start+4 > len(raw) {
+		return 0, false
+	}
+	var value uint16
+	for _, digit := range raw[start : start+4] {
+		value <<= 4
+		switch {
+		case digit >= '0' && digit <= '9':
+			value |= uint16(digit - '0')
+		case digit >= 'a' && digit <= 'f':
+			value |= uint16(digit-'a') + 10
+		case digit >= 'A' && digit <= 'F':
+			value |= uint16(digit-'A') + 10
+		default:
+			return 0, false
+		}
+	}
+	return value, true
 }
 
 func (c *cli) emit(payload any, pretty bool) error {
@@ -1561,7 +2261,7 @@ func (c *cli) cmdPacketReconstruct(args []string) error {
 	if err != nil {
 		return err
 	}
-	response, _, err := c.requestJSON(context.Background(), http.MethodPost, "/memory/agent-packet/reconstruct", map[string]any{
+	response, _, err := c.requestJSONForValidation(context.Background(), http.MethodPost, "/memory/agent-packet/reconstruct", map[string]any{
 		"base_packet": base,
 		"delta":       delta,
 	}, parsed.float("timeout", 10))
@@ -1602,7 +2302,7 @@ func (c *cli) cmdResume(args []string) error {
 	if sessionID == "" {
 		sessionID = firstString(readSessionState(project)["session_id"])
 		if sessionID != "" {
-			if cached, _, err := c.requestJSON(context.Background(), http.MethodGet, "/v1/agents/sessions/"+url.PathEscape(sessionID), nil, parsed.float("timeout", 10)); err != nil || !agentSessionStatusReusable(cached, project, parsed.string("agent_id", ""), "") {
+			if cached, _, err := c.requestJSONForValidation(context.Background(), http.MethodGet, "/v1/agents/sessions/"+url.PathEscape(sessionID), nil, parsed.float("timeout", 10)); err != nil || !agentSessionStatusReusable(cached, sessionID, project, "", parsed.string("agent_id", ""), "") {
 				sessionID = ""
 			}
 		}
@@ -2911,9 +3611,24 @@ func (c *cli) cmdPackWithRouteMode(args []string, commandName string, route stri
 		}
 		return c.emitUsage(usage)
 	}
+	explicitOutputBudget := cliArgPresent(args, "budget-chars")
+	outputBudget := 10000
+	if explicitOutputBudget {
+		var budgetErr error
+		outputBudget, budgetErr = explicitPackCommandBudget(parsed)
+		if budgetErr != nil {
+			if err := c.emitInvalidPackBudgetFailure(parsed.bool("pretty") || !parsed.bool("raw")); err != nil {
+				return err
+			}
+			if parsed.bool("soft") {
+				return nil
+			}
+			return errCLIReportedFailure
+		}
+	}
 	if responseMode {
-		if parsed.bool("full") || parsed.bool("debug") || parsed.string("base_packet_file", "") != "" {
-			return errors.New("--response cannot be combined with Agent Packet or debug output options")
+		if parsed.bool("full") || parsed.bool("debug") || explicitOutputBudget || parsed.string("base_packet_file", "") != "" {
+			return errors.New("--response cannot be combined with Agent Packet, debug, or context-budget output options")
 		}
 		route = "/memory/recall/response"
 		sessionTag = "recall-response"
@@ -2935,8 +3650,18 @@ func (c *cli) cmdPackWithRouteMode(args []string, commandName string, route stri
 		}
 	}
 	blocking := parsed.bool("blocking") && !parsed.bool("nonblocking")
-	fullOutput := parsed.bool("full") || parsed.bool("debug")
+	fullOutput := parsed.bool("full") || parsed.bool("debug") || explicitOutputBudget
 	packetSurface := route == "/memory/context-pack" || route == "/memory/synthesis-pack" || route == "/memory/synthesis-pack/v2"
+	allowImplicitFramingNewline := false
+	if fullOutput && !explicitOutputBudget {
+		outputBudget = maxContextPackResponseJSONBytes
+		allowImplicitFramingNewline = true
+	} else if packetSurface && !explicitOutputBudget {
+		if contractMaximum := asInt(adapterContractDefinition(agentPacketContractID)["max_total_json_bytes"]); contractMaximum > 0 {
+			outputBudget = contractMaximum
+			allowImplicitFramingNewline = true
+		}
+	}
 	payload := map[string]any{
 		"query":                     query,
 		"project":                   project,
@@ -3010,7 +3735,10 @@ func (c *cli) cmdPackWithRouteMode(args []string, commandName string, route stri
 			return err
 		}
 		if parsed.bool("soft") {
-			return c.emit(failurePack(query, parsed.int("budget_chars", 10000), err), !parsed.bool("raw"))
+			return c.emitPackFailureWithFraming(
+				query, outputBudget, err, allowImplicitFramingNewline,
+				parsed.bool("pretty") || !parsed.bool("raw"),
+			)
 		}
 		return err
 	}
@@ -3032,21 +3760,41 @@ func (c *cli) cmdPackWithRouteMode(args []string, commandName string, route stri
 		c.autoDrainAsyncInbox(sessionID, project, agentID)
 		return nil
 	}
-	out := normalizePackOutput(raw, query, parsed.int("budget_chars", 10000))
+	prettyOutput := parsed.bool("pretty") || !parsed.bool("raw")
+	out, outputOK := preparePackCommandOutput(
+		raw, query, outputBudget, sessionID, agentID, commandName, sessionTag,
+	)
+	if outputOK {
+		out, prettyOutput, outputOK = fitPackCommandOutputBudgetWithFraming(
+			out, outputBudget, allowImplicitFramingNewline, prettyOutput,
+		)
+	}
+	if !outputOK {
+		boundaryErr := errors.New("context pack response failed its registered output boundary")
+		if parsed.bool("soft") {
+			return c.emitPackFailureWithFraming(
+				query, outputBudget, boundaryErr, allowImplicitFramingNewline,
+				parsed.bool("pretty") || !parsed.bool("raw"),
+			)
+		}
+		return boundaryErr
+	}
 	qualitySample := contextPackQualitySample(out)
-	if len(qualitySample) == 0 {
-		qualitySample = contextPackQualitySample(raw)
+	if isAgentPacketWireSchema(firstString(out["schema_id"])) {
+		qualitySample, _ = validatedAgentPacketOutcomeQualityReference(out)
+	} else {
+		if len(qualitySample) == 0 {
+			qualitySample = contextPackQualitySample(raw)
+		}
+		validatedQuality, qualityValid := validatedContextPackQualityStateReceipt(qualitySample)
+		if qualityValid {
+			qualitySample = validatedQuality
+		} else {
+			qualitySample = map[string]any{}
+		}
 	}
-	qualitySampleID := firstString(qualitySample["sample_id"])
 	recordContextPackQualityPending(project, sessionID, query, agentID, qualitySample)
-	if commandName != "contextlattice_pack" && !isAgentPacketWireSchema(firstString(out["schema_id"])) {
-		out["tool"] = commandName
-		out["pack_surface"] = sessionTag
-	}
-	if report := contextPackOutcomeReport(sessionID, qualitySampleID); len(report) > 0 && !isAgentPacketWireSchema(firstString(out["schema_id"])) {
-		out["outcome_report"] = report
-	}
-	if err := c.emit(out, parsed.bool("pretty") || !parsed.bool("raw")); err != nil {
+	if err := c.emit(out, prettyOutput); err != nil {
 		return err
 	}
 	c.autoDrainAsyncInbox(sessionID, project, agentID)
@@ -3056,7 +3804,7 @@ func (c *cli) cmdPackWithRouteMode(args []string, commandName string, route stri
 func (c *cli) requestWithRetries(path string, payload any, timeout float64, retries int, delay float64) (map[string]any, error) {
 	var last error
 	for attempt := 0; attempt <= maxInt(retries, 0); attempt++ {
-		result, _, err := c.requestJSON(context.Background(), http.MethodPost, path, payload, timeout)
+		result, _, err := c.requestJSONForValidation(context.Background(), http.MethodPost, path, payload, timeout)
 		if err == nil {
 			return result, nil
 		}
@@ -3071,6 +3819,276 @@ func (c *cli) requestWithRetries(path string, payload any, timeout float64, retr
 		break
 	}
 	return nil, last
+}
+
+func preparePackCommandOutput(raw map[string]any, query string, budget int, sessionID, agentID, commandName, sessionTag string) (map[string]any, bool) {
+	schemaID := firstString(raw["schema_id"])
+	if isAgentPacketWireSchema(schemaID) {
+		if raw["ok"] != true || !adapterRegisteredEnvelopeAttestationValid(schemaID, raw) {
+			return nil, false
+		}
+		return raw, true
+	}
+	if !adapterContextPackEnvelopeAttestationValid(raw) {
+		return nil, false
+	}
+	normalized := normalizePackOutput(raw, query, budget)
+	if commandName != "contextlattice_pack" {
+		normalized["tool"] = commandName
+		normalized["pack_surface"] = sessionTag
+	}
+	if quality, ok := validatedContextPackQualityStateReceipt(contextPackQualitySample(normalized)); ok {
+		if publicSessionID, valid := adapterPublicIdentity(sessionID, true); valid {
+			normalized["outcome_report"] = contextPackOutcomeReport(publicSessionID, firstString(quality["sample_id"]))
+		}
+	}
+	if !adapterPrepareContextPackRetrievalProofs(normalized) || !adapterContextPackContractPassed(normalized) {
+		return nil, false
+	}
+	return adapterPublicContextPack(normalized, sessionID, agentID)
+}
+
+func normalizedPackCommandBudget(requested int) (int, int, bool) {
+	if requested < 1 {
+		requested = 1
+	}
+	effective := requested
+	if effective < minimumContextPackContractBudgetChars {
+		effective = minimumContextPackContractBudgetChars
+	}
+	return requested, effective, requested < minimumContextPackContractBudgetChars
+}
+
+func packCommandOutputWireBytes(payload map[string]any, pretty bool) (int, bool) {
+	var (
+		raw []byte
+		err error
+	)
+	if pretty {
+		raw, err = json.MarshalIndent(payload, "", "  ")
+	} else {
+		raw, err = json.Marshal(payload)
+	}
+	if err != nil {
+		return 0, false
+	}
+	return len(raw) + 1, true
+}
+
+func packCommandOutputModeForBudget(payload map[string]any, effective int, pretty bool) (bool, bool) {
+	if wireBytes, ok := packCommandOutputWireBytes(payload, pretty); ok && wireBytes <= effective {
+		return pretty, true
+	}
+	if pretty {
+		if wireBytes, ok := packCommandOutputWireBytes(payload, false); ok && wireBytes <= effective {
+			return false, true
+		}
+	}
+	return pretty, false
+}
+
+func fitPackCommandOutputBudget(payload map[string]any, budget int, pretty bool) (map[string]any, bool, bool) {
+	return fitPackCommandOutputBudgetWithFraming(payload, budget, false, pretty)
+}
+
+func fitPackCommandOutputBudgetWithFraming(payload map[string]any, budget int, allowImplicitFramingNewline bool, pretty bool) (map[string]any, bool, bool) {
+	requested, effective, floorApplied := normalizedPackCommandBudget(budget)
+	wireEffective := effective
+	if allowImplicitFramingNewline && wireEffective < int(^uint(0)>>1) {
+		wireEffective++
+	}
+	if isAgentPacketWireSchema(firstString(payload["schema_id"])) {
+		outputPretty, ok := packCommandOutputModeForBudget(payload, wireEffective, pretty)
+		return payload, outputPretty, ok
+	}
+	payload["context_budget_chars"] = effective
+	payload["requested_context_budget_chars"] = requested
+	payload["budget_floor_applied"] = floorApplied
+	stamped, ok := adapterStampRegisteredEnvelope("context_pack_response.v1", payload)
+	if ok && adapterContextPackContractPassed(stamped) {
+		if outputPretty, fits := packCommandOutputModeForBudget(stamped, wireEffective, pretty); fits {
+			return stamped, outputPretty, true
+		}
+	}
+	minimum, ok := minimumPackCommandOutput(payload, requested, effective, floorApplied)
+	if !ok {
+		return nil, pretty, false
+	}
+	outputPretty, fits := packCommandOutputModeForBudget(minimum, wireEffective, pretty)
+	return minimum, outputPretty, fits
+}
+
+func (c *cli) emitPackFailure(query string, budget int, cause error, pretty bool) error {
+	return c.emitPackFailureWithFraming(query, budget, cause, false, pretty)
+}
+
+func (c *cli) emitPackFailureWithFraming(query string, budget int, cause error, allowImplicitFramingNewline bool, pretty bool) error {
+	payload, outputPretty, ok := fitPackCommandOutputBudgetWithFraming(
+		failurePack(query, budget, cause), budget, allowImplicitFramingNewline, pretty,
+	)
+	if !ok {
+		return errors.New("context pack failure response exceeded its registered output boundary")
+	}
+	return c.emit(payload, outputPretty)
+}
+
+func (c *cli) emitInvalidPackBudgetFailure(pretty bool) error {
+	payload := failurePack("", 1, errors.New("invalid context budget"))
+	payload["status"] = "invalid_context_budget"
+	payload["error"] = "invalid context budget"
+	payload["warnings"] = []any{"Requested context budget was outside the supported signed-integer range."}
+	bounded, outputPretty, ok := fitPackCommandOutputBudget(payload, 1, pretty)
+	if !ok {
+		return errors.New("invalid context budget response exceeded its registered output boundary")
+	}
+	return c.emit(bounded, outputPretty)
+}
+
+func minimumPackCommandOutput(payload map[string]any, requested, effective int, floorApplied bool) (map[string]any, bool) {
+	assessment := adapterCanonicalRetrievalProof(payload["memory_trust_assessment"], adapterMemoryTrustAssessmentContractID, true)
+	trace := adapterCanonicalRetrievalProof(payload["retrieval_decision_trace"], adapterRetrievalDecisionTraceContractID, true)
+	if len(assessment) == 0 || len(trace) == 0 || !adapterRetrievalProofPairValid(assessment, trace) {
+		assessment = adapterUnavailableRetrievalProof(adapterMemoryTrustAssessmentContractID)
+		trace = adapterUnavailableRetrievalProof(adapterRetrievalDecisionTraceContractID)
+	}
+	compiler := map[string]any{
+		"schema_id": "contextlattice_context_compiler.v1", "version": 1,
+		"strategy":            "minimum_contract_envelope",
+		"intended_use":        "return a bounded prompt-ready context packet for the next agent step",
+		"recommended_surface": "cli_for_local_agents", "ranked_evidence_count": 0,
+		"memory_trust_assessment": assessment, "retrieval_decision_trace": trace,
+	}
+	responseOK := payload["ok"] == true
+	advisor, advisorOK := adapterStampRegisteredEnvelope("run_advisor.v1", map[string]any{
+		"ok": responseOK, "schema_id": "run_advisor.v1", "posture": "minimal_context",
+		"prompt_quality": map[string]any{
+			"score": 0, "state": "minimal", "ranked_evidence_count": 0,
+			"reference_prompt_chars": 0, "missing": []any{},
+		},
+		"retrieval_advice": map[string]any{
+			"recommended_mode": "balanced", "recommended_surface": "cli_for_local_agents", "rationale": []any{},
+		},
+		"continuation": map[string]any{
+			"status": "minimal", "pending_sources": []any{}, "warming_sources": []any{},
+			"repair_instruction": "Rerun with a larger budget when detailed evidence is required.",
+		},
+		"objective_coherence": map[string]any{
+			"score": 0, "status": "minimal", "signals": map[string]any{},
+			"repair_instruction": "Carry objective, goal, and mission into the next prompt packet.",
+		},
+		"graph_quality": map[string]any{
+			"status": "not_sampled", "signals": map[string]any{},
+			"recommendation": "Run contextlattice_memory_topology when graph evidence matters.",
+		},
+		"next_actions": []any{},
+	})
+	if !advisorOK {
+		return nil, false
+	}
+	pack := map[string]any{
+		"facts": []any{}, "results": []any{}, "citations": []any{}, "ranked_evidence": []any{},
+		"prompt_sections": map[string]any{}, "context_compiler": compiler,
+		"relevant_decisions": []any{}, "files_to_read": []any{}, "files_to_avoid": []any{},
+		"capabilities_to_use": []any{}, "runbooks": []any{}, "known_failure_modes": []any{},
+		"commands": []any{}, "acceptance_criteria": []any{},
+		"memory_trust_assessment": assessment, "retrieval_decision_trace": trace,
+	}
+	minimum := map[string]any{
+		"ok":                             responseOK,
+		"context_budget_chars":           effective,
+		"requested_context_budget_chars": requested,
+		"budget_floor_applied":           floorApplied,
+		"clipped":                        true,
+		"source_coverage":                map[string]any{"configured": []any{}, "returned": []any{}, "complete": false},
+		"context_pack":                   pack, "context_compiler": compiler, "run_advisor": advisor,
+		"reference_prompt": "", "writeback_required": true,
+		"memory_trust_assessment": assessment, "retrieval_decision_trace": trace,
+	}
+	if !responseOK {
+		failureStatus := firstString(payload["status"])
+		if failureStatus != "invalid_context_budget" {
+			failureStatus = "failed_without_replay"
+		}
+		minimum["status"] = failureStatus
+		minimum["retry_policy"] = "pre_delivery_connection_failures_only"
+		minimum["structured_failure"] = true
+		minimum["error"] = "context pack request or boundary validation failed"
+		if failureStatus == "invalid_context_budget" {
+			minimum["error"] = "invalid context budget"
+		} else if firstString(payload["error"]) == "ContextLattice gateway request failed" {
+			minimum["error"] = "ContextLattice gateway request failed"
+		}
+		if evidence := asMap(payload["error_evidence"]); len(evidence) > 0 {
+			minimum["error_evidence"] = map[string]any{
+				"schema_id":         "contextlattice_cli_request_error.v1",
+				"method":            truncateUTF8Bytes(firstString(evidence["method"]), 16),
+				"path":              truncateUTF8Bytes(firstString(evidence["path"]), 200),
+				"status_code":       adapterPublicNonnegativeInt(evidence["status_code"]),
+				"timed_out":         evidence["timed_out"] == true,
+				"wrote_request":     evidence["wrote_request"] == true,
+				"got_connection":    evidence["got_connection"] == true,
+				"pre_delivery":      evidence["pre_delivery"] == true,
+				"connection_failed": evidence["connection_failed"] == true,
+				"retryable":         evidence["retryable"] == true,
+			}
+		}
+	}
+	if tokenBudget := firstMap(payload["token_budget"], asMap(payload["context_pack"])["token_budget"]); len(tokenBudget) > 0 {
+		minimalTokenBudget := map[string]any{
+			"schema_id": "contextlattice_context_token_budget.v1", "selected_count": 0,
+		}
+		minimum["token_budget"] = minimalTokenBudget
+		pack["token_budget"] = minimalTokenBudget
+	}
+	for _, identity := range []string{"session_id", "agent_id"} {
+		if value, ok := payload[identity].(string); ok && strings.TrimSpace(value) != "" {
+			minimum[identity] = value
+		}
+	}
+	if omitted := adapterPublicStringList(payload["identity_omitted"], 2, 32); len(omitted) > 0 {
+		minimum["identity_omitted"] = omitted
+	}
+	stamped, ok := adapterStampRegisteredEnvelope("context_pack_response.v1", minimum)
+	if !ok || !adapterRegisteredEnvelopeAttestationValid("context_pack_response.v1", stamped) || containsProviderOverflowPayload(stamped) {
+		return nil, false
+	}
+	if responseOK && !adapterContextPackContractPassed(stamped) {
+		return nil, false
+	}
+	return stamped, true
+}
+
+func adapterRegisteredEnvelopeAttestationValid(contractID string, payload map[string]any) bool {
+	contract := adapterContractDefinition(contractID)
+	if len(contract) == 0 || len(adapterContractFindings(contractID, payload)) != 0 {
+		return false
+	}
+	formatContract, ok := payload["format_contract"].(map[string]any)
+	contractVersion, contractVersionOK := adapterExactJSONInt(formatContract["contract_version"])
+	registryVersion, registryVersionOK := adapterExactJSONInt(formatContract["registry_version"])
+	maximum, maximumOK := adapterExactJSONInt(formatContract["max_total_json_bytes"])
+	maximumString, maximumStringOK := adapterExactJSONInt(formatContract["max_string_bytes"])
+	maximumList, maximumListOK := adapterExactJSONInt(formatContract["max_list_items"])
+	actual, actualOK := adapterExactJSONInt(formatContract["actual_json_bytes"])
+	if !ok || firstString(formatContract["registry_id"]) != generatedAgentContractRegistryID ||
+		!registryVersionOK || registryVersion != generatedAgentContractRegistryVersion ||
+		firstString(formatContract["schema_id"]) != contractID ||
+		!contractVersionOK || contractVersion != asInt(contract["contract_version"]) ||
+		firstString(formatContract["required_output_mode"]) != firstString(contract["required_output_mode"]) ||
+		firstString(formatContract["validator"]) != "contextlattice.boundary.v1" || formatContract["contract_valid"] != true ||
+		!maximumOK || maximum != asInt(contract["max_total_json_bytes"]) ||
+		!maximumStringOK || maximumString != asInt(contract["max_string_bytes"]) ||
+		!maximumListOK || maximumList != asInt(contract["max_list_items"]) || !actualOK || actual < 1 || actual > maximum {
+		return false
+	}
+	validation, validationOK := formatContract["validation"].(map[string]any)
+	errorsValue, errorsPresent := validation["errors"]
+	errorsList, errorsTyped := errorsValue.([]any)
+	if !validationOK || firstString(validation["status"]) != "passed" || !errorsPresent || !errorsTyped || len(errorsList) != 0 {
+		return false
+	}
+	encoded, err := json.Marshal(payload)
+	return err == nil && len(encoded) == actual
 }
 
 func cliRequestRetryable(err error) bool {
@@ -3091,26 +4109,43 @@ func (c *cli) ensureSession(project, objective, taskID, agentID string, timeout 
 	return c.ensureSessionForAgent(project, objective, envString("CONTEXTLATTICE_AGENT", "agent-cli"), agentID, ownership, adapterProfile{}, timeout)
 }
 
-func agentSessionStatusReusable(payload map[string]any, project string, agentID string, reuseKey string) bool {
+func agentSessionAuthorityMatches(session map[string]any, expectedID, project, agent, agentID string) bool {
+	actualID := strings.TrimSpace(firstString(session["id"]))
+	if expectedID == "" || actualID != expectedID {
+		return false
+	}
+	if project != "" && !strings.EqualFold(firstString(session["project"]), project) {
+		return false
+	}
+	if agent != "" && !strings.EqualFold(firstString(session["agent"]), agent) {
+		return false
+	}
+	if agentID != "" && firstString(session["agent_id"]) != agentID {
+		return false
+	}
+	return true
+}
+
+func agentSessionStatusReusable(payload map[string]any, expectedID, project, agent, agentID, reuseKey string) bool {
+	if payload["ok"] != true {
+		return false
+	}
 	session := asMap(payload["session"])
+	if !agentSessionAuthorityMatches(session, expectedID, project, agent, agentID) {
+		return false
+	}
 	status := strings.ToLower(firstString(session["status"]))
 	switch status {
 	case "completed", "failed", "canceled", "cancelled", "expired":
 		return false
 	}
-	if project != "" && firstString(session["project"]) != "" && !strings.EqualFold(firstString(session["project"]), project) {
-		return false
-	}
-	if agentID != "" && firstString(session["agent_id"]) != "" && !strings.EqualFold(firstString(session["agent_id"]), agentID) {
-		return false
-	}
 	if reuseKey != "" {
 		actualReuseKey := firstString(session["reuse_key"])
-		if actualReuseKey == "" || !strings.EqualFold(actualReuseKey, reuseKey) {
+		if actualReuseKey != reuseKey {
 			return false
 		}
 	}
-	return firstString(session["id"]) != ""
+	return true
 }
 
 func agentSessionReuseKey(project, agent, agentID string, ownership map[string]any) string {
@@ -3139,7 +4174,7 @@ func (c *cli) ensureSessionForAgent(project, objective, agent, agentID string, o
 	}
 	reuseKey := agentSessionReuseKey(project, agent, agentID, ownership)
 	if cachedID := firstString(readSessionState(project)["session_id"]); cachedID != "" {
-		if raw, _, err := c.requestJSON(context.Background(), http.MethodGet, "/v1/agents/sessions/"+url.PathEscape(cachedID), nil, minFloat(timeout, 5)); err == nil && agentSessionStatusReusable(raw, project, agentID, reuseKey) {
+		if raw, _, err := c.requestJSONForValidation(context.Background(), http.MethodGet, "/v1/agents/sessions/"+url.PathEscape(cachedID), nil, minFloat(timeout, 5)); err == nil && agentSessionStatusReusable(raw, cachedID, project, agent, agentID, reuseKey) {
 			return cachedID
 		}
 	}
@@ -3170,15 +4205,16 @@ func (c *cli) ensureSessionForAgent(project, objective, agent, agentID string, o
 			"state_authority": state["authority"],
 		},
 	}
-	raw, _, err := c.requestJSON(context.Background(), http.MethodPost, "/v1/agents/sessions/start", payload, minFloat(timeout, 10))
+	raw, _, err := c.requestJSONForValidation(context.Background(), http.MethodPost, "/v1/agents/sessions/start", payload, minFloat(timeout, 10))
 	if err != nil {
 		return ""
 	}
 	session := asMap(raw["session"])
-	id := firstString(session["id"], raw["session_id"])
-	if id != "" {
-		writeSessionStateWithExtras(project, id, objective, agentID, map[string]any{"reuse_key": reuseKey, "ownership": ownership})
+	id := firstString(session["id"])
+	if !agentSessionStatusReusable(raw, id, project, agent, agentID, reuseKey) {
+		return ""
 	}
+	writeSessionStateWithExtras(project, id, objective, agentID, map[string]any{"reuse_key": reuseKey, "ownership": ownership})
 	return id
 }
 
@@ -3203,8 +4239,11 @@ func normalizePackOutput(raw map[string]any, query string, budget int) map[strin
 			raw["omitted_high_value_refs"] = omitted
 		}
 	}
-	raw["task_summary"] = query
-	raw["context_budget_chars"] = budget
+	requested, effective, floorApplied := normalizedPackCommandBudget(budget)
+	raw["task_summary"] = truncateUTF8Bytes(query, 1000)
+	raw["context_budget_chars"] = effective
+	raw["requested_context_budget_chars"] = requested
+	raw["budget_floor_applied"] = floorApplied
 	raw["writeback_required"] = true
 	return raw
 }
@@ -4486,14 +5525,27 @@ func (c *cli) utilityVerify(args []string) error {
 			},
 		},
 	}
+	if err := adapterPreflightResponse(
+		"utility_verify", profile.agent, profile.agentID, project, sessionID,
+		map[string]any{
+			"event":                  map[string]any{"id": "verification-event", "type": "verification.completed"},
+			"event_recorded":         true,
+			"utility_reconciliation": map[string]any{"ok": true, "status": "reconciled"},
+		},
+	); err != nil {
+		return err
+	}
 	raw, _, err := c.requestJSON(context.Background(), http.MethodPost, "/v1/agents/sessions/event", payload, parsed.float("timeout", 10))
 	if err != nil {
 		return err
 	}
-	detail := map[string]any{"event": raw["event"], "event_recorded": len(asMap(raw["event"])) > 0}
+	detail := map[string]any{"event": compactLifecycleEvent(raw), "event_recorded": len(asMap(raw["event"])) > 0}
 	reconciliation := asMap(raw["utility_reconciliation"])
 	if len(reconciliation) > 0 {
-		detail["utility_reconciliation"] = reconciliation
+		detail["utility_reconciliation"] = dropEmpty(map[string]any{
+			"ok":     reconciliation["ok"] == true,
+			"status": adapterCompactPublicString(firstString(reconciliation["status"]), 120),
+		})
 	}
 	if eventRecorded, present := raw["event_recorded"]; present {
 		detail["event_recorded"] = asBool(eventRecorded)
@@ -4507,7 +5559,7 @@ func (c *cli) utilityVerify(args []string) error {
 			"detail": "verification event was recorded but the durable Utility Ledger observation was not reconciled",
 		})
 	}
-	if err := c.emit(adapterResponse("utility_verify", reconciled, profile.agent, profile.agentID, project, sessionID, detail, findings), parsed.bool("pretty")); err != nil {
+	if err := c.emitAdapterResponse("utility_verify", reconciled, profile.agent, profile.agentID, project, sessionID, detail, findings, parsed.bool("pretty")); err != nil {
 		return err
 	}
 	if !reconciled {
@@ -4578,7 +5630,7 @@ func (c *cli) cmdAdapter(args []string) error {
 	case "bootstrap":
 		return c.adapterBootstrap(args)
 	case "status":
-		return c.sessionGet("status", args)
+		return c.adapterStatus(args)
 	case "context-pack":
 		return c.adapterContextPack(args)
 	case "checkpoint":
@@ -4599,14 +5651,80 @@ func (c *cli) cmdAdapter(args []string) error {
 }
 
 func (c *cli) adapterProfiles(args []string) error {
-	parsed := parseArgs(args, commonStringFlags(), commonBoolFlags())
+	parsed := parseArgs(args, mergeStringFlags(commonStringFlags(), map[string]string{
+		"agent": "agent", "agent-id": "agent_id", "session-id": "session_id",
+	}), commonBoolFlags())
 	profiles := loadAgentProfiles()
 	names := make([]string, 0, len(profiles))
 	for name := range profiles {
 		names = append(names, name)
 	}
 	sort.Strings(names)
-	return c.emit(map[string]any{"ok": true, "schema_id": "contextlattice_universal_agent_adapter_profiles.v1", "result": map[string]any{"profiles": profiles, "profile_names": names}}, parsed.bool("pretty"))
+	return c.emitAdapterResponse(
+		"profiles", true,
+		parsed.string("agent", "codex"), parsed.string("agent_id", ""),
+		parsed.string("project", "contextlattice"), parsed.string("session_id", ""),
+		map[string]any{
+			"schema_id":     "contextlattice_universal_agent_adapter_profiles.v1",
+			"profiles":      profiles,
+			"profile_names": names,
+		}, nil, parsed.bool("pretty"),
+	)
+}
+
+func (c *cli) adapterStatus(args []string) error {
+	parsed := parseArgs(args, adapterStringFlags(), adapterBoolFlags())
+	c.applyBaseURL(parsed)
+	project := parsed.string("project", "contextlattice")
+	profile := resolveAdapterProfile(parsed)
+	expectedAgent := parsed.string("agent", profile.agent)
+	expectedAgentID := parsed.string("agent_id", profile.agentID)
+	sessionID := parsed.string("session_id", envString("CONTEXTLATTICE_SESSION_ID", ""))
+	if sessionID == "" && len(parsed.pos) > 0 {
+		sessionID = parsed.pos[0]
+	}
+	if sessionID == "" {
+		return errors.New("session id is required")
+	}
+	raw, _, requestErr := c.requestJSONForValidation(
+		context.Background(),
+		http.MethodGet,
+		"/v1/agents/sessions/"+url.PathEscape(sessionID),
+		nil,
+		parsed.float("timeout", 10),
+	)
+	findings := []map[string]any{}
+	if requestErr != nil {
+		findings = append(findings, map[string]any{"reason": "session_status_request_failed"})
+	} else if raw["ok"] != true {
+		findings = append(findings, map[string]any{"reason": "session_status_rejected"})
+	}
+	session := asMap(raw["session"])
+	if requestErr == nil && raw["ok"] == true && !agentSessionAuthorityMatches(session, sessionID, project, expectedAgent, expectedAgentID) {
+		findings = append(findings, map[string]any{"reason": "session_status_authority_mismatch"})
+	}
+	result := map[string]any{"status": "unavailable"}
+	if len(findings) == 0 {
+		result = map[string]any{
+			"status": adapterCompactServerReceipt(raw),
+			"session": dropEmpty(map[string]any{
+				"session_id": firstString(session["id"]),
+				"status":     firstString(session["status"]),
+				"project":    firstString(session["project"]),
+				"agent":      firstString(session["agent"]),
+				"agent_id":   firstString(session["agent_id"]),
+				"updated_at": firstString(session["updated_at"]),
+			}),
+		}
+	}
+	ok := len(findings) == 0
+	if err := c.emitAdapterResponse("status", ok, expectedAgent, expectedAgentID, project, sessionID, result, findings, parsed.bool("pretty")); err != nil {
+		return err
+	}
+	if !ok {
+		return errors.New("session status did not complete")
+	}
+	return nil
 }
 
 func (c *cli) adapterBootstrap(args []string) error {
@@ -4614,16 +5732,20 @@ func (c *cli) adapterBootstrap(args []string) error {
 	c.applyBaseURL(parsed)
 	agent := parsed.string("agent", "codex")
 	profile := resolveAdapterProfile(parsed)
-	query := parsed.string("query", parsed.string("objective", agent+" preflight connectivity and retrieval"))
+	project := parsed.string("project", "contextlattice")
+	requestedAgentID := parsed.string("agent_id", profile.agentID)
+	topicPath := profile.topicPath
+	retrievalMode := profile.mode
+	query := profile.query
 	ownership := adapterOwnership(parsed)
-	reuseKey := agentSessionReuseKey(parsed.string("project", "contextlattice"), agent, parsed.string("agent_id", profile.agentID), ownership)
+	reuseKey := agentSessionReuseKey(project, agent, requestedAgentID, ownership)
 	payload := dropEmpty(map[string]any{
 		"agent":             agent,
-		"agent_id":          parsed.string("agent_id", ""),
-		"project":           parsed.string("project", "contextlattice"),
-		"topic_path":        parsed.string("topic_path", ""),
+		"agent_id":          requestedAgentID,
+		"project":           project,
+		"topic_path":        topicPath,
 		"query":             query,
-		"retrieval_mode":    parsed.string("mode", "balanced"),
+		"retrieval_mode":    retrievalMode,
 		"mission":           parsed.string("mission", ""),
 		"objective":         parsed.string("objective", query),
 		"goal":              parsed.string("goal", ""),
@@ -4636,20 +5758,47 @@ func (c *cli) adapterBootstrap(args []string) error {
 		"reuse_key":         reuseKey,
 		"agent_state":       buildAgentLifecycleState(parsed, profile, "working"),
 	})
-	raw, _, err := c.requestJSON(context.Background(), http.MethodPost, "/v1/agents/preflight", payload, parsed.float("timeout", 45))
-	findings := errorFinding(err)
+	raw, _, err := c.requestJSONForValidation(context.Background(), http.MethodPost, "/v1/agents/preflight", payload, parsed.float("timeout", 45))
+	findings := []map[string]any{}
+	if err != nil {
+		findings = append(findings, map[string]any{"reason": "bootstrap_request_failed"})
+	}
 	sessionID := firstString(raw["session_id"], asMap(asMap(raw["agent_runtime"])["session"])["id"])
-	if err == nil && sessionID == "" {
-		findings = append(findings, map[string]any{"reason": "missing_session_id"})
+	if err == nil && !adapterPreflightEnvelopeAttestationValid(raw, sessionID, agent, requestedAgentID, project, query, topicPath, retrievalMode, reuseKey) {
+		findings = append(findings, map[string]any{"reason": "bootstrap_contract_or_authority_invalid"})
 	}
-	ok := err == nil && !explicitFalse(raw["ok"]) && len(findings) == 0
-	if sessionID != "" {
-		writeSessionStateWithExtras(parsed.string("project", "contextlattice"), sessionID, query, parsed.string("agent_id", profile.agentID), map[string]any{"reuse_key": reuseKey, "ownership": ownership})
+	ok := err == nil && raw["ok"] == true && len(findings) == 0
+	publicAgentID := requestedAgentID
+	response := adapterFailureResponse(
+		"bootstrap", agent, publicAgentID, project, "", "bootstrap_contract_or_authority_invalid",
+	)
+	if ok {
+		response = adapterResponse(
+			"bootstrap", true, agent, publicAgentID,
+			project, sessionID,
+			map[string]any{
+				"preflight":   compactPreflightForAdapter(raw, sessionID, publicAgentID),
+				"agent_state": payload["agent_state"],
+				"ownership":   adapterOwnership(parsed),
+			}, nil,
+		)
 	}
-	if err := c.emit(adapterResponse("bootstrap", ok, firstString(raw["agent"], agent), firstString(raw["agent_id"], payload["agent_id"]), parsed.string("project", "contextlattice"), sessionID, map[string]any{"preflight": compactPreflightForAdapter(raw), "agent_state": payload["agent_state"], "ownership": adapterOwnership(parsed)}, findings), parsed.bool("pretty")); err != nil {
+	if ok && !adapterResponseFits(response) {
+		response = adapterFailureResponse(
+			"bootstrap", agent, publicAgentID,
+			project, "", "adapter_public_boundary_rejected",
+		)
+	}
+	if response["ok"] == true && sessionID != "" {
+		writeSessionStateWithExtras(project, sessionID, query, publicAgentID, map[string]any{"reuse_key": reuseKey, "ownership": ownership})
+	}
+	if err := c.emitPreparedAdapterResponse(response, parsed.bool("pretty")); err != nil {
 		return err
 	}
-	c.autoDrainAsyncInbox(sessionID, parsed.string("project", "contextlattice"), parsed.string("agent_id", ""))
+	if response["ok"] != true {
+		return errors.New("bootstrap did not produce an accepted public response")
+	}
+	c.autoDrainAsyncInbox(sessionID, project, requestedAgentID)
 	return nil
 }
 
@@ -4788,6 +5937,108 @@ func contextPackQualitySampleID(payload map[string]any) string {
 	return firstString(contextPackQualitySample(payload)["sample_id"])
 }
 
+func validatedAgentPacketOutcomeQualityReference(payload map[string]any) (map[string]any, bool) {
+	if !isAgentPacketWireSchema(firstString(payload["schema_id"])) {
+		return map[string]any{}, false
+	}
+	sampleID, ok := asMap(payload["outcome"])["sample_id"].(string)
+	sampleID = strings.TrimSpace(sampleID)
+	if !ok || !adapterPublicQualitySampleID(sampleID) {
+		return map[string]any{}, false
+	}
+	return map[string]any{"sample_id": sampleID}, true
+}
+
+func validatedContextPackQualityStateReceipt(value map[string]any) (map[string]any, bool) {
+	if len(value) == 0 {
+		return map[string]any{}, true
+	}
+	sampleID, sampleOK := value["sample_id"].(string)
+	sampleID = strings.TrimSpace(sampleID)
+	queryHash, queryOK := value["query_hash"].(string)
+	queryHash = strings.ToLower(strings.TrimSpace(queryHash))
+	capturedAt := firstString(value["capturedAt"], value["captured_at"])
+	if !sampleOK || !queryOK || !adapterPublicQualitySampleID(sampleID) || len(queryHash) != 16 {
+		return map[string]any{}, false
+	}
+	for _, char := range queryHash {
+		if !((char >= '0' && char <= '9') || (char >= 'a' && char <= 'f')) {
+			return map[string]any{}, false
+		}
+	}
+	qualityScore, scoreOK := strictFiniteQualityScore(value["quality_score"])
+	if !scoreOK {
+		return map[string]any{}, false
+	}
+	parsedAt, err := time.Parse(time.RFC3339, capturedAt)
+	if err != nil || parsedAt.Location() == nil {
+		return map[string]any{}, false
+	}
+	return map[string]any{
+		"sample_id":     sampleID,
+		"query_hash":    queryHash,
+		"quality_score": qualityScore,
+		"capturedAt":    capturedAt,
+	}, true
+}
+
+func adapterPublicQualitySampleID(value string) bool {
+	value = strings.TrimSpace(value)
+	if len(value) < len("cpq_")+1 || len(value) > 200 || !utf8.ValidString(value) || !strings.HasPrefix(value, "cpq_") {
+		return false
+	}
+	for _, char := range value {
+		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') || char == '_' || char == '-' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func strictFiniteQualityScore(value any) (float64, bool) {
+	var score float64
+	switch typed := value.(type) {
+	case float64:
+		score = typed
+	case float32:
+		score = float64(typed)
+	case int:
+		score = float64(typed)
+	case int8:
+		score = float64(typed)
+	case int16:
+		score = float64(typed)
+	case int32:
+		score = float64(typed)
+	case int64:
+		score = float64(typed)
+	case uint:
+		score = float64(typed)
+	case uint8:
+		score = float64(typed)
+	case uint16:
+		score = float64(typed)
+	case uint32:
+		score = float64(typed)
+	case uint64:
+		if typed > 1<<53 {
+			return 0, false
+		}
+		score = float64(typed)
+	case json.Number:
+		parsed, err := strconv.ParseFloat(string(typed), 64)
+		if err != nil {
+			return 0, false
+		}
+		score = parsed
+	default:
+		return 0, false
+	}
+	return score, !math.IsNaN(score) && !math.IsInf(score, 0) && score >= 0 && score <= 100
+}
+
 func contextPackOutcomeReport(sessionID string, sampleID string) map[string]any {
 	if strings.TrimSpace(sampleID) == "" {
 		return map[string]any{}
@@ -4900,12 +6151,6 @@ func (c *cli) ensureAdapterSession(parsed parsedArgs, project, objective, agentI
 	if sessionID != "" {
 		return sessionID, nil
 	}
-	if cachedID := firstString(readSessionState(project)["session_id"]); cachedID != "" {
-		cached, _, cachedErr := c.requestJSON(context.Background(), http.MethodGet, "/v1/agents/sessions/"+url.PathEscape(cachedID), nil, minFloat(parsed.float("timeout", 30), 5))
-		if cachedErr == nil && agentSessionStatusReusable(cached, project, "", "") {
-			return cachedID, nil
-		}
-	}
 	profile := resolveAdapterProfile(parsed)
 	sessionID = c.ensureSessionForAgent(project, objective, profile.agent, agentID, adapterOwnership(parsed), profile, parsed.float("timeout", 30))
 	if sessionID == "" && parsed.bool("strict") {
@@ -4915,18 +6160,273 @@ func (c *cli) ensureAdapterSession(parsed parsedArgs, project, objective, agentI
 }
 
 func adapterResponse(command string, ok bool, agent, agentID, project, sessionID string, result map[string]any, findings []map[string]any) map[string]any {
-	return map[string]any{
-		"ok":               ok && len(findings) == 0,
-		"schema_id":        "universal_agent_adapter_response.v1",
-		"command":          command,
-		"agent":            agent,
-		"agent_id":         agentID,
-		"project":          project,
-		"session_id":       sessionID,
-		"adapter_contract": defaultAdapterContract(),
-		"result":           result,
-		"findings":         findings,
-		"format_contract":  adapterResponseFormatContract(),
+	projectedResult, resultOK := adapterProjectPublicValue(result, sessionID, agentID, 0)
+	if resultOK {
+		resultOK = adapterRestampNestedPublicContracts(projectedResult, true)
+	}
+	if !resultOK {
+		projectedResult = map[string]any{"status": "bounded_public_boundary_failure"}
+		findings = append(findings, map[string]any{"reason": "adapter_result_public_boundary_failure"})
+	}
+	projectedFindings, findingsOK := adapterProjectPublicValue(findings, sessionID, agentID, 0)
+	if !findingsOK {
+		projectedFindings = []any{map[string]any{"reason": "adapter_findings_public_boundary_failure"}}
+		findings = append(findings, map[string]any{"reason": "adapter_findings_public_boundary_failure"})
+	}
+	publicCommand, commandOK := adapterPublicString(strings.TrimSpace(command))
+	publicAgent, agentOK := adapterPublicString(strings.TrimSpace(agent))
+	publicProject, projectOK := adapterPublicString(strings.TrimSpace(project))
+	if !commandOK || publicCommand == "" || len([]byte(publicCommand)) > 160 {
+		publicCommand = "adapter"
+		ok = false
+	}
+	if !agentOK || publicAgent == "" || len([]byte(publicAgent)) > 160 {
+		publicAgent = "unknown-agent"
+		ok = false
+	}
+	if !projectOK || publicProject == "" || len([]byte(publicProject)) > 240 {
+		publicProject = "unknown-project"
+		ok = false
+	}
+	build := func(resultValue any, findingValue any, responseOK bool) map[string]any {
+		payload := map[string]any{
+			"ok":               responseOK,
+			"schema_id":        generatedUniversalAgentAdapterResponseContractID,
+			"command":          publicCommand,
+			"agent":            publicAgent,
+			"project":          publicProject,
+			"adapter_contract": defaultAdapterContract(),
+			"result":           resultValue,
+			"findings":         findingValue,
+			"format_contract":  adapterResponseFormatContract(),
+		}
+		omitted := []any{}
+		if identity, valid := adapterPublicIdentity(sessionID, true); valid {
+			payload["session_id"] = identity
+		} else {
+			omitted = append(omitted, "session_id")
+		}
+		if identity, valid := adapterPublicIdentity(agentID, false); valid {
+			payload["agent_id"] = identity
+		} else {
+			omitted = append(omitted, "agent_id")
+		}
+		if len(omitted) > 0 {
+			payload["identity_omitted"] = omitted
+		}
+		return payload
+	}
+	payload := build(projectedResult, projectedFindings, ok && len(findings) == 0)
+	contractFindings := adapterContractFindings(generatedUniversalAgentAdapterResponseContractID, payload)
+	if len(contractFindings) == 0 {
+		return payload
+	}
+	return build(
+		map[string]any{"status": "bounded_public_boundary_failure"},
+		[]any{map[string]any{"reason": "adapter_public_boundary_failure"}},
+		false,
+	)
+}
+
+func adapterPublicIdentity(value string, session bool) (string, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" || len(value) > 256 || !utf8.ValidString(value) {
+		return "", false
+	}
+	if session {
+		if !strings.HasPrefix(value, "session-") || len(value) == len("session-") {
+			return "", false
+		}
+	} else {
+		lower := strings.ToLower(value)
+		if len(value) >= 48 || strings.HasPrefix(lower, "sk-") || strings.HasPrefix(lower, "pk-") || strings.HasPrefix(lower, "rk-") {
+			return "", false
+		}
+	}
+	for _, char := range value {
+		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') || strings.ContainsRune("._:@-", char) {
+			continue
+		}
+		return "", false
+	}
+	return value, true
+}
+
+func adapterProjectPublicValue(value any, sessionID, agentID string, depth int) (any, bool) {
+	if depth > 64 {
+		return nil, false
+	}
+	if object, ok := value.(map[string]any); ok && firstString(object["schema_id"]) == adapterContextPackOutcomeSchemaID {
+		return adapterPublicContextPackOutcomeReport(object, sessionID)
+	}
+	if object, ok := value.(map[string]any); ok && firstString(object["schema_id"]) == "run_advisor.v1" {
+		return adapterPublicRunAdvisor(object)
+	}
+	if value == nil {
+		return nil, true
+	}
+	if number, ok := value.(json.Number); ok {
+		return number, adapterJSONNumberLexemeValid(number)
+	}
+	reflected := reflect.ValueOf(value)
+	for reflected.Kind() == reflect.Interface {
+		if reflected.IsNil() {
+			return nil, true
+		}
+		reflected = reflected.Elem()
+	}
+	switch reflected.Kind() {
+	case reflect.Bool:
+		return reflected.Bool(), true
+	case reflect.String:
+		text := reflected.String()
+		trimmed := strings.TrimSpace(text)
+		if strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[") {
+			decoder := json.NewDecoder(bytes.NewReader([]byte(trimmed)))
+			decoder.UseNumber()
+			var decoded any
+			if decoder.Decode(&decoded) == nil {
+				var trailing any
+				if err := decoder.Decode(&trailing); errors.Is(err, io.EOF) {
+					projected, ok := adapterProjectPublicValue(decoded, sessionID, agentID, depth+1)
+					if !ok {
+						return nil, false
+					}
+					encoded, err := json.Marshal(projected)
+					if err != nil {
+						return nil, false
+					}
+					return string(encoded), true
+				}
+			}
+		}
+		return adapterPublicString(text)
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return reflected.Interface(), true
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return reflected.Interface(), reflected.Uint() <= math.MaxInt64
+	case reflect.Float32, reflect.Float64:
+		number := reflected.Float()
+		return reflected.Interface(), !math.IsNaN(number) && !math.IsInf(number, 0)
+	case reflect.Map:
+		if reflected.Type().Key().Kind() != reflect.String {
+			return nil, false
+		}
+		projected := map[string]any{}
+		omitted := map[string]bool{}
+		identitySeen := map[string]bool{}
+		for _, key := range reflected.MapKeys() {
+			name := key.String()
+			raw := reflected.MapIndex(key)
+			if !adapterPublicMapKeySafe(name) {
+				continue
+			}
+			if adapterStructuralPublicKey(name) {
+				continue
+			}
+			if name == "identity_omitted" {
+				value, ok := adapterProjectPublicValue(raw.Interface(), sessionID, agentID, depth+1)
+				if !ok {
+					return nil, false
+				}
+				for _, item := range asList(value) {
+					marker, markerOK := item.(string)
+					if markerOK && (marker == "session_id" || marker == "agent_id") {
+						omitted[marker] = true
+					}
+				}
+				continue
+			}
+			identityName := ""
+			switch adapterCanonicalFieldKey(name) {
+			case "sessionid":
+				identityName = "session_id"
+			case "agentid":
+				identityName = "agent_id"
+			}
+			if identityName == "session_id" {
+				identitySeen[identityName] = true
+				if identity, valid := adapterPublicIdentity(sessionID, true); valid {
+					projected[identityName] = identity
+				} else {
+					omitted[identityName] = true
+				}
+				continue
+			}
+			if identityName == "agent_id" {
+				identitySeen[identityName] = true
+				if identity, valid := adapterPublicIdentity(agentID, false); valid {
+					projected[identityName] = identity
+				} else {
+					omitted[identityName] = true
+				}
+				continue
+			}
+			if adapterPublicReferenceValue(name, raw.Interface()) {
+				projected[name] = raw.Interface()
+				continue
+			}
+			if adapterSensitivePublicKey(name) {
+				projected[name] = "[REDACTED]"
+				continue
+			}
+			child, ok := adapterProjectPublicValue(raw.Interface(), sessionID, agentID, depth+1)
+			if !ok {
+				return nil, false
+			}
+			projected[name] = child
+		}
+		for _, name := range []string{"session_id", "agent_id"} {
+			if identitySeen[name] {
+				_, supplied := projected[name]
+				omitted[name] = !supplied
+				continue
+			}
+			if omitted[name] {
+				identity, valid := "", false
+				if name == "session_id" {
+					identity, valid = adapterPublicIdentity(sessionID, true)
+				} else {
+					identity, valid = adapterPublicIdentity(agentID, false)
+				}
+				if valid {
+					projected[name] = identity
+					omitted[name] = false
+				}
+			}
+		}
+		markers := []any{}
+		for _, name := range []string{"session_id", "agent_id"} {
+			if omitted[name] {
+				markers = append(markers, name)
+			}
+		}
+		if len(markers) > 0 {
+			projected["identity_omitted"] = markers
+		}
+		return projected, true
+	case reflect.Slice, reflect.Array:
+		projected := make([]any, 0, reflected.Len())
+		for index := 0; index < reflected.Len(); index++ {
+			child, ok := adapterProjectPublicValue(reflected.Index(index).Interface(), sessionID, agentID, depth+1)
+			if !ok {
+				return nil, false
+			}
+			projected = append(projected, child)
+		}
+		return projected, true
+	default:
+		return nil, false
+	}
+}
+
+func adapterStructuralPublicKey(name string) bool {
+	switch adapterCanonicalFieldKey(name) {
+	case "hookspecificoutput", "messages", "toolcalls", "functioncall", "rawcontextlatticejson", "rawprompt":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -4934,12 +6434,278 @@ func adapterResponseFormatContract() map[string]any {
 	return map[string]any{
 		"registry_id":          generatedAgentContractRegistryID,
 		"registry_version":     generatedAgentContractRegistryVersion,
-		"schema_id":            "universal_agent_adapter_response.v1",
-		"contract_version":     1,
+		"schema_id":            generatedUniversalAgentAdapterResponseContractID,
+		"contract_version":     generatedUniversalAgentAdapterResponseContractVersion,
 		"required_output_mode": "json_object",
 		"validator":            "contextlattice.boundary.v1",
 		"validation":           map[string]any{"status": "passed", "errors": []any{}},
 	}
+}
+
+func adapterResponseFits(payload map[string]any) bool {
+	return payload["ok"] == true && adapterResponseContractValid(payload)
+}
+
+func adapterResponseContractValid(payload map[string]any) bool {
+	formatContract := asMap(payload["format_contract"])
+	validation := asMap(formatContract["validation"])
+	if firstString(formatContract["registry_id"]) != generatedAgentContractRegistryID ||
+		asInt(formatContract["registry_version"]) != generatedAgentContractRegistryVersion ||
+		firstString(formatContract["schema_id"]) != generatedUniversalAgentAdapterResponseContractID ||
+		asInt(formatContract["contract_version"]) != generatedUniversalAgentAdapterResponseContractVersion ||
+		firstString(formatContract["required_output_mode"]) != "json_object" ||
+		firstString(formatContract["validator"]) != "contextlattice.boundary.v1" ||
+		firstString(validation["status"]) != "passed" {
+		return false
+	}
+	errorsValue, errorsPresent := validation["errors"]
+	errorsList, errorsTyped := errorsValue.([]any)
+	if !errorsPresent || !errorsTyped || len(errorsList) != 0 {
+		return false
+	}
+	_, hasSession := payload["session_id"]
+	_, hasAgent := payload["agent_id"]
+	omitted := map[string]bool{}
+	for _, item := range asList(payload["identity_omitted"]) {
+		if marker, ok := item.(string); ok {
+			omitted[marker] = true
+		}
+	}
+	if hasSession == omitted["session_id"] || hasAgent == omitted["agent_id"] {
+		return false
+	}
+	return len(adapterContractFindings(generatedUniversalAgentAdapterResponseContractID, payload)) == 0
+}
+
+func adapterPreflightResponse(command, agent, agentID, project, sessionID string, result map[string]any) error {
+	if !adapterResponseFits(adapterResponse(command, true, agent, agentID, project, sessionID, result, nil)) {
+		return errors.New("adapter public response preflight failed")
+	}
+	return nil
+}
+
+func (c *cli) emitAdapterResponse(
+	command string,
+	ok bool,
+	agent, agentID, project, sessionID string,
+	result map[string]any,
+	findings []map[string]any,
+	pretty bool,
+) error {
+	response := adapterResponse(command, ok, agent, agentID, project, sessionID, result, findings)
+	if err := c.emitPreparedAdapterResponse(response, pretty); err != nil {
+		return err
+	}
+	if ok && response["ok"] != true {
+		return errors.New("adapter public response was rejected before emission")
+	}
+	return nil
+}
+
+func (c *cli) emitPreparedAdapterResponse(response map[string]any, pretty bool) error {
+	requestedOK := response["ok"] == true
+	if !adapterResponseContractValid(response) {
+		response = adapterFailureResponse("adapter", "unknown-agent", "", "unknown-project", "", "adapter_public_boundary_rejected")
+		if !adapterResponseContractValid(response) {
+			return errors.New("adapter public failure envelope did not validate")
+		}
+	}
+	if err := c.emit(response, pretty); err != nil {
+		return err
+	}
+	if requestedOK && response["ok"] != true {
+		return errors.New("adapter public response was rejected before emission")
+	}
+	return nil
+}
+
+func adapterFailureResponse(command, agent, agentID, project, sessionID, reason string) map[string]any {
+	return adapterResponse(command, false, agent, agentID, project, sessionID, map[string]any{
+		"status": "bounded_public_boundary_failure",
+	}, []map[string]any{{"reason": reason}})
+}
+
+func adapterPreflightEnvelopeAttestationValid(
+	payload map[string]any,
+	sessionID, agent, agentID, project, query, topicPath, retrievalMode, reuseKey string,
+) bool {
+	if payload["ok"] != true || sessionID == "" || len([]byte(sessionID)) > 192 ||
+		firstString(payload["session_id"]) != sessionID || firstString(payload["agent"]) != agent ||
+		firstString(payload["agent_id"]) != agentID || firstString(payload["project"]) != project ||
+		firstString(payload["query"]) != query || firstString(payload["topic_path"]) != topicPath ||
+		firstString(payload["retrieval_mode"]) != retrievalMode ||
+		len(adapterContractFindings("agent_preflight_response.v1", payload)) != 0 {
+		return false
+	}
+	objectiveRuntime := asMap(payload["objective_runtime"])
+	policy := asMap(payload["policy_context_package"])
+	policyRuntime := asMap(policy["objective_runtime"])
+	if !adapterRegisteredEnvelopeAttestationValid("objective_runtime_state.v1", objectiveRuntime) ||
+		!adapterRegisteredEnvelopeAttestationValid("policy_context_package.v1", policy) ||
+		!adapterRegisteredEnvelopeAttestationValid("objective_runtime_state.v1", policyRuntime) {
+		return false
+	}
+	formatContracts, ok := payload["format_contracts"].(map[string]any)
+	contract := adapterContractDefinition("agent_preflight_response.v1")
+	registryVersion, registryVersionOK := adapterExactJSONInt(formatContracts["registry_version"])
+	maximum, maximumOK := adapterExactJSONInt(formatContracts["max_total_json_bytes"])
+	maximumString, maximumStringOK := adapterExactJSONInt(formatContracts["max_string_bytes"])
+	maximumList, maximumListOK := adapterExactJSONInt(formatContracts["max_list_items"])
+	actual, actualOK := adapterExactJSONInt(formatContracts["actual_json_bytes"])
+	validation, validationOK := formatContracts["validation"].(map[string]any)
+	errorsValue, errorsPresent := validation["errors"]
+	errorsList, errorsTyped := errorsValue.([]any)
+	if !ok || firstString(formatContracts["registry_id"]) != generatedAgentContractRegistryID ||
+		!registryVersionOK || registryVersion != generatedAgentContractRegistryVersion ||
+		formatContracts["contract_valid"] != true ||
+		!maximumOK || maximum != asInt(contract["max_total_json_bytes"]) ||
+		!maximumStringOK || maximumString != asInt(contract["max_string_bytes"]) ||
+		!maximumListOK || maximumList != asInt(contract["max_list_items"]) ||
+		!actualOK || actual < 1 || actual > maximum || !validationOK ||
+		firstString(validation["status"]) != "passed" || !errorsPresent || !errorsTyped || len(errorsList) != 0 {
+		return false
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil || len(encoded) != actual {
+		return false
+	}
+	contractSet := map[string]bool{}
+	for _, item := range asList(formatContracts["contracts"]) {
+		contractSet[firstString(item)] = true
+	}
+	if !contractSet["agent_preflight_response.v1"] || !contractSet["objective_runtime_state.v1"] || !contractSet["policy_context_package.v1"] {
+		return false
+	}
+	session := asMap(asMap(payload["agent_runtime"])["session"])
+	return agentSessionStatusReusable(
+		map[string]any{"ok": true, "session": session},
+		sessionID, project, agent, agentID, reuseKey,
+	)
+}
+
+func adapterContextPackContractPassed(payload map[string]any) bool {
+	return adapterContextPackEnvelopeAttestationValid(payload) &&
+		len(adapterContractFindings("context_pack_response.v1", payload)) == 0 &&
+		!containsProviderOverflowPayload(payload)
+}
+
+func adapterContextPackEnvelopeAttestationValid(payload map[string]any) bool {
+	if payload["ok"] != true {
+		return false
+	}
+	if _, ok := payload["context_pack"].(map[string]any); !ok {
+		return false
+	}
+	formatContract, ok := payload["format_contract"].(map[string]any)
+	expectedContractVersion := asInt(adapterContractDefinition("context_pack_response.v1")["contract_version"])
+	registryVersion, registryVersionOK := adapterExactJSONInt(formatContract["registry_version"])
+	contractVersion, contractVersionOK := adapterExactJSONInt(formatContract["contract_version"])
+	maximum, maximumOK := adapterExactJSONInt(formatContract["max_total_json_bytes"])
+	maximumString, maximumStringOK := adapterExactJSONInt(formatContract["max_string_bytes"])
+	maximumList, maximumListOK := adapterExactJSONInt(formatContract["max_list_items"])
+	actual, actualOK := adapterExactJSONInt(formatContract["actual_json_bytes"])
+	if !ok || firstString(formatContract["registry_id"]) != generatedAgentContractRegistryID ||
+		!registryVersionOK || registryVersion != generatedAgentContractRegistryVersion ||
+		firstString(formatContract["schema_id"]) != "context_pack_response.v1" ||
+		!contractVersionOK || expectedContractVersion < 1 || contractVersion != expectedContractVersion ||
+		firstString(formatContract["required_output_mode"]) != "json_object" ||
+		firstString(formatContract["validator"]) != "contextlattice.boundary.v1" ||
+		formatContract["contract_valid"] != true ||
+		!maximumOK || maximum != maxContextPackResponseJSONBytes ||
+		!maximumStringOK || maximumString != 6000 || !maximumListOK || maximumList != 64 ||
+		!actualOK {
+		return false
+	}
+	validation, ok := formatContract["validation"].(map[string]any)
+	if !ok || firstString(validation["status"]) != "passed" {
+		return false
+	}
+	errorsValue, present := validation["errors"]
+	errorsList, errorsTyped := errorsValue.([]any)
+	if !present || !errorsTyped || len(errorsList) != 0 {
+		return false
+	}
+	if maximum < 1 || maximum > maxContextPackResponseJSONBytes || actual < 1 || actual > maximum {
+		return false
+	}
+	raw, err := json.Marshal(payload)
+	return err == nil && len(raw) == actual && len(raw) <= maximum
+}
+
+func adapterExactJSONInt(value any) (int, bool) {
+	switch typed := value.(type) {
+	case int:
+		return typed, true
+	case int8:
+		return int(typed), true
+	case int16:
+		return int(typed), true
+	case int32:
+		return int(typed), true
+	case int64:
+		if int64(int(typed)) != typed {
+			return 0, false
+		}
+		return int(typed), true
+	case uint:
+		if uint(int(typed)) != typed {
+			return 0, false
+		}
+		return int(typed), true
+	case uint8:
+		return int(typed), true
+	case uint16:
+		return int(typed), true
+	case uint32:
+		if uint32(int(typed)) != typed {
+			return 0, false
+		}
+		return int(typed), true
+	case uint64:
+		if typed > math.MaxInt64 || uint64(int(typed)) != typed {
+			return 0, false
+		}
+		return int(typed), true
+	case float64:
+		if math.IsNaN(typed) || math.IsInf(typed, 0) || math.Trunc(typed) != typed || typed > float64(math.MaxInt64) || typed < float64(math.MinInt64) {
+			return 0, false
+		}
+		return int(typed), true
+	case json.Number:
+		parsed, err := strconv.ParseInt(typed.String(), 10, 64)
+		if err != nil || int64(int(parsed)) != parsed {
+			return 0, false
+		}
+		return int(parsed), true
+	default:
+		return 0, false
+	}
+}
+
+func adapterPublicContextPack(payload map[string]any, sessionID, agentID string) (map[string]any, bool) {
+	projected, ok := adapterProjectPublicValue(payload, sessionID, agentID, 0)
+	if !ok {
+		return nil, false
+	}
+	publicPayload, ok := projected.(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	if !adapterRestampNestedPublicContracts(publicPayload, true) {
+		return nil, false
+	}
+	formatContract := asMap(publicPayload["format_contract"])
+	for attempts := 0; attempts < 8; attempts++ {
+		raw, err := json.Marshal(publicPayload)
+		if err != nil || len(raw) > maxContextPackResponseJSONBytes {
+			return nil, false
+		}
+		if asInt(formatContract["actual_json_bytes"]) == len(raw) {
+			return publicPayload, adapterContextPackContractPassed(publicPayload)
+		}
+		formatContract["actual_json_bytes"] = len(raw)
+	}
+	return nil, false
 }
 
 func compactLifecycleEvent(raw map[string]any) map[string]any {
@@ -4950,11 +6716,27 @@ func compactLifecycleEvent(raw map[string]any) map[string]any {
 	session := asMap(raw["session"])
 	rollup := asMap(raw["rollup"])
 	return dropEmpty(map[string]any{
-		"id":         firstString(event["id"], raw["event_id"]),
-		"type":       firstString(event["type"], raw["event_type"]),
-		"status":     firstString(event["status"], session["status"], rollup["status"]),
-		"created_at": firstString(event["created_at"], raw["created_at"], raw["timestamp"]),
+		"id":         adapterCompactPublicString(firstString(event["id"], raw["event_id"]), 240),
+		"type":       adapterCompactPublicString(firstString(event["type"], raw["event_type"]), 160),
+		"status":     adapterCompactPublicString(firstString(event["status"], session["status"], rollup["status"]), 120),
+		"created_at": adapterCompactPublicString(firstString(event["created_at"], raw["created_at"], raw["timestamp"]), 80),
 	})
+}
+
+func adapterCompactServerReceipt(raw map[string]any) map[string]any {
+	return dropEmpty(map[string]any{
+		"ok":     raw["ok"] == true,
+		"status": adapterCompactPublicString(firstString(raw["status"]), 120),
+		"event":  compactLifecycleEvent(raw),
+	})
+}
+
+func adapterCompactPublicString(value string, limit int) string {
+	projected, ok := adapterPublicString(strings.TrimSpace(value))
+	if !ok || projected == "" {
+		return ""
+	}
+	return truncateUTF8Bytes(projected, limit)
 }
 
 func lifecycleReceiptFormatContract() map[string]any {
@@ -4962,11 +6744,75 @@ func lifecycleReceiptFormatContract() map[string]any {
 		"registry_id":          generatedAgentContractRegistryID,
 		"registry_version":     generatedAgentContractRegistryVersion,
 		"schema_id":            generatedLifecycleReceiptContractID,
-		"contract_version":     1,
+		"contract_version":     generatedLifecycleReceiptContractVersion,
 		"required_output_mode": "json_object",
 		"validator":            "contextlattice.boundary.v1",
 		"validation":           map[string]any{"status": "passed", "errors": []any{}},
 	}
+}
+
+func lifecycleReceiptContractValid(payload map[string]any) bool {
+	formatContract := asMap(payload["format_contract"])
+	validation := asMap(formatContract["validation"])
+	errorsValue, errorsPresent := validation["errors"]
+	errorsList, errorsTyped := errorsValue.([]any)
+	if firstString(formatContract["registry_id"]) != generatedAgentContractRegistryID ||
+		asInt(formatContract["registry_version"]) != generatedAgentContractRegistryVersion ||
+		firstString(formatContract["schema_id"]) != generatedLifecycleReceiptContractID ||
+		asInt(formatContract["contract_version"]) != generatedLifecycleReceiptContractVersion ||
+		firstString(formatContract["required_output_mode"]) != "json_object" ||
+		firstString(formatContract["validator"]) != "contextlattice.boundary.v1" ||
+		firstString(validation["status"]) != "passed" ||
+		!errorsPresent || !errorsTyped || len(errorsList) != 0 {
+		return false
+	}
+	return len(adapterContractFindings(generatedLifecycleReceiptContractID, payload)) == 0
+}
+
+func prepareLifecycleReceipt(payload map[string]any, sessionID string) map[string]any {
+	projectedValue, projectedOK := adapterProjectPublicValue(payload, sessionID, "", 0)
+	projected, mapOK := projectedValue.(map[string]any)
+	if projectedOK && mapOK {
+		projected["format_contract"] = lifecycleReceiptFormatContract()
+		if lifecycleReceiptContractValid(projected) {
+			return projected
+		}
+	}
+	command := adapterCompactPublicString(firstString(payload["command"], "lifecycle"), 120)
+	if command == "" {
+		command = "lifecycle"
+	}
+	project := adapterCompactPublicString(firstString(payload["project"], "contextlattice"), 240)
+	if project == "" {
+		project = "contextlattice"
+	}
+	fallback := map[string]any{
+		"ok":              false,
+		"schema_id":       generatedLifecycleReceiptContractID,
+		"command":         command,
+		"project":         project,
+		"status":          "failed",
+		"event":           map[string]any{},
+		"findings":        []any{map[string]any{"reason": "lifecycle_public_boundary_failure"}},
+		"format_contract": lifecycleReceiptFormatContract(),
+	}
+	if identity, valid := adapterPublicIdentity(sessionID, true); valid {
+		fallback["session_id"] = identity
+	} else {
+		fallback["identity_omitted"] = []any{"session_id"}
+	}
+	return fallback
+}
+
+func (c *cli) emitPreparedLifecycleReceipt(payload map[string]any, sessionID string, pretty bool) (bool, error) {
+	prepared := prepareLifecycleReceipt(payload, sessionID)
+	if !lifecycleReceiptContractValid(prepared) {
+		return false, errors.New("lifecycle public failure envelope did not validate")
+	}
+	if err := c.emit(prepared, pretty); err != nil {
+		return false, err
+	}
+	return prepared["ok"] == true, nil
 }
 
 func compactCheckpointReceipt(ok bool, project, sessionID, fileName, topicPath, content string, write, event map[string]any, findings []map[string]any) map[string]any {
@@ -4983,9 +6829,9 @@ func compactCheckpointReceipt(ok bool, project, sessionID, fileName, topicPath, 
 		"session_id": sessionID,
 		"status":     status,
 		"checkpoint": dropEmpty(map[string]any{
-			"write_id":      firstString(write["id"], write["write_id"], writeResult["id"]),
-			"file":          fileName,
-			"topic_path":    topicPath,
+			"write_id":      adapterCompactPublicString(firstString(write["id"], write["write_id"], writeResult["id"]), 240),
+			"file":          adapterCompactPublicString(fileName, 500),
+			"topic_path":    adapterCompactPublicString(topicPath, 500),
 			"content_bytes": len([]byte(content)),
 		}),
 		"event":           compactLifecycleEvent(event),
@@ -5006,8 +6852,8 @@ func compactCompletionReceipt(ok bool, project, sessionID, status, agentState, s
 		"session_id":      sessionID,
 		"status":          status,
 		"agent_state":     agentState,
-		"summary":         truncate(summary, 360),
-		"outcome_mode":    outcomeMode,
+		"summary":         adapterCompactPublicString(summary, 360),
+		"outcome_mode":    adapterCompactPublicString(outcomeMode, 120),
 		"event":           compactLifecycleEvent(event),
 		"findings":        findings,
 		"format_contract": lifecycleReceiptFormatContract(),
@@ -5018,7 +6864,7 @@ func compactCompletionReceipt(ok bool, project, sessionID, status, agentState, s
 	return receipt
 }
 
-func compactPreflightForAdapter(raw map[string]any) map[string]any {
+func compactPreflightForAdapter(raw map[string]any, sessionID, agentID string) map[string]any {
 	objectiveRuntime := asMap(raw["objective_runtime"])
 	objectiveValidation := asMap(asMap(objectiveRuntime["format_contract"])["validation"])
 	policy := asMap(raw["policy_context_package"])
@@ -5026,16 +6872,14 @@ func compactPreflightForAdapter(raw map[string]any) map[string]any {
 	contextPack := asMap(raw["context_pack"])
 	agentRuntime := asMap(raw["agent_runtime"])
 	session := asMap(agentRuntime["session"])
-	return map[string]any{
+	preflight := map[string]any{
 		"ok":                   raw["ok"],
 		"service":              raw["service"],
 		"agent":                raw["agent"],
-		"agent_id":             raw["agent_id"],
 		"project":              raw["project"],
 		"query":                raw["query"],
 		"topic_path":           raw["topic_path"],
 		"retrieval_mode":       raw["retrieval_mode"],
-		"session_id":           firstString(raw["session_id"], session["id"]),
 		"objective_state":      objectiveRuntime["objective_state"],
 		"next_action":          objectiveRuntime["next_action"],
 		"objective_validation": objectiveValidation["status"],
@@ -5044,13 +6888,28 @@ func compactPreflightForAdapter(raw map[string]any) map[string]any {
 		"mission_status":       raw["mission_context_status"],
 		"skills_index":         compactSkillsIndex(asMap(raw["skills_index"])),
 		"agent_runtime": map[string]any{
-			"session_id":          firstString(session["id"], raw["session_id"]),
 			"last_event_type":     session["last_event_type"],
 			"memory_contribution": agentRuntime["memory_contribution"],
 		},
 		"format_contracts": raw["format_contracts"],
 		"raw_omitted":      true,
 	}
+	omitted := []any{}
+	if identity, valid := adapterPublicIdentity(sessionID, true); valid {
+		preflight["session_id"] = identity
+		asMap(preflight["agent_runtime"])["session_id"] = identity
+	} else {
+		omitted = append(omitted, "session_id")
+	}
+	if identity, valid := adapterPublicIdentity(agentID, false); valid {
+		preflight["agent_id"] = identity
+	} else {
+		omitted = append(omitted, "agent_id")
+	}
+	if len(omitted) > 0 {
+		preflight["identity_omitted"] = omitted
+	}
+	return preflight
 }
 
 func compactSkillsIndex(payload map[string]any) map[string]any {
@@ -5271,19 +7130,58 @@ func (c *cli) adapterContextPack(args []string) error {
 		"native_cli_implementation": true,
 	})
 	addContextPackTokenBudgetArgs(request, parsed)
-	contextPack, _, err := c.requestJSON(context.Background(), http.MethodPost, "/memory/context-pack", request, parsed.float("timeout", 30))
+	emitFailure := func(reason string) error {
+		if err := c.emitPreparedAdapterResponse(
+			adapterFailureResponse("context-pack", profile.agent, profile.agentID, project, sessionID, reason),
+			parsed.bool("pretty"),
+		); err != nil {
+			return err
+		}
+		return errors.New("context-pack adapter boundary rejected response")
+	}
+	contextPack, _, err := c.requestJSONForValidation(context.Background(), http.MethodPost, "/memory/context-pack", request, parsed.float("timeout", 30))
 	if err != nil {
-		return err
+		return emitFailure("context_pack_request_failed")
 	}
-	qualitySample := contextPackQualitySample(contextPack)
+	if !adapterContextPackEnvelopeAttestationValid(contextPack) {
+		return emitFailure("context_pack_contract_rejected")
+	}
+	if !adapterPrepareContextPackRetrievalProofs(contextPack) {
+		return emitFailure("context_pack_proof_boundary_rejected")
+	}
+	if !adapterContextPackContractPassed(contextPack) {
+		return emitFailure("context_pack_contract_rejected")
+	}
+	publicContextPack, publicPackOK := adapterPublicContextPack(contextPack, sessionID, profile.agentID)
+	if !publicPackOK {
+		return emitFailure("context_pack_public_boundary_rejected")
+	}
+	rawQualitySample := contextPackQualitySample(contextPack)
+	qualitySample, qualityOK := validatedContextPackQualityStateReceipt(rawQualitySample)
+	if !qualityOK {
+		qualitySample = map[string]any{}
+	}
 	qualitySampleID := firstString(qualitySample["sample_id"])
-	recordContextPackQualityPending(project, sessionID, profile.query, profile.agentID, qualitySample)
-	findings := []map[string]any{}
-	if validation := contractValidationStatus(contextPack); validation != "" && validation != "passed" {
-		findings = append(findings, map[string]any{"reason": "context_pack_validation_not_passed", "validation": validation})
+	outcomeReport := map[string]any{}
+	if publicSessionID, valid := adapterPublicIdentity(sessionID, true); valid && qualitySampleID != "" {
+		outcomeReport = contextPackOutcomeReport(publicSessionID, qualitySampleID)
 	}
-	if containsProviderOverflowPayload(contextPack) {
-		findings = append(findings, map[string]any{"reason": "context_pack_provider_overflow_phrase_leaked"})
+	result := func(event map[string]any) map[string]any {
+		return map[string]any{
+			"profile":        profile.profile,
+			"topic_path":     request["topic_path"],
+			"query":          profile.query,
+			"retrieval_mode": profile.mode,
+			"agent_state":    request["agent_state"],
+			"ownership":      request["ownership"],
+			"context_pack":   publicContextPack,
+			"outcome_report": outcomeReport,
+			"event":          event,
+		}
+	}
+	preflight := adapterResponse("context-pack", true, profile.agent, profile.agentID, project, sessionID, result(map[string]any{"ok": true}), nil)
+	if !adapterResponseFits(preflight) {
+		return emitFailure("adapter_public_boundary_rejected")
 	}
 	event, _, eventErr := c.requestJSON(context.Background(), http.MethodPost, "/v1/agents/sessions/event", map[string]any{
 		"session_id": sessionID,
@@ -5296,7 +7194,7 @@ func (c *cli) adapterContextPack(args []string) error {
 			"adapter":                        "contextlattice-agent-adapter",
 			"topic_path":                     request["topic_path"],
 			"retrieval_mode":                 profile.mode,
-			"contract_ok":                    len(findings) == 0,
+			"contract_ok":                    true,
 			"go_native_cli":                  true,
 			"context_pack_ref":               firstString(contextPack["schema_id"], "context_pack_response.v1"),
 			"context_pack_quality_sample_id": qualitySampleID,
@@ -5304,21 +7202,15 @@ func (c *cli) adapterContextPack(args []string) error {
 			"ownership":                      request["ownership"],
 		},
 	}, parsed.float("timeout", 10))
-	if eventErr != nil {
-		findings = append(findings, map[string]any{"reason": "context_pack_event_failed", "detail": truncate(eventErr.Error(), 500)})
+	if eventErr != nil || event["ok"] != true {
+		return emitFailure("context_pack_event_failed")
 	}
-	ok := len(findings) == 0 && (len(event) == 0 || asBool(event["ok"]))
-	if err := c.emit(adapterResponse("context-pack", ok, profile.agent, profile.agentID, project, sessionID, map[string]any{
-		"profile":        profile.profile,
-		"topic_path":     request["topic_path"],
-		"query":          profile.query,
-		"retrieval_mode": profile.mode,
-		"agent_state":    request["agent_state"],
-		"ownership":      request["ownership"],
-		"context_pack":   contextPack,
-		"outcome_report": contextPackOutcomeReport(sessionID, qualitySampleID),
-		"event":          event,
-	}, findings), parsed.bool("pretty")); err != nil {
+	response := adapterResponse("context-pack", true, profile.agent, profile.agentID, project, sessionID, result(map[string]any{"ok": true}), nil)
+	if !adapterResponseFits(response) {
+		return emitFailure("adapter_public_boundary_rejected")
+	}
+	recordContextPackQualityPending(project, sessionID, profile.query, profile.agentID, qualitySample)
+	if err := c.emitPreparedAdapterResponse(response, parsed.bool("pretty")); err != nil {
 		return err
 	}
 	c.autoDrainAsyncInbox(sessionID, project, profile.agentID)
@@ -5360,7 +7252,27 @@ func (c *cli) adapterCheckpoint(args []string, compactDefault bool) error {
 		topicPath = "agent/checkpoints"
 	}
 	fileName := parsed.string("file", "notes/agent-adapters/checkpoint.md")
-	write, _, err := c.requestJSON(context.Background(), http.MethodPost, "/memory/write", map[string]any{
+	preflightReceipt := prepareLifecycleReceipt(compactCheckpointReceipt(
+		true, project, sessionID, fileName, topicPath, content,
+		map[string]any{"id": "writeback-receipt"},
+		map[string]any{"event": map[string]any{"id": "writeback-event", "type": "writeback.completed"}},
+		nil,
+	), sessionID)
+	if preflightReceipt["ok"] != true || !lifecycleReceiptContractValid(preflightReceipt) {
+		return errors.New("checkpoint lifecycle receipt preflight failed")
+	}
+	preflightResult := map[string]any{
+		"writeback": map[string]any{
+			"ok": true, "kind": "checkpoint", "project": project,
+			"file": fileName, "topic_path": topicPath,
+			"write_receipt": map[string]any{"ok": true},
+			"event":         map[string]any{"id": "writeback-event", "type": "writeback.completed"},
+		},
+	}
+	if err := adapterPreflightResponse("checkpoint", profile.agent, profile.agentID, project, sessionID, preflightResult); err != nil {
+		return err
+	}
+	write, _, writeErr := c.requestJSON(context.Background(), http.MethodPost, "/memory/write", map[string]any{
 		"projectName": project,
 		"fileName":    fileName,
 		"topicPath":   topicPath,
@@ -5373,45 +7285,64 @@ func (c *cli) adapterCheckpoint(args []string, compactDefault bool) error {
 		"worktree":    adapterOwnership(parsed)["worktree"],
 		"tags":        []any{"agent-writeback", "checkpoint", "universal-agent-adapter", "go-native-cli"},
 	}, parsed.float("timeout", 30))
-	if err != nil {
-		return err
+	findings := []map[string]any{}
+	if writeErr != nil {
+		findings = append(findings, map[string]any{"reason": "writeback_request_failed"})
+	} else if write["ok"] != true {
+		findings = append(findings, map[string]any{"reason": "writeback_rejected"})
 	}
-	event, _, eventErr := c.requestJSON(context.Background(), http.MethodPost, "/v1/agents/sessions/event", map[string]any{
-		"session_id": sessionID,
-		"agent":      profile.agent,
-		"agent_id":   profile.agentID,
-		"project":    project,
-		"type":       "writeback.completed",
-		"summary":    truncate(content, 240),
-		"metadata": map[string]any{
-			"adapter":       "contextlattice-agent-adapter",
-			"file":          fileName,
-			"topic_path":    topicPath,
-			"go_native_cli": true,
-			"agent_state":   buildAgentLifecycleState(parsed, profile, "working"),
-			"ownership":     adapterOwnership(parsed),
-		},
-	}, parsed.float("timeout", 10))
-	findings := errorFinding(eventErr)
-	ok := len(findings) == 0 && asBool(write["ok"])
+	event := map[string]any{}
+	if len(findings) == 0 {
+		var eventErr error
+		event, _, eventErr = c.requestJSON(context.Background(), http.MethodPost, "/v1/agents/sessions/event", map[string]any{
+			"session_id": sessionID,
+			"agent":      profile.agent,
+			"agent_id":   profile.agentID,
+			"project":    project,
+			"type":       "writeback.completed",
+			"summary":    truncate(content, 240),
+			"metadata": map[string]any{
+				"adapter":       "contextlattice-agent-adapter",
+				"file":          fileName,
+				"topic_path":    topicPath,
+				"go_native_cli": true,
+				"agent_state":   buildAgentLifecycleState(parsed, profile, "working"),
+				"ownership":     adapterOwnership(parsed),
+			},
+		}, parsed.float("timeout", 10))
+		if eventErr != nil || event["ok"] != true {
+			findings = append(findings, map[string]any{"reason": "writeback_event_failed"})
+		}
+	}
+	ok := len(findings) == 0 && write["ok"] == true && event["ok"] == true
 	fullResponse := adapterResponse("checkpoint", ok, profile.agent, profile.agentID, project, sessionID, map[string]any{
 		"writeback": map[string]any{
-			"ok":         asBool(write["ok"]),
-			"kind":       "checkpoint",
-			"project":    project,
-			"file":       fileName,
-			"topic_path": topicPath,
-			"session_id": sessionID,
-			"write":      write,
-			"event":      event,
+			"ok":            write["ok"] == true,
+			"kind":          "checkpoint",
+			"project":       project,
+			"file":          fileName,
+			"topic_path":    topicPath,
+			"write_receipt": adapterCompactServerReceipt(write),
+			"event":         compactLifecycleEvent(event),
 		},
 	}, findings)
 	output := fullResponse
 	if compactDefault && !parsed.bool("full") {
 		output = compactCheckpointReceipt(ok, project, sessionID, fileName, topicPath, content, write, event, findings)
 	}
-	if err := c.emit(output, parsed.bool("pretty")); err != nil {
+	if compactDefault && !parsed.bool("full") {
+		emittedOK, err := c.emitPreparedLifecycleReceipt(output, sessionID, parsed.bool("pretty"))
+		if err != nil {
+			return err
+		}
+		if !ok || !emittedOK {
+			return errors.New("checkpoint writeback did not complete")
+		}
+	} else if err := c.emitPreparedAdapterResponse(fullResponse, parsed.bool("pretty")); err != nil {
 		return err
+	}
+	if !ok {
+		return errors.New("checkpoint writeback did not complete")
 	}
 	c.autoDrainAsyncInbox(sessionID, project, profile.agentID)
 	return nil
@@ -5447,6 +7378,15 @@ func (c *cli) adapterHandoff(args []string) error {
 		"ownership":   adapterOwnership(parsed),
 		"created_at":  time.Now().UTC().Format(time.RFC3339),
 	}
+	if err := adapterPreflightResponse(
+		"handoff", profile.agent, profile.agentID, project, sessionID,
+		map[string]any{
+			"handoff": handoff,
+			"event":   map[string]any{"id": "handoff-event", "type": "handoff.created"},
+		},
+	); err != nil {
+		return err
+	}
 	event, _, eventErr := c.requestJSON(context.Background(), http.MethodPost, "/v1/agents/sessions/event", map[string]any{
 		"session_id": sessionID,
 		"agent":      profile.agent,
@@ -5463,13 +7403,19 @@ func (c *cli) adapterHandoff(args []string) error {
 			"ownership":     handoff["ownership"],
 		},
 	}, parsed.float("timeout", 10))
-	findings := errorFinding(eventErr)
-	ok := len(findings) == 0 && (len(event) == 0 || asBool(event["ok"]))
-	if err := c.emit(adapterResponse("handoff", ok, profile.agent, profile.agentID, project, sessionID, map[string]any{
+	findings := []map[string]any{}
+	if eventErr != nil {
+		findings = append(findings, map[string]any{"reason": "handoff_event_failed"})
+	}
+	ok := len(findings) == 0 && event["ok"] == true
+	if err := c.emitAdapterResponse("handoff", ok, profile.agent, profile.agentID, project, sessionID, map[string]any{
 		"handoff": handoff,
-		"event":   event,
-	}, findings), parsed.bool("pretty")); err != nil {
+		"event":   compactLifecycleEvent(event),
+	}, findings, parsed.bool("pretty")); err != nil {
 		return err
+	}
+	if !ok {
+		return errors.New("handoff event did not complete")
 	}
 	c.autoDrainAsyncInbox(sessionID, project, profile.agentID)
 	return nil
@@ -5505,6 +7451,16 @@ func (c *cli) adapterState(args []string) error {
 	}
 	metadata := mergeAdapterMetadata(parsed, profile, firstString(state["state"]))
 	eventType := "agent.state." + firstString(state["state"])
+	if err := adapterPreflightResponse(
+		"state", profile.agent, profile.agentID, project, sessionID,
+		map[string]any{
+			"agent_state": state,
+			"ownership":   adapterOwnership(parsed),
+			"event":       map[string]any{"id": "state-event", "type": eventType},
+		},
+	); err != nil {
+		return err
+	}
 	event, _, eventErr := c.requestJSON(context.Background(), http.MethodPost, "/v1/agents/sessions/event", map[string]any{
 		"session_id": sessionID,
 		"agent":      profile.agent,
@@ -5515,14 +7471,20 @@ func (c *cli) adapterState(args []string) error {
 		"status":     sessionStatusForAgentState(firstString(state["state"])),
 		"metadata":   metadata,
 	}, parsed.float("timeout", 10))
-	findings := errorFinding(eventErr)
-	ok := len(findings) == 0 && asBool(event["ok"])
-	if err := c.emit(adapterResponse("state", ok, profile.agent, profile.agentID, project, sessionID, map[string]any{
+	findings := []map[string]any{}
+	if eventErr != nil {
+		findings = append(findings, map[string]any{"reason": "state_event_failed"})
+	}
+	ok := len(findings) == 0 && event["ok"] == true
+	if err := c.emitAdapterResponse("state", ok, profile.agent, profile.agentID, project, sessionID, map[string]any{
 		"agent_state": state,
 		"ownership":   adapterOwnership(parsed),
-		"event":       event,
-	}, findings), parsed.bool("pretty")); err != nil {
+		"event":       compactLifecycleEvent(event),
+	}, findings, parsed.bool("pretty")); err != nil {
 		return err
+	}
+	if !ok {
+		return errors.New("agent state event did not complete")
 	}
 	c.autoDrainAsyncInbox(sessionID, project, profile.agentID)
 	return nil
@@ -5544,6 +7506,12 @@ func (c *cli) adapterEvent(args []string) error {
 		return err
 	}
 	summary := parsed.string("summary", strings.Join(parsed.pos[1:], " "))
+	if err := adapterPreflightResponse(
+		"event", profile.agent, profile.agentID, project, sessionID,
+		map[string]any{"event": map[string]any{"id": "session-event", "type": parsed.pos[0]}},
+	); err != nil {
+		return err
+	}
 	event, _, eventErr := c.requestJSON(context.Background(), http.MethodPost, "/v1/agents/sessions/event", dropEmpty(map[string]any{
 		"id":         parsed.string("event_id", ""),
 		"session_id": sessionID,
@@ -5555,10 +7523,16 @@ func (c *cli) adapterEvent(args []string) error {
 		"status":     firstNonEmpty(parsed.string("status", ""), sessionStatusForAgentState(parsed.string("state", "working"))),
 		"metadata":   mergeAdapterMetadata(parsed, profile, parsed.string("state", "working")),
 	}), parsed.float("timeout", 10))
-	findings := errorFinding(eventErr)
-	ok := len(findings) == 0 && asBool(event["ok"])
-	if err := c.emit(adapterResponse("event", ok, profile.agent, profile.agentID, project, sessionID, map[string]any{"event": event}, findings), parsed.bool("pretty")); err != nil {
+	findings := []map[string]any{}
+	if eventErr != nil {
+		findings = append(findings, map[string]any{"reason": "agent_event_failed"})
+	}
+	ok := len(findings) == 0 && event["ok"] == true
+	if err := c.emitAdapterResponse("event", ok, profile.agent, profile.agentID, project, sessionID, map[string]any{"event": compactLifecycleEvent(event)}, findings, parsed.bool("pretty")); err != nil {
 		return err
+	}
+	if !ok {
+		return errors.New("agent event did not complete")
 	}
 	c.autoDrainAsyncInbox(sessionID, project, profile.agentID)
 	return nil
@@ -5729,26 +7703,170 @@ func contextPackOutcomeRequested(parsed parsedArgs) bool {
 }
 
 func compactOutcomeMetadata(outcome map[string]any) map[string]any {
-	return dropEmpty(map[string]any{
-		"schema_id":                  firstString(outcome["schema_id"], "contextlattice_context_pack_outcome.v1"),
-		"outcome_id":                 outcome["outcome_id"],
-		"sample_id":                  outcome["sample_id"],
-		"task_class":                 outcome["task_class"],
-		"first_pass_success":         outcome["first_pass_success"],
-		"repair_required":            outcome["repair_required"],
-		"retry_count":                outcome["retry_count"],
-		"observed_followup_tokens":   outcome["observed_followup_tokens"],
-		"provider_prompt_tokens":     outcome["provider_prompt_tokens"],
-		"provider_completion_tokens": outcome["provider_completion_tokens"],
-		"provider_total_tokens":      outcome["provider_total_tokens"],
-		"outcome_source":             outcome["outcome_source"],
-		"policy_id":                  outcome["policy_id"],
-		"policy_arm":                 outcome["policy_arm"],
-		"policy_phase":               outcome["policy_phase"],
-		"utility":                    outcome["utility"],
-		"economics":                  outcome["economics"],
-		"pairing":                    outcome["pairing"],
+	compact := map[string]any{"schema_id": "contextlattice_context_pack_outcome.v1"}
+	for _, field := range []string{"outcome_id", "sample_id"} {
+		if text := adapterCompactPublicString(firstString(outcome[field]), 240); text != "" {
+			compact[field] = text
+		}
+	}
+	for _, field := range []string{"task_class", "outcome_source", "policy_id", "policy_arm", "policy_phase"} {
+		if text := adapterCompactPublicString(firstString(outcome[field]), 120); text != "" {
+			compact[field] = text
+		}
+	}
+	for _, field := range []string{"first_pass_success", "repair_required"} {
+		if value, ok := outcome[field].(bool); ok {
+			compact[field] = value
+		}
+	}
+	for _, field := range []string{"retry_count", "observed_followup_tokens", "provider_prompt_tokens", "provider_completion_tokens", "provider_total_tokens"} {
+		if value, ok := adapterExactJSONInt(outcome[field]); ok && value >= 0 {
+			compact[field] = value
+		}
+	}
+	if utility := compactOutcomeUtility(asMap(outcome["utility"])); len(utility) > 0 {
+		compact["utility"] = utility
+	}
+	if economics := compactOutcomeEconomics(asMap(outcome["economics"])); len(economics) > 0 {
+		compact["economics"] = economics
+	}
+	if pairing := compactOutcomePairing(asMap(outcome["pairing"])); len(pairing) > 0 {
+		compact["pairing"] = pairing
+	}
+	return compact
+}
+
+func compactOutcomeUtility(value map[string]any) map[string]any {
+	out := map[string]any{}
+	if number, ok := adapterFiniteOutcomeNumber(value["value"]); ok && math.Abs(number) <= 1_000_000 {
+		out["value"] = number
+	}
+	for _, field := range []string{"unit", "verification_event_id", "verifier_kind", "verifier_id"} {
+		if text := adapterCompactPublicString(firstString(value[field]), 160); text != "" {
+			out[field] = text
+		}
+	}
+	if digest := strings.TrimSpace(firstString(value["evidence_digest"])); adapterPublicSHA256Pattern.MatchString(digest) {
+		out["evidence_digest"] = digest
+	}
+	if verified, ok := value["verification_passed"].(bool); ok {
+		out["verification_passed"] = verified
+	}
+	return out
+}
+
+func compactOutcomeEconomics(value map[string]any) map[string]any {
+	out := map[string]any{}
+	for _, field := range []string{"latency_ms", "cost_microusd", "tool_calls", "failures"} {
+		if number, ok := adapterExactJSONInt(value[field]); ok && number >= 0 {
+			out[field] = number
+		}
+	}
+	return out
+}
+
+func compactOutcomePairing(value map[string]any) map[string]any {
+	out := map[string]any{}
+	for _, field := range []string{"pair_id", "matched_control_outcome_id", "experiment_id", "model", "runner", "harness", "context_reconstruction_contract", "arm", "matching_method"} {
+		if text := adapterCompactPublicString(firstString(value[field]), 200); text != "" {
+			out[field] = text
+		}
+	}
+	for _, field := range []string{"task_match_digest", "assignment_digest"} {
+		if digest := strings.TrimSpace(firstString(value[field])); adapterPublicSHA256Pattern.MatchString(digest) {
+			out[field] = digest
+		}
+	}
+	if leakageFree, ok := value["leakage_free"].(bool); ok {
+		out["leakage_free"] = leakageFree
+	}
+	return out
+}
+
+func adapterFiniteOutcomeNumber(value any) (float64, bool) {
+	var number float64
+	switch typed := value.(type) {
+	case float64:
+		number = typed
+	case float32:
+		number = float64(typed)
+	case int:
+		number = float64(typed)
+	case int8:
+		number = float64(typed)
+	case int16:
+		number = float64(typed)
+	case int32:
+		number = float64(typed)
+	case int64:
+		number = float64(typed)
+	case uint:
+		number = float64(typed)
+	case uint8:
+		number = float64(typed)
+	case uint16:
+		number = float64(typed)
+	case uint32:
+		number = float64(typed)
+	case uint64:
+		if typed > 1<<53 {
+			return 0, false
+		}
+		number = float64(typed)
+	case json.Number:
+		parsed, err := strconv.ParseFloat(typed.String(), 64)
+		if err != nil {
+			return 0, false
+		}
+		number = parsed
+	default:
+		return 0, false
+	}
+	return number, !math.IsNaN(number) && !math.IsInf(number, 0)
+}
+
+func compactOutcomeTelemetry(telemetry map[string]any) map[string]any {
+	compact := dropEmpty(map[string]any{
+		"status": adapterCompactPublicString(firstString(telemetry["status"]), 120),
 	})
+	for _, field := range []string{"outcome_sample_count", "observed_provider_total_tokens", "observed_followup_tokens"} {
+		if value, ok := adapterExactJSONInt(telemetry[field]); ok && value >= 0 {
+			compact[field] = value
+		}
+	}
+	return compact
+}
+
+func validatedContextPackOutcomeReceipt(value map[string]any, expectedSampleID string) (map[string]any, bool) {
+	if firstString(value["schema_id"]) != "contextlattice_context_pack_outcome.v1" {
+		return map[string]any{}, false
+	}
+	compact := compactOutcomeMetadata(value)
+	outcomeID, outcomeOK := value["outcome_id"].(string)
+	sampleID, sampleOK := value["sample_id"].(string)
+	outcomeID = strings.TrimSpace(outcomeID)
+	sampleID = strings.TrimSpace(sampleID)
+	if !outcomeOK || firstString(compact["outcome_id"]) != outcomeID || !adapterPublicOutcomeID(outcomeID) ||
+		!sampleOK || sampleID != strings.TrimSpace(expectedSampleID) || !adapterPublicQualitySampleID(sampleID) ||
+		firstString(compact["sample_id"]) != sampleID {
+		return map[string]any{}, false
+	}
+	return compact, true
+}
+
+func adapterPublicOutcomeID(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" || len([]byte(value)) > 240 || !utf8.ValidString(value) {
+		return false
+	}
+	for _, char := range value {
+		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') || strings.ContainsRune("._:@-", char) {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func (c *cli) postContextPackOutcome(parsed parsedArgs, project, sessionID string, profile adapterProfile, source string) (map[string]any, map[string]any, []map[string]any) {
@@ -5757,13 +7875,32 @@ func (c *cli) postContextPackOutcome(parsed parsedArgs, project, sessionID strin
 		return map[string]any{}, map[string]any{}, errorFinding(err)
 	}
 	raw, _, postErr := c.requestJSON(context.Background(), http.MethodPost, "/telemetry/context-pack-quality/outcome", payload, parsed.float("timeout", 10))
-	findings := errorFinding(postErr)
+	findings := []map[string]any{}
+	if postErr != nil {
+		findings = append(findings, map[string]any{"reason": "outcome_report_request_failed"})
+	} else if raw["ok"] != true {
+		findings = append(findings, map[string]any{"reason": "outcome_report_rejected"})
+	}
 	event := map[string]any{}
 	outcome := asMap(raw["outcome"])
-	if postErr == nil {
-		markContextPackQualityReported(project, sessionID, outcome)
+	compactOutcome, outcomeValid := validatedContextPackOutcomeReceipt(outcome, firstString(payload["sample_id"]))
+	compactTelemetry := compactOutcomeTelemetry(asMap(raw["telemetry"]))
+	if len(findings) == 0 && !outcomeValid {
+		findings = append(findings, map[string]any{"reason": "outcome_receipt_invalid"})
 	}
-	if postErr == nil && sessionID != "" {
+	if len(findings) == 0 {
+		command := "outcome"
+		if source == "adapter_complete" {
+			command = "complete"
+		}
+		if err := adapterPreflightResponse(command, profile.agent, profile.agentID, project, sessionID, map[string]any{
+			"outcome": compactOutcome, "telemetry": compactTelemetry,
+			"event": map[string]any{"id": "outcome-event", "type": "context_pack.outcome_reported"},
+		}); err != nil {
+			findings = append(findings, map[string]any{"reason": "outcome_public_boundary_failure"})
+		}
+	}
+	if len(findings) == 0 && sessionID != "" {
 		var postEventErr error
 		event, _, postEventErr = c.requestJSON(context.Background(), http.MethodPost, "/v1/agents/sessions/event", map[string]any{
 			"session_id": sessionID,
@@ -5775,10 +7912,21 @@ func (c *cli) postContextPackOutcome(parsed parsedArgs, project, sessionID strin
 			"metadata": map[string]any{
 				"adapter":       "contextlattice-agent-adapter",
 				"go_native_cli": true,
-				"outcome":       compactOutcomeMetadata(outcome),
+				"outcome":       compactOutcome,
 			},
 		}, parsed.float("timeout", 10))
-		findings = append(findings, errorFinding(postEventErr)...)
+		if postEventErr != nil || event["ok"] != true {
+			findings = append(findings, map[string]any{"reason": "outcome_event_failed"})
+		}
+	}
+	if len(findings) == 0 {
+		safeRaw := make(map[string]any, len(raw))
+		for key, value := range raw {
+			safeRaw[key] = value
+		}
+		raw = safeRaw
+		raw["outcome"] = compactOutcome
+		markContextPackQualityReported(project, sessionID, compactOutcome)
 	}
 	return raw, event, findings
 }
@@ -5799,16 +7947,25 @@ func (c *cli) adapterOutcomeCommand(args []string, command string) error {
 	project := parsed.string("project", "contextlattice")
 	profile := resolveAdapterProfile(parsed)
 	sessionID := resolveOutcomeSessionID(parsed, project)
-	raw, event, findings := c.postContextPackOutcome(parsed, project, sessionID, profile, "adapter_outcome")
-	ok := len(findings) == 0 && asBool(raw["ok"])
-	if err := c.emit(adapterResponse(command, ok, profile.agent, profile.agentID, project, sessionID, map[string]any{
-		"outcome":   raw["outcome"],
-		"telemetry": raw["telemetry"],
-		"event":     event,
-	}, findings), parsed.bool("pretty")); err != nil {
+	if err := adapterPreflightResponse(
+		command, profile.agent, profile.agentID, project, sessionID,
+		map[string]any{
+			"outcome":   map[string]any{"schema_id": "contextlattice_context_pack_outcome.v1"},
+			"telemetry": map[string]any{"outcome_sample_count": 1},
+			"event":     map[string]any{"id": "outcome-event", "type": "context_pack.outcome_reported"},
+		},
+	); err != nil {
 		return err
 	}
-	c.autoDrainAsyncInbox(sessionID, project, profile.agentID)
+	raw, event, findings := c.postContextPackOutcome(parsed, project, sessionID, profile, "adapter_outcome")
+	ok := len(findings) == 0 && raw["ok"] == true
+	if err := c.emitAdapterResponse(command, ok, profile.agent, profile.agentID, project, sessionID, map[string]any{
+		"outcome":   compactOutcomeMetadata(asMap(raw["outcome"])),
+		"telemetry": compactOutcomeTelemetry(asMap(raw["telemetry"])),
+		"event":     compactLifecycleEvent(event),
+	}, findings, parsed.bool("pretty")); err != nil {
+		return err
+	}
 	if !ok {
 		if len(findings) > 0 {
 			if detail, _ := findings[0]["detail"].(string); strings.TrimSpace(detail) != "" {
@@ -5817,6 +7974,7 @@ func (c *cli) adapterOutcomeCommand(args []string, command string) error {
 		}
 		return errors.New("context pack outcome report failed")
 	}
+	c.autoDrainAsyncInbox(sessionID, project, profile.agentID)
 	return nil
 }
 
@@ -5869,11 +8027,6 @@ func (c *cli) adapterComplete(args []string, compactDefault bool) error {
 	} else if parsed.bool("no_outcome") {
 		outcomeMode = "explicitly_disabled"
 	}
-	if outcomeRequested {
-		var outcomeFindings []map[string]any
-		outcomeResult, outcomeEvent, outcomeFindings = c.postContextPackOutcome(parsed, project, sessionID, profile, "adapter_complete")
-		findings = append(findings, outcomeFindings...)
-	}
 	eventType := "session.completed"
 	eventStatus := "completed"
 	state := "done"
@@ -5881,6 +8034,72 @@ func (c *cli) adapterComplete(args []string, compactDefault bool) error {
 		eventType = "session.failed"
 		eventStatus = "failed"
 		state = "blocked"
+	}
+	preflightCompletion := prepareLifecycleReceipt(compactCompletionReceipt(
+		true, project, sessionID, eventStatus, state, summary, outcomeMode,
+		map[string]any{}, map[string]any{"event": map[string]any{"id": "completion-event", "type": eventType}}, nil,
+	), sessionID)
+	if preflightCompletion["ok"] != true || !lifecycleReceiptContractValid(preflightCompletion) {
+		return errors.New("completion lifecycle receipt preflight failed")
+	}
+	if outcomeRequested {
+		if err := adapterPreflightResponse(
+			"complete", profile.agent, profile.agentID, project, sessionID,
+			map[string]any{
+				"event":         map[string]any{"id": "completion-event", "type": "session.completed"},
+				"outcome":       map[string]any{"schema_id": "contextlattice_context_pack_outcome.v1"},
+				"outcome_event": map[string]any{"id": "outcome-event", "type": "context_pack.outcome_reported"},
+				"outcome_mode":  outcomeMode,
+			},
+		); err != nil {
+			return err
+		}
+		var outcomeFindings []map[string]any
+		outcomeResult, outcomeEvent, outcomeFindings = c.postContextPackOutcome(parsed, project, sessionID, profile, "adapter_complete")
+		findings = append(findings, outcomeFindings...)
+		if len(findings) > 0 || outcomeResult["ok"] != true || (sessionID != "" && outcomeEvent["ok"] != true) {
+			fullResponse := adapterResponse("complete", false, profile.agent, profile.agentID, project, sessionID, map[string]any{
+				"event": map[string]any{}, "outcome": compactOutcomeMetadata(asMap(outcomeResult["outcome"])),
+				"outcome_event": compactLifecycleEvent(outcomeEvent), "outcome_mode": outcomeMode,
+			}, findings)
+			if compactDefault && !parsed.bool("full") {
+				receipt := compactCompletionReceipt(false, project, sessionID, "failed", "blocked", summary, outcomeMode, asMap(outcomeResult["outcome"]), map[string]any{}, findings)
+				if _, err := c.emitPreparedLifecycleReceipt(receipt, sessionID, parsed.bool("pretty")); err != nil {
+					return err
+				}
+			} else if err := c.emitPreparedAdapterResponse(fullResponse, parsed.bool("pretty")); err != nil {
+				return err
+			}
+			return errors.New("context pack outcome report did not complete")
+		}
+		preflightCompletion = prepareLifecycleReceipt(compactCompletionReceipt(
+			true, project, sessionID, eventStatus, state, summary, outcomeMode,
+			asMap(outcomeResult["outcome"]), map[string]any{"event": map[string]any{"id": "completion-event", "type": eventType}}, nil,
+		), sessionID)
+		if preflightCompletion["ok"] != true || !lifecycleReceiptContractValid(preflightCompletion) {
+			return errors.New("completion lifecycle receipt with outcome did not validate")
+		}
+		if err := adapterPreflightResponse(
+			"complete", profile.agent, profile.agentID, project, sessionID,
+			map[string]any{
+				"event":         map[string]any{"id": "completion-event", "type": eventType},
+				"outcome":       compactOutcomeMetadata(asMap(outcomeResult["outcome"])),
+				"outcome_event": compactLifecycleEvent(outcomeEvent), "outcome_mode": outcomeMode,
+			},
+		); err != nil {
+			return err
+		}
+	}
+	if !outcomeRequested {
+		if err := adapterPreflightResponse(
+			"complete", profile.agent, profile.agentID, project, sessionID,
+			map[string]any{
+				"event":        map[string]any{"id": "completion-event", "type": eventType},
+				"outcome_mode": outcomeMode,
+			},
+		); err != nil {
+			return err
+		}
 	}
 	event, _, eventErr := c.requestJSON(context.Background(), http.MethodPost, "/v1/agents/sessions/event", map[string]any{
 		"session_id": sessionID,
@@ -5892,15 +8111,31 @@ func (c *cli) adapterComplete(args []string, compactDefault bool) error {
 		"status":     eventStatus,
 		"metadata":   mergeAdapterMetadata(parsed, profile, state),
 	}, parsed.float("timeout", 10))
-	findings = append(findings, errorFinding(eventErr)...)
-	ok := len(findings) == 0 && asBool(event["ok"])
-	fullResponse := adapterResponse("complete", ok, profile.agent, profile.agentID, project, sessionID, map[string]any{"event": event, "outcome": outcomeResult["outcome"], "outcome_event": outcomeEvent, "outcome_mode": outcomeMode}, findings)
+	if eventErr != nil {
+		findings = append(findings, map[string]any{"reason": "completion_event_failed"})
+	}
+	ok := len(findings) == 0 && event["ok"] == true
+	fullResponse := adapterResponse("complete", ok, profile.agent, profile.agentID, project, sessionID, map[string]any{
+		"event": compactLifecycleEvent(event), "outcome": compactOutcomeMetadata(asMap(outcomeResult["outcome"])),
+		"outcome_event": compactLifecycleEvent(outcomeEvent), "outcome_mode": outcomeMode,
+	}, findings)
 	output := fullResponse
 	if compactDefault && !parsed.bool("full") {
 		output = compactCompletionReceipt(ok, project, sessionID, eventStatus, state, summary, outcomeMode, asMap(outcomeResult["outcome"]), event, findings)
 	}
-	if err := c.emit(output, parsed.bool("pretty")); err != nil {
+	if compactDefault && !parsed.bool("full") {
+		emittedOK, err := c.emitPreparedLifecycleReceipt(output, sessionID, parsed.bool("pretty"))
+		if err != nil {
+			return err
+		}
+		if !ok || !emittedOK {
+			return errors.New("session completion did not complete")
+		}
+	} else if err := c.emitPreparedAdapterResponse(fullResponse, parsed.bool("pretty")); err != nil {
 		return err
+	}
+	if !ok {
+		return errors.New("session completion did not complete")
 	}
 	c.autoDrainAsyncInbox(sessionID, project, profile.agentID)
 	return nil
@@ -6684,10 +8919,24 @@ func (c *cli) cmdMemoryGraphRepair(args []string) error {
 
 func (c *cli) cmdMemoryGraphEfficacy(args []string) error {
 	parsed := parseArgs(args, mergeStringFlags(commonStringFlags(), map[string]string{
-		"max-cases": "max_cases", "graph-max-cases": "graph_max_cases", "min-hits": "min_hits", "k": "k",
+		"k": "k", "topic-prefix": "topic_prefix",
 	}), mergeBoolFlags(commonBoolFlags(), map[string]string{"refresh-cases": "refresh_cases", "include-retrieval-debug": "include_retrieval_debug"}))
 	if parsed.bool("help") {
-		return c.emitUsage("contextlattice_memory_graph_efficacy [--refresh-cases --project <project>] [--max-cases 12] [--graph-max-cases 3] [--pretty]")
+		return c.emitUsage("contextlattice_memory_graph_efficacy [--refresh-cases --project <project>] [--topic-prefix <prefix>] [--timeout seconds] [--pretty]\nUses the frozen 200-development/100-holdout graph corpus evaluator; refreshes always use the server-owned graph corpus receipt. Omitted or zero --timeout has no client deadline. Positive --timeout opts into a client deadline.")
+	}
+	if err := rejectDuplicateCLIFlag(args, "topic-prefix"); err != nil {
+		return err
+	}
+	if len(parsed.pos) > 0 {
+		return fmt.Errorf("unknown or unexpected arguments: %s", strings.Join(parsed.pos, " "))
+	}
+	topicPrefix, err := strictGraphTopicPrefix(parsed)
+	if err != nil {
+		return err
+	}
+	clientTimeout, err := graphEvaluationClientTimeout(parsed)
+	if err != nil {
+		return err
 	}
 	c.applyBaseURL(parsed)
 	project := parsed.string("project", envString("CONTEXTLATTICE_PROJECT", ""))
@@ -6697,33 +8946,76 @@ func (c *cli) cmdMemoryGraphEfficacy(args []string) error {
 			return errors.New("--refresh-cases requires --project")
 		}
 		refreshPayload := map[string]any{
-			"project": project, "max_cases": parsed.int("max_cases", 12), "graph_max_cases": parsed.int("graph_max_cases", 3),
-			"min_hits": parsed.int("min_hits", 1), "include_graph_cases": true,
+			"graph_corpus": true, "project": project, "topic_prefix": topicPrefix,
+			"seed": "graph-v1", "development_cases": graphEfficacyDevelopmentCases, "holdout_cases": graphEfficacyHoldoutCases,
 		}
-		var err error
-		refresh, _, err = c.requestJSON(context.Background(), http.MethodPost, "/memory/recall/eval-cases/refresh", refreshPayload, parsed.float("timeout", 60))
+		refresh, _, err = c.requestJSON(context.Background(), http.MethodPost, "/memory/recall/eval-cases/refresh", refreshPayload, clientTimeout)
 		if err != nil {
 			return err
 		}
-		if explicitFalse(refresh["ok"]) {
-			return errors.New("graph-aware recall case refresh failed")
+		var bindingErr error
+		refreshBinding, bindingErr := graphCorpusRefreshBinding(refresh)
+		if bindingErr != nil {
+			if explicitFalse(refresh["ok"]) {
+				return fmt.Errorf("graph corpus refresh failed closed: %w", bindingErr)
+			}
+			return bindingErr
 		}
-		if asInt(asMap(refresh["savedCaseSet"])["graphCaseCount"]) < 1 {
-			return errors.New("graph-aware recall case refresh produced no graph holdouts")
+		// Carry the server-owned receipt into the evaluation request so a route
+		// or proxy cannot silently swap the canonical corpus between calls.
+		evalPayload := map[string]any{
+			"mode": "graph", "graph_corpus": true, "split": "holdout", "project": project,
+			"topic_prefix": topicPrefix, "include_retrieval_debug": parsed.bool("include_retrieval_debug"),
+			"graph_corpus_binding": refreshBinding,
 		}
+		if parsed.has("k") {
+			evalPayload["k"] = parsed.int("k", 5)
+		}
+		evaluation, _, err := c.requestJSON(context.Background(), http.MethodPost, "/memory/recall/evaluate/saved", evalPayload, clientTimeout)
+		if err != nil {
+			return err
+		}
+		evaluationBinding, bindingErr := graphCorpusEvaluationBinding(evaluation)
+		if bindingErr != nil {
+			return bindingErr
+		}
+		if bindingErr := graphCorpusBindingsEqual(refreshBinding, evaluationBinding); bindingErr != nil {
+			return fmt.Errorf("graph corpus refresh/evaluation binding mismatch: %w", bindingErr)
+		}
+		metrics := asMap(evaluation["metrics"])
+		graph := asMap(metrics["graphContribution"])
+		status := firstString(metrics["graphEfficacyStatus"], graph["status"], "unmeasured")
+		ok := graphEfficacyGatesPass(evaluation, metrics, graph)
+		result := map[string]any{
+			"ok": ok, "schema_id": "memory_graph_efficacy_cli.v1", "project": project,
+			"status": status, "refresh": refresh, "evaluation": evaluation,
+		}
+		if err := c.emit(result, !parsed.bool("raw")); err != nil {
+			return err
+		}
+		if !ok {
+			return fmt.Errorf("memory graph efficacy gate %s", status)
+		}
+		return nil
 	}
-	evalPayload := map[string]any{"include_retrieval_debug": parsed.bool("include_retrieval_debug")}
+	evalPayload := map[string]any{
+		"mode": "graph", "graph_corpus": true, "split": "holdout", "project": project,
+		"topic_prefix": topicPrefix, "include_retrieval_debug": parsed.bool("include_retrieval_debug"),
+	}
 	if parsed.has("k") {
 		evalPayload["k"] = parsed.int("k", 5)
 	}
-	evaluation, _, err := c.requestJSON(context.Background(), http.MethodPost, "/memory/recall/evaluate/saved", evalPayload, parsed.float("timeout", 180))
+	evaluation, _, err := c.requestJSON(context.Background(), http.MethodPost, "/memory/recall/evaluate/saved", evalPayload, clientTimeout)
 	if err != nil {
+		return err
+	}
+	if _, err := graphCorpusEvaluationBinding(evaluation); err != nil {
 		return err
 	}
 	metrics := asMap(evaluation["metrics"])
 	graph := asMap(metrics["graphContribution"])
 	status := firstString(metrics["graphEfficacyStatus"], graph["status"], "unmeasured")
-	ok := asBool(metrics["directPassed"]) && status == "passed"
+	ok := graphEfficacyGatesPass(evaluation, metrics, graph)
 	result := map[string]any{
 		"ok": ok, "schema_id": "memory_graph_efficacy_cli.v1", "project": project,
 		"status": status, "refresh": refresh, "evaluation": evaluation,
@@ -6733,6 +9025,117 @@ func (c *cli) cmdMemoryGraphEfficacy(args []string) error {
 	}
 	if !ok {
 		return fmt.Errorf("memory graph efficacy gate %s", status)
+	}
+	return nil
+}
+
+func (c *cli) cmdMemoryGraphCorpus(args []string) error {
+	parsed := parseArgs(args, mergeStringFlags(commonStringFlags(), map[string]string{
+		"seed": "seed", "topic-prefix": "topic_prefix",
+	}), mergeBoolFlags(commonBoolFlags(), map[string]string{"evaluate": "evaluate"}))
+	if parsed.bool("help") {
+		return c.emitUsage("contextlattice_memory_graph_corpus [--evaluate] [--project <scope>] [--topic-prefix <prefix>] [--seed graph-v1] [--timeout seconds] [--pretty]\nAlways refreshes the closed corpus before returning its health receipt. Omitted or zero timeout has no client deadline.")
+	}
+	if err := rejectDuplicateCLIFlag(args, "topic-prefix"); err != nil {
+		return err
+	}
+	if len(parsed.pos) > 0 {
+		return fmt.Errorf("unknown or unexpected arguments: %s", strings.Join(parsed.pos, " "))
+	}
+	topicPrefix, err := strictGraphTopicPrefix(parsed)
+	if err != nil {
+		return err
+	}
+	clientTimeout, err := graphEvaluationClientTimeout(parsed)
+	if err != nil {
+		return err
+	}
+	c.applyBaseURL(parsed)
+	project := parsed.string("project", envString("CONTEXTLATTICE_PROJECT", ""))
+	refreshPayload := map[string]any{
+		"graph_corpus": true, "project": project, "topic_prefix": topicPrefix,
+		"seed": parsed.string("seed", "graph-v1"), "development_cases": 200,
+		"holdout_cases": 100,
+	}
+	refresh, _, err := c.requestJSON(context.Background(), http.MethodPost, "/memory/recall/eval-cases/refresh", refreshPayload, clientTimeout)
+	if err != nil {
+		return err
+	}
+	result := map[string]any{"ok": asBool(refresh["ok"]), "schema_id": "memory_graph_corpus_cli.v1", "refresh": refresh}
+	if parsed.bool("evaluate") {
+		if !asBool(refresh["ok"]) {
+			result["evaluation_skipped"] = "refresh_not_eligible; canonical corpus was preserved"
+		} else {
+			evaluation, _, evalErr := c.requestJSON(context.Background(), http.MethodPost, "/memory/recall/evaluate/saved", map[string]any{"mode": "graph", "graph_corpus": true, "split": "holdout", "k": 5, "project": project, "topic_prefix": topicPrefix}, clientTimeout)
+			if evalErr != nil {
+				return evalErr
+			}
+			result["evaluation"] = evaluation
+			result["ok"] = asBool(asMap(evaluation["promotion"])["promotion_eligible"])
+		}
+	}
+	if err := c.emit(result, !parsed.bool("raw")); err != nil {
+		return err
+	}
+	if !asBool(result["ok"]) {
+		return errors.New("graph recall corpus is not promotion eligible")
+	}
+	return nil
+}
+
+func (c *cli) cmdMemoryGraphEvaluation(args []string) error {
+	parsed := parseArgs(args, mergeStringFlags(commonStringFlags(), map[string]string{"split": "split", "topic-prefix": "topic_prefix"}), mergeBoolFlags(commonBoolFlags(), map[string]string{"refresh": "refresh"}))
+	if parsed.bool("help") {
+		return c.emitUsage("contextlattice_memory_graph_evaluation [--refresh] [--split holdout|development|all] [--project <scope>] [--topic-prefix <prefix>] [--timeout seconds] [--pretty]\nOmitted or zero timeout has no client deadline; positive timeout opts into one.")
+	}
+	if err := rejectDuplicateCLIFlag(args, "topic-prefix"); err != nil {
+		return err
+	}
+	if len(parsed.pos) > 0 {
+		return fmt.Errorf("unknown or unexpected arguments: %s", strings.Join(parsed.pos, " "))
+	}
+	topicPrefix, err := strictGraphTopicPrefix(parsed)
+	if err != nil {
+		return err
+	}
+	clientTimeout, err := graphEvaluationClientTimeout(parsed)
+	if err != nil {
+		return err
+	}
+	c.applyBaseURL(parsed)
+	project := parsed.string("project", envString("CONTEXTLATTICE_PROJECT", ""))
+	result := map[string]any{"ok": false, "schema_id": "memory_graph_evaluation_cli.v1"}
+	if parsed.bool("refresh") {
+		refresh, _, err := c.requestJSON(context.Background(), http.MethodPost, "/memory/recall/eval-cases/refresh", map[string]any{
+			"graph_corpus": true, "project": project, "topic_prefix": topicPrefix,
+			"seed": "graph-v1", "development_cases": 200, "holdout_cases": 100,
+		}, clientTimeout)
+		if err != nil {
+			return err
+		}
+		result["refresh"] = refresh
+		if !asBool(refresh["ok"]) {
+			result["evaluation_skipped"] = "refresh_not_eligible; canonical corpus was preserved"
+			if emitErr := c.emit(result, !parsed.bool("raw")); emitErr != nil {
+				return emitErr
+			}
+			return errors.New("graph recall evaluation refresh is not promotion eligible")
+		}
+	}
+	split := parsed.string("split", "holdout")
+	evaluation, _, err := c.requestJSON(context.Background(), http.MethodPost, "/memory/recall/evaluate/saved", map[string]any{
+		"mode": "graph", "graph_corpus": true, "split": split, "k": 5, "project": project, "topic_prefix": topicPrefix,
+	}, clientTimeout)
+	if err != nil {
+		return err
+	}
+	result["evaluation"] = evaluation
+	result["ok"] = asBool(asMap(evaluation["promotion"])["promotion_eligible"])
+	if err := c.emit(result, !parsed.bool("raw")); err != nil {
+		return err
+	}
+	if !asBool(result["ok"]) {
+		return errors.New("graph recall evaluation is not promotion eligible")
 	}
 	return nil
 }
@@ -7371,6 +9774,12 @@ func asInt(value any) int {
 		return int(v)
 	case float64:
 		return int(v)
+	case json.Number:
+		parsed, err := strconv.ParseInt(v.String(), 10, 64)
+		if err != nil || int64(int(parsed)) != parsed {
+			return 0
+		}
+		return int(parsed)
 	case string:
 		i, _ := strconv.Atoi(v)
 		return i
@@ -7453,13 +9862,26 @@ func ensureSlash(path string) string {
 }
 
 func truncate(value string, limit int) string {
-	if len(value) <= limit {
+	return truncateUTF8Bytes(value, limit)
+}
+
+func truncateUTF8Bytes(value string, limit int) string {
+	if limit <= 0 || !utf8.ValidString(value) {
+		return ""
+	}
+	if len([]byte(value)) <= limit {
 		return value
 	}
-	if limit <= 3 {
-		return value[:limit]
+	marker := "..."
+	if limit <= len(marker) {
+		marker = marker[:limit]
+		return marker
 	}
-	return strings.TrimSpace(value[:limit-3]) + "..."
+	cut := limit - len(marker)
+	for cut > 0 && !utf8.ValidString(value[:cut]) {
+		cut--
+	}
+	return strings.TrimSpace(value[:cut]) + marker
 }
 
 func minInt(a, b int) int {

@@ -27,10 +27,17 @@ const (
 	ownerOnlyMigrationBatchDefault   = 256
 	ownerOnlyMigrationReadChunk      = 256
 	ownerOnlyMigrationMaxDepth       = 256
+	ownerOnlyMigrationStateMaxBytes  = int64(64 * 1024)
 )
 
 var errOwnerOnlyMigrationYield = errors.New("owner-only migration yielded to startup")
 var errOwnerOnlyMigrationLocked = errors.New("owner-only migration worker already active")
+var errOwnerOnlyLockPathChanged = errors.New("owner-only lock pathname changed during acquisition")
+
+type ownerOnlyFileLock struct {
+	unlock   func()
+	validate func() error
+}
 
 type ownerOnlyAtomicWriteError struct {
 	Operation string
@@ -198,15 +205,22 @@ func openOwnerOnlyAppend(path string, dedicatedParent bool) (*os.File, error) {
 	if err := prepareOwnerOnlyFile(path, dedicatedParent); err != nil {
 		return nil, err
 	}
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, ownerOnlyFileMode)
+	file, err := openOwnerOnlyAppendPlatform(path)
 	if err != nil {
 		return nil, err
 	}
-	if err := enforceOwnerOnlyPermissions(path, ownerOnlyFileMode); err != nil {
-		_ = file.Close()
+	// Unix opens with O_APPEND. Windows opens with FILE_APPEND_DATA, whose
+	// kernel-enforced append offset is atomic across processes. Never perform a
+	// seek-then-write sequence here: the shared wrapper serves history, access,
+	// edge, telemetry, and continuation ledgers.
+	return file, nil
+}
+
+func openOwnerOnlyTruncate(path string, dedicatedParent bool) (*os.File, error) {
+	if err := prepareOwnerOnlyFile(path, dedicatedParent); err != nil {
 		return nil, err
 	}
-	return file, nil
+	return openOwnerOnlyTruncatePlatform(path)
 }
 
 func writeOwnerOnlyAtomicFile(path string, content []byte, dedicatedParent bool) error {
@@ -245,6 +259,16 @@ func writeOwnerOnlyAtomicFile(path string, content []byte, dedicatedParent bool)
 }
 
 func writeOwnerOnlyDurableAtomicFile(path string, content []byte, dedicatedParent bool) error {
+	return writeOwnerOnlyDurableAtomicFileWithHook(path, content, dedicatedParent, nil)
+}
+
+// writeOwnerOnlyDurableAtomicFileWithHook is the same owner-only durable
+// replacement primitive with a narrow fault-injection seam. Production
+// callers pass nil; the current-state transaction path uses it only to prove
+// recovery when a process dies while its server-owned temporary file is still
+// open. The hook runs after each durable boundary and before the next step so
+// an abrupt os.Exit intentionally leaves the exact CreateTemp name behind.
+func writeOwnerOnlyDurableAtomicFileWithHook(path string, content []byte, dedicatedParent bool, hook func(string) error) error {
 	if err := prepareOwnerOnlyFile(path, dedicatedParent); err != nil {
 		return err
 	}
@@ -261,27 +285,75 @@ func writeOwnerOnlyDurableAtomicFile(path string, content []byte, dedicatedParen
 		cleanup()
 		return err
 	}
-	if _, err := file.Write(content); err != nil {
-		cleanup()
-		return err
+	if hook != nil {
+		if err := hook("after_temp_create"); err != nil {
+			return err
+		}
+	}
+	const chunkBytes = 4096
+	for offset := 0; offset < len(content); {
+		end := offset + chunkBytes
+		if end > len(content) {
+			end = len(content)
+		}
+		if _, err := file.Write(content[offset:end]); err != nil {
+			cleanup()
+			return err
+		}
+		offset = end
+		if hook != nil {
+			if err := hook("after_temp_write_chunk"); err != nil {
+				return err
+			}
+		}
+	}
+	if hook != nil {
+		if err := hook("after_temp_write"); err != nil {
+			return err
+		}
 	}
 	if err := file.Sync(); err != nil {
 		cleanup()
 		return err
 	}
+	if hook != nil {
+		if err := hook("after_temp_sync"); err != nil {
+			return err
+		}
+	}
 	if err := file.Close(); err != nil {
 		_ = os.Remove(tmpPath)
 		return err
+	}
+	if hook != nil {
+		if err := hook("after_temp_close"); err != nil {
+			return err
+		}
 	}
 	if err := replaceOwnerOnlyFile(tmpPath, path); err != nil {
 		_ = os.Remove(tmpPath)
 		return err
 	}
+	if hook != nil {
+		if err := hook("after_replace"); err != nil {
+			return err
+		}
+	}
 	if err := syncOwnerOnlyDirectory(filepath.Dir(path)); err != nil {
 		return &ownerOnlyAtomicWriteError{Operation: "sync owner-only atomic replacement directory", Committed: true, Err: err}
 	}
+	if hook != nil {
+		if err := hook("after_directory_sync"); err != nil {
+			return err
+		}
+	}
 	if err := ensureOwnerOnlyFile(path); err != nil {
 		return &ownerOnlyAtomicWriteError{Operation: "verify owner-only durable replacement", Committed: true, Err: err}
+	}
+	if hook != nil {
+		if err := hook("after_verify"); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -346,7 +418,7 @@ func ownerOnlyStatePath(root string) string {
 
 func loadOwnerOnlyMigrationState(path string) (ownerOnlyMigrationState, error) {
 	state := ownerOnlyMigrationState{SchemaID: ownerOnlySchemaID}
-	raw, err := os.ReadFile(path)
+	raw, err := readOwnerOnlyBoundedFile(path, ownerOnlyMigrationStateMaxBytes)
 	if errors.Is(err, os.ErrNotExist) {
 		return state, nil
 	}
@@ -375,6 +447,9 @@ func persistOwnerOnlyMigrationState(path string, state ownerOnlyMigrationState) 
 	raw, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
 		return err
+	}
+	if int64(len(raw))+1 > ownerOnlyMigrationStateMaxBytes {
+		return fmt.Errorf("%w: owner-only migration state bytes=%d cap=%d", errMemoryEdgeLogOversized, len(raw)+1, ownerOnlyMigrationStateMaxBytes)
 	}
 	return writeOwnerOnlyDurableAtomicFile(path, raw, true)
 }

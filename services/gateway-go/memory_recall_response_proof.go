@@ -161,9 +161,6 @@ func recallResponseProofSpine(
 		primaryResult = evidenceRefs[0]
 	}
 	addProof(primaryResult)
-	for _, raw := range evidence {
-		addProof(anyToString(anyMap(raw)["ref_id"]))
-	}
 	conflictRefs := []string{}
 	for _, raw := range conflicts {
 		ref := anyToString(anyMap(raw)["conflict_id"])
@@ -178,13 +175,25 @@ func recallResponseProofSpine(
 		gapRefs = appendRecallResponseString(gapRefs, ref, recallResponseMaxProofRefs)
 		addProof(ref)
 	}
+	for _, raw := range evidence {
+		addProof(anyToString(anyMap(raw)["ref_id"]))
+	}
+	coveredRefs := func(refs []string) []any {
+		covered := []string{}
+		for _, ref := range refs {
+			if containsString(proofRefs, ref) {
+				covered = append(covered, ref)
+			}
+		}
+		return recallResponseAnyStrings(covered)
+	}
 
 	coverage := []any{
 		map[string]any{"obligation": "primary_result", "status": recallResponseCoverageStatus(primaryResult != ""), "proof_refs": recallResponseAnyStrings(proofRefs)},
 		map[string]any{"obligation": "temporal_premise", "status": recallResponseCoverageStatus(recallResponseValidDigest(temporalPremiseDigest)), "proof_refs": []any{}},
 		map[string]any{"obligation": "bounded_snapshot", "status": recallResponseCoverageStatus(recallResponseValidDigest(snapshotDigest)), "proof_refs": []any{}},
-		map[string]any{"obligation": "conflict_free", "status": recallResponseCoverageStatus(len(conflicts) == 0), "proof_refs": recallResponseAnyStrings(conflictRefs)},
-		map[string]any{"obligation": "material_gaps_resolved", "status": recallResponseCoverageStatus(len(gaps) == 0), "proof_refs": recallResponseAnyStrings(gapRefs)},
+		map[string]any{"obligation": "conflict_free", "status": recallResponseCoverageStatus(len(conflicts) == 0), "proof_refs": coveredRefs(conflictRefs)},
+		map[string]any{"obligation": "material_gaps_resolved", "status": recallResponseCoverageStatus(len(gaps) == 0), "proof_refs": coveredRefs(gapRefs)},
 	}
 
 	nextMove := anyToString(anyMap(response["next_action"])["kind"])
@@ -221,6 +230,9 @@ func recallResponseCoverageStatus(satisfied bool) string {
 }
 
 func validateRecallResponseU2(response map[string]any) bool {
+	if !validateRecallResponseNonExclusion(response) {
+		return false
+	}
 	classification := anyMap(response["classification"])
 	facets := anyMap(classification["facets"])
 	answer := anyMap(response["answer"])
@@ -384,6 +396,12 @@ func recallResponseRecomputeClippedIdentity(response map[string]any) bool {
 		return true
 	}
 	answer["components"] = modules
+	if !recallResponseMergeComponentUnion(response, modules, policy.ablation) {
+		fallback := recallResponseFailClosedU2Control(response, policy, asOf)
+		recallResponseAttachFallbackStageReceipt(fallback, recallResponseFallbackStageReceipt(recallResponseFallbackStageModuleValidation, recallResponseProofCompression{}, response))
+		recallResponseReplaceWithControl(response, fallback)
+		return true
+	}
 	nextComposition := recallResponseComposition(policy, compressed)
 	nextComposition["primary_module"] = primary
 	nextComposition["ordered_modules"] = recallResponseAnyStrings(ordered)
@@ -424,8 +442,13 @@ func recallResponseFailClosedU2Control(
 		facets["temporal_state"] = "historical"
 	}
 	response["classification"] = recallResponseLegacyClassification(facets, "abstain")
+	// The control fallback withdraws top-level support and components. The
+	// authoritative post-eligibility union remains available only in the
+	// bounded disclosure surface, with an explicit withdrawal ledger; no
+	// candidate claim survives a failed closed-contract validation.
+	recallResponseEnsureControlReceipt(response, policy, asOf)
+	recallResponseRecordFailClosedWithdrawals(response)
 	response["evidence"] = []any{}
-	response["conflicts"] = []any{}
 	gaps := contextPackAnyList(response["gaps"])
 	hasFailureGap := false
 	for _, raw := range gaps {
@@ -457,7 +480,7 @@ func recallResponseFailClosedU2Control(
 	state := anyMap(response["state"])
 	state["status"] = "abstain"
 	state["evidence_count"] = 0
-	state["conflict_count"] = 0
+	state["conflict_count"] = len(contextPackAnyList(response["conflicts"]))
 	state["gap_count"] = len(gaps)
 	nextAction := anyMap(response["next_action"])
 	nextAction["kind"] = "retrieve_or_verify"
@@ -500,10 +523,331 @@ func recallResponseFailClosedU2Control(
 	scope["receipt_digest"] = receiptDigest
 	scope["condition"] = policy.condition
 	scope["ablation"] = policy.ablation
+	// The fail-closed fallback derives compatibility snapshot/receipt digests
+	// when no authoritative policy artifact was supplied. Rebind the control
+	// receipt after those final scope values are settled so the receipt cannot
+	// point at the pre-fallback local hash.
+	recallResponseEnsureControlReceipt(response, policy, asOf)
 	proof := recallResponseProofSpine(response, asOf, temporalPremiseDigest, snapshotDigest, receiptDigest)
 	answer["proof_spine"] = proof
 	answer["composition"] = recallResponseComposition(policy, proof)
 	anyMap(answer["composition"])["fallback_reason"] = "candidate_projection_invalid"
+	response["response_id"] = recallResponseIDForResponse(response)
+	response["response_digest"] = recallResponseSemanticDigest(response)
+	return response
+}
+
+const (
+	recallResponseAblationWitnessSchema = "recall_response.synthetic_ablation_witness.v1"
+	recallResponseAblationStagePrefix   = "selected_component_ablation:"
+)
+
+func recallResponseAblationExpectedStage(productStage string) string {
+	if !recallResponseFallbackStages[productStage] {
+		return ""
+	}
+	return recallResponseAblationStagePrefix + productStage
+}
+
+func recallResponseAblationExpectedStageValid(value string) bool {
+	if !strings.HasPrefix(value, recallResponseAblationStagePrefix) {
+		return false
+	}
+	return recallResponseFallbackStages[strings.TrimPrefix(value, recallResponseAblationStagePrefix)]
+}
+
+func recallResponseAblationWitnessDigest(witness map[string]any) string {
+	material := cloneJSONMap(witness)
+	delete(material, "witness_digest")
+	return "sha256:" + sha256Hex(recallResponseCanonicalJSON(material))
+}
+
+func recallResponseDefaultAblationWitness() map[string]any {
+	witness := map[string]any{
+		"schema_id":                  recallResponseAblationWitnessSchema,
+		"status":                     "not_applicable",
+		"component_ref":              "",
+		"baseline_component_ref":     "",
+		"component_kind":             "",
+		"baseline_union_digest":      "",
+		"baseline_response_identity": "",
+		"omission_receipt_digest":    "",
+		"expected_failure_stage":     "none",
+		"observed_failure_stage":     "none",
+		"witness_digest":             "",
+	}
+	witness["witness_digest"] = recallResponseAblationWitnessDigest(witness)
+	return witness
+}
+
+func recallResponseSyntheticAblationOmissionReceiptDigest(row map[string]any) string {
+	material := map[string]any{
+		"item_ref": anyToString(row["item_ref"]), "item_type": anyToString(row["item_type"]),
+		"reason": anyToString(row["reason"]), "protected": anyToBool(row["protected"]),
+		"counterfactual_outcome": anyToString(anyMap(row["same_snapshot_counterfactual"])["outcome"]),
+	}
+	return "sha256:" + sha256Hex(recallResponseCanonicalJSON(material))
+}
+
+func recallResponseEnsureSyntheticAblationOmission(response map[string]any, componentRef string) bool {
+	disclosure := recallResponseDisclosure(response)
+	protected := false
+	foundComponent := false
+	for _, raw := range contextPackAnyList(disclosure["component_union"]) {
+		component := anyMap(raw)
+		if anyToString(component["component_ref"]) == componentRef {
+			protected = anyToBool(component["protected"])
+			foundComponent = true
+			break
+		}
+	}
+	if !foundComponent {
+		return false
+	}
+	ledger := contextPackAnyList(disclosure["omission_ledger"])
+	for _, raw := range ledger {
+		row := anyMap(raw)
+		if anyToString(row["item_type"]) == "component" && anyToString(row["item_ref"]) == componentRef {
+			row["reason"] = "synthetic_ablation"
+			row["protected"] = protected
+			row["evidence_binding"] = recallResponseOmissionBinding(response, componentRef, "component")
+			row["same_snapshot_counterfactual"] = recallResponseOmissionCounterfactual(response, "fail_closed_control", protected)
+			return true
+		}
+	}
+	row := map[string]any{
+		"item_ref": componentRef, "item_type": "component", "reason": "synthetic_ablation", "protected": protected,
+		"evidence_binding":             recallResponseOmissionBinding(response, componentRef, "component"),
+		"same_snapshot_counterfactual": recallResponseOmissionCounterfactual(response, "fail_closed_control", protected),
+	}
+	if len(ledger) < recallResponseMaxOmissionLedger {
+		disclosure["omission_ledger"] = append(ledger, row)
+		return true
+	}
+	// The evaluator's exact ablated component receipt is mandatory. Replace the
+	// deterministically lowest-priority ledger sample; the displaced omission
+	// remains represented by authoritative counts, union digest, and cursor.
+	replacement := 0
+	for index := 1; index < len(ledger); index++ {
+		left := anyMap(ledger[index])
+		right := anyMap(ledger[replacement])
+		leftPriority := recallResponseOmissionPriority(anyToString(left["reason"]), anyToBool(left["protected"]))
+		rightPriority := recallResponseOmissionPriority(anyToString(right["reason"]), anyToBool(right["protected"]))
+		if leftPriority < rightPriority || leftPriority == rightPriority && recallResponseTypedItemKey(anyToString(left["item_type"]), anyToString(left["item_ref"])) > recallResponseTypedItemKey(anyToString(right["item_type"]), anyToString(right["item_ref"])) {
+			replacement = index
+		}
+	}
+	ledger[replacement] = row
+	disclosure["omission_ledger"] = ledger
+	return true
+}
+
+func recallResponseSealAblationWitness(response map[string]any, policy validatedRecallResponsePolicyInput, status, observedStage string) bool {
+	base := policy.ablationWitness
+	baselineComponentRef := anyToString(base["baseline_component_ref"])
+	componentKind := anyToString(base["component_kind"])
+	if !policy.synthetic || componentKind != policy.ablation || strings.TrimSpace(baselineComponentRef) == "" ||
+		!recallResponseValidDigest(anyToString(base["baseline_union_digest"])) ||
+		!recallResponseExactOpaqueID(anyToString(base["baseline_response_identity"]), "rr_") {
+		return false
+	}
+	componentRef := ""
+	for _, raw := range contextPackAnyList(recallResponseDisclosure(response)["component_union"]) {
+		row := anyMap(raw)
+		if anyToString(row["kind"]) == componentKind {
+			componentRef = anyToString(row["component_ref"])
+			break
+		}
+	}
+	if strings.TrimSpace(componentRef) == "" {
+		return false
+	}
+	if !recallResponseEnsureSyntheticAblationOmission(response, componentRef) {
+		return false
+	}
+	omissionDigest := ""
+	for _, raw := range contextPackAnyList(recallResponseDisclosure(response)["omission_ledger"]) {
+		row := anyMap(raw)
+		if anyToString(row["item_type"]) == "component" && anyToString(row["item_ref"]) == componentRef && anyToString(row["reason"]) == "synthetic_ablation" {
+			omissionDigest = recallResponseSyntheticAblationOmissionReceiptDigest(row)
+			break
+		}
+	}
+	if !recallResponseValidDigest(omissionDigest) {
+		return false
+	}
+	witness := map[string]any{
+		"schema_id":                  recallResponseAblationWitnessSchema,
+		"status":                     status,
+		"component_ref":              componentRef,
+		"baseline_component_ref":     baselineComponentRef,
+		"component_kind":             componentKind,
+		"baseline_union_digest":      anyToString(base["baseline_union_digest"]),
+		"baseline_response_identity": anyToString(base["baseline_response_identity"]),
+		"omission_receipt_digest":    omissionDigest,
+		"expected_failure_stage":     anyToString(base["expected_failure_stage"]),
+		"observed_failure_stage":     observedStage,
+		"witness_digest":             "",
+	}
+	witness["witness_digest"] = recallResponseAblationWitnessDigest(witness)
+	disclosure := recallResponseDisclosure(response)
+	disclosure["ablation_witness"] = witness
+	recallResponseSetContinuationAction(response, anyMap(disclosure["continuation_action"]))
+	return true
+}
+
+func recallResponseSealAblationFailureWitness(response map[string]any, policy validatedRecallResponsePolicyInput, observedStage string) {
+	base := policy.ablationWitness
+	if len(base) == 0 {
+		return
+	}
+	componentRef := ""
+	for _, raw := range contextPackAnyList(recallResponseDisclosure(response)["component_union"]) {
+		row := anyMap(raw)
+		if anyToString(row["kind"]) == anyToString(base["component_kind"]) {
+			componentRef = anyToString(row["component_ref"])
+			break
+		}
+	}
+	witness := map[string]any{
+		"schema_id":                  recallResponseAblationWitnessSchema,
+		"status":                     "candidate_projection_invalid",
+		"component_ref":              componentRef,
+		"baseline_component_ref":     anyToString(base["baseline_component_ref"]),
+		"component_kind":             anyToString(base["component_kind"]),
+		"baseline_union_digest":      anyToString(base["baseline_union_digest"]),
+		"baseline_response_identity": anyToString(base["baseline_response_identity"]),
+		"omission_receipt_digest":    "",
+		"expected_failure_stage":     anyToString(base["expected_failure_stage"]),
+		"observed_failure_stage":     firstNonEmptyStrings(observedStage, "unknown"),
+		"witness_digest":             "",
+	}
+	witness["witness_digest"] = recallResponseAblationWitnessDigest(witness)
+	disclosure := recallResponseDisclosure(response)
+	disclosure["ablation_witness"] = witness
+	recallResponseSetContinuationAction(response, anyMap(disclosure["continuation_action"]))
+}
+
+func recallResponseAblationWitnessValid(response map[string]any, witness map[string]any) bool {
+	if !recallResponseExactFields(witness, []string{
+		"schema_id", "status", "component_ref", "baseline_component_ref", "component_kind", "baseline_union_digest",
+		"baseline_response_identity", "omission_receipt_digest", "expected_failure_stage",
+		"observed_failure_stage", "witness_digest",
+	}) || anyToString(witness["schema_id"]) != recallResponseAblationWitnessSchema ||
+		anyToString(witness["witness_digest"]) != recallResponseAblationWitnessDigest(witness) {
+		return false
+	}
+	ablation := anyToString(anyMap(response["request_scope"])["ablation"])
+	status := anyToString(witness["status"])
+	if ablation == "none" {
+		return status == "not_applicable" && anyToString(witness["component_ref"]) == "" &&
+			anyToString(witness["baseline_component_ref"]) == "" &&
+			anyToString(witness["component_kind"]) == "" && anyToString(witness["baseline_union_digest"]) == "" &&
+			anyToString(witness["baseline_response_identity"]) == "" && anyToString(witness["omission_receipt_digest"]) == "" &&
+			anyToString(witness["expected_failure_stage"]) == "none" && anyToString(witness["observed_failure_stage"]) == "none"
+	}
+	if anyToString(witness["component_kind"]) != ablation || strings.TrimSpace(anyToString(witness["component_ref"])) == "" ||
+		strings.TrimSpace(anyToString(witness["baseline_component_ref"])) == "" ||
+		!recallResponseValidDigest(anyToString(witness["baseline_union_digest"])) ||
+		!recallResponseExactOpaqueID(anyToString(witness["baseline_response_identity"]), "rr_") {
+		return false
+	}
+	if status == "candidate_projection_invalid" {
+		return anyToString(witness["omission_receipt_digest"]) == "" && anyToString(witness["observed_failure_stage"]) != ""
+	}
+	if status != "accepted_candidate" && status != "accepted_control" || !recallResponseValidDigest(anyToString(witness["omission_receipt_digest"])) {
+		return false
+	}
+	wantExpected, wantObserved := "none", "none"
+	if status == "accepted_control" {
+		wantExpected = anyToString(witness["expected_failure_stage"])
+		wantObserved = wantExpected
+		if !recallResponseAblationExpectedStageValid(wantExpected) {
+			return false
+		}
+	}
+	if anyToString(witness["expected_failure_stage"]) != wantExpected || anyToString(witness["observed_failure_stage"]) != wantObserved {
+		return false
+	}
+	for _, raw := range contextPackAnyList(recallResponseDisclosure(response)["omission_ledger"]) {
+		row := anyMap(raw)
+		if anyToString(row["item_type"]) == "component" && anyToString(row["item_ref"]) == anyToString(witness["component_ref"]) &&
+			anyToString(row["reason"]) == "synthetic_ablation" {
+			return anyToString(witness["omission_receipt_digest"]) == recallResponseSyntheticAblationOmissionReceiptDigest(row)
+		}
+	}
+	return false
+}
+
+// recallResponseSyntheticAblationControl is the explicit closed
+// counterfactual for a test-only selected-component ablation. It remains an
+// abstaining v1 control, but it is not a candidate-validation failure:
+// candidate_projection_invalid is reserved for genuine contract defects.
+func recallResponseSyntheticAblationControl(
+	control map[string]any,
+	policy validatedRecallResponsePolicyInput,
+	asOf string,
+	observedStage string,
+) map[string]any {
+	response := recallResponseFailClosedU2Control(control, policy, asOf)
+	gaps := make([]any, 0, len(contextPackAnyList(response["gaps"])))
+	for _, raw := range contextPackAnyList(response["gaps"]) {
+		if anyToString(anyMap(raw)["code"]) != "candidate_projection_invalid" {
+			gaps = append(gaps, raw)
+		}
+	}
+	response["gaps"] = gaps
+	confidence := map[string]any{
+		"label": "abstain", "score": 0.0, "basis": []any{"synthetic_ablation"}, "calibrated": false,
+	}
+	response["confidence"] = confidence
+	response["inferences"] = recallResponseInferences(nil, confidence, "abstain")
+	state := anyMap(response["state"])
+	state["status"] = "abstain"
+	state["gap_count"] = len(gaps)
+	answer := anyMap(response["answer"])
+	answer["summary"] = "The requested synthetic ablation removed a selected component; the evaluator returned an explicit closed counterfactual control."
+	nextAction := anyMap(response["next_action"])
+	nextAction["kind"] = "retrieve_or_verify"
+	nextAction["label"] = "Review the ablated counterfactual"
+	nextAction["reason"] = "The synthetic evaluator removed a selected response component; no action authority is retained."
+
+	scope := anyMap(response["request_scope"])
+	proof := recallResponseProofSpine(
+		response, asOf, anyToString(scope["temporal_premise_digest"]),
+		anyToString(scope["snapshot_digest"]), anyToString(scope["receipt_digest"]),
+	)
+	answer["proof_spine"] = proof
+	composition := recallResponseComposition(policy, proof)
+	composition["fallback_reason"] = "synthetic_ablation"
+	answer["composition"] = composition
+
+	disclosure := recallResponseDisclosure(response)
+	for _, raw := range contextPackAnyList(disclosure["component_union"]) {
+		component := anyMap(raw)
+		if anyToString(component["kind"]) != policy.ablation {
+			continue
+		}
+		itemRef := anyToString(component["component_ref"])
+		for _, omissionRaw := range contextPackAnyList(disclosure["omission_ledger"]) {
+			omission := anyMap(omissionRaw)
+			if anyToString(omission["item_type"]) != "component" || anyToString(omission["item_ref"]) != itemRef {
+				continue
+			}
+			omission["reason"] = "synthetic_ablation"
+			omission["evidence_binding"] = recallResponseOmissionBinding(response, itemRef, "component")
+			omission["same_snapshot_counterfactual"] = recallResponseOmissionCounterfactual(response, "fail_closed_control", anyToBool(component["protected"]))
+			break
+		}
+		break
+	}
+	if !recallResponseSealAblationWitness(response, policy, "accepted_control", observedStage) {
+		fallback := recallResponseFailClosedU2Control(control, policy, asOf)
+		receipt := recallResponseFallbackStageReceipt(recallResponseFallbackStageModuleValidation, recallResponseProofCompression{}, response)
+		recallResponseAttachFallbackStageReceipt(fallback, receipt)
+		recallResponseSealAblationFailureWitness(fallback, policy, anyToString(receipt["stage"]))
+		return fallback
+	}
 	response["response_id"] = recallResponseIDForResponse(response)
 	response["response_digest"] = recallResponseSemanticDigest(response)
 	return response

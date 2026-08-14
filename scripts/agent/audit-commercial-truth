@@ -367,11 +367,30 @@ def audit_release_publish_inputs(
             )
         )
 
+    expected_version = contract["product"]["version"]
     expected = contract["product"]["stable_tag"]
+    expected_train = contract["product"]["release_train"]
+    expected_window = f"ContextLattice {expected} release wave (v{expected_train} release train)"
+    expected_identity = {
+        "product_version": expected_version,
+        "stable_tag": expected,
+        "release_train": expected_train,
+        "launch_window": expected_window,
+    }
+    observed_identity = {key: str(payload.get(key, "")).strip() for key in expected_identity}
+    if observed_identity != expected_identity:
+        findings.append(
+            finding(
+                "release_publish_version_drift",
+                str(relative),
+                f"observed_identity={observed_identity}; expected_identity={expected_identity}",
+            )
+        )
+
     allowed = {expected}
     observed = set(
         re.findall(
-            r"(?<![0-9A-Za-z])v\d+\.\d+\.\d+(?:[-+_/.][0-9A-Za-z][0-9A-Za-z._+/-]*)?(?![0-9A-Za-z])",
+            r"(?<![0-9A-Za-z])v\d+\.\d+\.\d+(?:(?:[-+_/.][0-9A-Za-z]|[A-Za-z])[0-9A-Za-z._+/-]*)?(?![0-9A-Za-z])",
             serialized,
         )
     )
@@ -384,6 +403,22 @@ def audit_release_publish_inputs(
                 f"observed={sorted(observed)}; expected={sorted(allowed)}",
             )
         )
+    expected_train_claim = f"v{expected_train}"
+    observed_trains = set(
+        re.findall(
+            r"(?<![0-9A-Za-z])v\d+\.\d+(?!\.\d)(?![0-9A-Za-z])",
+            serialized,
+        )
+    )
+    if observed_trains != {expected_train_claim}:
+        findings.append(
+            finding(
+                "release_publish_version_drift",
+                str(relative),
+                f"observed_trains={sorted(observed_trains)}; expected_train={expected_train_claim}",
+            )
+        )
+
     primary_cta = str(payload.get("primary_cta", "")).lower()
     if "cli" not in primary_cta:
         findings.append(finding("release_publish_cli_not_primary", str(relative), "primary CTA must name the CLI"))

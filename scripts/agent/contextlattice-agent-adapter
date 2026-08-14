@@ -5,16 +5,18 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
+import re
 import subprocess
 import sys
-from pathlib import Path
+from datetime import datetime
 from typing import Any
 
-from _common import REPO_ROOT, emit, ensure_agent_session, now_iso, request_json
+from _common import REPO_ROOT, agent_session_matches_authority, agent_session_reuse_key, emit, ensure_agent_session, now_iso, redact_public_value, request_json, request_json_for_validation, session_identity_valid
 
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
-from agent_contracts import attach_format_contract, enforce_contract_limits, validate_agent_contract_payload  # noqa: E402
+from agent_contracts import agent_contract_go_json, agent_contract_json_domain_valid, attach_format_contract, enforce_contract_limits, load_agent_contracts_registry, validate_agent_contract_payload  # noqa: E402
 from agent_orchestration import AGENT_PREFLIGHT_PROFILES, _resolve_agent_preflight_profile  # noqa: E402
 
 
@@ -54,6 +56,13 @@ def adapter_contract() -> dict[str, Any]:
             "MEMMCP_AGENT_ID",
             "CONTEXTLATTICE_SESSION_ID",
         ],
+        "task_binding_exports": [
+            "CONTEXTLATTICE_TASK_ID",
+            "CONTEXTLATTICE_ATTEMPT_ID",
+            "CONTEXTLATTICE_LEASE_ID",
+            "CONTEXTLATTICE_CONTEXT_SNAPSHOT_ID",
+            "CONTEXTLATTICE_CONTEXT_PACK_HASH",
+        ],
         "preflight_route": "/v1/agents/preflight",
         "event_route": "/v1/agents/sessions/event",
         "context_pack_route": "/memory/context-pack",
@@ -73,6 +82,48 @@ def validation_status(payload: Any, key: str = "format_contract") -> str:
     if not isinstance(validation, dict):
         return ""
     return str(validation.get("status") or "")
+
+
+def registered_contract_attestation_valid(contract_id: str, payload: Any) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    registry = load_agent_contracts_registry()
+    contracts = registry.get("contracts") if isinstance(registry.get("contracts"), dict) else {}
+    contract = contracts.get(contract_id) if isinstance(contracts.get(contract_id), dict) else {}
+    metadata = payload.get("format_contract") if isinstance(payload.get("format_contract"), dict) else {}
+    validation = metadata.get("validation") if isinstance(metadata.get("validation"), dict) else {}
+    errors = validation.get("errors")
+    try:
+        actual_json_bytes = len(agent_contract_go_json(payload))
+    except (TypeError, ValueError, OverflowError, UnicodeEncodeError, RecursionError):
+        return False
+
+    def exact_integer(value: Any, expected: Any) -> bool:
+        return (
+            isinstance(value, int)
+            and not isinstance(value, bool)
+            and isinstance(expected, int)
+            and not isinstance(expected, bool)
+            and value == expected
+        )
+
+    return (
+        not validate_agent_contract_payload(contract_id, payload, registry)
+        and metadata.get("registry_id") == registry.get("registry_id")
+        and exact_integer(metadata.get("registry_version"), registry.get("registry_version"))
+        and metadata.get("schema_id") == contract_id
+        and exact_integer(metadata.get("contract_version"), contract.get("contract_version"))
+        and metadata.get("required_output_mode") == contract.get("required_output_mode")
+        and metadata.get("validator") == "contextlattice.boundary.v1"
+        and metadata.get("contract_valid") is True
+        and exact_integer(metadata.get("max_total_json_bytes"), contract.get("max_total_json_bytes"))
+        and exact_integer(metadata.get("max_string_bytes"), contract.get("max_string_bytes"))
+        and exact_integer(metadata.get("max_list_items"), contract.get("max_list_items"))
+        and exact_integer(metadata.get("actual_json_bytes"), actual_json_bytes)
+        and validation.get("status") == "passed"
+        and isinstance(errors, list)
+        and not errors
+    )
 
 
 def configure_base_url(args: argparse.Namespace) -> None:
@@ -102,7 +153,17 @@ def profile_payload(args: argparse.Namespace) -> tuple[str, dict[str, Any], str,
     return profile_key, profile, agent_id, topic_path, query, mode
 
 
-def env_exports(base_url: str, profile_key: str, agent_id: str, session_id: str) -> dict[str, str]:
+def env_exports(
+    base_url: str,
+    profile_key: str,
+    agent_id: str,
+    session_id: str,
+    task_id: str = "",
+    attempt_id: str = "",
+    lease_id: str = "",
+    snapshot_id: str = "",
+    context_pack_hash: str = "",
+) -> dict[str, str]:
     return {
         "CONTEXTLATTICE_ORCHESTRATOR_URL": base_url,
         "MEMMCP_ORCHESTRATOR_URL": base_url,
@@ -110,7 +171,61 @@ def env_exports(base_url: str, profile_key: str, agent_id: str, session_id: str)
         "CONTEXTLATTICE_AGENT_ID": agent_id,
         "MEMMCP_AGENT_ID": agent_id,
         "CONTEXTLATTICE_SESSION_ID": session_id,
+        "CONTEXTLATTICE_TASK_ID": task_id,
+        "CONTEXTLATTICE_ATTEMPT_ID": attempt_id,
+        "CONTEXTLATTICE_LEASE_ID": lease_id,
+        "CONTEXTLATTICE_CONTEXT_SNAPSHOT_ID": snapshot_id,
+        "CONTEXTLATTICE_CONTEXT_PACK_HASH": context_pack_hash,
     }
+
+
+def task_binding(args: argparse.Namespace) -> dict[str, str]:
+    values = {
+        "session_id": getattr(args, "session_id", "") or os.getenv("CONTEXTLATTICE_SESSION_ID", ""),
+        "task_id": getattr(args, "task_id", "") or os.getenv("CONTEXTLATTICE_TASK_ID", ""),
+        "attempt_id": getattr(args, "attempt_id", "") or os.getenv("CONTEXTLATTICE_ATTEMPT_ID", ""),
+        "lease_id": getattr(args, "lease_id", "") or os.getenv("CONTEXTLATTICE_LEASE_ID", ""),
+        "worker_id": os.getenv("TASK_WORKER_ID", ""),
+        "worker_instance_id": os.getenv("TASK_WORKER_INSTANCE_ID", ""),
+        "generation": os.getenv("TASK_LEASE_GENERATION", ""),
+        "snapshot_id": getattr(args, "snapshot_id", "") or os.getenv("CONTEXTLATTICE_CONTEXT_SNAPSHOT_ID", ""),
+        "context_pack_hash": getattr(args, "context_pack_hash", "") or os.getenv("CONTEXTLATTICE_CONTEXT_PACK_HASH", ""),
+    }
+    return {key: str(value or "").strip() for key, value in values.items()}
+
+
+def binding_metadata(args: argparse.Namespace) -> dict[str, Any]:
+    binding = task_binding(args)
+    metadata: dict[str, Any] = {key: value for key, value in binding.items() if value}
+    fence_keys = ("task_id", "attempt_id", "lease_id", "worker_id", "worker_instance_id", "generation")
+    if all(metadata.get(key) for key in fence_keys):
+        try:
+            generation = int(str(metadata["generation"]))
+        except (TypeError, ValueError):
+            generation = 0
+        if generation > 0:
+            metadata["fence"] = {
+                "task_id": metadata["task_id"],
+                "attempt_id": metadata["attempt_id"],
+                "lease_id": metadata["lease_id"],
+                "worker_id": metadata["worker_id"],
+                "worker_instance_id": metadata["worker_instance_id"],
+                "generation": generation,
+            }
+    return metadata
+
+
+def attach_task_binding(payload: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
+    binding = binding_metadata(args)
+    for key, value in binding.items():
+        if key not in payload and value:
+            payload[key] = value
+    metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+    if binding:
+        metadata = dict(metadata)
+        metadata["task_binding"] = binding
+        payload["metadata"] = metadata
+    return payload
 
 
 def shell_exports(values: dict[str, str]) -> list[str]:
@@ -147,6 +262,72 @@ def compact_skills_index(payload: Any) -> dict[str, Any]:
     }
 
 
+def compact_adapter_server_receipt(payload: Any, kind: str) -> dict[str, Any]:
+    """Return a closed, public receipt for post-mutation server evidence."""
+
+    value = payload if isinstance(payload, dict) else {}
+    receipt: dict[str, Any] = {"ok": value.get("ok") is True, "kind": kind}
+    sources = [value]
+    for nested_field in ("event", "outcome", "receipt", "result", "write"):
+        nested = value.get(nested_field)
+        if isinstance(nested, dict):
+            sources.append(nested)
+    for field in (
+        "schema_id",
+        "id",
+        "event_id",
+        "outcome_id",
+        "sample_id",
+        "content_ref",
+        "digest",
+        "status",
+        "type",
+    ):
+        candidate = next((source[field] for source in sources if field in source), None)
+        if isinstance(candidate, bool):
+            receipt[field] = candidate
+            continue
+        if isinstance(candidate, int) and not isinstance(candidate, bool):
+            if -(1 << 63) <= candidate <= (1 << 63) - 1:
+                receipt[field] = candidate
+            continue
+        if not isinstance(candidate, str):
+            continue
+        projected = redact_public_value({field: candidate})
+        public_value = projected.get(field) if isinstance(projected, dict) else None
+        if (
+            isinstance(public_value, str)
+            and public_value == candidate
+            and len(public_value.encode("utf-8")) <= 256
+        ):
+            receipt[field] = public_value
+    return receipt
+
+
+def compact_adapter_handoff(payload: Any) -> dict[str, Any]:
+    value = payload if isinstance(payload, dict) else {}
+    compact: dict[str, Any] = {
+        "ok": True,
+        "schema_id": "contextlattice_adapter_handoff.v1",
+    }
+    for field, limit in (("summary", 1200), ("objective", 1200), ("next_action", 1200), ("created_at", 80)):
+        candidate = value.get(field)
+        if not isinstance(candidate, str):
+            continue
+        projected = redact_public_value({field: candidate})
+        public_value = projected.get(field) if isinstance(projected, dict) else None
+        if not isinstance(public_value, str):
+            continue
+        encoded = public_value.encode("utf-8")
+        if len(encoded) <= limit:
+            compact[field] = public_value
+    return compact
+
+
+def adapter_output_accepted(output: Any) -> bool:
+    return isinstance(output, dict) and output.get("ok") is True and public_contract_fits(output)
+
+
 def adapter_response(
     *,
     command: str,
@@ -158,36 +339,137 @@ def adapter_response(
     agent: str = "",
     agent_id: str = "",
 ) -> dict[str, Any]:
+    public_session_id, session_id_omitted = bounded_public_identity(session_id, "session_id")
+    public_agent_id, agent_id_omitted = bounded_public_identity(agent_id, "agent_id")
     payload = {
         "ok": bool(ok),
         "command": command,
         "agent": str(agent or "").strip(),
-        "agent_id": str(agent_id or "").strip(),
         "project": str(project or "").strip(),
-        "session_id": str(session_id or "").strip(),
         "adapter_contract": adapter_contract(),
         "result": result,
         "findings": findings or [],
     }
-    return attach_format_contract("universal_agent_adapter_response.v1", payload)
+    omitted: list[str] = []
+    if public_session_id:
+        payload["session_id"] = public_session_id
+    else:
+        omitted.append("session_id")
+    if public_agent_id:
+        payload["agent_id"] = public_agent_id
+    else:
+        omitted.append("agent_id")
+    if session_id_omitted or agent_id_omitted or omitted:
+        payload["identity_omitted"] = omitted
+    payload = public_context_pack_identities(
+        payload,
+        omitted_fields=set(omitted),
+        authoritative_fields={"session_id": public_session_id, "agent_id": public_agent_id},
+    )
+    return public_contract_payload("universal_agent_adapter_response.v1", payload)
 
 
 def contract_findings_for_bootstrap(response: dict[str, Any]) -> list[dict[str, Any]]:
     findings: list[dict[str, Any]] = []
+    if response.get("ok") is not True:
+        findings.append({"reason": "preflight_rejected"})
     findings.extend(validate_agent_contract_payload("agent_preflight_response.v1", response))
     runtime = response.get("objective_runtime") if isinstance(response.get("objective_runtime"), dict) else {}
     findings.extend(validate_agent_contract_payload("objective_runtime_state.v1", runtime))
     policy = response.get("policy_context_package") if isinstance(response.get("policy_context_package"), dict) else {}
+    findings.extend(validate_agent_contract_payload("policy_context_package.v1", policy))
     policy_runtime = policy.get("objective_runtime") if isinstance(policy.get("objective_runtime"), dict) else {}
     findings.extend(validate_agent_contract_payload("objective_runtime_state.v1", policy_runtime))
     if validation_status(runtime) != "passed":
         findings.append({"reason": "objective_runtime_validation_not_passed", "validation": runtime.get("format_contract")})
     if validation_status(policy_runtime) != "passed":
         findings.append({"reason": "policy_objective_runtime_validation_not_passed", "validation": policy_runtime.get("format_contract")})
+    if validation_status(policy) != "passed":
+        findings.append({"reason": "policy_context_package_validation_not_passed", "validation": policy.get("format_contract")})
+    if not registered_contract_attestation_valid("objective_runtime_state.v1", runtime):
+        findings.append({"reason": "objective_runtime_contract_attestation_invalid"})
+    if not registered_contract_attestation_valid("policy_context_package.v1", policy):
+        findings.append({"reason": "policy_context_package_contract_attestation_invalid"})
+    if not registered_contract_attestation_valid("objective_runtime_state.v1", policy_runtime):
+        findings.append({"reason": "policy_objective_runtime_contract_attestation_invalid"})
+    format_contracts = response.get("format_contracts") if isinstance(response.get("format_contracts"), dict) else {}
+    validation = format_contracts.get("validation") if isinstance(format_contracts.get("validation"), dict) else {}
+    errors = validation.get("errors")
+    registry = load_agent_contracts_registry()
+    preflight_contract = (
+        registry.get("contracts", {}).get("agent_preflight_response.v1", {})
+        if isinstance(registry.get("contracts"), dict)
+        else {}
+    )
+    try:
+        actual_json_bytes = len(agent_contract_go_json(response))
+    except (TypeError, ValueError, OverflowError, UnicodeEncodeError, RecursionError):
+        actual_json_bytes = -1
+    contract_ids = format_contracts.get("contracts")
+    required_contract_ids = {
+        "agent_preflight_response.v1",
+        "objective_runtime_state.v1",
+        "policy_context_package.v1",
+    }
+    if (
+        format_contracts.get("registry_id") != registry.get("registry_id")
+        or format_contracts.get("registry_version") != registry.get("registry_version")
+        or format_contracts.get("contract_valid") is not True
+        or validation.get("status") != "passed"
+        or not isinstance(errors, list)
+        or errors
+        or not isinstance(contract_ids, list)
+        or not required_contract_ids.issubset({item for item in contract_ids if isinstance(item, str)})
+        or format_contracts.get("max_total_json_bytes") != preflight_contract.get("max_total_json_bytes")
+        or format_contracts.get("max_string_bytes") != preflight_contract.get("max_string_bytes")
+        or format_contracts.get("max_list_items") != preflight_contract.get("max_list_items")
+        or format_contracts.get("actual_json_bytes") != actual_json_bytes
+    ):
+        findings.append({"reason": "preflight_contract_attestation_invalid"})
     if contains_provider_overflow(response):
         findings.append({"reason": "provider_overflow_phrase_leaked"})
     if not str(response.get("session_id") or "").strip():
         findings.append({"reason": "missing_session_id"})
+    return findings
+
+
+def bootstrap_authority_findings(
+    response: dict[str, Any],
+    *,
+    agent: str,
+    agent_id: str,
+    project: str,
+    query: str,
+    topic_path: str,
+    retrieval_mode: str,
+    reuse_key: str,
+) -> list[dict[str, Any]]:
+    findings: list[dict[str, Any]] = []
+    expected = {
+        "agent": agent,
+        "agent_id": agent_id,
+        "project": project,
+        "query": query,
+        "topic_path": topic_path,
+        "retrieval_mode": retrieval_mode,
+    }
+    for field, value in expected.items():
+        if response.get(field) != value:
+            findings.append({"reason": "preflight_authority_mismatch", "field": field})
+    if not session_identity_valid(response.get("session_id")):
+        findings.append({"reason": "preflight_session_identity_invalid"})
+    session_id = str(response.get("session_id") or "").strip()
+    agent_runtime = response.get("agent_runtime") if isinstance(response.get("agent_runtime"), dict) else {}
+    session = agent_runtime.get("session") if isinstance(agent_runtime.get("session"), dict) else {}
+    if not agent_session_matches_authority(
+        session,
+        expected_id=session_id,
+        project=project,
+        agent=agent,
+        agent_id=agent_id,
+        reuse_key=reuse_key,
+    ):
+        findings.append({"reason": "preflight_session_authority_mismatch"})
     return findings
 
 
@@ -205,12 +487,50 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
         "objective": args.objective or query,
         "goal": args.goal,
     }
+    payload = attach_task_binding(payload, args)
+    reuse_key = agent_session_reuse_key(
+        args.project,
+        profile_key,
+        agent_id,
+        str(payload.get("objective") or query),
+        {"adapter": "contextlattice-agent-adapter", "task_binding": binding_metadata(args)},
+    )
+    payload["reuse_key"] = reuse_key
     payload = {key: value for key, value in payload.items() if value not in ("", None)}
-    response = request_json("POST", "/v1/agents/preflight", payload, args.timeout)
-    response = enforce_contract_limits("agent_preflight_response.v1", response)
-    session_id = str(response.get("session_id") or "").strip()
-    exports = env_exports(args.base_url, profile_key, agent_id, session_id)
-    findings = contract_findings_for_bootstrap(response)
+    raw_response = request_json_for_validation("POST", "/v1/agents/preflight", payload, args.timeout)
+    findings = contract_findings_for_bootstrap(raw_response)
+    findings.extend(
+        bootstrap_authority_findings(
+            raw_response,
+            agent=profile_key,
+            agent_id=agent_id,
+            project=args.project,
+            query=query,
+            topic_path=topic_path,
+            retrieval_mode=mode,
+            reuse_key=reuse_key,
+        )
+    )
+    session_id = str(raw_response.get("session_id") or "").strip() if not findings else ""
+    if findings:
+        output = adapter_response(
+            command="bootstrap",
+            ok=False,
+            agent=profile_key,
+            agent_id=agent_id,
+            project=args.project,
+            session_id="",
+            result={"status": "bounded_public_boundary_failure"},
+            findings=[{"reason": "bootstrap_contract_or_authority_invalid"}],
+        )
+        emit(output, args.pretty)
+        return 1
+    response = enforce_contract_limits("agent_preflight_response.v1", raw_response)
+    binding = task_binding(args)
+    if session_id:
+        binding["session_id"] = session_id
+    export_binding = {key: binding.get(key, "") for key in ("task_id", "attempt_id", "lease_id", "snapshot_id", "context_pack_hash")}
+    exports = env_exports(args.base_url, profile_key, agent_id, session_id, **export_binding)
     output = adapter_response(
         command="bootstrap",
         ok=not findings,
@@ -235,11 +555,12 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
                 "session_id": response.get("session_id"),
                 "skills_index": compact_skills_index(response.get("skills_index")),
             },
+            "task_binding": binding,
         },
         findings=findings,
     )
     emit(output, args.pretty)
-    return 1 if findings else 0
+    return 0 if adapter_output_accepted(output) else 1
 
 
 def ensure_session_for_args(args: argparse.Namespace, objective: str) -> str:
@@ -252,7 +573,10 @@ def ensure_session_for_args(args: argparse.Namespace, objective: str) -> str:
         agent_id=args.agent_id,
         mission=args.mission,
         goal=args.goal,
-        metadata={"adapter": "contextlattice-agent-adapter"},
+        metadata={
+            "adapter": "contextlattice-agent-adapter",
+            "task_binding": binding_metadata(args),
+        },
         tags=["universal-agent-adapter"],
         timeout=min(float(args.timeout), 10.0),
         soft=not args.strict,
@@ -273,19 +597,32 @@ def cmd_event(args: argparse.Namespace) -> int:
         "status": args.status,
         "metadata": metadata_from_args(args.metadata_json),
     }
+    payload = attach_task_binding(payload, args)
     payload = {key: value for key, value in payload.items() if value not in ("", None, {})}
-    response = request_json("POST", "/v1/agents/sessions/event", payload, args.timeout)
-    output = adapter_response(
+    preflight = adapter_response(
         command="event",
-        ok=bool(response.get("ok")),
+        ok=True,
         agent=args.agent,
         agent_id=args.agent_id,
         project=args.project,
         session_id=session_id,
-        result={"event": response},
+        result={"event": {"ok": True, "kind": "event"}},
+    )
+    if not adapter_output_accepted(preflight):
+        emit(preflight, args.pretty)
+        return 1
+    response = request_json("POST", "/v1/agents/sessions/event", payload, args.timeout)
+    output = adapter_response(
+        command="event",
+        ok=response.get("ok") is True,
+        agent=args.agent,
+        agent_id=args.agent_id,
+        project=args.project,
+        session_id=session_id,
+        result={"event": compact_adapter_server_receipt(response, "event")},
     )
     emit(output, args.pretty)
-    return 0 if response.get("ok") else 1
+    return 0 if adapter_output_accepted(output) else 1
 
 
 def metadata_from_args(raw: str) -> dict[str, Any]:
@@ -312,9 +649,350 @@ def context_pack_quality_sample(payload: dict[str, Any]) -> dict[str, Any]:
     return {}
 
 
+def bounded_public_identity(value: Any, public_field: str, limit: int = 256) -> tuple[str, bool]:
+    if value in (None, ""):
+        return "", False
+    if not isinstance(value, str):
+        return "", True
+    try:
+        encoded_bytes = len(value.encode("utf-8"))
+    except UnicodeEncodeError:
+        return "", True
+    if len(value) > limit or encoded_bytes > limit:
+        return "", True
+    projected = redact_public_value({public_field: value})
+    if not isinstance(projected, dict) or projected.get(public_field) != value:
+        return "", True
+    return value, False
+
+
+def public_context_pack_identities(
+    value: Any,
+    *,
+    omitted_fields: set[str] | None = None,
+    authoritative_fields: dict[str, str] | None = None,
+    preserve_canonical_proofs: bool = False,
+) -> dict[str, Any]:
+    """Project context-pack identities before attaching its public contract."""
+
+    authorities = authoritative_fields or {}
+
+    proof_field_names = {"memory_trust_assessment", "retrieval_decision_trace"}
+    proof_paths = {
+        ("memory_trust_assessment",),
+        ("retrieval_decision_trace",),
+        ("context_pack", "memory_trust_assessment"),
+        ("context_pack", "retrieval_decision_trace"),
+        ("context_compiler", "memory_trust_assessment"),
+        ("context_compiler", "retrieval_decision_trace"),
+        ("context_pack", "context_compiler", "memory_trust_assessment"),
+        ("context_pack", "context_compiler", "retrieval_decision_trace"),
+    }
+    structural_forbidden = {
+        "hookspecificoutput",
+        "messages",
+        "toolcalls",
+        "functioncall",
+        "rawcontextlatticejson",
+        "rawprompt",
+    }
+
+    def project(node: Any, *, root: bool = False, depth: int = 0, path: tuple[str, ...] = ()) -> Any:
+        if depth > 64:
+            return None
+        if isinstance(node, list):
+            return [project(item, depth=depth + 1, path=path) for item in node]
+        if not isinstance(node, dict):
+            return node
+        # Retrieval proof content is hashed before public projection; candidate
+        # metadata inside that immutable receipt must never be rewritten as an
+        # adapter identity. The proof projector replaces this subtree later.
+        if preserve_canonical_proofs and path in proof_paths and path[-1] in proof_field_names:
+            return dict(node)
+        result = {
+            key: project(item, depth=depth + 1, path=(*path, str(key)))
+            for key, item in node.items()
+            if "".join(character for character in str(key).lower() if character.isalnum())
+            not in structural_forbidden
+            if "".join(character for character in str(key).lower() if character.isalnum())
+            not in {"sessionid", "agentid"}
+            or key in {"session_id", "agent_id"}
+        }
+        omitted = {
+            item
+            for item in result.get("identity_omitted", [])
+            if isinstance(item, str) and item in {"session_id", "agent_id"}
+        } if isinstance(result.get("identity_omitted"), list) else set()
+        if root:
+            omitted.update(omitted_fields or set())
+        for field in ("session_id", "agent_id"):
+            had_identity = any(
+                "".join(character for character in str(key).lower() if character.isalnum())
+                == field.replace("_", "")
+                for key in node
+            ) or field in omitted
+            if authoritative_fields is not None and (root or had_identity):
+                authority = authorities.get(field, "")
+                if authority:
+                    result[field] = authority
+                    omitted.discard(field)
+                else:
+                    result.pop(field, None)
+                    omitted.add(field)
+                continue
+            if field not in result:
+                continue
+            identity, identity_omitted = bounded_public_identity(result.get(field), field)
+            if identity and not identity_omitted and field not in omitted:
+                result[field] = identity
+                continue
+            result.pop(field, None)
+            omitted.add(field)
+        if omitted:
+            result["identity_omitted"] = sorted(omitted)
+        else:
+            result.pop("identity_omitted", None)
+        return result
+
+    projected = project(value, root=True)
+    return projected if isinstance(projected, dict) else {}
+
+
+def public_contract_payload_once(contract_id: str, value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    if not agent_contract_json_domain_valid(value):
+        return {}
+    # Attach first so a full retrieval receipt is digest-projected while it is
+    # still untouched. Only then apply the canonical public projection.
+    projected = attach_format_contract(contract_id, value)
+    if contract_id == "context_pack_response.v1":
+        pack = projected.get("context_pack") if isinstance(projected.get("context_pack"), dict) else {}
+        advisor = projected.get("run_advisor") or pack.get("run_advisor")
+        advisor = public_contract_payload_once("run_advisor.v1", advisor if isinstance(advisor, dict) else {})
+        projected["run_advisor"] = advisor
+        if pack:
+            pack["run_advisor"] = advisor
+            projected["context_pack"] = pack
+    projected = redact_public_value(projected)
+    if not isinstance(projected, dict):
+        return {}
+    if not agent_contract_json_domain_valid(projected):
+        return {}
+    projected, nested_contracts_valid = restamp_nested_public_contracts(projected, root=True)
+    contract = projected.get("format_contract")
+    if not isinstance(contract, dict):
+        return projected
+    for _ in range(8):
+        canonical_bytes = len(
+            json.dumps(
+                projected,
+                allow_nan=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        )
+        if contract.get("actual_json_bytes") == canonical_bytes:
+            break
+        contract["actual_json_bytes"] = canonical_bytes
+    findings = validate_agent_contract_payload(contract_id, projected)
+    if not nested_contracts_valid:
+        findings.append({"reason": "nested_public_contract_invalid", "contract_id": contract_id})
+    contract["contract_valid"] = not findings
+    contract["validation"] = {
+        "status": "passed" if not findings else "failed",
+        "errors": findings[:12],
+    }
+    for _ in range(8):
+        canonical_bytes = len(
+            json.dumps(
+                projected,
+                allow_nan=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        )
+        if contract.get("actual_json_bytes") == canonical_bytes:
+            break
+        contract["actual_json_bytes"] = canonical_bytes
+    return projected
+
+
+def restamp_nested_public_contracts(value: Any, *, root: bool = False) -> tuple[Any, bool]:
+    """Refresh public nested contracts or remove stale, non-authoritative stamps."""
+
+    if isinstance(value, list):
+        valid = True
+        result: list[Any] = []
+        for item in value:
+            projected, child_valid = restamp_nested_public_contracts(item)
+            result.append(projected)
+            valid = valid and child_valid
+        return result, valid
+    if not isinstance(value, dict):
+        return value, True
+    result: dict[str, Any] = {}
+    valid = True
+    for key, item in value.items():
+        projected, child_valid = restamp_nested_public_contracts(item)
+        result[key] = projected
+        valid = valid and child_valid
+    if root:
+        return result, valid
+    format_contract = result.get("format_contract")
+    contract_id = str(format_contract.get("schema_id") or "") if isinstance(format_contract, dict) else ""
+    if contract_id not in {
+        "agent_preflight_response.v1",
+        "objective_runtime_state.v1",
+        "policy_context_package.v1",
+        "run_advisor.v1",
+    }:
+        return result, valid
+    stamped = public_contract_payload_once(contract_id, result)
+    nested_findings = validate_agent_contract_payload(contract_id, stamped)
+    nested_status = validation_status(stamped)
+    if not nested_findings and nested_status == "passed":
+        return stamped, valid
+    result.pop("format_contract", None)
+    if contract_id == "run_advisor.v1":
+        valid = False
+    return result, valid
+
+
+def public_contract_valid(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return False
+    if not agent_contract_json_domain_valid(value):
+        return False
+    contract = value.get("format_contract")
+    if not isinstance(contract, dict) or contract.get("contract_valid") is not True:
+        return False
+    contract_id = str(contract.get("schema_id") or "").strip()
+    if not contract_id or validate_agent_contract_payload(contract_id, value):
+        return False
+    return True
+
+
+def public_contract_fits(value: Any) -> bool:
+    if not public_contract_valid(value):
+        return False
+    contract = value["format_contract"]
+    try:
+        actual = int(contract.get("actual_json_bytes") or 0)
+        maximum = int(contract.get("max_total_json_bytes") or 0)
+    except (TypeError, ValueError, OverflowError):
+        return False
+    return 0 < actual <= maximum
+
+
+def bounded_context_pack_failure() -> dict[str, Any]:
+    compiler = {
+        "schema_id": "contextlattice_context_compiler.v1",
+        "version": 1,
+        "strategy": "adapter_public_boundary_failure",
+        "intended_use": "return a bounded typed failure without raw response data",
+        "recommended_surface": "cli_for_local_agents",
+        "ranked_evidence_count": 0,
+    }
+    return {
+        "ok": False,
+        "context_pack": {
+            "facts": [],
+            "results": [],
+            "citations": [],
+            "ranked_evidence": [],
+            "prompt_sections": {},
+            "context_compiler": compiler,
+            "relevant_decisions": [],
+            "files_to_read": [],
+            "files_to_avoid": [],
+            "capabilities_to_use": [],
+            "runbooks": [],
+            "known_failure_modes": [],
+            "commands": [],
+            "acceptance_criteria": [],
+        },
+        "source_coverage": {"configured": [], "returned": [], "complete": False},
+        "context_compiler": compiler,
+        "reference_prompt": "",
+        "writeback_required": True,
+        "warnings": ["Context pack was rejected at the adapter public boundary."],
+    }
+
+
+def public_contract_payload(contract_id: str, value: Any) -> dict[str, Any]:
+    projected = public_contract_payload_once(contract_id, value)
+    if public_contract_fits(projected):
+        return projected
+    if contract_id == "context_pack_response.v1":
+        fallback = public_contract_payload_once(contract_id, bounded_context_pack_failure())
+    elif contract_id == "universal_agent_adapter_response.v1":
+        omitted = {"session_id", "agent_id"}
+        if isinstance(value, dict) and isinstance(value.get("identity_omitted"), list):
+            omitted.update(
+                item for item in value["identity_omitted"] if item in {"session_id", "agent_id"}
+            )
+        fallback = public_contract_payload_once(
+            contract_id,
+            {
+                "ok": False,
+                "command": str(value.get("command") or "context-pack") if isinstance(value, dict) else "context-pack",
+                "project": str(value.get("project") or "") if isinstance(value, dict) else "",
+                "adapter_contract": adapter_contract(),
+                "result": {"status": "bounded_public_boundary_failure"},
+                "findings": [{"reason": "adapter_public_boundary_failure"}],
+                "identity_omitted": sorted(omitted),
+            },
+        )
+    else:
+        return projected
+    return fallback if public_contract_fits(fallback) else {}
+
+
+def validated_context_pack_quality_state_receipt(value: Any) -> dict[str, Any]:
+    quality = value if isinstance(value, dict) else {}
+    sample_id = str(quality.get("sample_id") or "").strip()
+    query_hash = str(quality.get("query_hash") or "").strip().lower()
+    quality_score = quality.get("quality_score")
+    captured_at = str(quality.get("capturedAt") or quality.get("captured_at") or "").strip()
+    try:
+        sample_id_bytes = len(sample_id.encode("utf-8"))
+    except UnicodeEncodeError:
+        return {}
+    if not sample_id or len(sample_id) > 200 or sample_id_bytes > 200:
+        return {}
+    if not sample_id.startswith("cpq_") or any(ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-" for ch in sample_id):
+        return {}
+    projected_sample_id, sample_id_omitted = bounded_public_identity(sample_id, "sample_id", 200)
+    if sample_id_omitted or projected_sample_id != sample_id:
+        return {}
+    if len(query_hash) != 16 or any(ch not in "0123456789abcdef" for ch in query_hash):
+        return {}
+    if isinstance(quality_score, bool) or not isinstance(quality_score, (int, float)):
+        return {}
+    if isinstance(quality_score, int):
+        if not 0 <= quality_score <= 100:
+            return {}
+    elif not math.isfinite(quality_score) or not 0 <= quality_score <= 100:
+        return {}
+    try:
+        parsed_at = datetime.fromisoformat(captured_at.replace("Z", "+00:00"))
+        if parsed_at.tzinfo is None:
+            return {}
+    except ValueError:
+        return {}
+    return {
+        "sample_id": sample_id,
+        "query_hash": query_hash,
+        "quality_score": quality_score,
+        "capturedAt": captured_at,
+    }
+
+
 def context_pack_outcome_report(session_id: str, sample_id: str) -> dict[str, Any]:
-    sample_id = str(sample_id or "").strip()
-    if not sample_id:
+    session_id, session_id_omitted = bounded_public_identity(session_id, "session_id")
+    sample_id, sample_id_omitted = bounded_public_identity(sample_id, "sample_id", 200)
+    if session_id_omitted or sample_id_omitted or not session_id or not sample_id:
         return {}
     return {
         "schema_id": "contextlattice_context_pack_outcome_report.v1",
@@ -340,8 +1018,11 @@ def context_pack_outcome_report(session_id: str, sample_id: str) -> dict[str, An
 
 
 def record_context_pack_quality_pending(project: str, session_id: str, agent_id: str, objective: str, quality: dict[str, Any]) -> None:
+    session_id, session_id_omitted = bounded_public_identity(session_id, "session_id")
+    agent_id, agent_id_omitted = bounded_public_identity(agent_id, "agent_id")
+    quality = validated_context_pack_quality_state_receipt(quality)
     sample_id = str(quality.get("sample_id") or "").strip()
-    if not sample_id or not session_id:
+    if session_id_omitted or agent_id_omitted or not sample_id or not session_id:
         return
     from _common import read_agent_session_state, write_agent_session_state
 
@@ -358,6 +1039,7 @@ def record_context_pack_quality_pending(project: str, session_id: str, agent_id:
                 "query_hash": quality.get("query_hash"),
                 "quality_score": quality.get("quality_score"),
                 "captured_at": quality.get("capturedAt") or quality.get("captured_at") or now_iso(),
+                "reported": False,
             },
         }
     )
@@ -386,7 +1068,28 @@ def pending_quality_sample_id(args: argparse.Namespace) -> str:
 
     state = read_agent_session_state(args.project)
     quality = state.get("latest_context_pack_quality") if isinstance(state.get("latest_context_pack_quality"), dict) else {}
+    if quality.get("reported") is True:
+        return ""
     return str(quality.get("sample_id") or "").strip()
+
+
+def mark_context_pack_quality_reported(project: str, session_id: str, outcome: dict[str, Any]) -> None:
+    outcome_id = str(outcome.get("outcome_id") or "").strip()
+    sample_id = str(outcome.get("sample_id") or "").strip()
+    if not session_id or not outcome_id or not sample_id:
+        return
+    from _common import read_agent_session_state, write_agent_session_state
+
+    state = read_agent_session_state(project)
+    if str(state.get("session_id") or "") != session_id:
+        return
+    quality = state.get("latest_context_pack_quality") if isinstance(state.get("latest_context_pack_quality"), dict) else {}
+    if str(quality.get("sample_id") or "") != sample_id or quality.get("reported") is True:
+        return
+    quality = dict(quality)
+    quality.update({"reported": True, "reported_at": now_iso(), "outcome_id": outcome_id})
+    state["latest_context_pack_quality"] = quality
+    write_agent_session_state(project, state)
 
 
 def outcome_payload_from_args(args: argparse.Namespace, session_id: str, profile_key: str, agent_id: str, source: str) -> dict[str, Any]:
@@ -433,28 +1136,69 @@ def outcome_payload_from_args(args: argparse.Namespace, session_id: str, profile
 
 
 def compact_outcome_metadata(outcome: dict[str, Any]) -> dict[str, Any]:
-    keys = [
-        "schema_id",
-        "sample_id",
-        "task_class",
-        "first_pass_success",
-        "repair_required",
+    compact: dict[str, Any] = {"schema_id": "contextlattice_context_pack_outcome.v1"}
+    for field, limit in (("outcome_id", 240), ("sample_id", 200), ("task_class", 120), ("outcome_source", 120)):
+        value = outcome.get(field)
+        if not isinstance(value, str):
+            continue
+        projected = redact_public_value({field: value})
+        public_value = projected.get(field) if isinstance(projected, dict) else None
+        try:
+            public_bytes = len(public_value.encode("utf-8")) if isinstance(public_value, str) else limit + 1
+        except UnicodeEncodeError:
+            public_bytes = limit + 1
+        if isinstance(public_value, str) and public_value == value and 0 < public_bytes <= limit:
+            compact[field] = public_value
+    for field in ("first_pass_success", "repair_required"):
+        if isinstance(outcome.get(field), bool):
+            compact[field] = outcome[field]
+    for field in (
         "retry_count",
         "observed_followup_tokens",
         "provider_prompt_tokens",
         "provider_completion_tokens",
         "provider_total_tokens",
-        "outcome_source",
-    ]
-    return {key: outcome.get(key) for key in keys if key in outcome}
+    ):
+        value = outcome.get(field)
+        if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= (1 << 63) - 1:
+            compact[field] = value
+    return compact
+
+
+def validated_context_pack_outcome_receipt(value: Any, expected_sample_id: str) -> dict[str, Any]:
+    outcome = value if isinstance(value, dict) else {}
+    if outcome.get("schema_id") != "contextlattice_context_pack_outcome.v1":
+        return {}
+    compact = compact_outcome_metadata(outcome)
+    outcome_id = compact.get("outcome_id")
+    sample_id = compact.get("sample_id")
+    if not isinstance(outcome_id, str) or not re.fullmatch(r"[A-Za-z0-9._:@-]{1,240}", outcome_id):
+        return {}
+    if (
+        not isinstance(sample_id, str)
+        or sample_id != expected_sample_id
+        or not sample_id.startswith("cpq_")
+        or not re.fullmatch(r"[A-Za-z0-9_-]{5,200}", sample_id)
+    ):
+        return {}
+    return compact
 
 
 def post_context_pack_outcome(args: argparse.Namespace, session_id: str, profile_key: str, agent_id: str, source: str) -> tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]]:
     payload = outcome_payload_from_args(args, session_id, profile_key, agent_id, source)
+    payload = attach_task_binding(payload, args)
     raw = request_json("POST", "/telemetry/context-pack-quality/outcome", payload, args.timeout)
     event: dict[str, Any] = {}
     findings: list[dict[str, Any]] = []
-    outcome = raw.get("outcome") if isinstance(raw.get("outcome"), dict) else {}
+    outcome = validated_context_pack_outcome_receipt(raw.get("outcome"), str(payload.get("sample_id") or ""))
+    if raw.get("ok") is not True:
+        findings.append({"reason": "outcome_report_rejected"})
+        return raw, event, findings
+    if not outcome:
+        findings.append({"reason": "outcome_receipt_invalid"})
+        return raw, event, findings
+    raw = dict(raw)
+    raw["outcome"] = outcome
     if session_id:
         event = request_json(
             "POST",
@@ -469,12 +1213,15 @@ def post_context_pack_outcome(args: argparse.Namespace, session_id: str, profile
                 "metadata": {
                     "adapter": "contextlattice-agent-adapter",
                     "outcome": compact_outcome_metadata(outcome),
+                    "task_binding": binding_metadata(args),
                 },
             },
             args.timeout,
         )
-        if not event.get("ok"):
-            findings.append({"reason": "outcome_event_failed", "event": event})
+        if event.get("ok") is not True:
+            findings.append({"reason": "outcome_event_failed"})
+    if not findings and session_id and event.get("ok") is True:
+        mark_context_pack_quality_reported(args.project, session_id, outcome)
     return raw, event, findings
 
 
@@ -515,46 +1262,84 @@ def cmd_checkpoint(args: argparse.Namespace) -> int:
         "created_at": now_iso(),
         "tags": ["agent-writeback", "checkpoint", "universal-agent-adapter"],
     }
+    body = attach_task_binding(body, args)
+    public_session_id, _session_omitted = bounded_public_identity(session_id, "session_id")
+    preflight_writeback: dict[str, Any] = {
+        "ok": True,
+        "kind": "checkpoint",
+        "project": args.project,
+        "file": args.file,
+        "topic_path": body["topicPath"],
+        "write": {"ok": True, "kind": "write"},
+        "event": {"ok": True, "kind": "event"},
+        "adapter_contract": adapter_contract(),
+    }
+    if public_session_id:
+        preflight_writeback["session_id"] = public_session_id
+    preflight = adapter_response(
+        command="checkpoint",
+        ok=True,
+        agent=profile_key,
+        agent_id=agent_id,
+        project=args.project,
+        session_id=session_id,
+        result={"writeback": preflight_writeback, "retrieval_mode": mode, "profile": profile},
+    )
+    if not adapter_output_accepted(preflight):
+        emit(preflight, args.pretty)
+        return 1
     write = request_json("POST", "/memory/write", body, args.timeout)
-    event = request_json(
-        "POST",
-        "/v1/agents/sessions/event",
-        {
-            "session_id": session_id,
-            "agent": profile_key,
-            "agent_id": agent_id,
-            "project": args.project,
-            "type": "writeback.completed",
-            "summary": content[:240],
-            "metadata": {"file": args.file, "topic_path": body["topicPath"], "adapter": "contextlattice-agent-adapter"},
-        },
-        args.timeout,
-    )
-    writeback = attach_format_contract(
-        "writeback_result.v1",
-        {
-            "ok": bool(write.get("ok", True)),
-            "kind": "checkpoint",
-            "project": args.project,
-            "file": args.file,
-            "topic_path": body["topicPath"],
-            "session_id": session_id,
-            "write": write,
-            "event": event,
-            "adapter_contract": adapter_contract(),
-        },
-    )
+    event: dict[str, Any] = {}
+    findings: list[dict[str, Any]] = []
+    if write.get("ok") is True:
+        event = request_json(
+            "POST",
+            "/v1/agents/sessions/event",
+            {
+                "session_id": session_id,
+                "agent": profile_key,
+                "agent_id": agent_id,
+                "project": args.project,
+                "type": "writeback.completed",
+                "summary": content[:240],
+                "metadata": {
+                    "file": args.file,
+                    "topic_path": body["topicPath"],
+                    "adapter": "contextlattice-agent-adapter",
+                    "task_binding": binding_metadata(args),
+                },
+            },
+            args.timeout,
+        )
+        if event.get("ok") is not True:
+            findings.append({"reason": "writeback_event_failed"})
+    else:
+        findings.append({"reason": "writeback_rejected"})
+    writeback_payload = {
+        "ok": write.get("ok") is True and event.get("ok") is True,
+        "kind": "checkpoint",
+        "project": args.project,
+        "file": args.file,
+        "topic_path": body["topicPath"],
+        "write": compact_adapter_server_receipt(write, "write"),
+        "event": compact_adapter_server_receipt(event, "event"),
+        "adapter_contract": adapter_contract(),
+    }
+    if public_session_id:
+        writeback_payload["session_id"] = public_session_id
+    writeback = public_contract_payload_once("writeback_result.v1", writeback_payload)
     output = adapter_response(
         command="checkpoint",
-        ok=bool(writeback.get("ok")),
+        ok=writeback.get("ok") is True and not findings and public_contract_valid(writeback),
         agent=profile_key,
         agent_id=agent_id,
         project=args.project,
         session_id=session_id,
         result={"writeback": writeback, "retrieval_mode": mode, "profile": profile},
+        findings=findings,
     )
     emit(output, args.pretty)
-    return 0 if output.get("ok") else 1
+    return 0 if adapter_output_accepted(output) else 1
 
 
 def cmd_context_pack(args: argparse.Namespace) -> int:
@@ -573,56 +1358,118 @@ def cmd_context_pack(args: argparse.Namespace) -> int:
         "session_id": session_id,
         "traffic_class": "user",
     }
+    request = attach_task_binding(request, args)
     request = {key: value for key, value in request.items() if value not in ("", None)}
-    context_pack = request_json("POST", "/memory/context-pack", request, args.timeout)
-    if isinstance(context_pack, dict):
-        context_pack = attach_format_contract("context_pack_response.v1", context_pack)
-    quality_sample = context_pack_quality_sample(context_pack if isinstance(context_pack, dict) else {})
-    quality_sample_id = str(quality_sample.get("sample_id") or "").strip()
-    record_context_pack_quality_pending(args.project, session_id, agent_id, query, quality_sample)
+    raw_context_pack = request_json_for_validation("POST", "/memory/context-pack", request, args.timeout)
+    quality_sample = context_pack_quality_sample(raw_context_pack if isinstance(raw_context_pack, dict) else {})
+    public_session_id, _session_id_omitted = bounded_public_identity(session_id, "session_id")
+    public_agent_id, _agent_id_omitted = bounded_public_identity(agent_id, "agent_id")
+    omitted_context_pack_identities = {
+        field
+        for field, public_value in (
+            ("session_id", public_session_id),
+            ("agent_id", public_agent_id),
+        )
+        if not public_value
+    }
+    raw_context_pack_for_public = public_context_pack_identities(
+        raw_context_pack,
+        omitted_fields=omitted_context_pack_identities,
+        authoritative_fields={"session_id": public_session_id, "agent_id": public_agent_id},
+        preserve_canonical_proofs=True,
+    )
+    context_pack = public_contract_payload("context_pack_response.v1", raw_context_pack_for_public)
     findings = validate_agent_contract_payload("context_pack_response.v1", context_pack)
+    raw_success = (
+        isinstance(raw_context_pack, dict)
+        and raw_context_pack.get("ok") is True
+        and isinstance(raw_context_pack.get("context_pack"), dict)
+    )
+    if not raw_success or context_pack.get("ok") is not True:
+        findings.append({"reason": "context_pack_public_boundary_failure"})
     if contains_provider_overflow(context_pack):
         findings.append({"reason": "context_pack_provider_overflow_phrase_leaked"})
-    event = request_json(
-        "POST",
-        "/v1/agents/sessions/event",
-        {
-            "session_id": session_id,
-            "agent": profile_key,
-            "agent_id": agent_id,
-            "project": args.project,
-            "type": "context_pack.completed",
-            "summary": f"context pack completed for {query[:160]}",
-            "metadata": {
-                "adapter": "contextlattice-agent-adapter",
+    accepted_context_pack = not findings and public_contract_fits(context_pack)
+    quality_state_receipt = (
+        validated_context_pack_quality_state_receipt(quality_sample) if accepted_context_pack else {}
+    )
+    quality_sample_id = str(quality_state_receipt.get("sample_id") or "").strip()
+    def build_output(event_value: dict[str, Any]) -> dict[str, Any]:
+        candidate = adapter_response(
+            command="context-pack",
+            ok=accepted_context_pack and event_value.get("ok") is True,
+            agent=profile_key,
+            agent_id=public_agent_id,
+            project=args.project,
+            session_id=public_session_id,
+            result={
+                "profile": profile,
                 "topic_path": request.get("topic_path"),
+                "query": query,
                 "retrieval_mode": mode,
-                "contract_ok": not findings,
-                "context_pack_quality_sample_id": quality_sample_id,
+                "context_pack": enforce_contract_limits("context_pack_response.v1", context_pack),
+                "outcome_report": (
+                    context_pack_outcome_report(session_id, quality_sample_id)
+                    if accepted_context_pack and quality_sample_id
+                    else {}
+                ),
+                "event": event_value,
             },
-        },
-        args.timeout,
+            findings=findings,
+        )
+        return public_contract_payload("universal_agent_adapter_response.v1", candidate)
+
+    preflight_event = {"ok": True}
+    output = build_output(preflight_event)
+    envelope_accepted = output.get("ok") is True and public_contract_fits(output)
+    if not envelope_accepted:
+        accepted_context_pack = False
+        quality_state_receipt = {}
+        quality_sample_id = ""
+        if not any(finding.get("reason") == "adapter_public_boundary_failure" for finding in findings):
+            findings.append({"reason": "adapter_public_boundary_failure"})
+    if accepted_context_pack:
+        raw_event = request_json(
+            "POST",
+            "/v1/agents/sessions/event",
+            {
+                "session_id": session_id,
+                "agent": profile_key,
+                "agent_id": agent_id,
+                "project": args.project,
+                "type": "context_pack.completed",
+                "summary": f"context pack completed for {query[:160]}",
+                "metadata": {
+                    "adapter": "contextlattice-agent-adapter",
+                    "topic_path": request.get("topic_path"),
+                    "retrieval_mode": mode,
+                    "contract_ok": True,
+                    "context_pack_quality_sample_id": quality_sample_id,
+                    "task_binding": binding_metadata(args),
+                },
+            },
+            args.timeout,
+        )
+        event = {"ok": raw_event.get("ok") is True}
+    else:
+        event = {"ok": False, "skipped": True, "reason": "context_pack_public_boundary_failure"}
+    output = build_output(event)
+    final_accepted = (
+        accepted_context_pack
+        and event.get("ok") is True
+        and output.get("ok") is True
+        and public_contract_fits(output)
     )
-    output = adapter_response(
-        command="context-pack",
-        ok=not findings and bool(event.get("ok")),
-        agent=profile_key,
-        agent_id=agent_id,
-        project=args.project,
-        session_id=session_id,
-        result={
-            "profile": profile,
-            "topic_path": request.get("topic_path"),
-            "query": query,
-            "retrieval_mode": mode,
-            "context_pack": enforce_contract_limits("context_pack_response.v1", context_pack),
-            "outcome_report": context_pack_outcome_report(session_id, quality_sample_id),
-            "event": event,
-        },
-        findings=findings,
-    )
+    if final_accepted:
+        record_context_pack_quality_pending(
+            args.project,
+            public_session_id,
+            public_agent_id,
+            query,
+            quality_state_receipt,
+        )
     emit(output, args.pretty)
-    return 1 if findings or not event.get("ok") else 0
+    return 0 if final_accepted else 1
 
 
 def cmd_handoff(args: argparse.Namespace) -> int:
@@ -637,6 +1484,7 @@ def cmd_handoff(args: argparse.Namespace) -> int:
         "objective": args.objective,
         "next_action": args.next_action,
     }
+    payload = attach_task_binding(payload, args)
     env = os.environ.copy()
     env["CONTEXTLATTICE_SESSION_ID"] = session_id
     env["CONTEXTLATTICE_PROJECT"] = args.project
@@ -651,14 +1499,40 @@ def cmd_handoff(args: argparse.Namespace) -> int:
         timeout=max(5.0, float(args.timeout)),
     )
     try:
-        handoff = json.loads(proc.stdout or "{}")
-    except json.JSONDecodeError:
-        handoff = {"raw": proc.stdout[:2000], "stderr": proc.stderr[:1000]}
+        handoff = json.loads(proc.stdout) if proc.stdout.strip() else None
+    except (json.JSONDecodeError, UnicodeError):
+        handoff = None
     findings = []
     if proc.returncode != 0:
-        findings.append({"reason": "handoff_payload_failed", "returncode": proc.returncode, "stderr": proc.stderr[:1000]})
+        findings.append({"reason": "handoff_payload_failed", "returncode": proc.returncode})
+    handoff_valid = (
+        isinstance(handoff, dict)
+        and handoff.get("schema_version") == 1
+        and handoff.get("event") == "context_compaction"
+        and isinstance(handoff.get("summary"), str)
+        and bool(handoff["summary"].strip())
+        and isinstance(handoff.get("portable_prompt"), str)
+        and bool(handoff["portable_prompt"].strip())
+    )
+    if not handoff_valid:
+        findings.append({"reason": "handoff_payload_invalid"})
+        handoff = {}
     if contains_provider_overflow(handoff):
         findings.append({"reason": "handoff_provider_overflow_phrase_leaked"})
+    public_handoff = compact_adapter_handoff(handoff)
+    preflight = adapter_response(
+        command="handoff",
+        ok=not findings,
+        agent=args.agent,
+        agent_id=args.agent_id,
+        project=args.project,
+        session_id=session_id,
+        result={"handoff": public_handoff, "event": {"ok": True, "kind": "event"}},
+        findings=findings,
+    )
+    if not adapter_output_accepted(preflight):
+        emit(preflight, args.pretty)
+        return 1
     event = request_json(
         "POST",
         "/v1/agents/sessions/event",
@@ -669,22 +1543,29 @@ def cmd_handoff(args: argparse.Namespace) -> int:
             "project": args.project,
             "type": "handoff.created",
             "summary": args.summary,
-            "metadata": {"adapter": "contextlattice-agent-adapter", "handoff_ok": not findings},
+            "metadata": {
+                "adapter": "contextlattice-agent-adapter",
+                "handoff_ok": not findings,
+                "task_binding": binding_metadata(args),
+            },
         },
         args.timeout,
     )
     output = adapter_response(
         command="handoff",
-        ok=not findings and bool(event.get("ok")),
+        ok=not findings and event.get("ok") is True,
         agent=args.agent,
         agent_id=args.agent_id,
         project=args.project,
         session_id=session_id,
-        result={"handoff": handoff, "event": event},
+        result={
+            "handoff": public_handoff,
+            "event": compact_adapter_server_receipt(event, "event"),
+        },
         findings=findings,
     )
     emit(output, args.pretty)
-    return 1 if findings or not event.get("ok") else 0
+    return 0 if adapter_output_accepted(output) else 1
 
 
 def cmd_complete(args: argparse.Namespace) -> int:
@@ -701,25 +1582,55 @@ def cmd_complete(args: argparse.Namespace) -> int:
         "status": "completed",
         "metadata": metadata_from_args(args.metadata_json),
     }
-    event = request_json("POST", "/v1/agents/sessions/event", {key: value for key, value in payload.items() if value not in ("", None, {})}, args.timeout)
+    payload = attach_task_binding(payload, args)
+    event: dict[str, Any] = {}
     findings: list[dict[str, Any]] = []
     outcome: dict[str, Any] = {}
     outcome_event: dict[str, Any] = {}
-    if outcome_args_present(args):
-        outcome, outcome_event, outcome_findings = post_context_pack_outcome(args, session_id, profile_key, agent_id, "adapter_complete")
-        findings.extend(outcome_findings)
-    output = adapter_response(
+    preflight = adapter_response(
         command="complete",
-        ok=bool(event.get("ok")) and not findings and (not outcome or bool(outcome.get("ok"))),
+        ok=True,
         agent=profile_key,
         agent_id=agent_id,
         project=args.project,
         session_id=session_id,
-        result={"event": event, "outcome": outcome.get("outcome"), "outcome_event": outcome_event},
+        result={
+            "event": {"ok": True, "kind": "event"},
+            "outcome": {"ok": True, "kind": "outcome"},
+            "outcome_event": {"ok": True, "kind": "event"},
+        },
+    )
+    if not adapter_output_accepted(preflight):
+        emit(preflight, args.pretty)
+        return 1
+    if outcome_args_present(args):
+        outcome, outcome_event, outcome_findings = post_context_pack_outcome(args, session_id, profile_key, agent_id, "adapter_complete")
+        findings.extend(outcome_findings)
+    if not findings and (not outcome or outcome.get("ok") is True):
+        event = request_json(
+            "POST",
+            "/v1/agents/sessions/event",
+            {key: value for key, value in payload.items() if value not in ("", None, {})},
+            args.timeout,
+        )
+        if event.get("ok") is not True:
+            findings.append({"reason": "completion_event_failed"})
+    output = adapter_response(
+        command="complete",
+        ok=event.get("ok") is True and not findings and (not outcome or outcome.get("ok") is True),
+        agent=profile_key,
+        agent_id=agent_id,
+        project=args.project,
+        session_id=session_id,
+        result={
+            "event": compact_adapter_server_receipt(event, "event"),
+            "outcome": compact_adapter_server_receipt(outcome, "outcome"),
+            "outcome_event": compact_adapter_server_receipt(outcome_event, "event"),
+        },
         findings=findings,
     )
     emit(output, args.pretty)
-    return 0 if output.get("ok") else 1
+    return 0 if adapter_output_accepted(output) else 1
 
 
 def cmd_outcome(args: argparse.Namespace) -> int:
@@ -730,19 +1641,41 @@ def cmd_outcome(args: argparse.Namespace) -> int:
         from _common import read_agent_session_state
 
         session_id = str(read_agent_session_state(args.project).get("session_id") or "")
-    outcome, event, findings = post_context_pack_outcome(args, session_id, profile_key, agent_id, "adapter_outcome")
-    output = adapter_response(
+    preflight = adapter_response(
         command="outcome",
-        ok=bool(outcome.get("ok")) and not findings,
+        ok=True,
         agent=profile_key,
         agent_id=agent_id,
         project=args.project,
         session_id=session_id,
-        result={"query": query, "outcome": outcome.get("outcome"), "telemetry": outcome.get("telemetry"), "event": event},
+        result={
+            "query": query,
+            "outcome": {"ok": True, "kind": "outcome"},
+            "telemetry": {},
+            "event": {"ok": True, "kind": "event"},
+        },
+    )
+    if not adapter_output_accepted(preflight):
+        emit(preflight, args.pretty)
+        return 1
+    outcome, event, findings = post_context_pack_outcome(args, session_id, profile_key, agent_id, "adapter_outcome")
+    output = adapter_response(
+        command="outcome",
+        ok=outcome.get("ok") is True and not findings,
+        agent=profile_key,
+        agent_id=agent_id,
+        project=args.project,
+        session_id=session_id,
+        result={
+            "query": query,
+            "outcome": compact_adapter_server_receipt(outcome, "outcome"),
+            "telemetry": compact_adapter_server_receipt(outcome.get("telemetry"), "telemetry"),
+            "event": compact_adapter_server_receipt(event, "event"),
+        },
         findings=findings,
     )
     emit(output, args.pretty)
-    return 0 if output.get("ok") else 1
+    return 0 if adapter_output_accepted(output) else 1
 
 
 def cmd_profiles(args: argparse.Namespace) -> int:
@@ -754,7 +1687,7 @@ def cmd_profiles(args: argparse.Namespace) -> int:
         result={"profiles": AGENT_PREFLIGHT_PROFILES},
     )
     emit(output, args.pretty)
-    return 0
+    return 0 if adapter_output_accepted(output) else 1
 
 
 def add_common(parser: argparse.ArgumentParser) -> None:
@@ -762,6 +1695,11 @@ def add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--agent-id", default="")
     parser.add_argument("--project", default="contextlattice")
     parser.add_argument("--session-id", default=os.getenv("CONTEXTLATTICE_SESSION_ID", ""))
+    parser.add_argument("--task-id", default=os.getenv("CONTEXTLATTICE_TASK_ID", ""))
+    parser.add_argument("--attempt-id", default=os.getenv("CONTEXTLATTICE_ATTEMPT_ID", ""))
+    parser.add_argument("--lease-id", default=os.getenv("CONTEXTLATTICE_LEASE_ID", ""))
+    parser.add_argument("--snapshot-id", default=os.getenv("CONTEXTLATTICE_CONTEXT_SNAPSHOT_ID", ""))
+    parser.add_argument("--context-pack-hash", default=os.getenv("CONTEXTLATTICE_CONTEXT_PACK_HASH", ""))
     parser.add_argument("--mission", default="")
     parser.add_argument("--objective", default="")
     parser.add_argument("--goal", default="")
@@ -856,5 +1794,54 @@ def main() -> int:
     return int(args.func(args))
 
 
+def _entrypoint() -> int:
+    try:
+        return main()
+    except SystemExit as exc:
+        # Network/UTF-8/JSON failures from the trusted validation transport use
+        # a JSON SystemExit payload. Convert that internal transport signal to
+        # the same bounded universal v2 envelope as every other adapter path.
+        # Preserve argparse's ordinary numeric help/usage exits unchanged.
+        if isinstance(exc.code, int) or exc.code is None:
+            raise
+        argv = sys.argv[1:]
+        command = argv[0] if argv and not argv[0].startswith("-") else "adapter"
+        values: dict[str, str] = {}
+        for index, item in enumerate(argv[:-1]):
+            if item in {"--project", "--agent", "--agent-id", "--session-id"}:
+                values[item] = argv[index + 1]
+        output = adapter_response(
+            command=command,
+            ok=False,
+            project=values.get("--project", "contextlattice"),
+            session_id=values.get("--session-id", ""),
+            agent=values.get("--agent", "unknown-agent"),
+            agent_id=values.get("--agent-id", ""),
+            result={"status": "gateway_response_invalid"},
+            findings=[{"reason": "gateway_response_invalid"}],
+        )
+        emit(output, "--pretty" in argv)
+        return 1
+    except (subprocess.TimeoutExpired, OSError, UnicodeError, json.JSONDecodeError, RecursionError):
+        argv = sys.argv[1:]
+        command = argv[0] if argv and not argv[0].startswith("-") else "adapter"
+        values: dict[str, str] = {}
+        for index, item in enumerate(argv[:-1]):
+            if item in {"--project", "--agent", "--agent-id", "--session-id"}:
+                values[item] = argv[index + 1]
+        output = adapter_response(
+            command=command,
+            ok=False,
+            project=values.get("--project", "contextlattice"),
+            session_id=values.get("--session-id", ""),
+            agent=values.get("--agent", "unknown-agent"),
+            agent_id=values.get("--agent-id", ""),
+            result={"status": "adapter_command_failed"},
+            findings=[{"reason": "adapter_command_failed"}],
+        )
+        emit(output, "--pretty" in argv)
+        return 1
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(_entrypoint())

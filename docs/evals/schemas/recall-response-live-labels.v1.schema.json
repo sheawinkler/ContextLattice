@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contextlattice.local/schemas/recall-response-live-labels.v1.schema.json",
+  "title": "Human-authored recall response semantic labels",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_id", "version", "synthetic", "authoring", "case_set_digest", "snapshot_digest", "labels_digest", "split_counts", "custody", "labels"],
+  "properties": {
+    "schema_id": {"const": "recall_response_live_labels.v1"},
+    "version": {"const": 1},
+    "synthetic": {"const": false},
+    "authoring": {"const": "human_authored"},
+    "case_set_digest": {"$ref": "#/$defs/digest"},
+    "snapshot_digest": {"$ref": "#/$defs/digest"},
+    "labels_digest": {"$ref": "#/$defs/digest"},
+    "split_counts": {"type": "object", "additionalProperties": false, "required": ["development", "holdout"], "properties": {"development": {"type": "integer", "minimum": 1}, "holdout": {"type": "integer", "minimum": 1}}},
+    "custody": {"$ref": "#/$defs/custody"},
+    "labels": {"type": "array", "minItems": 2, "items": {"$ref": "#/$defs/label"}}
+  },
+  "$defs": {
+    "digest": {"type": "string", "pattern": "^sha256:[0-9a-fA-F]{64}$"},
+    "custody": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_id", "owner", "mode", "synthetic", "contamination_state", "case_set_digest", "snapshot_digest", "labels_digest", "promotional_claims_allowed"],
+      "properties": {
+        "schema_id": {"const": "recall_response_live_label_custody.v1"},
+        "owner": {"const": "human_authored"},
+        "mode": {"const": "sealed_holdout"},
+        "synthetic": {"const": false},
+        "contamination_state": {"enum": ["sealed_holdout", "uncontaminated"]},
+        "case_set_digest": {"$ref": "#/$defs/digest"},
+        "snapshot_digest": {"$ref": "#/$defs/digest"},
+        "labels_digest": {"$ref": "#/$defs/digest"},
+        "promotional_claims_allowed": {"const": true}
+      }
+    },
+    "label": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["case_id", "split", "request_shape", "action", "temporal", "abstention"],
+      "properties": {
+        "case_id": {"type": "string", "minLength": 1},
+        "split": {"enum": ["development", "holdout"]},
+        "request_shape": {"type": "object", "additionalProperties": false, "properties": {"retrieval_intent": {"type": "string"}, "task_class": {"type": "string"}, "evidence_state": {"type": "string"}, "temporal_state": {"type": "string"}, "proof_union_digest": {"$ref": "#/$defs/digest"}}},
+        "action": {"type": "object", "additionalProperties": false, "properties": {"expected_next_action": {"type": "string"}, "expected_tool_ref": {"type": "string"}, "requires_refusal": {"type": "boolean"}}},
+        "temporal": {"type": "object", "additionalProperties": false, "properties": {"expected_as_of": {"type": "string"}, "expected_temporal_state": {"type": "string"}, "expected_currentness": {"type": "string"}}},
+        "abstention": {"type": "object", "additionalProperties": false, "properties": {"expected": {"type": "boolean"}}},
+        "expected_record_digests": {"type": "array", "items": {"$ref": "#/$defs/digest"}},
+        "expected_content_digests": {"type": "array", "items": {"$ref": "#/$defs/digest"}},
+        "expected_proof_refs": {"type": "array", "items": {"type": "string", "minLength": 1}}
+      }
+    }
+  }
+}

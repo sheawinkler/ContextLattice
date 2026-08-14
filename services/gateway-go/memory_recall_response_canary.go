@@ -17,8 +17,7 @@ const (
 
 var recallResponseCanonicalBindingFields = []string{
 	"condition", "ablation", "arm", "exposure_bucket", "policy_version",
-	"proof_digest", "snapshot_digest", "receipt_digest", "owner_ref", "task_ref",
-	"lane_ref", "intent", "temporal_premise_digest", "verifier_digest", "component_digest",
+	"proof_digest", "scope_binding_digest", "verifier_digest", "component_digest",
 }
 
 // recallResponseCanaryScope is the typed, already-normalized input to canary
@@ -163,7 +162,7 @@ func recallResponseCanaryPolicySnapshotFromResponse(response map[string]any) (re
 		}
 		resolved[kind] = recallResponseComponentPolicy{
 			BasisPoints: basisPoints, PolicyVersion: anyToString(binding["policy_version"]),
-			ReceiptDigest: anyToString(binding["receipt_digest"]),
+			ReceiptDigest: anyToString(anyMap(response["request_scope"])["receipt_digest"]),
 		}
 	}
 	return resolved, true
@@ -184,13 +183,8 @@ func recallResponseCanonicalComponentBinding(binding map[string]any, module stri
 		(anyToString(binding["policy_version"]) == recallResponseCanaryZeroPolicyVersion && arm != recallResponseCanaryArmControl) {
 		return nil, false
 	}
-	for _, key := range []string{"proof_digest", "snapshot_digest", "receipt_digest", "temporal_premise_digest", "verifier_digest", "component_digest"} {
+	for _, key := range []string{"proof_digest", "scope_binding_digest", "verifier_digest", "component_digest"} {
 		if !recallResponseValidDigest(anyToString(binding[key])) {
-			return nil, false
-		}
-	}
-	for _, key := range []string{"owner_ref", "task_ref", "lane_ref", "intent"} {
-		if strings.TrimSpace(anyToString(binding[key])) == "" {
 			return nil, false
 		}
 	}
@@ -329,11 +323,101 @@ func recallResponseFitCandidateBudget(candidate map[string]any) bool {
 		if recallResponsePruneLowestUnprovedEvidence(candidate, proof) {
 			continue
 		}
+		if recallResponsePruneDerivedInferencePresentation(candidate) {
+			continue
+		}
 		if !recallResponsePruneOptionalSecondaryModule(candidate) {
 			return false
 		}
 	}
 	return false
+}
+
+// recallResponsePruneDerivedInferencePresentation removes only the redundant
+// response-state annotation produced by recallResponseInferences. The row is
+// explicitly not a memory fact, is outside every source/union membership
+// digest, and repeats state/confidence values that remain in their
+// authoritative fields. An unknown inference shape is retained fail-closed.
+func recallResponsePruneDerivedInferencePresentation(candidate map[string]any) bool {
+	inferences := contextPackAnyList(candidate["inferences"])
+	if len(inferences) == 0 {
+		return false
+	}
+	for _, raw := range inferences {
+		row := anyMap(raw)
+		if !recallResponseExactFields(row, []string{"inference_id", "claim_ref", "basis_refs", "status", "confidence", "disclosure"}) ||
+			anyToString(row["status"]) != "deterministic_metadata_only" ||
+			anyToString(row["claim_ref"]) != "response_state" {
+			return false
+		}
+	}
+	candidate["inferences"] = []any{}
+	candidate["response_id"] = recallResponseIDForResponse(candidate)
+	candidate["response_digest"] = recallResponseSemanticDigest(candidate)
+	return true
+}
+
+// recallResponseCompactCursorPresentation reduces only deterministic
+// explanatory prose when an owner-issued cursor is present and the complete
+// transport envelope is over budget. It never changes refs, counts, digests,
+// statuses, safety booleans, action permissions, or the continuation contract.
+// The cursor's server-owned membership and all proof/omission receipts remain
+// authoritative; this is presentation-only budget fitting.
+func recallResponseCompactCursorPresentation(candidate map[string]any) bool {
+	disclosure := recallResponseDisclosure(candidate)
+	if anyToString(anyMap(disclosure["continuation_action"])["kind"]) != "continue_snapshot" {
+		return false
+	}
+	changed := false
+	answer := anyMap(candidate["answer"])
+	answerMode := anyToString(answer["answer_mode"])
+	compactSummary := "Bounded evidence; unresolved limits require verification."
+	if answerMode == "answer" {
+		compactSummary = "Bounded evidence; inspect proof before relying."
+	} else if answerMode == "abstention" {
+		compactSummary = "No bounded answer; verify before acting."
+	}
+	if anyToString(answer["summary"]) != compactSummary {
+		answer["summary"] = compactSummary
+		changed = true
+	}
+	if progressive := anyMap(answer["progressive_disclosure"]); len(progressive) > 0 {
+		if anyToString(progressive["next_level_requires"]) != "Explicit proof request." {
+			progressive["next_level_requires"] = "Explicit proof request."
+			changed = true
+		}
+	}
+	nextAction := anyMap(candidate["next_action"])
+	compactLabel, compactReason := "Retrieve or verify", "Advisory only; verify before acting."
+	if anyToString(nextAction["kind"]) == "inspect_proof" {
+		compactLabel, compactReason = "Inspect proof", "Verify proof before relying."
+	}
+	if anyToString(nextAction["label"]) != compactLabel {
+		nextAction["label"] = compactLabel
+		changed = true
+	}
+	if anyToString(nextAction["reason"]) != compactReason {
+		nextAction["reason"] = compactReason
+		changed = true
+	}
+	actionBoundary := anyMap(candidate["action_boundary"])
+	if anyToString(actionBoundary["reason"]) != "Advisory only; independently authorize mutations." {
+		actionBoundary["reason"] = "Advisory only; independently authorize mutations."
+		changed = true
+	}
+	if anyToString(disclosure["inference_boundary"]) != "Opaque refs only." {
+		disclosure["inference_boundary"] = "Opaque refs only."
+		changed = true
+	}
+	if anyToString(disclosure["omission_policy"]) != "Presentation only; union membership is count-, digest-, and continuation-bound." {
+		disclosure["omission_policy"] = "Presentation only; union membership is count-, digest-, and continuation-bound."
+		changed = true
+	}
+	if changed {
+		candidate["response_id"] = recallResponseIDForResponse(candidate)
+		candidate["response_digest"] = recallResponseSemanticDigest(candidate)
+	}
+	return changed
 }
 
 func recallResponsePruneOptionalSecondaryModule(candidate map[string]any) bool {
@@ -344,7 +428,11 @@ func recallResponsePruneOptionalSecondaryModule(candidate map[string]any) bool {
 	modules := contextPackAnyList(answer["components"])
 	remove := -1
 	for index := len(modules) - 1; index > 0; index-- {
-		if !recallResponseModuleSafety[anyToString(anyMap(modules[index])["kind"])] {
+		module := anyMap(modules[index])
+		componentRef := anyToString(module["component_ref"])
+		kind := anyToString(module["kind"])
+		readyAction := kind == "memory_to_action" && recallResponseActionPayloadReady(anyMap(module["payload"]))
+		if !recallResponseModuleSafety[kind] && !readyAction && !recallResponseNonExclusionProtected(candidate, componentRef) {
 			remove = index
 			break
 		}
@@ -352,6 +440,8 @@ func recallResponsePruneOptionalSecondaryModule(candidate map[string]any) bool {
 	if remove < 0 {
 		return false
 	}
+	removedRef := anyToString(anyMap(modules[remove])["component_ref"])
+	removedKind := anyToString(anyMap(modules[remove])["kind"])
 	modules = append(append([]any(nil), modules[:remove]...), modules[remove+1:]...)
 	ordered := make([]string, 0, len(modules))
 	for index, raw := range modules {
@@ -364,11 +454,19 @@ func recallResponsePruneOptionalSecondaryModule(candidate map[string]any) bool {
 		ordered = append(ordered, anyToString(module["kind"]))
 	}
 	answer["components"] = modules
+	coverage := []any{}
+	for _, raw := range contextPackAnyList(proof["coverage"]) {
+		if anyToString(anyMap(raw)["obligation"]) != "module:"+removedKind {
+			coverage = append(coverage, raw)
+		}
+	}
+	proof["coverage"] = coverage
 	composition["primary_module"] = ordered[0]
 	composition["ordered_modules"] = recallResponseAnyStrings(ordered)
 	if !recallResponseValidateModules(modules, proof, scope) {
 		return false
 	}
+	recallResponseRecordOmission(candidate, removedRef, "component", "response_budget_secondary_module", false, recallResponseBudgetOmissionOutcome(candidate))
 	candidate["response_id"] = recallResponseIDForResponse(candidate)
 	candidate["response_digest"] = recallResponseSemanticDigest(candidate)
 	return true
@@ -383,7 +481,12 @@ func recallResponsePruneLowestUnprovedEvidence(candidate, proof map[string]any) 
 	remove := -1
 	for index := len(evidence) - 1; index >= 0; index-- {
 		row := anyMap(evidence[index])
-		if anyToString(row["role"]) == "context" && !proofSet[anyToString(row["ref_id"])] {
+		refID := anyToString(row["ref_id"])
+		// The complete typed union remains server-owned and continues through the
+		// cursor. Presentation may omit any unproved, unprotected row—regardless
+		// of its display role—to keep the initial/full envelope within budget.
+		// Protected rows and proof witnesses remain non-omissible.
+		if !proofSet[refID] && !recallResponseNonExclusionProtected(candidate, refID) {
 			remove = index
 			break
 		}
@@ -391,6 +494,7 @@ func recallResponsePruneLowestUnprovedEvidence(candidate, proof map[string]any) 
 	if remove < 0 {
 		return false
 	}
+	removedRef := anyToString(anyMap(evidence[remove])["ref_id"])
 	evidence = append(append([]any(nil), evidence[:remove]...), evidence[remove+1:]...)
 	candidate["evidence"] = evidence
 	answer := anyMap(candidate["answer"])
@@ -409,23 +513,49 @@ func recallResponsePruneLowestUnprovedEvidence(candidate, proof map[string]any) 
 	confidence := recallResponseConfidence(evidence, map[string]any{"complete": anyToBool(state["source_complete"])}, conflicts, gaps)
 	candidate["confidence"] = confidence
 	candidate["inferences"] = recallResponseInferences(evidence, confidence, anyToString(state["status"]))
+	recallResponseRecordOmission(candidate, removedRef, "evidence", "response_budget_context", false, recallResponseBudgetOmissionOutcome(candidate))
 	candidate["response_id"] = recallResponseIDForResponse(candidate)
 	candidate["response_digest"] = recallResponseSemanticDigest(candidate)
 	return true
 }
 
+// Budget pruning may only claim no-loss after the closed, source-bound control
+// receipt compares the candidate union and proof identities in this snapshot.
+// Missing authority, clipping, or a mismatched receipt remains promotion-
+// blocking and is recorded as unverified.
+func recallResponseBudgetOmissionOutcome(response map[string]any) string {
+	counterfactual := recallResponseOmissionCounterfactual(response, "no_loss_verified", false)
+	if anyToBool(counterfactual["verified"]) {
+		return "no_loss_verified"
+	}
+	return "not_verified"
+}
+
 func projectRecallResponseV1ControlFromArtifacts(input map[string]any, policy validatedRecallResponsePolicyInput) map[string]any {
+	policy.sourceBound = policy.sourceBound && recallResponseValidDigest(policy.snapshotDigest) && recallResponseValidDigest(policy.receiptDigest)
 	prepared, asOf := recallResponsePrepareTemporalInput(input)
+	if sourceSnapshot := recallResponseSourceSnapshotForInput(prepared); len(sourceSnapshot) > 0 {
+		policy.sourceBound = policy.sourceBound && anyToBool(sourceSnapshot["complete"]) &&
+			recallResponseSourceSnapshotValidForInput(prepared, sourceSnapshot)
+	} else if !policy.synthetic {
+		policy.sourceBound = false
+	}
 	control := composeRecallResponseV1Control(prepared, policy, asOf)
 	policy, _ = recallResponseBindArtifactIdentity(prepared, control, policy, asOf)
+	recallResponseEnsureControlReceipt(control, policy, asOf)
 	return recallResponseFailClosedU2Control(control, policy, asOf)
 }
 
 func recallResponseCandidateOrControl(control, candidate map[string]any, policy validatedRecallResponsePolicyInput, asOf string, valid bool, receipts ...map[string]any) map[string]any {
 	if !valid || candidate == nil {
 		fallback := recallResponseFailClosedU2Control(control, policy, asOf)
+		stage := ""
 		if len(receipts) > 0 {
 			recallResponseAttachFallbackStageReceipt(fallback, receipts[0])
+			stage = anyToString(receipts[0]["stage"])
+		}
+		if policy.synthetic && policy.ablation != "" && policy.ablation != "none" {
+			recallResponseSealAblationFailureWitness(fallback, policy, stage)
 		}
 		return fallback
 	}

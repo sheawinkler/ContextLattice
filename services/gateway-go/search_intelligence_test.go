@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"math"
 	"reflect"
 	"strings"
 	"testing"
@@ -55,6 +56,537 @@ func TestMergeRowsKeepsDistinctPassagesFromOneFile(t *testing.T) {
 	}
 	if rowIdentity(merged[0]) == rowIdentity(merged[1]) {
 		t.Fatalf("same-file passages share a pipeline identity: %#v", merged)
+	}
+}
+
+func TestMergeRowsEqualScoreConflictIsDeterministicAndConservative(t *testing.T) {
+	permissive := map[string]any{
+		"content": "same retained record", "summary": "same retained record", "project": "alpha",
+		"file": "notes/record.md", "chunk_id": "chunk-1", "source": "qdrant", "score": 0.88,
+		"status": "current", "support": "direct", "action_evidence": map[string]any{
+			"tool_ref": "sha256:" + strings.Repeat("a", 64),
+		},
+	}
+	excluded := map[string]any{
+		"content": "same retained record", "summary": "same retained record", "project": "alpha",
+		"file": "notes/record.md", "chunk_id": "chunk-1", "source": "topic_rollups", "score": 0.88,
+		"status": "retired", "lifecycle": "retired", "support": "distractor", "action_evidence": map[string]any{
+			"tool_ref": "sha256:" + strings.Repeat("b", 64),
+		},
+	}
+	if rowIdentity(permissive) != rowIdentity(excluded) {
+		t.Fatalf("fixture rows did not share identity: permissive=%q excluded=%q", rowIdentity(permissive), rowIdentity(excluded))
+	}
+	left := map[string][]map[string]any{
+		"qdrant":        {permissive},
+		"topic_rollups": {excluded},
+	}
+	right := map[string][]map[string]any{
+		"topic_rollups": {cloneMap(excluded)},
+		"qdrant":        {cloneMap(permissive)},
+	}
+	first, err := json.Marshal(mergeRowsAll(left))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for attempt := 0; attempt < 20; attempt++ {
+		merged := mergeRowsAll(right)
+		serialized, marshalErr := json.Marshal(merged)
+		if marshalErr != nil {
+			t.Fatal(marshalErr)
+		}
+		if string(serialized) != string(first) {
+			t.Fatalf("equal-score duplicate merge changed with input order: first=%s attempt=%s", first, serialized)
+		}
+		if len(merged) != 1 || anyToString(merged[0]["status"]) != "retired" ||
+			anyToString(merged[0]["support"]) != "distractor" || merged[0]["action_evidence"] != nil ||
+			anyToString(merged[0]["merge_conflict"]) != "conservative_duplicate_exclusion" {
+			t.Fatalf("permissive duplicate won conservative custody merge: %#v", merged)
+		}
+		if _, eligible := recallResponseEvidenceStatus(merged[0]); eligible {
+			t.Fatalf("conservative duplicate remained selectable: %#v", merged[0])
+		}
+	}
+	intelligenceLeft := buildSearchIntelligence(searchIntelligenceInput{
+		RowsBySource: left, AllMerged: mergeRowsAll(left), Literal: mergeRows(left, 1), ResultState: "ready",
+	})
+	intelligenceRight := buildSearchIntelligence(searchIntelligenceInput{
+		RowsBySource: right, AllMerged: mergeRowsAll(right), Literal: mergeRows(right, 1), ResultState: "ready",
+	})
+	leftBytes, err := json.Marshal(intelligenceLeft)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rightBytes, err := json.Marshal(intelligenceRight)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(leftBytes) != string(rightBytes) {
+		t.Fatalf("equal-score duplicate changed response intelligence digest: left=%s right=%s", leftBytes, rightBytes)
+	}
+}
+
+func TestMergeRowsUnequalScoreKeepsHighestScoreContentBaseAndConservativeSafety(t *testing.T) {
+	highScore := map[string]any{
+		"content": "same retained record", "summary": "same retained record",
+		"project": "highest-score-project", "file": "highest/record.md", "chunk_id": "highest-chunk",
+		"source": "z_high_score", "score": 0.97, "title": "highest-score-title",
+		"author": "highest-score-author", "numeric_value": 97,
+		"metadata": map[string]any{"winner": "highest-score"},
+		"status":   "current", "support": "direct", "action_evidence": map[string]any{
+			"tool_ref": "sha256:" + strings.Repeat("a", 64),
+		},
+	}
+	lowerScoreExcluded := map[string]any{
+		"content": "same retained record", "summary": "same retained record",
+		"project": "lower-score-project", "file": "lower/record.md", "chunk_id": "lower-chunk",
+		"source": "a_lower_score", "score": 0.42, "title": "lower-score-title",
+		"author": "lower-score-author", "numeric_value": 42,
+		"metadata": map[string]any{"winner": "lower-score"},
+		"status":   "retired", "lifecycle": "retired", "support": "distractor", "action_evidence": map[string]any{
+			"tool_ref": "sha256:" + strings.Repeat("b", 64),
+		},
+	}
+	if rowIdentity(highScore) != rowIdentity(lowerScoreExcluded) {
+		t.Fatalf("fixture rows did not share identity: high=%q low=%q", rowIdentity(highScore), rowIdentity(lowerScoreExcluded))
+	}
+	inputs := []map[string][]map[string]any{
+		{"z_high_score": {highScore}, "a_lower_score": {lowerScoreExcluded}},
+		{"a_lower_score": {cloneMap(lowerScoreExcluded)}, "z_high_score": {cloneMap(highScore)}},
+	}
+	var first []byte
+	for index, input := range inputs {
+		merged := mergeRowsAll(input)
+		if len(merged) != 1 {
+			t.Fatalf("input %d did not collapse the duplicate: %#v", index, merged)
+		}
+		row := merged[0]
+		for field, want := range highScore {
+			if mergeRowSafetyField(field) {
+				continue
+			}
+			if !reflect.DeepEqual(row[field], want) {
+				t.Fatalf("input %d field %q came from the lower-score base: got=%#v want=%#v row=%#v", index, field, row[field], want, row)
+			}
+		}
+		if got := parseScore(row); got != 0.97 {
+			t.Fatalf("input %d displayed score is not the content-base score: got=%v row=%#v", index, got, row)
+		}
+		if anyToString(row["status"]) != "retired" || anyToString(row["lifecycle"]) != "retired" ||
+			anyToString(row["support"]) != "distractor" || row["action_evidence"] != nil ||
+			anyToString(row["merge_conflict"]) != "conservative_duplicate_exclusion" {
+			t.Fatalf("input %d did not retain the strongest safety overlay: %#v", index, row)
+		}
+		serialized, err := json.Marshal(merged)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if index == 0 {
+			first = serialized
+		} else if string(serialized) != string(first) {
+			t.Fatalf("unequal-score duplicate merge changed with input order: first=%s next=%s", first, serialized)
+		}
+	}
+}
+
+func TestMergeRowsUnequalScoreKeepsHighestOrdinaryFieldsAndOverlaysEligibleActionSafety(t *testing.T) {
+	highScore := map[string]any{
+		"content": "same executable procedure", "summary": "same executable procedure",
+		"project": "highest-score-project", "file": "highest/procedure.md", "chunk_id": "highest-chunk",
+		"source": "z_high_score", "score": 0.96, "title": "highest-score-title",
+		"status": "current", "support": "direct",
+	}
+	actionReceipt := map[string]any{
+		"tool_ref": "sha256:" + strings.Repeat("c", 64),
+		"parameter_bindings": []any{map[string]any{
+			"parameter_ref": "sha256:" + strings.Repeat("d", 64),
+			"required":      true, "sensitive": false, "value_state": "bound_redacted",
+		}},
+		"ordered_steps": []any{map[string]any{"step_ref": "sha256:" + strings.Repeat("e", 64)}},
+	}
+	lowerScoreAction := map[string]any{
+		"content": "same executable procedure", "summary": "same executable procedure",
+		"project": "lower-score-project", "file": "lower/procedure.md", "chunk_id": "lower-chunk",
+		"source": "a_lower_action", "score": 0.41, "title": "lower-score-title",
+		"status": "current", "support": "direct", "action_evidence": actionReceipt,
+	}
+	if rowIdentity(highScore) != rowIdentity(lowerScoreAction) {
+		t.Fatalf("fixture rows did not share identity: high=%q low=%q", rowIdentity(highScore), rowIdentity(lowerScoreAction))
+	}
+	inputs := []map[string][]map[string]any{
+		{"z_high_score": {highScore}, "a_lower_action": {lowerScoreAction}},
+		{"a_lower_action": {cloneMap(lowerScoreAction)}, "z_high_score": {cloneMap(highScore)}},
+	}
+	for index, input := range inputs {
+		merged := mergeRowsAll(input)
+		if len(merged) != 1 {
+			t.Fatalf("input %d did not collapse the duplicate: %#v", index, merged)
+		}
+		row := merged[0]
+		for field, want := range highScore {
+			if mergeRowSafetyField(field) {
+				continue
+			}
+			if !reflect.DeepEqual(row[field], want) {
+				t.Fatalf("input %d ordinary field %q did not come from the highest-score base: got=%#v want=%#v row=%#v", index, field, row[field], want, row)
+			}
+		}
+		if anyToString(row["source"]) != "z_high_score" || parseScore(row) != 0.96 {
+			t.Fatalf("input %d displayed source/score did not stay with the highest-score base: %#v", index, row)
+		}
+		if !reflect.DeepEqual(row["action_evidence"], actionReceipt) {
+			t.Fatalf("input %d eligible lower-score action safety receipt was lost: %#v", index, row)
+		}
+		if _, eligible := recallResponseEvidenceStatus(row); !eligible {
+			t.Fatalf("input %d eligible action receipt became non-supporting: %#v", index, row)
+		}
+	}
+}
+
+func TestMergeRowsActionOverlayRequiresWholePayloadAgreement(t *testing.T) {
+	actionPayload := map[string]any{
+		"tool_ref": "sha256:" + strings.Repeat("1", 64),
+		"parameter_bindings": []any{map[string]any{
+			"parameter_ref": "sha256:" + strings.Repeat("2", 64),
+			"required":      true, "sensitive": false, "value_state": "bound_redacted",
+		}},
+		"ordered_steps":      []any{map[string]any{"step_ref": "sha256:" + strings.Repeat("3", 64)}},
+		"refusal_conditions": []any{},
+	}
+	row := func(source string, score float64, field string, payload map[string]any) map[string]any {
+		out := map[string]any{
+			"content": "same closed action", "summary": "same closed action",
+			"project": source + "-project", "file": source + "/action.md", "chunk_id": source + "-chunk",
+			"source": source, "score": score, "title": source + "-title",
+			"status": "current", "support": "direct",
+		}
+		if field != "" {
+			out[field] = payload
+		}
+		return out
+	}
+	clonePayload := func() map[string]any { return cloneJSONMap(actionPayload) }
+	toolConflict := clonePayload()
+	toolConflict["tool_ref"] = "sha256:" + strings.Repeat("4", 64)
+	parameterConflict := clonePayload()
+	anyMap(contextPackAnyList(parameterConflict["parameter_bindings"])[0])["parameter_ref"] = "sha256:" + strings.Repeat("5", 64)
+	stepsConflict := clonePayload()
+	anyMap(contextPackAnyList(stepsConflict["ordered_steps"])[0])["step_ref"] = "sha256:" + strings.Repeat("6", 64)
+	partialConflict := map[string]any{"tool_ref": actionPayload["tool_ref"]}
+	nestedIdentical := row("nested_identical", 0.65, "action_evidence", clonePayload())
+	nestedIdentical["recall_metadata"] = map[string]any{"action": clonePayload()}
+	nestedConflict := row("nested_conflict", 0.65, "action_evidence", clonePayload())
+	nestedConflict["recall_metadata"] = map[string]any{"action": toolConflict}
+	nestedOnly := row("nested_only", 0.60, "", nil)
+	nestedOnly["recall_metadata"] = map[string]any{"action": clonePayload()}
+
+	tests := []struct {
+		name       string
+		candidates []map[string]any
+		wantAction bool
+		wantHard   bool
+	}{
+		{
+			name: "identical complete aliases",
+			candidates: []map[string]any{
+				row("a_action", 0.70, "action_evidence", clonePayload()),
+				row("b_action", 0.60, "structured_action", clonePayload()),
+			},
+			wantAction: true,
+		},
+		{
+			name:       "identical nested and top-level aliases",
+			candidates: []map[string]any{nestedIdentical},
+			wantAction: true,
+		},
+		{
+			name: "identical nested and top-level carriers",
+			candidates: []map[string]any{
+				row("top_level", 0.70, "action_evidence", clonePayload()),
+				nestedOnly,
+			},
+			wantAction: true,
+		},
+		{
+			name:       "conflicting nested and top-level aliases",
+			candidates: []map[string]any{nestedConflict},
+		},
+		{
+			name: "conflicting tool",
+			candidates: []map[string]any{
+				row("a_action", 0.70, "action_evidence", clonePayload()),
+				row("b_action", 0.60, "action_evidence", toolConflict),
+			},
+		},
+		{
+			name: "conflicting parameter",
+			candidates: []map[string]any{
+				row("a_action", 0.70, "action_evidence", clonePayload()),
+				row("b_action", 0.60, "action_evidence", parameterConflict),
+			},
+		},
+		{
+			name: "conflicting steps",
+			candidates: []map[string]any{
+				row("a_action", 0.70, "action_evidence", clonePayload()),
+				row("b_action", 0.60, "action_evidence", stepsConflict),
+			},
+		},
+		{
+			name: "partial payload conflicts with complete payload",
+			candidates: []map[string]any{
+				row("a_action", 0.70, "action_evidence", clonePayload()),
+				row("b_action", 0.60, "action_evidence", partialConflict),
+			},
+		},
+		{
+			name: "hard excluded duplicate suppresses agreed action",
+			candidates: []map[string]any{
+				row("a_action", 0.70, "action_evidence", clonePayload()),
+				func() map[string]any {
+					excluded := row("b_retired", 0.60, "", nil)
+					excluded["status"] = "retired"
+					excluded["lifecycle"] = "retired"
+					excluded["support"] = "distractor"
+					return excluded
+				}(),
+			},
+			wantHard: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			highest := row("z_highest", 0.99, "", nil)
+			input := map[string][]map[string]any{"z_highest": {highest}}
+			for _, candidate := range test.candidates {
+				source := anyToString(candidate["source"])
+				input[source] = append(input[source], candidate)
+			}
+			merged := mergeRowsAll(input)
+			if len(merged) != 1 {
+				t.Fatalf("duplicate action rows did not collapse: %#v", merged)
+			}
+			got := merged[0]
+			if anyToString(got["source"]) != "z_highest" || parseScore(got) != 0.99 || anyToString(got["title"]) != "z_highest-title" {
+				t.Fatalf("action overlay replaced the highest-score ordinary/display winner: %#v", got)
+			}
+			if test.wantAction {
+				if !reflect.DeepEqual(got["action_evidence"], actionPayload) {
+					t.Fatalf("byte-equivalent complete action payloads were not retained: %#v", got)
+				}
+			} else if got["action_evidence"] != nil || got["structured_action"] != nil || got["action"] != nil {
+				t.Fatalf("conflicting or excluded action payload did not fail closed: %#v", got)
+			}
+			if test.wantHard {
+				if anyToString(got["status"]) != "retired" || anyToString(got["support"]) != "distractor" {
+					t.Fatalf("hard exclusion did not retain lifecycle authority: %#v", got)
+				}
+			}
+		})
+	}
+}
+
+func TestMergeRowsLowerScoreNestedLifecycleAuthoritySurvivesAndSuppressesAction(t *testing.T) {
+	actionPayload := map[string]any{
+		"tool_ref": "sha256:" + strings.Repeat("a", 64),
+		"parameter_bindings": []any{map[string]any{
+			"parameter_ref": "sha256:" + strings.Repeat("b", 64),
+			"required":      true, "sensitive": false, "value_state": "bound_redacted",
+		}},
+	}
+	high := map[string]any{
+		"content": "same lifecycle record", "summary": "same lifecycle record",
+		"project": "high-project", "file": "high/record.md", "chunk_id": "high-chunk",
+		"source": "z_high", "score": 0.99, "title": "highest ordinary content",
+		"status": "current", "support": "direct", "action_evidence": actionPayload,
+	}
+	tests := []struct {
+		name          string
+		wantLifecycle string
+		apply         func(map[string]any)
+	}{
+		{
+			name:          "recall metadata temporal retirement",
+			wantLifecycle: "retired",
+			apply: func(row map[string]any) {
+				row["recall_metadata"] = map[string]any{"temporal": map[string]any{"lifecycle": "retired"}}
+			},
+		},
+		{
+			name:          "recall metadata root forgotten flag",
+			wantLifecycle: "forgotten",
+			apply: func(row map[string]any) {
+				row["recall_metadata"] = map[string]any{"forgotten": true}
+			},
+		},
+		{
+			name:          "temporal evidence forgotten flag",
+			wantLifecycle: "forgotten",
+			apply: func(row map[string]any) {
+				row["temporal_evidence"] = map[string]any{"forgotten": true}
+			},
+		},
+		{
+			name:          "mixed optimistic and nested forgotten state",
+			wantLifecycle: "forgotten",
+			apply: func(row map[string]any) {
+				row["recall_metadata"] = map[string]any{
+					"state":    "current",
+					"temporal": map[string]any{"state": "current", "forgotten": true},
+				}
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			low := cloneJSONMap(high)
+			low["source"] = "a_low"
+			low["score"] = 0.20
+			low["title"] = "lower safety carrier"
+			delete(low, "action_evidence")
+			test.apply(low)
+			if rowIdentity(high) != rowIdentity(low) {
+				t.Fatalf("lifecycle fixture rows did not share identity: high=%q low=%q", rowIdentity(high), rowIdentity(low))
+			}
+			merged := mergeRowsAll(map[string][]map[string]any{
+				"z_high": {cloneJSONMap(high)},
+				"a_low":  {low},
+			})
+			if len(merged) != 1 {
+				t.Fatalf("lifecycle duplicate did not collapse: %#v", merged)
+			}
+			row := merged[0]
+			if anyToString(row["source"]) != "z_high" || parseScore(row) != 0.99 || anyToString(row["title"]) != "highest ordinary content" {
+				t.Fatalf("nested lifecycle overlay replaced highest-score ordinary/display fields: %#v", row)
+			}
+			lifecycle := recallResponseCanonicalLifecycle(row)
+			if !lifecycle.hard || lifecycle.canonical != test.wantLifecycle || anyToString(row["lifecycle"]) != test.wantLifecycle {
+				t.Fatalf("nested lifecycle authority did not survive merge: lifecycle=%#v row=%#v", lifecycle, row)
+			}
+			if _, eligible := recallResponseEvidenceStatus(row); eligible {
+				t.Fatalf("nested lifecycle row remained supporting: %#v", row)
+			}
+			if row["action_evidence"] != nil || row["structured_action"] != nil || row["action"] != nil ||
+				len(anyMap(anyMap(row["recall_metadata"])["action"])) != 0 || len(recallResponseProjectActionMetadata(row)) != 0 {
+				t.Fatalf("nested lifecycle row retained action authority: %#v", row)
+			}
+			source := map[string]any{
+				"retrieval_intent": "action",
+				"source_coverage":  map[string]any{"complete": true},
+				"context_pack":     map[string]any{"ranked_evidence": []any{row}},
+			}
+			if recallResponseActionProjectionAllowed(source) || len(anyMap(recallResponseProjectEvidenceMetadata(row)["action"])) != 0 {
+				t.Fatalf("nested lifecycle row remained projectable as action: %#v", row)
+			}
+			if _, err := json.Marshal(merged); err != nil {
+				t.Fatalf("merged lifecycle output is not JSON-safe: %v", err)
+			}
+		})
+	}
+}
+
+func TestRecallResponseActionProjectionRequiresExactNestedAliasAgreement(t *testing.T) {
+	payload := map[string]any{
+		"tool_ref": "sha256:" + strings.Repeat("c", 64),
+		"parameter_bindings": []any{map[string]any{
+			"parameter_ref": "sha256:" + strings.Repeat("d", 64),
+			"required":      true, "sensitive": false, "value_state": "bound_redacted",
+		}},
+	}
+	row := map[string]any{
+		"candidate_id": "rtc_" + strings.Repeat("a", 24),
+		"status":       "current", "support": "direct", "confidence": 0.95,
+		"action_evidence": cloneJSONMap(payload),
+		"recall_metadata": map[string]any{"action": cloneJSONMap(payload)},
+	}
+	if len(recallResponseProjectActionMetadata(row)) == 0 || !recallResponseHasStructuredActionEvidence([]any{row}) {
+		t.Fatalf("identical nested/top-level action aliases were rejected: %#v", row)
+	}
+	conflicting := cloneJSONMap(row)
+	anyMap(anyMap(conflicting["recall_metadata"])["action"])["tool_ref"] = "sha256:" + strings.Repeat("e", 64)
+	if len(recallResponseProjectActionMetadata(conflicting)) != 0 || recallResponseHasStructuredActionEvidence([]any{conflicting}) {
+		t.Fatalf("conflicting nested/top-level action aliases remained projectable: %#v", conflicting)
+	}
+}
+
+func TestMergeRowsRejectsEveryNonFiniteScoreBeforeOrderingAndJSON(t *testing.T) {
+	types := []struct {
+		name  string
+		value any
+	}{
+		{name: "numeric_nan", value: math.NaN()},
+		{name: "numeric_positive_infinity", value: math.Inf(1)},
+		{name: "numeric_negative_infinity", value: math.Inf(-1)},
+		{name: "numeric_float32_nan", value: float32(math.NaN())},
+		{name: "numeric_float32_positive_infinity", value: float32(math.Inf(1))},
+		{name: "numeric_float32_negative_infinity", value: float32(math.Inf(-1))},
+		{name: "string_nan", value: "NaN"},
+		{name: "string_positive_infinity", value: "+Inf"},
+		{name: "string_negative_infinity", value: "-Inf"},
+		{name: "string_lowercase_nan", value: "nan"},
+		{name: "string_positive_infinity_word", value: "+Infinity"},
+		{name: "string_negative_infinity_word", value: "-Infinity"},
+		{name: "string_overflow_to_infinity", value: "1e10000"},
+		{name: "json_number_nan", value: json.Number("NaN")},
+		{name: "json_number_positive_infinity", value: json.Number("+Inf")},
+		{name: "json_number_negative_infinity", value: json.Number("-Inf")},
+		{name: "json_number_lowercase_nan", value: json.Number("nan")},
+		{name: "json_number_positive_infinity_word", value: json.Number("+Infinity")},
+		{name: "json_number_negative_infinity_word", value: json.Number("-Infinity")},
+		{name: "json_number_overflow_to_infinity", value: json.Number("1e10000")},
+	}
+	aliases := []string{"score", "hybrid_score", "similarity", "confidence"}
+	valid := map[string]any{
+		"content": "finite score record", "summary": "finite score record",
+		"source": "finite", "score": 0.75, "status": "current",
+	}
+	invalid := make([]map[string]any, 0, len(types)*len(aliases)+1)
+	for _, alias := range aliases {
+		for _, scoreType := range types {
+			row := map[string]any{
+				"content": "invalid " + alias + " " + scoreType.name,
+				"summary": "invalid " + alias + " " + scoreType.name,
+				"source":  alias + "_" + scoreType.name,
+				"status":  "current",
+				alias:     scoreType.value,
+			}
+			if score, ok := parseFiniteScore(row); ok || score != 0 || math.IsNaN(parseScore(row)) || math.IsInf(parseScore(row), 0) {
+				t.Fatalf("non-finite %s/%s was accepted: score=%v valid=%t", alias, scoreType.name, score, ok)
+			}
+			invalid = append(invalid, row)
+		}
+	}
+	hiddenAlias := cloneJSONMap(valid)
+	hiddenAlias["source"] = "finite_primary_nonfinite_secondary"
+	hiddenAlias["confidence"] = math.NaN()
+	invalid = append(invalid, hiddenAlias)
+
+	forward := append([]map[string]any{cloneJSONMap(valid)}, invalid...)
+	reverse := make([]map[string]any, 0, len(forward))
+	for index := len(invalid) - 1; index >= 0; index-- {
+		reverse = append(reverse, invalid[index])
+	}
+	reverse = append(reverse, cloneJSONMap(valid))
+	inputs := []map[string][]map[string]any{
+		{"mixed": forward},
+		{"mixed": reverse},
+	}
+	var first []byte
+	for index, input := range inputs {
+		merged := mergeRowsAll(input)
+		if len(merged) != 1 || anyToString(merged[0]["source"]) != "finite" || parseScore(merged[0]) != 0.75 {
+			t.Fatalf("input %d retained or ordered a non-finite row: %#v", index, merged)
+		}
+		serialized, err := json.Marshal(merged)
+		if err != nil {
+			t.Fatalf("input %d emitted non-JSON score material: %v", index, err)
+		}
+		if index == 0 {
+			first = serialized
+		} else if string(serialized) != string(first) {
+			t.Fatalf("finite output changed with non-finite input order: first=%s next=%s", first, serialized)
+		}
 	}
 }
 

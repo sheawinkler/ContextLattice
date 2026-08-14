@@ -24132,27 +24132,8 @@ async def get_recent_memory(limit: int = 20, project: str | None = None):
 
 @app.post("/agents/tasks")
 async def create_agent_task(payload: AgentTaskCreate):
-    task_payload = dict(payload.payload or {})
-    if payload.risk_level:
-        task_payload["risk_level"] = payload.risk_level
-    if payload.action_type:
-        task_payload["action_type"] = payload.action_type
-    if payload.approval_required is not None:
-        task_payload["approval_required"] = payload.approval_required
-    if payload.approved is not None:
-        task_payload["approved"] = payload.approved
-    if payload.topic_path:
-        task_payload["topic_path"] = payload.topic_path
-    task = await _scheduler_submit_via_runtime(
-        title=payload.title,
-        project=payload.project,
-        agent=payload.agent,
-        priority=payload.priority,
-        payload=task_payload or None,
-        run_after=payload.run_after,
-        max_attempts=payload.max_attempts,
-    )
-    return {"task": task}
+    del payload
+    raise HTTPException(410, "legacy task authority disabled; use Gateway /agents/tasks")
 
 
 @app.get("/agents/tasks")
@@ -24162,79 +24143,61 @@ async def list_agent_tasks(
     agent: str | None = None,
     limit: int = 50,
 ):
-    tasks = await list_task_records(status=status, project=project, agent=agent, limit=limit)
-    return {"tasks": tasks}
+    del status, project, agent, limit
+    raise HTTPException(410, "legacy task archive is non-authoritative; use Gateway /agents/tasks")
 
 
 @app.post("/agents/tasks/next")
 async def claim_agent_task(worker: str | None = None):
-    task = await _scheduler_claim_via_runtime(worker)
-    if not task:
-        return {"task": None}
-    return {"task": task}
+    del worker
+    raise HTTPException(410, "legacy task authority disabled; use Gateway /agents/tasks/next")
 
 
 @app.get("/agents/tasks/{task_id}")
 async def get_agent_task(task_id: str):
-    task = await get_task_record(task_id)
-    if not task:
-        raise HTTPException(404, "task not found")
-    events = await get_task_events(task_id)
-    return {"task": task, "events": events}
+    del task_id
+    raise HTTPException(410, "legacy task archive is non-authoritative; use Gateway /agents/tasks/{task_id}")
 
 
 @app.post("/agents/tasks/{task_id}/status")
 async def update_agent_task_status(task_id: str, payload: AgentTaskStatus):
-    task = await _scheduler_update_via_runtime(
-        task_id=task_id,
-        status=payload.status,
-        message=payload.message,
-        metadata=payload.metadata,
-    )
-    if not task:
-        raise HTTPException(404, "task not found")
-    return {"task": task}
+    del task_id, payload
+    raise HTTPException(410, "legacy task authority disabled; use Gateway fenced observation routes")
 
 
 @app.post("/agents/tasks/{task_id}/approve")
 async def approve_agent_task(task_id: str, payload: AgentTaskApproval):
-    task = await approve_task_record(task_id, payload.approver, payload.note)
-    if not task:
-        raise HTTPException(404, "task not found")
-    return {"task": task}
+    del task_id, payload
+    raise HTTPException(410, "legacy task authority disabled; use Gateway approval routes")
 
 
 @app.post("/agents/tasks/{task_id}/replay")
 async def replay_agent_task(task_id: str, payload: AgentTaskReplay):
-    task = await replay_task_record(
-        task_id,
-        actor=payload.actor,
-        note=payload.note,
-        reset_attempts=payload.reset_attempts,
-    )
-    if not task:
-        raise HTTPException(404, "task not found")
-    return {"task": task}
+    del task_id, payload
+    raise HTTPException(410, "legacy task replay disabled; use a new Gateway fenced attempt")
 
 
 @app.post("/agents/tasks/recover-leases")
 async def recover_agent_task_leases(limit: int = 200):
-    recovered = await recover_expired_task_leases(limit=max(1, min(limit, 1000)))
-    return {"ok": True, "recovered": recovered}
+    del limit
+    raise HTTPException(410, "legacy task recovery disabled; use Gateway lease recovery")
 
 
 @app.get("/agents/tasks/deadletter")
 async def list_deadletter_tasks(project: str | None = None, limit: int = 100):
-    tasks = await list_deadletter_task_records(project=project, limit=limit)
-    return {"tasks": tasks}
+    del project, limit
+    raise HTTPException(410, "legacy task archive is non-authoritative; use Gateway dead-letter resources")
 
 
 @app.get("/agents/tasks/runtime")
 async def agent_task_runtime():
-    runtime = await _get_migration_runtime()
-    if runtime is None:
-        return {"runtime": await get_task_runtime_snapshot()}
-    return {"runtime": await runtime.scheduler.queue_metrics()}
+    return {
+        "runtime": {
+            "authoritative": False,
+            "mutations_enabled": False,
+            "authoritative_backend": "gateway-go-sqlite-wal",
+        }
+    }
 
 
 @app.get("/signals/latest")

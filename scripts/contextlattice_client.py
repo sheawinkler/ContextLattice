@@ -13,7 +13,7 @@ import os
 import urllib.error
 import urllib.request
 from urllib.parse import urlencode, urljoin
-from typing import Any
+from typing import Any, Mapping
 
 try:
     import httpx
@@ -48,11 +48,20 @@ def resolve_orchestrator_api_key(role: str = "orchestrator") -> str:
     )
 
 
-def build_orchestrator_headers(api_key: str | None = None) -> dict[str, str]:
+def build_orchestrator_headers(
+    api_key: str | None = None,
+    extra_headers: Mapping[str, str] | None = None,
+) -> dict[str, str]:
     headers: dict[str, str] = {}
     key = str(api_key or "").strip()
     if key:
         headers["x-api-key"] = key
+    if extra_headers:
+        for name, value in extra_headers.items():
+            header_name = str(name or "").strip()
+            header_value = str(value or "").strip()
+            if header_name and header_value:
+                headers[header_name] = header_value
     return headers
 
 
@@ -130,6 +139,7 @@ class ContextLatticeClient:
         timeout: float = 30.0,
         role: str = "orchestrator",
         api_key: str | None = None,
+        extra_headers: Mapping[str, str] | None = None,
     ) -> None:
         self.base_url = str(base_url or DEFAULT_ORCHESTRATOR_URL).rstrip("/")
         resolved_key = (
@@ -137,7 +147,10 @@ class ContextLatticeClient:
             if api_key is not None
             else resolve_orchestrator_api_key(role=role)
         )
-        headers = build_orchestrator_headers(resolved_key)
+        headers = build_orchestrator_headers(resolved_key, extra_headers)
+        self.last_response_headers: dict[str, str] = {}
+        self.last_response_status: int | None = None
+        self.last_error_code: str = ""
         if httpx is not None:
             self.client = httpx.Client(
                 timeout=max(1.0, float(timeout)),
@@ -166,6 +179,18 @@ class ContextLatticeClient:
     ) -> dict[str, Any]:
         url = self._absolute_url(path_or_url)
         response = self.client.get(url, params=params, timeout=timeout)
+        self.last_response_status = int(response.status_code)
+        self.last_response_headers = {
+            str(key).lower(): str(value) for key, value in response.headers.items()
+        }
+        self.last_error_code = ""
+        if self.last_response_status >= 400:
+            try:
+                error_payload = response.json()
+            except Exception:
+                error_payload = None
+            if isinstance(error_payload, dict):
+                self.last_error_code = str(error_payload.get("code") or "").strip()
         response.raise_for_status()
         payload = response.json()
         return payload if isinstance(payload, dict) else {"data": payload}
@@ -180,6 +205,18 @@ class ContextLatticeClient:
     ) -> dict[str, Any]:
         url = self._absolute_url(path_or_url)
         response = self.client.post(url, json=payload, params=params, timeout=timeout)
+        self.last_response_status = int(response.status_code)
+        self.last_response_headers = {
+            str(key).lower(): str(value) for key, value in response.headers.items()
+        }
+        self.last_error_code = ""
+        if self.last_response_status >= 400:
+            try:
+                error_payload = response.json()
+            except Exception:
+                error_payload = None
+            if isinstance(error_payload, dict):
+                self.last_error_code = str(error_payload.get("code") or "").strip()
         response.raise_for_status()
         body = response.json()
         return body if isinstance(body, dict) else {"data": body}

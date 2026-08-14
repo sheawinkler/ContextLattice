@@ -1,0 +1,1471 @@
+#!/usr/bin/env python3
+"""Run a provider-free response holdout against the rebuilt localhost runtime.
+
+This evaluator is deliberately independent from the synthetic compositional
+fixture evaluator.  It reads a complete saved-recall v3 frozen-live-index
+artifact, sends only closed production response requests to loopback, and
+records structural evidence without inventing answer-correctness labels from
+Recall@K/MRR.  Every case remains in the ledger, including malformed,
+unsupported, or timeout responses.
+"""
+
+from __future__ import annotations
+
+import argparse
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+import hashlib
+import json
+import math
+import os
+from pathlib import Path
+import re
+import socket
+import statistics
+import sys
+import time
+from typing import Any, Iterable, Mapping, Sequence
+import urllib.error
+import urllib.parse
+import urllib.request
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_ARTIFACT = REPO_ROOT / ".data" / "orchestrator" / "recall_eval_cases.json"
+FALLBACK_ARTIFACT = REPO_ROOT / "services" / "orchestrator" / "data" / "recall_eval_cases.json"
+CASE_SET_SCHEMA_ID = "saved_recall_eval_case_set.v3"
+SNAPSHOT_SCHEMA_ID = "saved_recall_eval_snapshot.v1"
+CUSTODY_SCHEMA_ID = "saved_recall_eval_custody.v1"
+LABEL_SCHEMA_ID = "recall_response_live_labels.v1"
+LABEL_CUSTODY_SCHEMA_ID = "recall_response_live_label_custody.v1"
+EVAL_SCHEMA_ID = "recall_response.live_production_eval.v1"
+RESPONSE_SCHEMA_ID = "recall_response.v1"
+PROMOTION_POLICY_ID = "recall_response.live_promotion.v1"
+PROMOTION_POLICY_VERSION = 1
+PROMOTION_THRESHOLDS: dict[str, float] = {
+    "authored_semantic_min_rate": 0.90,
+    "contract_validity_min_rate": 1.0,
+    "proof_binding_min_rate": 1.0,
+    "temporal_as_of_binding_min_rate": 1.0,
+    "fail_closed_min_rate": 1.0,
+    "replay_exact_digest_min_rate": 1.0,
+    "replay_exact_snapshot_min_rate": 1.0,
+    "unsupported_action_max_rate": 0.0,
+    "provider_cost_max_microusd": 0.0,
+    "provider_calls_max": 0.0,
+    "provider_tokens_max": 0.0,
+    "external_network_calls_max": 0.0,
+}
+HEALTH_ROUTE = "/health"
+RESPONSE_ROUTE = "/memory/recall/response"
+TOOL_RESPONSE_ROUTE = "/tools/recall_response"
+LOOPBACK_LITERAL_HOSTS = frozenset(("127.0.0.1", "::1"))
+SHA256_RE = re.compile(r"^sha256:[0-9a-fA-F]{64}$")
+HEX40_RE = re.compile(r"^[0-9a-fA-F]{40}$")
+MAX_CASES = 300
+MAX_RESPONSE_BYTES = 256 * 1024
+MAX_REQUEST_BYTES = 32 * 1024
+DEFAULT_TIMEOUT_SECONDS = 200.0
+DEFAULT_ROUTE = RESPONSE_ROUTE
+GRAPH_CASE_KIND = "graph_neighbor"
+FROZEN_INDEX_SOURCES = frozenset(("current_state_bottom_k", "project_current_state_bottom_k"))
+
+# The response route intentionally exposes only opaque proof references.  A
+# file/record match is measured only when a case or authored label explicitly
+# supplies a digest/ref that the public response can expose; the evaluator
+# never reconstructs an expected answer from retrieval rank.
+FORBIDDEN_PUBLIC_KEYS = frozenset(
+    {
+        "context_pack",
+        "raw_contextlattice_json",
+        "raw_retrieval_payload",
+        "raw_retrieval",
+        "raw_prompt",
+        "prompt",
+        "prompts",
+        "messages",
+        "tool_calls",
+        "function_call",
+        "secret",
+        "secrets",
+        "api_key",
+        "access_token",
+        "refresh_token",
+        "bearer_token",
+        "password",
+        "credential",
+        "authorization",
+        "private_key",
+        "file_path",
+        "local_path",
+        "paths",
+        "timestamp",
+        "exact_timestamp",
+        "raw_text",
+        "text",
+        "excerpt",
+        "content",
+        "query",
+        "project",
+        "topic_path",
+    }
+)
+PRIVATE_VALUE_RE = re.compile(r"/(?:Users|Volumes|private|home|tmp|var)/|(?:sk|ghp)_[A-Za-z0-9_-]{8,}", re.IGNORECASE)
+ALLOWED_NEXT_ACTIONS = frozenset(
+    {
+        "retrieve_or_verify",
+        "inspect_proof",
+        "verify_conflict",
+        "verify_currentness",
+        "project_continuation",
+        "none",
+    }
+)
+UNSUPPORTED_ACTIONS = frozenset({"act", "apply", "execute", "mutate", "send", "trade", "write", "delete"})
+CONTINUATION_GAP_CODES = frozenset({"pending_sources", "timed_out_sources", "omitted_high_value_evidence"})
+NON_EXCLUSION_GAP_CODES = frozenset({"excluded_evidence", "omitted_high_value_evidence", "pending_sources", "timed_out_sources"})
+
+
+def _canonical(value: Any) -> bytes:
+    """Canonical JSON compatible with the Go route's compact JSON digest."""
+
+    raw = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    # encoding/json escapes HTML-sensitive bytes by default.
+    return raw.replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e").encode("utf-8")
+
+
+def digest(value: Any) -> str:
+    return "sha256:" + hashlib.sha256(_canonical(value)).hexdigest()
+
+
+def bytes_digest(value: bytes) -> str:
+    return "sha256:" + hashlib.sha256(value).hexdigest()
+
+
+def _sha(value: Any) -> bool:
+    return isinstance(value, str) and bool(SHA256_RE.fullmatch(value.strip()))
+
+
+def _opaque_id(value: Any, prefix: str) -> bool:
+    text = str(value or "").strip()
+    return text.startswith(prefix) and len(text) == len(prefix) + 24 and all(c in "0123456789abcdef" for c in text[len(prefix) :])
+
+
+def _is_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _is_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(float(value))
+
+
+def _as_map(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _as_list(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def _normal_text(value: Any) -> str:
+    return " ".join(str(value or "").strip().lower().replace("\\", "/").split())
+
+
+def _file_tokens(value: Any) -> set[str]:
+    return {token.strip("\t\r\n .,;:!?()[]{}'\"`") for token in _normal_text(value).split() if token.strip()}
+
+
+def _query_contains_file(query: str, file_name: str) -> bool:
+    tokens = _file_tokens(query)
+    normalized = _normal_text(file_name).strip("/")
+    base_name = normalized.rsplit("/", 1)[-1]
+    return any(token in tokens for token in (normalized, base_name) if len(token) >= 3)
+
+
+def _case_is_graph(case: Mapping[str, Any]) -> bool:
+    return str(case.get("case_kind") or "").strip().lower() == GRAPH_CASE_KIND or bool(
+        _as_list(case.get("graph_expected_files")) or _as_list(case.get("graph_expected_substrings"))
+    )
+
+
+def _issue(issues: list[dict[str, Any]], code: str, detail: str) -> None:
+    issues.append({"code": code, "detail": detail})
+
+
+def _safe_case_digest(case: Mapping[str, Any]) -> str:
+    return digest(dict(case))
+
+
+@dataclass(frozen=True)
+class ArtifactValidation:
+    valid: bool
+    issues: tuple[dict[str, Any], ...]
+    payload: dict[str, Any]
+    raw_bytes: bytes
+    cases: tuple[dict[str, Any], ...]
+    holdout: tuple[dict[str, Any], ...]
+    digests: dict[str, str | None]
+    graph_claimed: bool
+    digest_validation: dict[str, dict[str, Any]]
+
+
+def _declared_digest_validation(
+    value: Mapping[str, Any],
+    label: str,
+    declared_keys: Sequence[str],
+    issues: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Validate a producer-owned digest only when its canonical contract is present.
+
+    Saved artifacts from older producers expose opaque snapshot/custody digests
+    without the material needed to recompute them.  Those digests remain useful
+    provenance bindings, but are not relabelled as independently canonicalized
+    by this evaluator.
+    """
+
+    container = dict(value)
+    rule_value = container.get("digest_rule")
+    material = container.get("digest_material")
+    if rule_value is None and material is None:
+        return {"status": "provenance_bound", "provenance_bound_fields": list(declared_keys)}
+    if rule_value is None or material is None:
+        _issue(issues, f"{label}_digest_rule_incomplete", f"{label} supplied only part of its canonical digest contract")
+        return {"status": "invalid"}
+    rule = _as_map(rule_value)
+    rule_id = rule_value if isinstance(rule_value, str) else rule.get("id") or rule.get("schema_id")
+    if isinstance(rule_value, str):
+        rule = {"id": rule_value, "algorithm": "sha256", "canonicalization": "sorted_compact_json"}
+    algorithm = str(rule.get("algorithm") or "").strip().lower()
+    canonicalization = str(rule.get("canonicalization") or rule.get("canonical") or "").strip().lower()
+    if algorithm != "sha256" or canonicalization not in {"sorted_compact_json", "canonical_json", "json"}:
+        _issue(issues, f"{label}_digest_rule_invalid", f"{label} digest rule is not a supported sha256 canonical JSON contract")
+        return {"status": "invalid"}
+    if not isinstance(material, Mapping):
+        _issue(issues, f"{label}_digest_material_invalid", f"{label} digest material must be an object")
+        return {"status": "invalid"}
+    canonical_material = dict(material)
+    excluded = rule.get("exclude_keys", rule.get("exclude", []))
+    if excluded is None:
+        excluded = []
+    if not isinstance(excluded, list) or any(not isinstance(key, str) for key in excluded):
+        _issue(issues, f"{label}_digest_rule_invalid", f"{label} digest exclusions must be a list of field names")
+        return {"status": "invalid"}
+    for key in excluded:
+        canonical_material.pop(key, None)
+    expected = digest(canonical_material)
+    declared = next((container.get(key) for key in declared_keys if container.get(key) is not None), None)
+    if not _sha(declared) or str(declared).lower() != expected.lower():
+        _issue(issues, f"{label}_digest_canonical_mismatch", f"{label} digest does not match its declared canonical material")
+        return {"status": "invalid", "expected_digest": expected}
+    return {
+        "status": "canonical_validated",
+        "algorithm": "sha256",
+        "canonicalization": "sorted_compact_json",
+        "rule_id": str(rule_id) if rule_id else None,
+        "excluded_fields": list(excluded),
+    }
+
+
+def validate_frozen_artifact(payload: Mapping[str, Any], raw_bytes: bytes) -> ArtifactValidation:
+    data = dict(payload) if isinstance(payload, Mapping) else {}
+    issues: list[dict[str, Any]] = []
+    if data.get("schema_id") != CASE_SET_SCHEMA_ID or data.get("version") != 3:
+        _issue(issues, "schema_version_mismatch", "artifact is not saved_recall_eval_case_set.v3 version 3")
+    if data.get("synthetic") is not False:
+        _issue(issues, "synthetic_case_set", "artifact must explicitly declare synthetic=false")
+    raw_cases = data.get("cases")
+    if not isinstance(raw_cases, list) or not raw_cases or len(raw_cases) > MAX_CASES:
+        _issue(issues, "case_count_invalid", "complete bounded v3 case list is required")
+    cases = tuple(row for row in raw_cases if isinstance(row, dict)) if isinstance(raw_cases, list) else ()
+    if len(cases) != len(raw_cases or []):
+        _issue(issues, "malformed_case", "every case must be an object")
+    train = tuple(case for case in cases if str(case.get("split") or "").strip().lower() == "train")
+    holdout = tuple(case for case in cases if str(case.get("split") or "").strip().lower() == "holdout")
+    if not train or not holdout:
+        _issue(issues, "incomplete_split_set", "complete artifact requires train and holdout cases")
+    split_counts = data.get("split_counts")
+    computed_counts = {"train": len(train), "holdout": len(holdout)}
+    if not isinstance(split_counts, dict) or {"train": split_counts.get("train"), "holdout": split_counts.get("holdout")} != computed_counts:
+        _issue(issues, "split_count_mismatch", "split_counts does not match the complete case list")
+    source = str(data.get("source") or "").strip().lower()
+    if source not in FROZEN_INDEX_SOURCES:
+        _issue(issues, "source_provenance_invalid", "source must be a bounded current-state index")
+
+    def source_stats_ok(label: str, stats: Any) -> None:
+        value = _as_map(stats)
+        if value.get("index_mode") != source:
+            _issue(issues, f"{label}_source_mode_mismatch", f"{label} source_stats index_mode does not match source")
+        if value.get("bounded") is not True or value.get("index_integrity") is not True or value.get("context_cancelled") is not False:
+            _issue(issues, f"{label}_source_integrity_invalid", f"{label} source_stats is not an intact bounded index receipt")
+
+    source_stats_ok("artifact", data.get("source_stats"))
+    case_set_digest = data.get("case_set_digest")
+    if not _sha(case_set_digest) or str(case_set_digest).lower() != digest(list(cases)).lower():
+        _issue(issues, "case_set_digest_mismatch", "case_set_digest does not match the complete persisted cases")
+
+    snapshot = _as_map(data.get("snapshot"))
+    if snapshot.get("schema_id") != SNAPSHOT_SCHEMA_ID:
+        _issue(issues, "snapshot_schema_mismatch", "snapshot schema is not saved_recall_eval_snapshot.v1")
+    if str(snapshot.get("source") or "").strip().lower() != source:
+        _issue(issues, "snapshot_source_mismatch", "snapshot source does not match artifact source")
+    snapshot_digest = snapshot.get("digest")
+    if not _sha(snapshot_digest):
+        _issue(issues, "snapshot_digest_missing", "frozen source snapshot digest is required")
+    source_stats_ok("snapshot", snapshot.get("source_stats"))
+    if not _is_int(snapshot.get("selected_case_count")) or int(snapshot.get("selected_case_count")) != len(cases):
+        _issue(issues, "snapshot_case_count_mismatch", "snapshot selected_case_count does not match cases")
+    if not _is_int(_as_map(snapshot.get("sample")).get("count")) or int(_as_map(snapshot.get("sample")).get("count")) != len(cases):
+        _issue(issues, "snapshot_sample_count_mismatch", "snapshot sample count does not match cases")
+    if not _is_int(_as_map(snapshot.get("population")).get("count")) or int(_as_map(snapshot.get("population")).get("count")) < len(cases):
+        _issue(issues, "snapshot_population_invalid", "snapshot population denominator is invalid")
+    if _as_map(snapshot.get("diversity")).get("valid") is not True:
+        _issue(issues, "snapshot_diversity_invalid", "frozen snapshot diversity.valid must be true")
+    snapshot_digest_validation = _declared_digest_validation(snapshot, "snapshot", ("digest",), issues)
+
+    custody = _as_map(data.get("custody"))
+    if custody.get("schema_id") != CUSTODY_SCHEMA_ID or custody.get("owner") != "gateway-go" or custody.get("mode") != "frozen_live_index":
+        _issue(issues, "custody_identity_invalid", "custody must be the gateway-go frozen_live_index receipt")
+    if custody.get("synthetic") is not False:
+        _issue(issues, "synthetic_custody", "custody must explicitly declare synthetic=false")
+    contamination = str(custody.get("contamination_state") or "").strip().lower()
+    if contamination and ("contamin" in contamination or contamination in {"invalid", "synthetic", "local_regression"}):
+        _issue(issues, "contradictory_custody", "custody contamination state is not promotion-safe")
+    source_stats_ok("custody", custody.get("source_stats"))
+    if custody.get("source_snapshot_digest") != snapshot_digest:
+        _issue(issues, "custody_snapshot_mismatch", "custody source snapshot digest does not match snapshot")
+    if custody.get("case_set_digest") != case_set_digest:
+        _issue(issues, "custody_case_set_mismatch", "custody case-set digest does not match artifact")
+    if custody.get("promotional_claims_allowed") is not True:
+        _issue(issues, "custody_promotional_claims_unproven", "custody must explicitly allow promotional claims")
+    population_count = custody.get("population_count")
+    if not _is_int(population_count) or int(population_count) != _as_map(snapshot.get("population")).get("count"):
+        _issue(issues, "custody_population_mismatch", "custody population denominator does not match snapshot")
+    if custody.get("sample_count") != len(cases) or custody.get("diversity_valid") is not True:
+        _issue(issues, "custody_sample_or_diversity_invalid", "custody sample and diversity proof are incomplete")
+    if "filename_removed" not in str(custody.get("oracle_leakage") or ""):
+        _issue(issues, "oracle_separation_unproven", "custody does not prove filename-redacted case derivation")
+    custody_digest_validation = _declared_digest_validation(custody, "custody", ("custody_digest", "digest", "metadata_digest"), issues)
+
+    ids: set[str] = set()
+    graph_count = 0
+    for case in cases:
+        case_id = str(case.get("id") or "").strip()
+        if not case_id or case_id.lower() in ids:
+            _issue(issues, "case_identity_invalid", "case ids must be non-empty and unique")
+        ids.add(case_id.lower())
+        query = str(case.get("query") or "").strip()
+        project = str(case.get("project") or "").strip()
+        topic = str(case.get("topic_path") or "").strip().strip("/")
+        expected_files = [str(value).strip().strip("/") for value in _as_list(case.get("expected_files")) if str(value).strip()]
+        split = str(case.get("split") or "").strip().lower()
+        if not query or not project or not topic or topic in {"root", "."}:
+            _issue(issues, "case_scope_invalid", "case query, project, and concrete topic are required")
+        if not _is_int(case.get("limit")) or not 1 <= int(case.get("limit")) <= 100:
+            _issue(issues, "case_limit_invalid", "case limit must be in [1,100]")
+        if len(expected_files) != 1:
+            _issue(issues, "expected_file_denominator_invalid", "each direct case must name exactly one expected file")
+        if split not in {"train", "holdout"} or (split == "holdout" and not str(case.get("source_updated_at") or "").strip()):
+            _issue(issues, "case_split_invalid", "case split and holdout timestamp are required")
+        provenance = " ".join(str(case.get(key) or "").strip().lower() for key in ("source", "source_kind", "fixture", "fixture_kind", "traffic_class"))
+        if any(marker in provenance for marker in ("synthetic", "built-in", "fallback")):
+            _issue(issues, "synthetic_case_marker", "case provenance is synthetic or fallback")
+        if expected_files and _query_contains_file(query, expected_files[0]):
+            _issue(issues, "query_contains_expected_file", "query leaks the expected filename")
+        if _case_is_graph(case):
+            graph_count += 1
+            graph_files = [str(value).strip().strip("/") for value in _as_list(case.get("graph_expected_files")) if str(value).strip()]
+            if len(graph_files) != 1 or graph_files[0].lower() == (expected_files[0].lower() if expected_files else ""):
+                _issue(issues, "graph_cohort_invalid", "graph case must name one distinct neighboring target")
+        for field in ("expected_record_digests", "expected_content_digests"):
+            values = _as_list(case.get(field))
+            if any(not _sha(value) for value in values) or len({str(value).lower() for value in values}) != len(values):
+                _issue(issues, "expected_record_digest_invalid", "optional expected record identities must be unique sha256 refs")
+
+    graph_holdout_count = sum(1 for case in holdout if _case_is_graph(case))
+    graph_claimed = bool(data.get("graphCasesEnabled") is True or graph_count > 0)
+    if graph_claimed and graph_holdout_count == 0:
+        _issue(issues, "graph_cohort_missing", "graph was claimed without a graph holdout cohort")
+    digests = {
+        "artifact_digest": bytes_digest(raw_bytes),
+        "case_set_digest": str(case_set_digest) if _sha(case_set_digest) else None,
+        "source_snapshot_digest": str(snapshot_digest) if _sha(snapshot_digest) else None,
+        "custody_metadata_digest": digest(custody) if custody else None,
+        "all_case_ids_digest": digest([str(case.get("id") or "") for case in cases]),
+        "holdout_case_ids_digest": digest([str(case.get("id") or "") for case in holdout]),
+        "holdout_cases_digest": digest(list(holdout)),
+    }
+    return ArtifactValidation(
+        valid=not issues and bool(holdout),
+        issues=tuple(issues),
+        payload=data,
+        raw_bytes=raw_bytes,
+        cases=cases,
+        holdout=holdout,
+        digests=digests,
+        graph_claimed=graph_claimed,
+        digest_validation={"snapshot": snapshot_digest_validation, "custody": custody_digest_validation},
+    )
+
+
+def _contains_private_material(value: Any) -> bool:
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if str(key).lower() in {"path", "paths", "file", "file_name", "content", "text", "query", "project", "topic_path"}:
+                return True
+            if _contains_private_material(child):
+                return True
+        return False
+    if isinstance(value, list):
+        return any(_contains_private_material(child) for child in value)
+    return isinstance(value, str) and bool(PRIVATE_VALUE_RE.search(value))
+
+
+@dataclass(frozen=True)
+class LabelValidation:
+    valid: bool
+    issues: tuple[dict[str, Any], ...]
+    labels_by_case: dict[str, dict[str, Any]]
+    digests: dict[str, str | None]
+
+
+def validate_authored_labels(payload: Mapping[str, Any], artifact: ArtifactValidation) -> LabelValidation:
+    data = dict(payload) if isinstance(payload, Mapping) else {}
+    issues: list[dict[str, Any]] = []
+    if data.get("schema_id") != LABEL_SCHEMA_ID or data.get("version") != 1:
+        _issue(issues, "label_schema_mismatch", "labels must use recall_response_live_labels.v1")
+    if data.get("synthetic") is not False or data.get("authoring") != "human_authored":
+        _issue(issues, "synthetic_or_unowned_labels", "semantic labels must be human-authored and synthetic=false")
+    if data.get("case_set_digest") != artifact.digests.get("case_set_digest"):
+        _issue(issues, "label_case_set_mismatch", "labels are not bound to the frozen case-set digest")
+    if data.get("snapshot_digest") != artifact.digests.get("source_snapshot_digest"):
+        _issue(issues, "label_snapshot_mismatch", "labels are not bound to the frozen source snapshot digest")
+    if _contains_private_material(data):
+        _issue(issues, "label_private_material", "labels contain raw paths or content rather than opaque identities")
+    custody = _as_map(data.get("custody"))
+    if custody.get("schema_id") != LABEL_CUSTODY_SCHEMA_ID or custody.get("synthetic") is not False or custody.get("owner") != "human_authored":
+        _issue(issues, "label_custody_invalid", "label custody must be a non-synthetic human-authored receipt")
+    if custody.get("promotional_claims_allowed") is not True:
+        _issue(issues, "label_promotional_claims_unproven", "label custody must explicitly allow semantic promotional claims")
+    if custody.get("case_set_digest") != artifact.digests.get("case_set_digest") or custody.get("snapshot_digest") != artifact.digests.get("source_snapshot_digest"):
+        _issue(issues, "label_custody_binding_invalid", "label custody digests do not match the frozen artifact")
+    contamination = str(custody.get("contamination_state") or "").strip().lower()
+    if contamination not in {"sealed_holdout", "uncontaminated"}:
+        _issue(issues, "label_custody_contaminated", "label custody does not prove a sealed uncontaminated holdout")
+    for oracle_key in ("oracle", "oracle_custody", "holdout_oracle"):
+        if _as_map(data.get(oracle_key)).get("synthetic") is True or _as_map(custody.get(oracle_key)).get("synthetic") is True:
+            _issue(issues, "contradictory_oracle_custody", "synthetic oracle evidence cannot override the canonical custody receipt")
+    labels = data.get("labels")
+    if not isinstance(labels, list) or not labels:
+        _issue(issues, "labels_missing", "authored labels must contain at least one row")
+        labels = []
+    case_by_id = {str(case.get("id")): case for case in artifact.cases}
+    seen: set[str] = set()
+    split_counts = {"development": 0, "holdout": 0}
+    by_case: dict[str, dict[str, Any]] = {}
+    for label in labels:
+        if not isinstance(label, dict):
+            _issue(issues, "label_row_invalid", "each label must be an object")
+            continue
+        case_id = str(label.get("case_id") or "").strip()
+        split = str(label.get("split") or "").strip().lower()
+        if not case_id or case_id not in case_by_id or case_id in seen:
+            _issue(issues, "label_case_identity_invalid", "label case identity must be unique and belong to the artifact")
+        if split not in {"development", "holdout"}:
+            _issue(issues, "label_split_invalid", "labels must declare development or holdout")
+        expected_split = "holdout" if str(case_by_id.get(case_id, {}).get("split") or "").lower() == "holdout" else "development"
+        if case_id and split and split != expected_split:
+            _issue(issues, "label_split_case_mismatch", "label split does not match the frozen case split")
+        if case_id:
+            seen.add(case_id)
+            split_counts[split] = split_counts.get(split, 0) + 1
+            by_case[case_id] = label
+        for field in ("expected_record_digests", "expected_content_digests", "expected_proof_refs"):
+            values = _as_list(label.get(field))
+            if field != "expected_proof_refs" and any(not _sha(value) for value in values):
+                _issue(issues, "label_evidence_identity_invalid", "label evidence identities must be sha256 refs")
+            if field == "expected_proof_refs" and any(not isinstance(value, str) or not value.strip() for value in values):
+                _issue(issues, "label_proof_identity_invalid", "label proof identities must be non-empty opaque refs")
+        temporal = _as_map(label.get("temporal"))
+        if temporal.get("expected_temporal_state") is not None and not isinstance(temporal.get("expected_temporal_state"), str):
+            _issue(issues, "label_temporal_invalid", "temporal ground truth must be scalar and authored")
+        abstention = _as_map(label.get("abstention"))
+        if "expected" in abstention and not isinstance(abstention.get("expected"), bool):
+            _issue(issues, "label_abstention_invalid", "abstention ground truth must be boolean")
+    declared_counts = data.get("split_counts")
+    if declared_counts != split_counts or not split_counts["development"] or not split_counts["holdout"]:
+        _issue(issues, "label_split_counts_invalid", "development and holdout label denominators must reconcile")
+    labels_digest = data.get("labels_digest")
+    canonical_labels = [label for label in labels if isinstance(label, dict)]
+    if not _sha(labels_digest) or str(labels_digest).lower() != digest(canonical_labels).lower():
+        _issue(issues, "label_digest_mismatch", "labels_digest does not match authored labels")
+    custody_labels_digest = custody.get("labels_digest")
+    if custody_labels_digest != labels_digest:
+        _issue(issues, "label_custody_digest_mismatch", "label custody does not bind labels_digest")
+    digests = {"labels_digest": str(labels_digest) if _sha(labels_digest) else None, "custody_metadata_digest": digest(custody) if custody else None}
+    return LabelValidation(not issues, tuple(issues), by_case if not issues else {}, digests)
+
+
+def default_artifact_path() -> Path:
+    override = os.getenv("ORCH_RECALL_EVAL_CASES_PATH", "").strip()
+    if override:
+        return Path(override).expanduser()
+    return DEFAULT_ARTIFACT if DEFAULT_ARTIFACT.exists() else FALLBACK_ARTIFACT
+
+
+def load_json_file(path: Path) -> tuple[dict[str, Any], bytes]:
+    raw = path.expanduser().resolve().read_bytes()
+    if len(raw) > 4 * 1024 * 1024:
+        raise ValueError("artifact exceeds bounded input size")
+    value = json.loads(raw.decode("utf-8"))
+    if not isinstance(value, dict):
+        raise ValueError("artifact must be a JSON object")
+    return value, raw
+
+
+def _normalise_as_of(value: Any) -> tuple[str, bool]:
+    raw = str(value or "").strip()
+    if not raw or raw.lower() == "latest_available":
+        return "latest_available", True
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            raise ValueError
+        now = datetime.now(timezone.utc)
+        if parsed > now + timedelta(minutes=1):
+            return "latest_available", False
+        normalized = parsed.astimezone(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
+        if normalized.endswith("Z"):
+            normalized = normalized[:-1].rstrip("0").rstrip(".") + "Z"
+        return normalized, True
+    except (TypeError, ValueError, OverflowError):
+        return "latest_available", False
+
+
+def build_response_request(case: Mapping[str, Any]) -> dict[str, Any]:
+    request: dict[str, Any] = {
+        "query": str(case.get("query") or "").strip(),
+        "project": str(case.get("project") or "").strip(),
+        "topic_path": str(case.get("topic_path") or "").strip(),
+        "limit": int(case.get("limit", 10)),
+        "include_grounding": True,
+        "include_retrieval_debug": False,
+    }
+    allowed = {
+        "max_facts",
+        "retrieval_mode",
+        "retrieval_intent",
+        "task_class",
+        "as_of",
+        "agent_id",
+        "session_id",
+        "task_id",
+        "task_identity_id",
+        "execution_lane_id",
+        "workspace_ref",
+        "workspace_id",
+        "user_id",
+        "include_preferences",
+        "sources",
+        "source_weights",
+        "auto_escalate",
+        "query_expansion",
+        "include_ephemeral",
+        "include_ephemeral_memory",
+        "include_test_memory",
+        "combined_sources",
+        "blocking",
+        "wait_for_slow_sources",
+        "sync_slow_sources",
+        "target_context_pack_tokens",
+        "budget_tokens",
+        "agent_context_budget_tokens",
+        "model_context_window_tokens",
+        "reserved_response_tokens",
+        "already_loaded_tokens",
+        "ranked_evidence_tokens",
+        "tokenizer_encoding",
+        "tokenizer_exact",
+        "objective_context",
+    }
+    for key in sorted(allowed):
+        if key in case and case[key] is not None:
+            request[key] = case[key]
+    return request
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req: urllib.request.Request, fp: Any, code: int, msg: str, headers: Any, newurl: str) -> None:
+        raise urllib.error.URLError("redirects are forbidden for the provider-free evaluator")
+
+
+@dataclass(frozen=True)
+class TransportResponse:
+    status: int
+    payload: dict[str, Any]
+    latency_ms: float
+    error: str = ""
+    headers: dict[str, str] | None = None
+
+
+class LocalhostTransport:
+    """HTTP transport whose URL and redirects are hard-loopback constrained."""
+
+    def __init__(self, base_url: str, api_key: str = "") -> None:
+        self.base_url = self._literal_loopback_origin(base_url)
+        self.api_key = api_key.strip()
+        self.request_count = 0
+        # Supplying an empty ProxyHandler is required: build_opener otherwise
+        # installs an environment-derived proxy handler alongside NoRedirect.
+        self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+
+    @staticmethod
+    def _literal_loopback_origin(base_url: str) -> str:
+        raw = str(base_url or "").strip()
+        parsed = urllib.parse.urlparse(raw)
+        try:
+            port = parsed.port
+        except ValueError as exc:
+            raise ValueError("base URL port is invalid") from exc
+        hostname = parsed.hostname
+        if (
+            parsed.scheme != "http"
+            or hostname not in LOOPBACK_LITERAL_HOSTS
+            or parsed.username
+            or parsed.password
+            or parsed.path not in {"", "/"}
+            or parsed.params
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError("base URL must be a literal http loopback origin without credentials, path, or query")
+        host = f"[{hostname}]" if ":" in hostname else hostname
+        return f"http://{host}" + (f":{port}" if port is not None else "")
+
+    @staticmethod
+    def _validate_literal_loopback_url(url: str) -> None:
+        parsed = urllib.parse.urlparse(url)
+        if parsed.scheme != "http" or parsed.hostname not in LOOPBACK_LITERAL_HOSTS or parsed.username or parsed.password or parsed.path not in {HEALTH_ROUTE, RESPONSE_ROUTE, TOOL_RESPONSE_ROUTE} or parsed.params or parsed.query or parsed.fragment:
+            raise ValueError("request URL must remain a literal http loopback route")
+
+    def request(self, method: str, path: str, payload: Mapping[str, Any] | None, timeout_seconds: float) -> TransportResponse:
+        if path not in {HEALTH_ROUTE, RESPONSE_ROUTE, TOOL_RESPONSE_ROUTE}:
+            return TransportResponse(0, {}, 0.0, "route_not_allowlisted", {})
+        if not math.isfinite(float(timeout_seconds)) or float(timeout_seconds) <= 0:
+            return TransportResponse(0, {}, 0.0, "timeout_invalid", {})
+        body = None if payload is None else _canonical(dict(payload))
+        if body is not None and len(body) > MAX_REQUEST_BYTES:
+            return TransportResponse(0, {}, 0.0, "request_too_large", {})
+        url = self.base_url + path
+        try:
+            self._validate_literal_loopback_url(url)
+        except ValueError:
+            return TransportResponse(0, {}, 0.0, "non_loopback_url", {})
+        request = urllib.request.Request(url, data=body, method=method.upper(), headers={"content-type": "application/json", "accept": "application/json"})
+        if self.api_key:
+            request.add_header("x-api-key", self.api_key)
+        started = time.perf_counter()
+        self.request_count += 1
+        try:
+            with self.opener.open(request, timeout=float(timeout_seconds)) as response:
+                raw = response.read(MAX_RESPONSE_BYTES + 1)
+                headers = {str(key).lower(): str(value) for key, value in response.headers.items()}
+                status = int(response.status)
+        except (socket.timeout, TimeoutError):
+            return TransportResponse(0, {}, round((time.perf_counter() - started) * 1000, 3), "timeout", {})
+        except urllib.error.HTTPError as exc:
+            try:
+                raw = exc.read(MAX_RESPONSE_BYTES + 1)
+            except OSError:
+                raw = b""
+            headers = {str(key).lower(): str(value) for key, value in exc.headers.items()} if exc.headers else {}
+            status = int(exc.code)
+        except urllib.error.URLError as exc:
+            reason = str(getattr(exc, "reason", exc)).lower()
+            error = "timeout" if "timed out" in reason or "timeout" in reason else "transport_error"
+            return TransportResponse(0, {}, round((time.perf_counter() - started) * 1000, 3), error, {})
+        except OSError:
+            return TransportResponse(0, {}, round((time.perf_counter() - started) * 1000, 3), "transport_error", {})
+        latency = round((time.perf_counter() - started) * 1000, 3)
+        if len(raw) > MAX_RESPONSE_BYTES:
+            return TransportResponse(status, {}, latency, "response_too_large", headers)
+        try:
+            decoded = json.loads(raw.decode("utf-8")) if raw.strip() else {}
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return TransportResponse(status, {}, latency, "malformed_json", headers)
+        return TransportResponse(status, decoded if isinstance(decoded, dict) else {}, latency, "" if isinstance(decoded, dict) else "malformed_payload", headers)
+
+
+def _response_material(response: Mapping[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in response.items() if key not in {"format_contract", "response_digest", "_fallback_stage_receipt"}}
+
+
+def _response_id_material(response: Mapping[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in response.items() if key not in {"response_id", "response_digest", "format_contract", "_fallback_stage_receipt"}}
+
+
+def _response_digest(response: Mapping[str, Any]) -> str:
+    return digest(_response_material(response))
+
+
+def _response_id(response: Mapping[str, Any]) -> str:
+    return "rr_" + hashlib.sha256(_canonical(_response_id_material(response))).hexdigest()[:24]
+
+
+def _component_digest(component: Mapping[str, Any]) -> str:
+    copied = dict(component)
+    copied.pop("component_digest", None)
+    binding = _as_map(copied.get("binding"))
+    if binding:
+        binding = dict(binding)
+        binding.pop("component_digest", None)
+        copied["binding"] = binding
+    return digest(copied)
+
+
+def _all_values(value: Any) -> Iterable[Any]:
+    if isinstance(value, dict):
+        yield value
+        for child in value.values():
+            yield from _all_values(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _all_values(child)
+
+
+def _gap_codes(response: Mapping[str, Any]) -> set[str]:
+    return {str(_as_map(raw).get("code") or "").strip() for raw in _as_list(response.get("gaps")) if str(_as_map(raw).get("code") or "").strip()}
+
+
+def _extract_observability(result: TransportResponse, response: Mapping[str, Any]) -> dict[str, Any]:
+    headers = {str(key).lower(): str(value) for key, value in (result.headers or {}).items()}
+    body = _as_map(response.get("observability"))
+
+    def number(names: Sequence[str], header_names: Sequence[str]) -> dict[str, Any]:
+        value: Any = None
+        field = ""
+        for name in names:
+            if name in body:
+                value, field = body[name], name
+                break
+            if name in response:
+                value, field = response[name], name
+                break
+        if value is None:
+            for name in header_names:
+                if name in headers:
+                    value, field = headers[name], name
+                    break
+        try:
+            parsed = float(value) if not isinstance(value, bool) else math.nan
+        except (TypeError, ValueError):
+            parsed = math.nan
+        if not math.isfinite(parsed) or parsed < 0:
+            return {"available": False, "value": None, "field": field}
+        return {"available": True, "value": parsed, "field": field}
+
+    return {
+        "cost_microusd": number(("cost_microusd", "provider_cost_micros", "total_cost_micros"), ("x-contextlattice-cost-microusd", "x-contextlattice-provider-cost-micros")),
+        "provider_calls": number(("provider_calls", "provider_call_count"), ("x-contextlattice-provider-calls",)),
+        "provider_tokens": number(("provider_tokens", "provider_token_count"), ("x-contextlattice-provider-tokens",)),
+        "tool_calls": number(("tool_calls", "tool_call_count"), ("x-contextlattice-tool-calls",)),
+        "external_network_calls": number(("external_network_calls", "external_network_call_count"), ("x-contextlattice-external-network-calls",)),
+        "provider_network_calls": number(("provider_network_calls", "provider_network_call_count"), ("x-contextlattice-provider-network-calls",)),
+        "evaluator_localhost_requests": {"available": True, "value": 1, "field": "evaluator_transport_request"},
+    }
+
+
+def _expected_record_coverage(case: Mapping[str, Any], response: Mapping[str, Any]) -> dict[str, Any]:
+    evidence = [_as_map(raw) for raw in _as_list(response.get("evidence"))]
+    expected = [str(value).strip().lower() for field in ("expected_record_digests", "expected_content_digests") for value in _as_list(case.get(field)) if str(value).strip()]
+    if not expected:
+        return {"available": False, "matched": None, "expected": 0, "observed": 0, "reason": "no_authored_expected_record_identity"}
+    observed = {str(row.get("content_digest") or "").lower() for row in evidence if _sha(row.get("content_digest"))}
+    matched = len(set(expected) & observed)
+    return {"available": True, "matched": matched, "expected": len(set(expected)), "observed": len(observed), "complete": matched == len(set(expected))}
+
+
+def _expected_file_coverage(case: Mapping[str, Any], response: Mapping[str, Any]) -> dict[str, Any]:
+    expected = [str(value).strip() for value in _as_list(case.get("expected_files")) if str(value).strip()]
+    if len(expected) != 1:
+        return {"available": False, "matched": None, "reason": "expected_file_denominator_invalid"}
+    # Production response v1 intentionally omits file identity.  Only an
+    # explicitly public opaque file identity can make this metric measured.
+    public_values: list[str] = []
+    for row in (_as_map(raw) for raw in _as_list(response.get("evidence"))):
+        for key in ("file_ref", "file_digest", "record_ref"):
+            value = row.get(key)
+            if isinstance(value, str) and value.strip():
+                public_values.append(value.strip())
+    if not public_values:
+        return {"available": False, "matched": None, "reason": "response_contract_uses_opaque_evidence_refs"}
+    return {"available": True, "matched": any(value == expected[0] for value in public_values), "expected": 1, "observed": len(public_values)}
+
+
+def _safe_failure(code: str, detail: str = "") -> dict[str, str]:
+    row = {"code": code}
+    if detail:
+        row["detail"] = detail
+    return row
+
+
+def validate_response(request: Mapping[str, Any], case: Mapping[str, Any], result: TransportResponse, *, source_snapshot_digest: str | None) -> dict[str, Any]:
+    response = result.payload if isinstance(result.payload, dict) else {}
+    case_id_digest = _safe_case_digest(case)
+    row: dict[str, Any] = {
+        "case_id_digest": case_id_digest,
+        "case_digest": case_id_digest,
+        "request_digest": digest(dict(request)),
+        "source_snapshot_digest": source_snapshot_digest,
+        "attempted": True,
+        "http_status": result.status,
+        "latency_ms": round(max(0.0, float(result.latency_ms)), 3),
+        "response_observed": bool(response),
+        "response_digest": response.get("response_digest") if isinstance(response.get("response_digest"), str) else None,
+        "runtime_snapshot_digest": None,
+        "receipt_digest": None,
+        "contract_valid": False,
+        "proof_binding_valid": False,
+        "temporal_binding_valid": False,
+        "fail_closed": False,
+        "evidence_count": 0,
+        "observed_record_digests": [],
+        "evidence_record_coverage": _expected_record_coverage(case, response),
+        "evidence_file_coverage": _expected_file_coverage(case, response),
+        "citation_exactness": {"available": False, "matched": None, "reason": "no_authored_citation_identity"},
+        "citation_structural_valid": False,
+        "unsupported_action": False,
+        "tool_ref_count": 0,
+        "refusal": False,
+        "abstained": None,
+        "non_exclusion": {"available": False, "preserved": None, "gap_codes": []},
+        "continuation": {"available": False, "observed": None},
+        "observed_projection_digest": None,
+        "observability": _extract_observability(result, response),
+        "failures": [],
+    }
+    if result.error:
+        row["failures"].append(_safe_failure(result.error))
+        return row
+    if result.status < 200 or result.status >= 300:
+        row["failures"].append(_safe_failure("http_status"))
+        return row
+    if not response:
+        row["failures"].append(_safe_failure("empty_response"))
+        return row
+    if response.get("schema_id") != RESPONSE_SCHEMA_ID or response.get("ok") is not True or response.get("version") != 1:
+        row["failures"].append(_safe_failure("response_contract_invalid"))
+    forbidden = [str(key) for value in _all_values(response) if isinstance(value, dict) for key in value if str(key).lower() in FORBIDDEN_PUBLIC_KEYS]
+    if forbidden:
+        row["failures"].append(_safe_failure("forbidden_public_field"))
+    contract = _as_map(response.get("format_contract"))
+    if contract.get("schema_id") != RESPONSE_SCHEMA_ID or contract.get("contract_valid") is not True or contract.get("truncated") is not False:
+        row["failures"].append(_safe_failure("format_contract_invalid"))
+    if not _sha(response.get("response_digest")) or response.get("response_digest") != _response_digest(response):
+        row["failures"].append(_safe_failure("response_digest_mismatch"))
+    if not _opaque_id(response.get("response_id"), "rr_") or response.get("response_id") != _response_id(response):
+        row["failures"].append(_safe_failure("response_id_mismatch"))
+
+    scope = _as_map(response.get("request_scope"))
+    expected_query_digest = "sha256:" + hashlib.sha256(str(request.get("query") or "").encode("utf-8")).hexdigest()
+    if scope.get("query_digest") != expected_query_digest:
+        row["failures"].append(_safe_failure("request_scope_query_mismatch"))
+    snapshot_digest = scope.get("snapshot_digest")
+    receipt_digest = scope.get("receipt_digest")
+    row["runtime_snapshot_digest"] = snapshot_digest if _sha(snapshot_digest) else None
+    row["receipt_digest"] = receipt_digest if _sha(receipt_digest) else None
+    if not _sha(snapshot_digest):
+        row["failures"].append(_safe_failure("snapshot_digest_missing"))
+    elif source_snapshot_digest and snapshot_digest != source_snapshot_digest:
+        row["failures"].append(_safe_failure("source_snapshot_digest_mismatch"))
+    if not _sha(receipt_digest):
+        row["failures"].append(_safe_failure("receipt_digest_missing"))
+    proof = _as_map(_as_map(response.get("answer")).get("proof_spine"))
+    temporal_digest = scope.get("temporal_premise_digest")
+    row["temporal_binding_valid"] = bool(
+        _sha(temporal_digest)
+        and proof.get("temporal_premise_digest") == temporal_digest
+        and proof.get("as_of") == scope.get("as_of")
+    )
+    if not row["temporal_binding_valid"]:
+        row["failures"].append(_safe_failure("temporal_binding_invalid"))
+    expected_as_of, as_of_valid = _normalise_as_of(request.get("as_of"))
+    if scope.get("as_of") != expected_as_of:
+        row["temporal_binding_valid"] = False
+        row["failures"].append(_safe_failure("as_of_mismatch"))
+    if not as_of_valid:
+        row["temporal_binding_valid"] = False
+    gaps = _gap_codes(response)
+    evidence = [_as_map(raw) for raw in _as_list(response.get("evidence"))]
+    row["evidence_count"] = len(evidence)
+    evidence_refs: set[str] = set()
+    evidence_valid = True
+    for item in evidence:
+        ref_id = str(item.get("ref_id") or "")
+        evidence_refs.add(ref_id)
+        if not _sha(item.get("source_ref")) or not _sha(item.get("content_digest")) or not ref_id:
+            evidence_valid = False
+    row["citation_structural_valid"] = evidence_valid
+    row["observed_record_digests"] = sorted({str(item.get("content_digest")).lower() for item in evidence if _sha(item.get("content_digest"))})
+    proof_refs = {str(value) for value in _as_list(proof.get("proof_refs")) if str(value)}
+    classification = _as_map(response.get("classification"))
+    row["proof_binding_valid"] = bool(
+        _sha(scope.get("snapshot_digest"))
+        and _sha(scope.get("receipt_digest"))
+        and proof.get("temporal_premise_digest") == scope.get("temporal_premise_digest")
+        and evidence_valid
+        and evidence_refs.issubset(proof_refs)
+    )
+    if not row["proof_binding_valid"]:
+        row["failures"].append(_safe_failure("proof_binding_invalid"))
+    facets = _as_map(classification.get("facets"))
+    row["observed_request_shape"] = {
+        "retrieval_intent": scope.get("retrieval_intent"),
+        "task_class": scope.get("task_class"),
+        "evidence_state": facets.get("evidence_state"),
+        "temporal_state": facets.get("temporal_state"),
+        "proof_union_digest": digest(sorted(evidence_refs | proof_refs)),
+    }
+    for component in (_as_map(raw) for raw in _as_list(_as_map(response.get("answer")).get("components"))):
+        binding = _as_map(component.get("binding"))
+        row["tool_ref_count"] += sum(1 for key in ("tool_ref", "intended_tool_ref") if str(_as_map(component.get("payload")).get(key) or "").strip())
+        if binding and (binding.get("snapshot_digest") != snapshot_digest or binding.get("receipt_digest") != receipt_digest or binding.get("temporal_premise_digest") != temporal_digest or component.get("component_digest") != _component_digest(component)):
+            row["failures"].append(_safe_failure("component_binding_invalid"))
+    next_action = _as_map(response.get("next_action"))
+    action_kind = str(next_action.get("kind") or "").strip().lower()
+    row["unsupported_action"] = action_kind in UNSUPPORTED_ACTIONS or (action_kind and action_kind not in ALLOWED_NEXT_ACTIONS)
+    if row["unsupported_action"]:
+        row["failures"].append(_safe_failure("unsupported_action"))
+    posture = str(classification.get("posture") or "").strip().lower()
+    answer = _as_map(response.get("answer"))
+    answer_mode = str(answer.get("answer_mode") or "").strip().lower()
+    row["abstained"] = posture == "abstain" or answer_mode == "abstention" or action_kind in {"retrieve_or_verify", "verify_conflict", "verify_currentness", "none"}
+    row["refusal"] = row["abstained"] is True and bool(_as_list(_as_map(response.get("action_boundary")).get("forbidden")))
+    boundary = _as_map(response.get("action_boundary"))
+    outcome = _as_map(response.get("outcome"))
+    row["fail_closed"] = bool(boundary.get("can_act") is False and boundary.get("execution_performed") is False and outcome.get("execution_performed") is False and next_action.get("execution_performed") is False)
+    if not row["fail_closed"]:
+        row["failures"].append(_safe_failure("fail_closed_boundary_invalid"))
+    row["non_exclusion"] = {"available": bool(gaps & NON_EXCLUSION_GAP_CODES), "preserved": bool(gaps & NON_EXCLUSION_GAP_CODES) and bool(proof_refs), "gap_codes": sorted(gaps & NON_EXCLUSION_GAP_CODES)}
+    row["continuation"] = {"available": bool(gaps & CONTINUATION_GAP_CODES) or action_kind == "project_continuation", "observed": bool(gaps & CONTINUATION_GAP_CODES) or action_kind == "project_continuation"}
+    row["observed_action"] = {"next_action": action_kind, "tool_ref_count": row["tool_ref_count"], "refusal": row["refusal"]}
+    row["observed_temporal"] = {"as_of": scope.get("as_of"), "temporal_state": facets.get("temporal_state"), "premise_digest": temporal_digest}
+    expected_snapshot = next((case.get(key) for key in ("expected_runtime_snapshot_digest", "expected_response_snapshot_digest") if case.get(key) is not None), None)
+    if expected_snapshot is not None and snapshot_digest != expected_snapshot:
+        row["failures"].append(_safe_failure("snapshot_drift"))
+    expected_as_of_failure = (not as_of_valid) and ("invalid_temporal_premise" not in gaps or evidence)
+    if expected_as_of_failure:
+        row["failures"].append(_safe_failure("invalid_as_of_not_failed_closed"))
+    expected_citation = [str(value).strip().lower() for value in _as_list(case.get("expected_citation_digests")) if str(value).strip()]
+    if expected_citation:
+        observed_citation = {str(item.get("content_digest") or "").lower() for item in evidence if _sha(item.get("content_digest"))}
+        matched = len(set(expected_citation) & observed_citation)
+        row["citation_exactness"] = {"available": True, "matched": matched, "expected": len(set(expected_citation)), "complete": matched == len(set(expected_citation))}
+    row["observed_projection_digest"] = digest({"request_scope": scope, "evidence": evidence, "proof_refs": sorted(proof_refs), "gaps": sorted(gaps), "next_action": action_kind})
+    row["contract_valid"] = not any(failure["code"] in {"response_contract_invalid", "format_contract_invalid", "forbidden_public_field", "response_digest_mismatch", "response_id_mismatch"} for failure in row["failures"])
+    return row
+
+
+def _observability_blockers(rows: Sequence[Mapping[str, Any]]) -> list[str]:
+    required = (
+        ("cost_microusd", "missing_cost_observability", "nonzero_provider_cost"),
+        ("provider_calls", "missing_provider_call_observability", "provider_calls_observed"),
+        ("external_network_calls", "missing_external_network_observability", "external_network_calls_observed"),
+    )
+    blockers: list[str] = []
+    for field, missing_code, nonzero_code in required:
+        values = [_as_map(_as_map(row.get("observability")).get(field)) for row in rows]
+        if not values or any(value.get("available") is not True for value in values):
+            blockers.append(missing_code)
+        elif any(value.get("value") != 0 for value in values):
+            blockers.append(nonzero_code)
+
+    token_values = [_as_map(_as_map(row.get("observability")).get("provider_tokens")) for row in rows]
+    token_exposed = any(str(value.get("field") or "").strip() for value in token_values)
+    if token_exposed:
+        if not token_values or any(value.get("available") is not True for value in token_values):
+            blockers.append("missing_provider_token_observability")
+        elif any(value.get("value") != 0 for value in token_values):
+            blockers.append("provider_tokens_observed")
+
+    provider_network_values = [_as_map(_as_map(row.get("observability")).get("provider_network_calls")) for row in rows]
+    provider_network_exposed = any(str(value.get("field") or "").strip() for value in provider_network_values)
+    if provider_network_exposed:
+        if not provider_network_values or any(value.get("available") is not True for value in provider_network_values):
+            blockers.append("missing_provider_network_observability")
+        elif any(value.get("value") != 0 for value in provider_network_values):
+            blockers.append("provider_network_calls_observed")
+    return sorted(set(blockers))
+
+
+def _observability_summary(rows: Sequence[Mapping[str, Any]], field: str, *, optional: bool = False) -> dict[str, Any]:
+    values = [_as_map(_as_map(row.get("observability")).get(field)) for row in rows]
+    available = sum(1 for value in values if value.get("available") is True)
+    exposed = sum(1 for value in values if str(value.get("field") or "").strip())
+    if optional and exposed == 0:
+        status = "not_exposed"
+    elif values and available == len(values):
+        status = "measured"
+    else:
+        status = "unmeasured"
+    total = round(sum(float(value.get("value") or 0) for value in values if value.get("available") is True), 6) if available else None
+    return {"status": status, "rows": len(values), "available_rows": available, "exposed_rows": exposed, "total": total}
+
+
+def _aggregate_boolean(rows: Sequence[Mapping[str, Any]], field: str) -> dict[str, Any]:
+    values = [row.get(field) for row in rows if isinstance(row.get(field), bool)]
+    if len(values) != len(rows) or not rows:
+        return {"status": "unmeasured", "denominator": len(rows), "observed": len(values), "rate": None}
+    return {"status": "measured", "denominator": len(rows), "observed": len(values), "rate": round(sum(values) / len(values), 6)}
+
+
+def _aggregate_latency(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    values = [float(row.get("latency_ms")) for row in rows if _is_number(row.get("latency_ms"))]
+    if len(values) != len(rows) or not values:
+        return {"status": "unmeasured", "denominator": len(rows), "observed": len(values), "mean_ms": None, "p50_ms": None, "p95_ms": None}
+    ordered = sorted(values)
+    return {"status": "measured", "denominator": len(rows), "observed": len(values), "mean_ms": round(statistics.fmean(values), 3), "p50_ms": round(ordered[max(0, math.ceil(len(ordered) * 0.50) - 1)], 3), "p95_ms": round(ordered[max(0, math.ceil(len(ordered) * 0.95) - 1)], 3)}
+
+
+def _aggregate_rates(rows: Sequence[Mapping[str, Any]], field: str) -> dict[str, Any]:
+    values = [bool(row.get(field)) for row in rows]
+    return {"status": "measured" if rows else "unmeasured", "denominator": len(rows), "count": sum(values), "rate": round(sum(values) / len(values), 6) if values else None}
+
+
+def _aggregate_coverage(rows: Sequence[Mapping[str, Any]], field: str) -> dict[str, Any]:
+    values = [_as_map(row.get(field)) for row in rows if _as_map(row.get(field)).get("available") is True]
+    complete = [value.get("complete") is True or value.get("matched") is True for value in values]
+    return {
+        "status": "measured" if values else "unmeasured",
+        "denominator": len(values),
+        "complete": sum(complete),
+        "rate": round(sum(complete) / len(complete), 6) if complete else None,
+    }
+
+
+def _semantic_metrics(rows: Sequence[Mapping[str, Any]], labels: LabelValidation | None, cases: Sequence[Mapping[str, Any]]) -> tuple[dict[str, Any], list[str]]:
+    holdout_ids = {str(case.get("id")) for case in cases if str(case.get("split") or "").lower() == "holdout"}
+    if labels is None or not labels.valid or not holdout_ids.issubset(labels.labels_by_case):
+        return {
+            "status": "unmeasured",
+            "reason": "missing_authored_holdout_labels",
+            "answer_correctness": {"status": "unmeasured", "reason": "retrieval scores are not answer ground truth"},
+            "request_shape": {"status": "unmeasured"},
+            "action": {"status": "unmeasured"},
+            "temporal": {"status": "unmeasured"},
+            "abstention_appropriateness": {"status": "unmeasured"},
+            "citation_exactness": {"status": "unmeasured"},
+            "answer_quality_claim_allowed": False,
+        }, ["missing_authored_labels"]
+    comparisons: dict[str, list[bool]] = {"request_shape": [], "action": [], "temporal": [], "abstention_appropriateness": [], "citation_exactness": []}
+    case_lookup = {str(case.get("id")): case for case in cases}
+    for row in rows:
+        case_id = next((case_id for case_id, case in case_lookup.items() if _safe_case_digest(case) == row.get("case_id_digest")), "")
+        label = labels.labels_by_case.get(case_id)
+        if not label:
+            continue
+        expected_shape = _as_map(label.get("request_shape"))
+        expected_action = _as_map(label.get("action"))
+        expected_temporal = _as_map(label.get("temporal"))
+        expected_abstention = _as_map(label.get("abstention"))
+        observed_shape = _as_map(row.get("observed_request_shape"))
+        observed_action = _as_map(row.get("observed_action"))
+        observed_temporal = _as_map(row.get("observed_temporal"))
+        if expected_shape:
+            comparisons["request_shape"].append(all(observed_shape.get(key) == value for key, value in expected_shape.items()))
+        action_checks: list[bool] = []
+        for key, value in expected_action.items():
+            if key == "expected_next_action":
+                action_checks.append(observed_action.get("next_action") == value)
+            elif key == "requires_refusal":
+                action_checks.append(observed_action.get("refusal") == value)
+            elif key == "expected_tool_ref":
+                action_checks.append(int(observed_action.get("tool_ref_count") or 0) > 0)
+        if expected_action:
+            comparisons["action"].append(bool(action_checks) and all(action_checks))
+        if expected_temporal:
+            comparisons["temporal"].append(all(
+                (observed_temporal.get("as_of") == value if key == "expected_as_of" else observed_temporal.get("temporal_state") == value if key in {"expected_temporal_state", "expected_currentness"} else True)
+                for key, value in expected_temporal.items()
+            ))
+        if "expected" in expected_abstention:
+            comparisons["abstention_appropriateness"].append(bool(row.get("abstained")) == bool(expected_abstention.get("expected")))
+        expected_citations = {str(value).lower() for value in _as_list(label.get("expected_record_digests")) + _as_list(label.get("expected_content_digests"))}
+        observed_citations = {str(value).lower() for value in _as_list(row.get("observed_record_digests"))}
+        if expected_citations:
+            comparisons["citation_exactness"].append(expected_citations.issubset(observed_citations))
+    metrics: dict[str, Any] = {"status": "measured" if any(comparisons.values()) else "unmeasured"}
+    for key, values in comparisons.items():
+        metrics[key] = {
+            "status": "measured" if values else "unmeasured",
+            "applicable": bool(values),
+            "denominator": len(values),
+            "correct": sum(values),
+            "rate": round(sum(values) / len(values), 6) if values else None,
+        }
+    metrics["answer_correctness"] = {"status": "unmeasured", "reason": "no answer-correctness oracle in this contract"}
+    metrics["answer_quality_claim_allowed"] = False
+    return metrics, []
+
+
+def _promotion_threshold_blockers(report: Mapping[str, Any]) -> list[str]:
+    metrics = _as_map(report.get("metrics"))
+    blockers: list[str] = []
+    structural = {
+        "contract_validity": "contract_validity_min_rate",
+        "proof_binding": "proof_binding_min_rate",
+        "temporal_as_of_binding": "temporal_as_of_binding_min_rate",
+        "fail_closed": "fail_closed_min_rate",
+    }
+    for metric_name, threshold_name in structural.items():
+        metric = _as_map(metrics.get(metric_name))
+        threshold = PROMOTION_THRESHOLDS[threshold_name]
+        rate = metric.get("rate")
+        if metric.get("status") != "measured" or not _is_number(rate):
+            blockers.append(f"{metric_name}_unmeasured")
+        elif float(rate) < threshold:
+            blockers.append(f"{metric_name}_threshold_failed")
+
+    unsupported = _as_map(metrics.get("unsupported_action_rate"))
+    if unsupported.get("status") != "measured":
+        blockers.append("unsupported_action_unmeasured")
+    elif float(unsupported.get("rate") or 0) > PROMOTION_THRESHOLDS["unsupported_action_max_rate"]:
+        blockers.append("unsupported_action_observed")
+
+    reproducibility = _as_map(report.get("reproducibility"))
+    if reproducibility.get("status") != "measured":
+        blockers.append("reproducibility_unmeasured")
+    else:
+        for field, threshold_name, code in (
+            ("exact_digest_rate", "replay_exact_digest_min_rate", "replay_digest_threshold_failed"),
+            ("exact_snapshot_rate", "replay_exact_snapshot_min_rate", "replay_snapshot_threshold_failed"),
+        ):
+            rate = reproducibility.get(field)
+            if not _is_number(rate) or float(rate) < PROMOTION_THRESHOLDS[threshold_name]:
+                blockers.append(code)
+
+    semantic = _as_map(report.get("semantic_metrics"))
+    semantic_metric_names = ("request_shape", "action", "temporal", "abstention_appropriateness", "citation_exactness")
+    for metric_name in semantic_metric_names:
+        metric = _as_map(semantic.get(metric_name))
+        if metric.get("applicable") is not True:
+            blockers.append(f"semantic_{metric_name}_unmeasured")
+            continue
+        if metric.get("status") != "measured" or not _is_number(metric.get("rate")):
+            blockers.append(f"semantic_{metric_name}_unmeasured")
+        elif float(metric.get("rate")) < PROMOTION_THRESHOLDS["authored_semantic_min_rate"]:
+            blockers.append(f"semantic_threshold_failed:{metric_name}")
+    return sorted(set(blockers))
+
+
+def _answer_quality_claim_blockers(report: Mapping[str, Any]) -> list[str]:
+    semantic = _as_map(report.get("semantic_metrics"))
+    if semantic.get("answer_correctness", {}).get("status") != "measured" or semantic.get("answer_quality_claim_allowed") is not True:
+        return ["answer_quality_unmeasured"]
+    return []
+
+
+def _failure_ledger(rows: Sequence[Mapping[str, Any]], extra: Iterable[Mapping[str, Any]] = ()) -> dict[str, Any]:
+    counts: dict[str, int] = {}
+    total = 0
+    for row in rows:
+        failures = _as_list(row.get("failures"))
+        for failure in failures:
+            code = str(_as_map(failure).get("code") or "unknown")
+            counts[code] = counts.get(code, 0) + 1
+            total += 1
+    for failure in extra:
+        code = str(_as_map(failure).get("code") or "unknown")
+        counts[code] = counts.get(code, 0) + 1
+        total += 1
+    return {"total": total, "by_code": dict(sorted(counts.items()))}
+
+
+def _runtime_identity(payload: Mapping[str, Any], expected_commit: str, expected_tree: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    build = _as_map(payload.get("build"))
+    memory = _as_map(payload.get("memoryStore"))
+    identity = {key: build.get(key) for key in ("schema_id", "version", "channel", "source_bound", "source_commit", "source_tree", "boot_nonce")}
+    safe_memory = {key: memory.get(key) for key in ("ready", "phase", "writer_policy", "processed_entries", "batch_count")}
+    safe_memory["store_ref_digest"] = digest(str(memory.get("store_ref") or "")) if str(memory.get("store_ref") or "").strip() else None
+    issues: list[dict[str, Any]] = []
+    if payload.get("ok") is not True or identity.get("schema_id") != "contextlattice_build_identity.v1" or identity.get("source_bound") is not True:
+        _issue(issues, "runtime_identity_invalid", "health did not prove a source-bound runtime")
+    if not HEX40_RE.fullmatch(str(identity.get("source_commit") or "")):
+        _issue(issues, "runtime_source_commit_invalid", "runtime source commit is not a 40-hex identity")
+    if not HEX40_RE.fullmatch(str(identity.get("source_tree") or "")):
+        _issue(issues, "runtime_source_tree_invalid", "runtime source tree is not a 40-hex identity")
+    if not expected_commit or not expected_tree:
+        _issue(issues, "runtime_source_expectation_missing", "expected rebuilt runtime source commit and tree are required")
+    if expected_commit and identity.get("source_commit") != expected_commit:
+        _issue(issues, "runtime_source_commit_mismatch", "runtime source commit does not match expected rebuilt source")
+    if expected_tree and identity.get("source_tree") != expected_tree:
+        _issue(issues, "runtime_source_tree_mismatch", "runtime source tree does not match expected rebuilt source")
+    if safe_memory.get("ready") is not True or safe_memory.get("phase") != "ready" or safe_memory.get("writer_policy") != "owner_only_writer.v2" or safe_memory.get("store_ref_digest") is None or not isinstance(memory.get("store_ref"), str):
+        _issue(issues, "runtime_memory_store_not_ready", "health did not prove a ready owner-only memory store")
+    return {"identity": identity, "memory_store": safe_memory, "identity_digest": digest({"identity": identity, "memory_store": safe_memory})}, issues
+
+
+def _row_not_attempted(case: Mapping[str, Any], request: Mapping[str, Any], reason: str, source_snapshot_digest: str | None) -> dict[str, Any]:
+    return {
+        "case_id_digest": _safe_case_digest(case),
+        "case_digest": _safe_case_digest(case),
+        "request_digest": digest(dict(request)),
+        "source_snapshot_digest": source_snapshot_digest,
+        "attempted": False,
+        "http_status": None,
+        "latency_ms": None,
+        "response_observed": False,
+        "response_digest": None,
+        "runtime_snapshot_digest": None,
+        "receipt_digest": None,
+        "contract_valid": False,
+        "proof_binding_valid": False,
+        "temporal_binding_valid": False,
+        "fail_closed": False,
+        "evidence_count": 0,
+        "evidence_record_coverage": {"available": False, "matched": None, "reason": "not_attempted"},
+        "evidence_file_coverage": {"available": False, "matched": None, "reason": "not_attempted"},
+        "citation_exactness": {"available": False, "matched": None, "reason": "not_attempted"},
+        "unsupported_action": False,
+        "tool_ref_count": 0,
+        "refusal": False,
+        "abstained": None,
+        "non_exclusion": {"available": False, "preserved": None, "gap_codes": []},
+        "continuation": {"available": False, "observed": None},
+        "observed_projection_digest": None,
+        "observability": {
+            "cost_microusd": {"available": False},
+            "provider_calls": {"available": False},
+            "provider_tokens": {"available": False, "field": ""},
+            "tool_calls": {"available": False},
+            "external_network_calls": {"available": False},
+            "provider_network_calls": {"available": False, "field": ""},
+            "evaluator_localhost_requests": {"available": False, "value": 0, "field": "not_attempted"},
+        },
+        "citation_structural_valid": False,
+        "failures": [_safe_failure(reason)],
+    }
+
+
+def run_evaluation(
+    artifact_payload: Mapping[str, Any],
+    artifact_bytes: bytes,
+    transport: Any,
+    *,
+    expected_source_commit: str = "",
+    expected_source_tree: str = "",
+    route: str = DEFAULT_ROUTE,
+    timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+    labels_payload: Mapping[str, Any] | None = None,
+    labels_bytes: bytes | None = None,
+    replay: bool = True,
+) -> dict[str, Any]:
+    artifact = validate_frozen_artifact(artifact_payload, artifact_bytes)
+    labels = None
+    label_issues: list[dict[str, Any]] = []
+    if labels_payload is not None:
+        labels = validate_authored_labels(labels_payload, artifact)
+        label_issues.extend(labels.issues)
+    report: dict[str, Any] = {
+        "schema_id": EVAL_SCHEMA_ID,
+        "version": 1,
+        "ok": False,
+        "status": "custody_rejected" if not artifact.valid else "pending",
+        "route": route,
+        "local_only": True,
+        "provider_free": False,
+        "provider_free_status": "unproven",
+        "provider_free_blockers": [],
+        "promotion_policy": {
+            "schema_id": PROMOTION_POLICY_ID,
+            "version": PROMOTION_POLICY_VERSION,
+            "thresholds": dict(PROMOTION_THRESHOLDS),
+        },
+        "dataset": {
+            "schema_id": CASE_SET_SCHEMA_ID,
+            "source": artifact.payload.get("source"),
+            "synthetic": artifact.payload.get("synthetic"),
+            "case_set_digest": artifact.digests.get("case_set_digest"),
+            "source_snapshot_digest": artifact.digests.get("source_snapshot_digest"),
+            "custody_metadata_digest": artifact.digests.get("custody_metadata_digest"),
+            "artifact_digest": artifact.digests.get("artifact_digest"),
+            "all_case_ids_digest": artifact.digests.get("all_case_ids_digest"),
+            "holdout_case_ids_digest": artifact.digests.get("holdout_case_ids_digest"),
+            "holdout_cases_digest": artifact.digests.get("holdout_cases_digest"),
+            "snapshot_digest_validation": artifact.digest_validation.get("snapshot"),
+            "custody_digest_validation": artifact.digest_validation.get("custody"),
+            "train_count": sum(1 for case in artifact.cases if str(case.get("split") or "").lower() == "train"),
+            "holdout_count": len(artifact.holdout),
+            "graph_claimed": artifact.graph_claimed,
+            "graph_holdout_count": sum(1 for case in artifact.holdout if _case_is_graph(case)),
+        },
+        "labels": {"available": labels is not None and labels.valid, "labels_digest": labels.digests.get("labels_digest") if labels else None, "custody_metadata_digest": labels.digests.get("custody_metadata_digest") if labels else None},
+        "runtime_identity": None,
+        "cases": [],
+        "metrics": {},
+        "semantic_metrics": {},
+        "reproducibility": {"requested": bool(replay), "status": "not_run", "exact_replay_count": 0, "mismatch_count": 0, "exact_digest_rate": None, "exact_snapshot_rate": None},
+        "failure_ledger": {"total": 0, "by_code": {}},
+        "promotion": {
+            "promotion_eligible": False,
+            "activation_eligible": False,
+            "blocked_reasons": [],
+            "answer_quality_claim_allowed": False,
+            "answer_quality_claim_blockers": ["answer_quality_unmeasured"],
+        },
+    }
+    if not artifact.valid:
+        report["promotion"]["blocked_reasons"] = sorted({issue["code"] for issue in artifact.issues})
+        report["failure_ledger"] = _failure_ledger([], artifact.issues)
+        return report
+    if label_issues:
+        report["promotion"]["blocked_reasons"].extend(sorted({issue["code"] for issue in label_issues}))
+    if route not in {RESPONSE_ROUTE, TOOL_RESPONSE_ROUTE}:
+        report["status"] = "configuration_rejected"
+        report["promotion"]["blocked_reasons"].append("route_not_allowlisted")
+        report["failure_ledger"] = _failure_ledger([], ({"code": "route_not_allowlisted"},))
+        return report
+    try:
+        timeout_seconds = float(timeout_seconds)
+        if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        report["status"] = "configuration_rejected"
+        report["promotion"]["blocked_reasons"].append("timeout_invalid")
+        report["failure_ledger"] = _failure_ledger([], ({"code": "timeout_invalid"},))
+        return report
+    health = transport.request("GET", HEALTH_ROUTE, None, timeout_seconds)
+    if health.error or health.status < 200 or health.status >= 300:
+        runtime, runtime_issues = ({}, [{"code": "runtime_health_unavailable", "detail": health.error or "non-success health status"}])
+    else:
+        runtime, runtime_issues = _runtime_identity(health.payload, expected_source_commit, expected_source_tree)
+    report["runtime_identity"] = runtime
+    if runtime_issues:
+        report["status"] = "runtime_identity_rejected"
+        report["promotion"]["blocked_reasons"].extend(sorted({issue["code"] for issue in runtime_issues}))
+        report["cases"] = [_row_not_attempted(case, build_response_request(case), "runtime_identity_rejected", artifact.digests.get("source_snapshot_digest")) for case in artifact.holdout]
+        report["failure_ledger"] = _failure_ledger(report["cases"], runtime_issues)
+        return report
+
+    rows: list[dict[str, Any]] = []
+    replay_mismatches = 0
+    for case in artifact.holdout:
+        request = build_response_request(case)
+        result = transport.request("POST", route, request, timeout_seconds)
+        row = validate_response(request, case, result, source_snapshot_digest=artifact.digests.get("source_snapshot_digest"))
+        if replay:
+            replay_result = transport.request("POST", route, request, timeout_seconds)
+            replay_row = validate_response(request, case, replay_result, source_snapshot_digest=artifact.digests.get("source_snapshot_digest"))
+            row["replay"] = {"replay_requested": True, "response_digest": replay_row.get("response_digest"), "runtime_snapshot_digest": replay_row.get("runtime_snapshot_digest"), "exact_digest_match": bool(row.get("response_digest") and row.get("response_digest") == replay_row.get("response_digest")), "exact_snapshot_match": bool(row.get("runtime_snapshot_digest") and row.get("runtime_snapshot_digest") == replay_row.get("runtime_snapshot_digest"))}
+            report["reproducibility"]["exact_replay_count"] += 1
+            if not row["replay"]["exact_digest_match"] or not row["replay"]["exact_snapshot_match"]:
+                replay_mismatches += 1
+                row["failures"].append(_safe_failure("replay_digest_mismatch"))
+        else:
+            row["replay"] = {"replay_requested": False, "response_digest": None, "runtime_snapshot_digest": None, "exact_digest_match": None, "exact_snapshot_match": None}
+        rows.append(row)
+    report["reproducibility"]["mismatch_count"] = replay_mismatches
+    report["reproducibility"]["status"] = "measured" if replay else "unmeasured"
+    if replay and rows:
+        report["reproducibility"]["exact_digest_rate"] = round(sum(1 for row in rows if _as_map(row.get("replay")).get("exact_digest_match") is True) / len(rows), 6)
+        report["reproducibility"]["exact_snapshot_rate"] = round(sum(1 for row in rows if _as_map(row.get("replay")).get("exact_snapshot_match") is True) / len(rows), 6)
+    report["cases"] = rows
+    response_failures = [failure for row in rows for failure in _as_list(row.get("failures"))]
+    metrics = {
+        "contract_validity": _aggregate_boolean(rows, "contract_valid"),
+        "proof_binding": _aggregate_boolean(rows, "proof_binding_valid"),
+        "temporal_as_of_binding": _aggregate_boolean(rows, "temporal_binding_valid"),
+        "fail_closed": _aggregate_boolean(rows, "fail_closed"),
+        "latency": _aggregate_latency(rows),
+        "unsupported_action_rate": _aggregate_rates(rows, "unsupported_action"),
+        "refusal_rate": _aggregate_rates(rows, "refusal"),
+        "tool_ref_rate": {"status": "measured" if rows else "unmeasured", "denominator": len(rows), "rows_with_tool_refs": sum(1 for row in rows if int(row.get("tool_ref_count") or 0) > 0), "rate": round(sum(1 for row in rows if int(row.get("tool_ref_count") or 0) > 0) / len(rows), 6) if rows else None},
+        "citation_exactness": {**_aggregate_coverage(rows, "citation_exactness"), "structural_validity_rate": round(sum(1 for row in rows if row.get("citation_structural_valid") is True) / len(rows), 6) if rows else None, "rows_with_authored_identity": sum(1 for row in rows if _as_map(row.get("citation_exactness")).get("available"))},
+        "expected_file_coverage": {**_aggregate_coverage(rows, "evidence_file_coverage"), "rows_with_public_file_identity": sum(1 for row in rows if _as_map(row.get("evidence_file_coverage")).get("available"))},
+        "expected_record_coverage": {**_aggregate_coverage(rows, "evidence_record_coverage"), "rows_with_authored_record_identity": sum(1 for row in rows if _as_map(row.get("evidence_record_coverage")).get("available"))},
+        "non_exclusion": {"status": "measured" if any(_as_map(row.get("non_exclusion")).get("available") for row in rows) else "unmeasured", "rows_with_disclosed_limits": sum(1 for row in rows if _as_map(row.get("non_exclusion")).get("available")), "preserved_rows": sum(1 for row in rows if _as_map(row.get("non_exclusion")).get("preserved") is True)},
+        "continuation": {"status": "measured" if any(_as_map(row.get("continuation")).get("available") for row in rows) else "unmeasured", "rows_with_continuation": sum(1 for row in rows if _as_map(row.get("continuation")).get("observed") is True)},
+        "observability": {
+            "cost_microusd": _observability_summary(rows, "cost_microusd"),
+            "provider_calls": _observability_summary(rows, "provider_calls"),
+            "provider_tokens": _observability_summary(rows, "provider_tokens", optional=True),
+            "external_network_calls": _observability_summary(rows, "external_network_calls"),
+            "provider_network_calls": _observability_summary(rows, "provider_network_calls", optional=True),
+            "tool_calls": _observability_summary(rows, "tool_calls", optional=True),
+            "evaluator_localhost_requests": {
+                "status": "measured",
+                "health_requests": 1,
+                "response_requests": len(rows) * (2 if replay else 1),
+                "total_requests": 1 + len(rows) * (2 if replay else 1),
+            },
+        },
+        "reproducibility": report["reproducibility"],
+    }
+    report["metrics"] = metrics
+    semantic, semantic_blockers = _semantic_metrics(rows, labels, artifact.cases)
+    report["semantic_metrics"] = semantic
+    blockers = list(report["promotion"]["blocked_reasons"])
+    observability_blockers = _observability_blockers(rows)
+    report["provider_free"] = not observability_blockers
+    report["provider_free_status"] = "proven_zero" if report["provider_free"] else "unproven"
+    report["provider_free_blockers"] = observability_blockers
+    blockers.extend(observability_blockers)
+    blockers.extend(semantic_blockers)
+    if replay and replay_mismatches:
+        blockers.append("replay_digest_mismatch")
+    if response_failures:
+        blockers.append("case_failures_present")
+    blockers.extend(_promotion_threshold_blockers(report))
+    report["promotion"]["blocked_reasons"] = sorted(set(blockers))
+    report["promotion"]["activation_eligible"] = not report["promotion"]["blocked_reasons"]
+    report["promotion"]["promotion_eligible"] = report["promotion"]["activation_eligible"]
+    answer_quality_blockers = _answer_quality_claim_blockers(report)
+    report["promotion"]["answer_quality_claim_blockers"] = answer_quality_blockers
+    report["promotion"]["answer_quality_claim_allowed"] = not answer_quality_blockers
+    report["status"] = "pass" if report["promotion"]["promotion_eligible"] else "completed_with_failures"
+    report["ok"] = True
+    report["failure_ledger"] = _failure_ledger(rows, [{"code": code} for code in report["promotion"]["blocked_reasons"]])
+    return report
+
+
+def _emit(payload: Mapping[str, Any], pretty: bool) -> None:
+    print(json.dumps(payload, indent=2 if pretty else None, sort_keys=pretty, ensure_ascii=False))
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--artifact", type=Path, default=default_artifact_path())
+    parser.add_argument("--labels", type=Path, default=None)
+    parser.add_argument("--base-url", default=os.getenv("CONTEXTLATTICE_ORCHESTRATOR_URL") or os.getenv("MEMMCP_ORCHESTRATOR_URL") or "http://127.0.0.1:8075")
+    parser.add_argument("--route", choices=(RESPONSE_ROUTE, TOOL_RESPONSE_ROUTE), default=DEFAULT_ROUTE)
+    parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT_SECONDS, help="per-request timeout; timeout is an explicit case failure")
+    parser.add_argument("--expected-source-commit", default=os.getenv("CONTEXTLATTICE_EXPECTED_SOURCE_COMMIT", ""))
+    parser.add_argument("--expected-source-tree", default=os.getenv("CONTEXTLATTICE_EXPECTED_SOURCE_TREE", ""))
+    parser.add_argument("--api-key", default=os.getenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", ""))
+    parser.add_argument("--no-replay", action="store_true", help="disable exact replay; reproducibility becomes unmeasured")
+    parser.add_argument("--pretty", action="store_true")
+    args = parser.parse_args(argv)
+    try:
+        artifact_payload, artifact_bytes = load_json_file(args.artifact)
+        labels_payload, labels_bytes = (load_json_file(args.labels) if args.labels else (None, None))
+        transport = LocalhostTransport(args.base_url, args.api_key)
+        report = run_evaluation(
+            artifact_payload,
+            artifact_bytes,
+            transport,
+            expected_source_commit=str(args.expected_source_commit).strip(),
+            expected_source_tree=str(args.expected_source_tree).strip(),
+            route=args.route,
+            timeout_seconds=args.timeout,
+            labels_payload=labels_payload,
+            labels_bytes=labels_bytes,
+            replay=not args.no_replay,
+        )
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        _emit({"schema_id": EVAL_SCHEMA_ID, "version": 1, "ok": False, "status": "input_rejected", "failure": {"code": type(exc).__name__}}, args.pretty)
+        return 2
+    _emit(report, args.pretty)
+    return 0 if report.get("ok") is True and report.get("promotion", {}).get("promotion_eligible") is True else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

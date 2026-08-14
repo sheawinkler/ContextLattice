@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -106,6 +108,44 @@ func countNonEmptyLines(raw string) int {
 		}
 	}
 	return count
+}
+
+func TestMemoryStoreRecoveryReadersHonorFiniteCaps(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "history.ndjson")
+	rows := make([]string, 0, 20)
+	for index := 0; index < 20; index++ {
+		rows = append(rows, `{"row":`+strconv.Itoa(index)+`}`)
+	}
+	if err := os.WriteFile(path, []byte(strings.Join(rows, "\n")+"\n"), ownerOnlyFileMode); err != nil {
+		t.Fatalf("write bounded history fixture: %v", err)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatalf("open bounded history fixture: %v", err)
+	}
+	lines, err := readHistoryTailLines(file, 3, 40)
+	_ = file.Close()
+	if err != nil {
+		t.Fatalf("read bounded history tail: %v", err)
+	}
+	if len(lines) > 3 || len(strings.Join(lines, "\n")) > 40 {
+		t.Fatalf("history tail exceeded explicit caps: lines=%d bytes=%d", len(lines), len(strings.Join(lines, "\n")))
+	}
+	oversizedPath := filepath.Join(root, "oversized.bin")
+	if err := os.WriteFile(oversizedPath, []byte(strings.Repeat("x", 17)), ownerOnlyFileMode); err != nil {
+		t.Fatalf("write oversized bounded fixture: %v", err)
+	}
+	if _, err := readOwnerOnlyBoundedFile(oversizedPath, 16); !errors.Is(err, errMemoryEdgeLogOversized) {
+		t.Fatalf("bounded owner-only read accepted oversized fixture: %v", err)
+	}
+	shardPath := filepath.Join(root, "current-state-00.json")
+	if err := os.WriteFile(shardPath, []byte(strings.Repeat("y", 17)), ownerOnlyFileMode); err != nil {
+		t.Fatalf("write oversized current-state fixture: %v", err)
+	}
+	if _, err := readMemoryCurrentStateShard(shardPath, 16); !errors.Is(err, errMemoryEdgeLogOversized) {
+		t.Fatalf("bounded current-state read accepted oversized fixture: %v", err)
+	}
 }
 
 func TestMemoryStoreTopicRollupCacheTTL(t *testing.T) {

@@ -762,9 +762,13 @@ func anyToFloat64(value any, fallback float64) float64 {
 		return float64(typed)
 	case uint64:
 		return float64(typed)
-	default:
-		return fallback
+	case json.Number:
+		parsed, err := typed.Float64()
+		if err == nil {
+			return parsed
+		}
 	}
+	return fallback
 }
 
 func anyToInt64(value any, fallback int64) int64 {

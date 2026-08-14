@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import math
@@ -29,6 +30,7 @@ EVAL_SCHEMA_ID = "recall_response_offline_eval.v1"
 FIXTURE_SCHEMA_ID = "recall_response_eval_fixture.v1"
 CONTRACT_SCHEMA_ID = "recall_response.v1"
 CONTINUOUS_COGNITION_SCHEMA_ID = "continuous_cognition.v1"
+PROJECTION_BINDING_SCHEMA_ID = "recall_response.offline_served_projection_binding.v1"
 CONTINUOUS_COGNITION_OPERATIONS = (
     "observe", "investigate", "status", "outcome", "evaluate", "rollback", "retire",
 )
@@ -296,27 +298,50 @@ def _static_policy(case: dict[str, Any]) -> dict[str, Any]:
     """
 
     rows = _evidence_rows(case)
-    eligible = [row for row in rows if str(row.get("support")) != "distractor"]
-    if not eligible:
-        return {
-            "rows": [],
-            "status": "abstain",
-            "abstain": True,
-            "next_action": "retrieve_or_verify",
-            "decision_impact": "none",
-            "conflict_groups": [],
-        }
-
-    conflict_groups = sorted({str(row.get("conflict_group")) for row in eligible if row.get("conflict_group")})
+    accounted = [
+        row
+        for row in rows
+        if str(row.get("support")) != "distractor"
+    ]
+    eligible = [row for row in accounted if str(row.get("currentness")) == "current"]
+    conflict_groups = sorted(
+        {str(row.get("conflict_group")) for row in accounted if row.get("conflict_group")}
+    )
     if conflict_groups:
-        selected = [row for row in eligible if str(row.get("conflict_group")) in conflict_groups]
+        selected = [
+            row
+            for row in eligible
+            if str(row.get("conflict_group")) in conflict_groups
+        ]
         return {
-            "rows": selected,
+            "rows": selected[:2],
+            "accounted_rows": accounted,
             "status": "verify",
             "abstain": True,
             "next_action": "verify_conflict",
             "decision_impact": "high",
             "conflict_groups": conflict_groups,
+        }
+
+    if not eligible:
+        if accounted:
+            return {
+                "rows": [],
+                "accounted_rows": accounted,
+                "status": "verify",
+                "abstain": True,
+                "next_action": "verify_currentness",
+                "decision_impact": "medium",
+                "conflict_groups": [],
+            }
+        return {
+            "rows": [],
+            "accounted_rows": [],
+            "status": "abstain",
+            "abstain": True,
+            "next_action": "retrieve_or_verify",
+            "decision_impact": "none",
+            "conflict_groups": [],
         }
 
     current_direct = [
@@ -325,6 +350,7 @@ def _static_policy(case: dict[str, Any]) -> dict[str, Any]:
     if not current_direct:
         return {
             "rows": eligible[:2],
+            "accounted_rows": accounted,
             "status": "verify",
             "abstain": True,
             "next_action": "verify_currentness",
@@ -336,6 +362,7 @@ def _static_policy(case: dict[str, Any]) -> dict[str, Any]:
     source_count = len({str(row.get("source_ref")) for row in current_direct[:2]})
     return {
         "rows": current_direct[:2],
+        "accounted_rows": accounted,
         "status": "answer",
         "abstain": False,
         "next_action": "verify_before_action",
@@ -344,26 +371,292 @@ def _static_policy(case: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _scoped_ref(scope_digest: str, kind: str, value: str) -> str:
+    normalized = str(value).strip() or "<empty>"
+    material = f"{scope_digest}\x00{normalized}".encode("utf-8")
+    return f"ref_{kind.strip().lower()}_{hashlib.sha256(material).hexdigest()[:24]}"
+
+
+def _ordered_unique(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for value in values:
+        if value and value not in seen:
+            seen.add(value)
+            out.append(value)
+    return out
+
+
+def _stable_response_material(response: dict[str, Any]) -> dict[str, Any]:
+    material = copy.deepcopy(response)
+    material.pop("continuation_action", None)
+    disclosure = material.get("disclosure")
+    if isinstance(disclosure, dict):
+        disclosure.pop("continuation_action", None)
+    return material
+
+
+def _response_id_for(response: dict[str, Any]) -> str:
+    material = _stable_response_material(response)
+    for key in ("response_id", "response_digest", "format_contract"):
+        material.pop(key, None)
+    return "rr_" + hashlib.sha256(_canonical(material)).hexdigest()[:24]
+
+
 def _response_digest_material(response: dict[str, Any]) -> dict[str, Any]:
-    return {key: value for key, value in response.items() if key not in {"format_contract", "response_digest"}}
+    material = _stable_response_material(response)
+    material.pop("format_contract", None)
+    material.pop("response_digest", None)
+    return material
 
 
-def _component_digest(component: dict[str, Any]) -> str:
-    return _digest({key: value for key, value in component.items() if key != "component_digest"})
+def _restamp_static_response(response: dict[str, Any]) -> dict[str, Any]:
+    stamped = copy.deepcopy(response)
+    stamped.pop("format_contract", None)
+    stamped["response_id"] = _response_id_for(stamped)
+    stamped["response_digest"] = _digest(_response_digest_material(stamped))
+    return attach_format_contract(CONTRACT_SCHEMA_ID, stamped, load_agent_contracts_registry())
+
+
+def _default_ablation_witness() -> dict[str, Any]:
+    witness = {
+        "schema_id": "recall_response.synthetic_ablation_witness.v1",
+        "status": "not_applicable",
+        "component_ref": "",
+        "baseline_component_ref": "",
+        "component_kind": "",
+        "baseline_union_digest": "",
+        "baseline_response_identity": "",
+        "omission_receipt_digest": "",
+        "expected_failure_stage": "none",
+        "observed_failure_stage": "none",
+        "witness_digest": "",
+    }
+    witness["witness_digest"] = _digest({key: value for key, value in witness.items() if key != "witness_digest"})
+    return witness
+
+
+def _proof_identity_digest(refs: list[str]) -> str:
+    return _digest(sorted(set(ref for ref in refs if ref)))
+
+
+def _non_exclusion_digest(disclosure: dict[str, Any]) -> str:
+    return _digest({
+        "schema": disclosure["union_schema"],
+        "evidence_union": disclosure["evidence_union"],
+        "proof_union": disclosure["proof_union"],
+        "component_union": disclosure["component_union"],
+        "exclusion_refs": disclosure["exclusion_refs"],
+        "source_counts": disclosure["source_counts"],
+        "union_counts": disclosure["union_counts"],
+        "omitted_counts": disclosure["omitted_counts"],
+        "source_truncated": disclosure["source_truncated"],
+        "union_truncated": disclosure["union_truncated"],
+        "continuation_digest": disclosure["continuation_digest"],
+        "ablation_witness": disclosure["ablation_witness"],
+    })
+
+
+def _evidence_projection(row: dict[str, Any], scope_digest: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    ref_id = _scoped_ref(scope_digest, "evidence", str(row["evidence_ref"]))
+    source_ref = _scoped_ref(scope_digest, "source", str(row["source_ref"]))
+    content_digest = _digest({
+        "evidence_ref": row["evidence_ref"],
+        "citation_ref": row["citation_ref"],
+        "rank": row["rank"],
+        "support": row["support"],
+        "currentness": row["currentness"],
+        "numeric_value": row["numeric_value"],
+    })
+    role = "context" if row["support"] == "context" else "support"
+    confidence = 0.92 if row["support"] == "direct" else 0.72
+    evidence = {
+        "ref_id": ref_id,
+        "kind": "fact",
+        "role": role,
+        "status": "current",
+        "confidence": confidence,
+        "source_ref": source_ref,
+        "content_digest": content_digest,
+    }
+    union = {
+        "ref_id": ref_id,
+        "item_type": "evidence",
+        "kind": "fact",
+        "role": role,
+        "status": "current",
+        "confidence": confidence,
+        "protected": False,
+        "evidence_binding": {
+            "source_ref": source_ref,
+            "content_digest": content_digest,
+            "binding_authority": "derived",
+            "source_bound": False,
+        },
+    }
+    return evidence, union
+
+
+def _projection_binding_receipt(
+    response: dict[str, Any],
+    served_surface: Any,
+    served_refs: list[str],
+    fixture_refs: list[str],
+    rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    material = {
+        "schema_id": PROJECTION_BINDING_SCHEMA_ID,
+        "response_identity": str(response.get("response_id") or response.get("cognition_id") or ""),
+        "response_digest": str(response.get("response_digest") or response.get("cognition_digest") or ""),
+        "served_surface_digest": _digest(served_surface),
+        "served_identity_order_digest": _digest(served_refs),
+        "served_identity_set_digest": _digest(sorted(set(served_refs))),
+        "fixture_identity_order_digest": _digest(fixture_refs),
+        "fixture_identity_set_digest": _digest(sorted(set(fixture_refs))),
+        "bound_rows_digest": _digest(rows),
+        "count": len(rows),
+    }
+    return {**material, "binding_digest": _digest(material)}
+
+
+def _static_served_projection_binding(case: dict[str, Any], response: Any) -> dict[str, Any]:
+    if not isinstance(response, dict):
+        return {"valid": False, "rows": [], "receipt": None}
+    scope = response.get("request_scope")
+    served = response.get("evidence")
+    if not isinstance(scope, dict) or not isinstance(scope.get("scope_digest"), str) or not isinstance(served, list):
+        return {"valid": False, "rows": [], "receipt": None}
+    scope_digest = str(scope["scope_digest"])
+    expected_by_ref: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
+    for row in _evidence_rows(case):
+        expected, _ = _evidence_projection(row, scope_digest)
+        expected_by_ref[str(expected["ref_id"])] = (expected, row)
+    served_refs: list[str] = []
+    fixture_refs: list[str] = []
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in served:
+        if not isinstance(item, dict):
+            return {"valid": False, "rows": [], "receipt": None}
+        ref_id = str(item.get("ref_id") or "")
+        expected_pair = expected_by_ref.get(ref_id)
+        if not ref_id or ref_id in seen or expected_pair is None or _canonical(item) != _canonical(expected_pair[0]):
+            return {"valid": False, "rows": [], "receipt": None}
+        seen.add(ref_id)
+        source_row = copy.deepcopy(expected_pair[1])
+        served_refs.append(ref_id)
+        fixture_refs.append(str(source_row["evidence_ref"]))
+        rows.append(source_row)
+    receipt = _projection_binding_receipt(response, served, served_refs, fixture_refs, rows)
+    return {"valid": True, "rows": rows, "receipt": receipt}
+
+
+def _continuous_served_projection_binding(case: dict[str, Any], response: Any) -> dict[str, Any]:
+    if not isinstance(response, dict):
+        return {"valid": False, "rows": [], "receipt": None}
+    policy = _static_policy(case)
+    rows = [copy.deepcopy(row) for row in policy["rows"]]
+    fixture_refs = [str(row["evidence_ref"]) for row in rows]
+    anchor_material = {
+        "selected_evidence_refs": fixture_refs,
+        "conflict_groups": policy["conflict_groups"],
+        "status": policy["status"],
+    }
+    expected_anchor = _digest(anchor_material)
+    observation = response.get("observation")
+    progress = response.get("progress")
+    loop_guard = progress.get("loop_guard") if isinstance(progress, dict) else None
+    if (
+        not isinstance(observation, dict)
+        or observation.get("source_anchor_digest") != expected_anchor
+        or not isinstance(loop_guard, dict)
+        or loop_guard.get("source_anchor_digest") != expected_anchor
+    ):
+        return {"valid": False, "rows": [], "receipt": None}
+    receipt = _projection_binding_receipt(
+        response,
+        {"source_anchor_digest": expected_anchor},
+        fixture_refs,
+        fixture_refs,
+        rows,
+    )
+    return {"valid": True, "rows": rows, "receipt": receipt}
+
+
+def _served_projection_binding(case: dict[str, Any], condition: str, response: Any) -> dict[str, Any]:
+    if condition == "static_recall_response":
+        return _static_served_projection_binding(case, response)
+    if condition == "continuous_cognition":
+        return _continuous_served_projection_binding(case, response)
+    return {"valid": False, "rows": [], "receipt": None}
+
+
+def _expected_static_conflicts(case: dict[str, Any], response: Any) -> list[dict[str, Any]]:
+    if not isinstance(response, dict):
+        return []
+    scope = response.get("request_scope")
+    if not isinstance(scope, dict) or not isinstance(scope.get("scope_digest"), str):
+        return []
+    scope_digest = str(scope["scope_digest"])
+    source_rows = _evidence_rows(case)
+    projected_refs = {
+        str(row["evidence_ref"]): _evidence_projection(row, scope_digest)[0]["ref_id"]
+        for row in source_rows
+    }
+    groups = sorted({
+        str(row.get("conflict_group"))
+        for row in source_rows
+        if row.get("conflict_group") and row.get("support") != "distractor"
+    })
+    expected: list[dict[str, Any]] = []
+    for group in groups:
+        group_rows = [
+            row
+            for row in source_rows
+            if row.get("support") != "distractor" and str(row.get("conflict_group")) == group
+        ]
+        group_refs = [projected_refs[str(row["evidence_ref"])] for row in group_rows]
+        support_refs = [
+            projected_refs[str(row["evidence_ref"])]
+            for row in group_rows
+            if row.get("currentness") == "current"
+        ][:1]
+        opposition_refs = [ref for ref in group_refs if ref not in support_refs][:8]
+        expected.append({
+            "conflict_id": _scoped_ref(scope_digest, "conflict", group),
+            "kind": "contradiction",
+            "status": "unresolved",
+            "support_refs": support_refs,
+            "opposition_refs": opposition_refs,
+            "resolution": "abstain_until_reconciled",
+        })
+    return expected
+
+
+def _static_conflict_surface_matches(case: dict[str, Any], response: Any) -> bool:
+    if not isinstance(response, dict):
+        return False
+    expected = _expected_static_conflicts(case, response)
+    actual = response.get("conflicts")
+    answer = response.get("answer")
+    proof_spine = answer.get("proof_spine") if isinstance(answer, dict) else None
+    if not isinstance(actual, list) or not isinstance(proof_spine, dict):
+        return False
+    if any(not item["support_refs"] or not item["opposition_refs"] for item in expected):
+        return False
+    expected_ids = [item["conflict_id"] for item in expected]
+    return _canonical(actual) == _canonical(expected) and proof_spine.get("conflict_refs") == expected_ids
 
 
 def _build_static_response(case: dict[str, Any], policy: dict[str, Any]) -> dict[str, Any]:
-    rows = policy["rows"]
+    selected_rows = list(policy["rows"])
+    source_rows = _evidence_rows(case)
     request = case["request"]
-    selected_refs = [row["evidence_ref"] for row in rows]
-    receipt_refs = [row["citation_ref"] for row in rows]
-    conflict_groups = list(policy["conflict_groups"])
-    conflict_refs = [_opaque("conflict", group) for group in conflict_groups]
     abstain = bool(policy["abstain"])
-    status = str(policy["status"])
-    posture = "abstain" if abstain else "advisory"
+    conflict_groups = list(policy["conflict_groups"])
     as_of = "latest_available"
-    temporal_state = "contested" if conflict_groups else ("unknown" if abstain else "current")
+    temporal_state = "mixed" if conflict_groups else ("current_or_unknown" if abstain else "current")
+    evidence_state = "conflicting" if conflict_groups else ("degraded" if abstain else "clean")
     temporal_premise_digest = _digest({
         "as_of": as_of,
         "selection_rule": "evidence_observed_at_or_before_as_of",
@@ -371,83 +664,212 @@ def _build_static_response(case: dict[str, Any], policy: dict[str, Any]) -> dict
     })
     snapshot_digest = _digest({
         "case_ref": _opaque("case", case["case_id"]),
-        "conflict_refs": conflict_refs,
-        "selected_refs": selected_refs,
-        "status": status,
+        "source_rows": source_rows,
         "temporal_premise_digest": temporal_premise_digest,
     })
-    receipt_digest = _digest(receipt_refs)
-    gap_refs = [_opaque("gap", case["case_id"])] if abstain else []
-    proof_refs: list[str] = []
-    for ref in selected_refs + conflict_refs + gap_refs:
-        if ref and ref not in proof_refs and len(proof_refs) < 8:
-            proof_refs.append(ref)
-    components: list[dict[str, Any]] = []
-    for ordinal, row in enumerate(rows, start=1):
-        component = {
-            "component_ref": row["evidence_ref"],
-            "kind": "evidence",
-            "ordinal": ordinal,
-        }
-        component["component_digest"] = _component_digest(component)
-        components.append(component)
-    evidence = [
-        {
-            "evidence_ref": row["evidence_ref"],
-            "source_ref": row["source_ref"],
-            "citation_ref": row["citation_ref"],
-            "rank": int(row["rank"]),
-            "support_status": row["support"],
-            "freshness": row["currentness"],
-        }
-        for row in rows
+    receipt_digest = _digest([row["citation_ref"] for row in selected_rows])
+    query_digest = _digest({"request_ref": request["request_ref"], "intent": request["intent"]})
+    workspace_ref = _digest({"workspace": request["scope_ref"]})
+    project_ref = _digest({"project": request["scope_ref"]})
+    scope_digest = _digest({
+        "query_digest": query_digest,
+        "workspace_ref": workspace_ref,
+        "project_ref": project_ref,
+        "session_ref": request["session_ref"],
+        "task_ref": request["request_ref"],
+        "as_of": as_of,
+        "condition": "universal_template",
+        "ablation": "none",
+        "snapshot_digest": snapshot_digest,
+        "receipt_digest": receipt_digest,
+        "source_bound": False,
+    })
+    scope = {
+        "scope_digest": scope_digest,
+        "query_digest": query_digest,
+        "owner_ref": _scoped_ref(scope_digest, "owner", str(request["scope_ref"])),
+        "workspace_ref": workspace_ref,
+        "project_ref": project_ref,
+        "topic_ref": _scoped_ref(scope_digest, "topic", str(request["intent"])),
+        "agent_ref": _scoped_ref(scope_digest, "agent", "offline_evaluator"),
+        "session_ref": _scoped_ref(scope_digest, "session", str(request["session_ref"])),
+        "task_ref": _scoped_ref(scope_digest, "task", str(request["request_ref"])),
+        "task_identity_ref": _scoped_ref(scope_digest, "task_identity", str(request["request_ref"])),
+        "execution_lane_ref": _scoped_ref(scope_digest, "execution_lane", "offline_fixture"),
+        "retrieval_intent": "decision",
+        "as_of": as_of,
+        "task_class": "offline_fixture_" + str(request["intent"]),
+        "temporal_premise_digest": temporal_premise_digest,
+        "snapshot_digest": snapshot_digest,
+        "receipt_digest": receipt_digest,
+        "source_bound": False,
+        "condition": "universal_template",
+        "ablation": "none",
+    }
+
+    eligible_rows = [
+        row
+        for row in source_rows
+        if row["support"] != "distractor" and row["currentness"] == "current"
     ]
+    excluded_rows = [row for row in source_rows if row not in eligible_rows]
+    projected_by_ref: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {
+        str(row["evidence_ref"]): _evidence_projection(row, scope_digest)
+        for row in source_rows
+    }
+    evidence = [copy.deepcopy(projected_by_ref[str(row["evidence_ref"])][0]) for row in selected_rows]
+    all_evidence_union = [copy.deepcopy(projected_by_ref[str(row["evidence_ref"])][1]) for row in eligible_rows]
+    all_exclusion_refs = [
+        projected_by_ref[str(row["evidence_ref"])][0]["ref_id"]
+        for row in excluded_rows
+    ]
+    selected_refs = [row["ref_id"] for row in evidence]
+    conflict_refs = [_scoped_ref(scope_digest, "conflict", group) for group in conflict_groups]
+    gap_refs = [_scoped_ref(scope_digest, "gap", case["case_id"])] if abstain else []
+    # A hard-excluded source remains visible through exclusion accounting. It
+    # is never promoted into the proof-support union merely to make that
+    # accounting traversable.
+    all_proof_refs = _ordered_unique(
+        [row["ref_id"] for row in all_evidence_union] + conflict_refs + gap_refs
+    )
+    evidence_union = all_evidence_union[:32]
+    exclusion_refs = all_exclusion_refs[:32]
+    proof_union = all_proof_refs[:32]
+    omitted_counts = {
+        "source": 0,
+        "evidence": len(all_evidence_union) - len(evidence_union),
+        "exclusions": len(all_exclusion_refs) - len(exclusion_refs),
+        "proof": len(all_proof_refs) - len(proof_union),
+        "components": 0,
+    }
+    union_truncated = any(omitted_counts[key] > 0 for key in ("evidence", "exclusions", "proof", "components"))
+    source_counts = {"evidence": len(source_rows), "temporal": 0, "proof": 0, "conflicts": 0}
+    continuation_digest = _digest({
+        "ordered_union_refs": _ordered_unique(all_proof_refs + all_exclusion_refs),
+        "source_continuation_digest": _digest({"source_refs": [row["evidence_ref"] for row in source_rows], "source_counts": source_counts}),
+        "exclusion_continuation_digest": _digest(all_exclusion_refs),
+        "proof_continuation_digest": _digest(all_proof_refs),
+        "component_continuation_digest": _digest([]),
+    })
+    disclosure: dict[str, Any] = {
+        "bounded": True,
+        "raw_retrieval_included": False,
+        "raw_prompt_included": False,
+        "paths_included": False,
+        "secrets_included": False,
+        "inference_boundary": "Metadata and opaque proof references only.",
+        "omission_policy": "Classification affects presentation only; safe union membership remains count-, digest-, and continuation-bound.",
+        "union_schema": "recall_response.non_exclusion.v1",
+        "evidence_union": evidence_union,
+        "proof_union": proof_union,
+        "component_union": [],
+        "omission_ledger": [],
+        "union_digest": "",
+        "exclusion_refs": exclusion_refs,
+        "union_truncated": union_truncated,
+        "source_counts": source_counts,
+        "source_truncated": False,
+        "union_counts": {
+            "evidence": len(all_evidence_union),
+            "exclusions": len(all_exclusion_refs),
+            "proof": len(all_proof_refs),
+            "components": 0,
+        },
+        "omitted_counts": omitted_counts,
+        "continuation_digest": continuation_digest,
+        "continuation_ref": _scoped_ref(scope_digest, "continuation", continuation_digest),
+        "continuation_action": {
+            "kind": "owner_cursor_unavailable",
+            "method": "",
+            "route": "",
+            "snapshot_semantics": "not_served",
+            "request_contract": "none",
+            "scope_digest": scope_digest,
+            "request_digest": "",
+            "token": "",
+            "page": 0,
+        },
+        "ablation_witness": _default_ablation_witness(),
+        "control_union_digest": "",
+        "control_proof_identity_digest": "",
+        "control_receipt": {},
+    }
+    disclosure["union_digest"] = _non_exclusion_digest(disclosure)
+    proof_identity_digest = _proof_identity_digest(proof_union)
+    control_material = {
+        "snapshot_digest": snapshot_digest,
+        "receipt_digest": receipt_digest,
+        "union_digest": disclosure["union_digest"],
+        "proof_identity_digest": proof_identity_digest,
+        "source_bound": False,
+    }
+    disclosure["control_union_digest"] = disclosure["union_digest"]
+    disclosure["control_proof_identity_digest"] = proof_identity_digest
+    disclosure["control_receipt"] = {**control_material, "artifact_digest": _digest(control_material)}
+
+    receipt_ids = [_scoped_ref(scope_digest, "receipt", str(row["citation_ref"])) for row in source_rows]
+    coverage_satisfied = not abstain
+    proof_refs = _ordered_unique(selected_refs + conflict_refs + gap_refs)[:8]
+    state_status = "supported" if str(policy["status"]) == "answer" else str(policy["status"])
+    conflicts = []
+    for group, conflict_ref in zip(conflict_groups, conflict_refs):
+        group_rows = [
+            row
+            for row in source_rows
+            if row["support"] != "distractor" and row.get("conflict_group") == group
+        ]
+        group_refs = [
+            projected_by_ref[str(row["evidence_ref"])][0]["ref_id"]
+            for row in group_rows
+        ]
+        support_refs = [
+            projected_by_ref[str(row["evidence_ref"])][0]["ref_id"]
+            for row in group_rows
+            if row["currentness"] == "current"
+        ]
+        opposition_refs = [ref for ref in group_refs if ref not in support_refs[:1]]
+        conflicts.append({
+            "conflict_id": conflict_ref,
+            "kind": "contradiction",
+            "status": "unresolved",
+            "support_refs": support_refs[:1],
+            "opposition_refs": opposition_refs[:8],
+            "resolution": "abstain_until_reconciled",
+        })
+    gaps = []
+    if abstain:
+        gaps.append({
+            "code": "verification_required",
+            "material": True,
+            "reason": "Independent verification is required before action.",
+            "required_for_action": True,
+        })
     response: dict[str, Any] = {
         "ok": True,
         "schema_id": CONTRACT_SCHEMA_ID,
         "version": 1,
-        "request_scope": {
-            "scope_digest": _opaque("scope", str(request["scope_ref"])),
-            "query_digest": _opaque("request", str(request["request_ref"])),
-            "owner_ref": _opaque("owner", str(request["scope_ref"])),
-            "workspace_ref": _opaque("workspace", case["case_id"]),
-            "project_ref": _opaque("project", case["case_id"]),
-            "topic_ref": _opaque("topic", case["case_id"]),
-            "agent_ref": _opaque("agent", case["case_id"]),
-            "session_ref": _opaque("session", str(request["session_ref"])),
-            "task_ref": _opaque("task", case["case_id"]),
-            "task_identity_ref": _opaque("task_identity", case["case_id"]),
-            "execution_lane_ref": _opaque("execution_lane", "offline_fixture"),
-            "retrieval_intent": str(request["intent"]),
-            "as_of": as_of,
-            "task_class": "offline_fixture_" + str(request["intent"]),
-            "temporal_premise_digest": temporal_premise_digest,
-            "snapshot_digest": snapshot_digest,
-            "receipt_digest": receipt_digest,
-            "condition": "universal_template",
-            "ablation": "none",
-        },
+        "request_scope": scope,
         "classification": {
-            "jobs": ["look_up"],
-            "objects": ["fact"],
-            "temporal_mode": str(request["intent"]),
-            "evidence_state": "contested" if conflict_groups else ("degraded" if abstain else "clean"),
+            "jobs": ["verify", "explain"] if abstain else ["look_up"],
+            "objects": ["fact", "proof_receipt"],
+            "temporal_mode": temporal_state,
+            "evidence_state": evidence_state,
             "consequence": "informational",
-            "posture": posture,
+            "posture": "abstain" if abstain else "advisory",
             "facets": {
-                "jobs": ["look_up"],
-                "memory_objects": ["fact"],
+                "jobs": ["verify", "explain"] if abstain else ["look_up"],
+                "memory_objects": ["fact", "proof_receipt"],
                 "temporal_state": temporal_state,
-                "evidence_state": "contested" if conflict_groups else ("degraded" if abstain else "clean"),
+                "evidence_state": evidence_state,
                 "consequence": "informational",
             },
         },
         "answer": {
             "summary": "Synthetic bounded evidence response.",
-            "answer_mode": "abstention" if abstain else "bounded_evidence",
-            "basis": ["synthetic_fixture", "opaque_proof_refs"],
+            "answer_mode": "abstention" if abstain else "answer",
+            "basis": ["synthetic_fixture", "opaque_proof_refs", "explicit_action_boundary"],
             "claim_refs": selected_refs,
-            "components": components,
+            "components": [],
             "progressive_disclosure": {
                 "level": "summary",
                 "available_levels": ["summary", "proof_refs", "next_action"],
@@ -458,81 +880,56 @@ def _build_static_response(case: dict[str, Any], policy: dict[str, Any]) -> dict
                 "as_of": as_of,
                 "temporal_premise_digest": temporal_premise_digest,
                 "proof_refs": proof_refs,
-                "confidence_basis": ["synthetic_evidence_refs"],
-                "conflict_refs": conflict_refs,
-                "gap_refs": gap_refs,
+                "confidence_basis": ["synthetic_evidence_refs", "closed_source_accounting"],
+                "conflict_refs": conflict_refs[:8],
+                "gap_refs": gap_refs[:8],
                 "memory_boundary": "server_evidence_and_deterministic_inference_only",
-                "next_move": "verify" if abstain else "review",
-                "receipt_refs": receipt_refs[:8],
+                "next_move": "retrieve_or_verify" if abstain else "inspect_proof",
+                "receipt_refs": receipt_ids[:8],
                 "disclosure": "opaque_refs_only",
                 "coverage": [
-                    {
-                        "obligation": "primary_result",
-                        "status": "satisfied" if selected_refs else "unsatisfied",
-                        "proof_refs": selected_refs[:8],
-                    },
-                    {
-                        "obligation": "conflict_free",
-                        "status": "satisfied" if not conflict_refs else "unsatisfied",
-                        "proof_refs": conflict_refs[:8],
-                    },
-                    {
-                        "obligation": "material_gaps_resolved",
-                        "status": "satisfied" if not gap_refs else "unsatisfied",
-                        "proof_refs": gap_refs[:8],
-                    },
+                    {"obligation": "primary_result", "status": "satisfied" if selected_refs else "unsatisfied", "proof_refs": selected_refs[:8]},
+                    {"obligation": "conflict_free", "status": "satisfied" if not conflict_refs else "unsatisfied", "proof_refs": conflict_refs[:8]},
+                    {"obligation": "material_gaps_resolved", "status": "satisfied" if not gap_refs else "unsatisfied", "proof_refs": gap_refs[:8]},
                 ],
             },
             "composition": {
                 "condition": "universal_template",
                 "ablation": "none",
-                "primary_module": "static_recall_response",
-                "ordered_modules": ["evidence_selection"] if selected_refs else [],
+                "primary_module": "v1_control",
+                "ordered_modules": [],
                 "proof_strategy": "shared_bounded_v1",
-                "coverage_status": "unsatisfied" if abstain else "satisfied",
-                "fallback_reason": "",
+                "coverage_status": "satisfied" if coverage_satisfied else "unsatisfied",
+                "fallback_reason": "" if coverage_satisfied else "unsatisfied_proof_obligation",
             },
         },
         "state": {
-            "status": status,
-            "source_complete": bool(rows),
-            "evidence_count": len(rows),
-            "conflict_count": len(conflict_groups),
-            "gap_count": 1 if abstain else 0,
-            "retrieval_mode": "offline_fixture",
+            "status": state_status,
+            "source_complete": True,
+            "evidence_count": len(evidence),
+            "conflict_count": len(conflicts),
+            "gap_count": len(gaps),
+            "retrieval_mode": "bounded",
         },
         "evidence": evidence,
         "confidence": {
             "label": "abstain" if abstain else "advisory",
             "score": 0.0 if abstain else 0.8,
-            "basis": ["synthetic_evidence_refs"],
+            "basis": ["synthetic_evidence_refs", "closed_source_accounting"],
             "calibrated": False,
         },
-        "conflicts": [
-            {
-                "conflict_ref": _opaque("conflict", group),
-                "evidence_refs": [row["evidence_ref"] for row in rows if row.get("conflict_group") == group],
-                "status": "contested",
-            }
-            for group in conflict_groups
-        ],
-        "gaps": (
-            [{"code": "verification_required", "material": True, "reason": "Independent verification is required before action."}]
-            if abstain
-            else []
-        ),
-        "inferences": [
-            {
-                "inference_id": _opaque("inference", case["case_id"]),
-                "claim_ref": "response_state",
-                "basis_refs": selected_refs,
-                "status": "deterministic_metadata_only",
-                "confidence": 0.0,
-                "disclosure": "This is response-state metadata, not an independent fact.",
-            }
-        ],
+        "conflicts": conflicts,
+        "gaps": gaps,
+        "inferences": [{
+            "inference_id": _scoped_ref(scope_digest, "inference", case["case_id"]),
+            "claim_ref": "response_state",
+            "basis_refs": selected_refs,
+            "status": "deterministic_metadata_only",
+            "confidence": 0.0,
+            "disclosure": "This is response-state metadata, not an independent fact.",
+        }],
         "next_action": {
-            "kind": "verify" if abstain else "review",
+            "kind": "retrieve_or_verify" if abstain else "inspect_proof",
             "label": str(policy["next_action"]),
             "reason": "The response is advisory-only and does not authorize external mutation.",
             "requires_verification": True,
@@ -542,32 +939,20 @@ def _build_static_response(case: dict[str, Any], policy: dict[str, Any]) -> dict
         "action_boundary": {
             "can_act": False,
             "requires_confirmation": True,
-            "allowed": ["retrieve_missing_sources", "verify_evidence"],
+            "allowed": ["inspect_proof_refs", "retrieve_missing_sources"],
             "forbidden": ["external_mutation", "credential_access", "raw_memory_export"],
-            "reason": "Advisory recall responses never authorize mutation.",
+            "reason": "Recall responses provide evidence and advice only; an agent must independently authorize any mutation.",
             "execution_performed": False,
         },
-        "disclosure": {
-            "bounded": True,
-            "raw_retrieval_included": False,
-            "raw_prompt_included": False,
-            "paths_included": False,
-            "secrets_included": False,
-            "inference_boundary": "Only opaque references and deterministic metadata are returned.",
-            "omission_policy": "Unverified or omitted evidence never becomes implicit support.",
-        },
-        "receipt_refs": receipt_refs,
-        "outcome": {
-            "status": "not_attributable",
-            "attributable": False,
-            "receipt_id": "",
-            "execution_performed": False,
-        },
+        "disclosure": disclosure,
+        "receipt_refs": [
+            {"kind": "retrieval", "ref_id": receipt_id, "status": "observed"}
+            for receipt_id in receipt_ids
+        ],
+        "outcome": {"status": "not_attributable", "attributable": False, "receipt_id": "", "execution_performed": False},
         "writeback_required": True,
     }
-    response["response_id"] = "rr_" + _digest(response).split(":", 1)[1][:24]
-    response["response_digest"] = _digest(_response_digest_material(response))
-    return attach_format_contract(CONTRACT_SCHEMA_ID, response, load_agent_contracts_registry())
+    return _restamp_static_response(response)
 
 
 def validate_recall_response(response: Any) -> bool:
@@ -581,7 +966,7 @@ def validate_recall_response(response: Any) -> bool:
         return False
     if not isinstance(digest, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
         return False
-    if _digest(_response_digest_material(response)) != digest:
+    if _response_id_for(response) != response_id or _digest(_response_digest_material(response)) != digest:
         return False
     registry = load_agent_contracts_registry()
     if validate_agent_contract_payload(CONTRACT_SCHEMA_ID, response, registry):
@@ -595,6 +980,200 @@ def validate_recall_response(response: Any) -> bool:
     if any(disclosure.get(key) is not False for key in ("raw_retrieval_included", "raw_prompt_included", "paths_included", "secrets_included")):
         return False
     if response.get("disclosure", {}).get("bounded") is not True:
+        return False
+    scope = response.get("request_scope")
+    if not isinstance(scope, dict) or set(scope) != {
+        "scope_digest", "query_digest", "owner_ref", "workspace_ref", "project_ref", "topic_ref", "agent_ref",
+        "session_ref", "task_ref", "task_identity_ref", "execution_lane_ref", "retrieval_intent", "as_of",
+        "task_class", "temporal_premise_digest", "snapshot_digest", "receipt_digest", "source_bound", "condition", "ablation",
+    }:
+        return False
+    valid_digest = lambda value: isinstance(value, str) and re.fullmatch(r"sha256:[0-9a-f]{64}", value) is not None
+    valid_ref = lambda value: isinstance(value, str) and re.fullmatch(r"ref_[a-z_]+_[0-9a-f]{24}", value) is not None
+    if any(not valid_digest(scope.get(key)) for key in ("scope_digest", "query_digest", "workspace_ref", "project_ref", "temporal_premise_digest", "snapshot_digest", "receipt_digest")):
+        return False
+    if scope.get("source_bound") is not False or scope.get("condition") != "universal_template" or scope.get("ablation") != "none":
+        return False
+    if any(not valid_ref(scope.get(key)) for key in ("owner_ref", "topic_ref", "agent_ref", "session_ref", "task_ref", "task_identity_ref", "execution_lane_ref")):
+        return False
+
+    answer = response.get("answer")
+    composition = answer.get("composition") if isinstance(answer, dict) else None
+    components = answer.get("components") if isinstance(answer, dict) else None
+    proof_spine = answer.get("proof_spine") if isinstance(answer, dict) else None
+    if not isinstance(composition, dict) or set(composition) != {
+        "condition", "ablation", "primary_module", "ordered_modules", "proof_strategy", "coverage_status", "fallback_reason",
+    }:
+        return False
+    if composition.get("condition") != scope["condition"] or composition.get("ablation") != scope["ablation"] or composition.get("primary_module") != "v1_control" or composition.get("ordered_modules") != [] or components != [] or composition.get("proof_strategy") != "shared_bounded_v1":
+        return False
+    if not isinstance(proof_spine, dict) or set(proof_spine) != {
+        "primary_result", "as_of", "temporal_premise_digest", "proof_refs", "confidence_basis", "conflict_refs",
+        "gap_refs", "memory_boundary", "next_move", "receipt_refs", "disclosure", "coverage",
+    }:
+        return False
+    if proof_spine.get("as_of") != scope["as_of"] or proof_spine.get("temporal_premise_digest") != scope["temporal_premise_digest"]:
+        return False
+
+    disclosure = response.get("disclosure")
+    if not isinstance(disclosure, dict) or set(disclosure) != {
+        "bounded", "raw_retrieval_included", "raw_prompt_included", "paths_included", "secrets_included",
+        "inference_boundary", "omission_policy", "union_schema", "evidence_union", "proof_union", "component_union",
+        "omission_ledger", "union_digest", "exclusion_refs", "union_truncated", "source_counts", "source_truncated",
+        "union_counts", "omitted_counts", "continuation_digest", "continuation_ref", "continuation_action",
+        "ablation_witness", "control_union_digest", "control_proof_identity_digest", "control_receipt",
+    }:
+        return False
+    if disclosure.get("union_schema") != "recall_response.non_exclusion.v1" or disclosure.get("component_union") != [] or disclosure.get("omission_ledger") != []:
+        return False
+    evidence_union = disclosure.get("evidence_union")
+    proof_union = disclosure.get("proof_union")
+    exclusion_refs = disclosure.get("exclusion_refs")
+    if not isinstance(evidence_union, list) or not isinstance(proof_union, list) or not isinstance(exclusion_refs, list):
+        return False
+    if len(evidence_union) > 32 or len(proof_union) > 32 or len(exclusion_refs) > 32:
+        return False
+    if any(not isinstance(ref, str) or not ref for ref in proof_union + exclusion_refs) or len(set(proof_union)) != len(proof_union) or len(set(exclusion_refs)) != len(exclusion_refs):
+        return False
+    union_refs: set[str] = set()
+    for row in evidence_union:
+        if not isinstance(row, dict) or set(row) != {"ref_id", "item_type", "kind", "role", "status", "confidence", "protected", "evidence_binding"}:
+            return False
+        binding = row.get("evidence_binding")
+        if not isinstance(binding, dict) or set(binding) != {"source_ref", "content_digest", "binding_authority", "source_bound"}:
+            return False
+        if not valid_ref(row.get("ref_id")) or row.get("item_type") != "evidence" or row.get("role") not in {"support", "context"} or row.get("status") != "current" or row.get("protected") is not False:
+            return False
+        if not valid_ref(binding.get("source_ref")) or not valid_digest(binding.get("content_digest")) or binding.get("binding_authority") != "derived" or binding.get("source_bound") is not False:
+            return False
+        if row["ref_id"] in union_refs:
+            return False
+        union_refs.add(row["ref_id"])
+    proof_union_set = set(proof_union)
+    exclusion_set = set(exclusion_refs)
+    if not union_refs.issubset(proof_union_set) or union_refs.intersection(exclusion_set) or proof_union_set.intersection(exclusion_set):
+        return False
+
+    evidence = response.get("evidence")
+    if not isinstance(evidence, list):
+        return False
+    visible_refs: set[str] = set()
+    union_by_ref = {str(row["ref_id"]): row for row in evidence_union}
+    for row in evidence:
+        if not isinstance(row, dict) or set(row) != {"ref_id", "kind", "role", "status", "confidence", "source_ref", "content_digest"}:
+            return False
+        ref_id = row.get("ref_id")
+        if ref_id in visible_refs or ref_id not in union_refs or not valid_ref(row.get("source_ref")) or not valid_digest(row.get("content_digest")) or row.get("status") != "current":
+            return False
+        visible_refs.add(ref_id)
+        union_row = union_by_ref[ref_id]
+        binding = union_row["evidence_binding"]
+        if row != {
+            "ref_id": ref_id,
+            "kind": union_row["kind"],
+            "role": union_row["role"],
+            "status": union_row["status"],
+            "confidence": union_row["confidence"],
+            "source_ref": binding["source_ref"],
+            "content_digest": binding["content_digest"],
+        }:
+            return False
+    for key in ("proof_refs", "conflict_refs", "gap_refs", "receipt_refs"):
+        refs = proof_spine.get(key)
+        if not isinstance(refs, list) or len(refs) > 8 or any(not isinstance(ref, str) or not ref for ref in refs) or len(set(refs)) != len(refs):
+            return False
+    if not set(proof_spine["proof_refs"]).issubset(proof_union_set) or not visible_refs.issubset(set(proof_spine["proof_refs"])):
+        return False
+    selected_or_support_proof = {str(row["ref_id"]) for row in evidence}
+    selected_or_support_proof.update(str(ref) for ref in proof_spine.get("proof_refs", []))
+    if selected_or_support_proof.intersection(exclusion_set):
+        return False
+
+    conflicts = response.get("conflicts")
+    if not isinstance(conflicts, list) or len(conflicts) > 32:
+        return False
+    for conflict in conflicts:
+        if not isinstance(conflict, dict) or set(conflict) != {
+            "conflict_id", "kind", "status", "support_refs", "opposition_refs", "resolution",
+        }:
+            return False
+        support_refs = conflict.get("support_refs")
+        opposition_refs = conflict.get("opposition_refs")
+        if not isinstance(support_refs, list) or not isinstance(opposition_refs, list):
+            return False
+        if not support_refs or not opposition_refs:
+            return False
+        if any(not isinstance(ref, str) or not ref for ref in support_refs + opposition_refs):
+            return False
+        if len(set(support_refs)) != len(support_refs) or len(set(opposition_refs)) != len(opposition_refs):
+            return False
+        if set(support_refs).intersection(opposition_refs):
+            return False
+        if conflict.get("conflict_id") not in proof_union_set or conflict.get("conflict_id") not in proof_spine["conflict_refs"]:
+            return False
+        if not set(support_refs).issubset(union_refs) or set(support_refs).intersection(exclusion_set):
+            return False
+        if not set(opposition_refs).issubset(union_refs.union(exclusion_set)):
+            return False
+
+    source_counts = disclosure.get("source_counts")
+    union_counts = disclosure.get("union_counts")
+    omitted_counts = disclosure.get("omitted_counts")
+    count_shapes = (
+        (source_counts, {"evidence", "temporal", "proof", "conflicts"}),
+        (union_counts, {"evidence", "exclusions", "proof", "components"}),
+        (omitted_counts, {"source", "evidence", "exclusions", "proof", "components"}),
+    )
+    for counts, keys in count_shapes:
+        if not isinstance(counts, dict) or set(counts) != keys or any(isinstance(value, bool) or not isinstance(value, int) or value < 0 for value in counts.values()):
+            return False
+    if source_counts["evidence"] != union_counts["evidence"] + union_counts["exclusions"]:
+        return False
+    if union_counts["evidence"] != len(evidence_union) + omitted_counts["evidence"] or union_counts["exclusions"] != len(exclusion_refs) + omitted_counts["exclusions"] or union_counts["proof"] != len(proof_union) + omitted_counts["proof"] or union_counts["components"] != omitted_counts["components"]:
+        return False
+    expected_truncated = any(omitted_counts[key] > 0 for key in ("evidence", "exclusions", "proof", "components"))
+    if disclosure.get("source_truncated") is not False or omitted_counts["source"] != 0 or disclosure.get("union_truncated") is not expected_truncated:
+        return False
+
+    continuation_digest = disclosure.get("continuation_digest")
+    continuation_action = disclosure.get("continuation_action")
+    if not valid_digest(continuation_digest) or disclosure.get("continuation_ref") != _scoped_ref(scope["scope_digest"], "continuation", continuation_digest):
+        return False
+    if not isinstance(continuation_action, dict) or set(continuation_action) != {"kind", "method", "route", "snapshot_semantics", "request_contract", "scope_digest", "request_digest", "token", "page"}:
+        return False
+    if continuation_action != {
+        "kind": "owner_cursor_unavailable", "method": "", "route": "", "snapshot_semantics": "not_served",
+        "request_contract": "none", "scope_digest": scope["scope_digest"], "request_digest": "", "token": "", "page": 0,
+    }:
+        return False
+
+    witness = disclosure.get("ablation_witness")
+    if not isinstance(witness, dict) or set(witness) != {
+        "schema_id", "status", "component_ref", "baseline_component_ref", "component_kind", "baseline_union_digest",
+        "baseline_response_identity", "omission_receipt_digest", "expected_failure_stage", "observed_failure_stage", "witness_digest",
+    }:
+        return False
+    if witness.get("schema_id") != "recall_response.synthetic_ablation_witness.v1" or witness.get("status") != "not_applicable" or witness.get("witness_digest") != _digest({key: value for key, value in witness.items() if key != "witness_digest"}):
+        return False
+    if disclosure.get("union_digest") != _non_exclusion_digest(disclosure) or disclosure.get("control_union_digest") != disclosure.get("union_digest"):
+        return False
+    expected_proof_digest = _proof_identity_digest(proof_union)
+    if disclosure.get("control_proof_identity_digest") != expected_proof_digest:
+        return False
+    receipt = disclosure.get("control_receipt")
+    if not isinstance(receipt, dict) or set(receipt) != {"snapshot_digest", "receipt_digest", "union_digest", "proof_identity_digest", "source_bound", "artifact_digest"}:
+        return False
+    control_material = {
+        "snapshot_digest": scope["snapshot_digest"],
+        "receipt_digest": scope["receipt_digest"],
+        "union_digest": disclosure["union_digest"],
+        "proof_identity_digest": expected_proof_digest,
+        "source_bound": False,
+    }
+    if receipt != {**control_material, "artifact_digest": _digest(control_material)}:
+        return False
+    state = response.get("state")
+    if not isinstance(state, dict) or state.get("evidence_count") != len(evidence) or state.get("conflict_count") != len(response.get("conflicts", [])) or state.get("gap_count") != len(response.get("gaps", [])):
         return False
     if _walk_public(response):
         return False
@@ -877,7 +1456,21 @@ def _selected_refs(rows: list[dict[str, Any]]) -> list[str]:
 
 def _case_metrics(case: dict[str, Any], condition: str, projection: dict[str, Any]) -> dict[str, Any]:
     expected = case["expected"]
-    rows = projection["rows"]
+    response = projection.get("response")
+    binding_valid = True
+    if condition in {"static_recall_response", "continuous_cognition"}:
+        binding = _served_projection_binding(case, condition, response)
+        rows = binding["rows"]
+        binding_valid = bool(binding["valid"]) and (
+            _canonical(projection.get("rows")) == _canonical(rows)
+            and projection.get("served_projection_binding") == binding["receipt"]
+        )
+    else:
+        rows = projection["rows"]
+    # Quality and selection metrics describe only what the product actually
+    # selected/presented.  accounted_rows is a custody/non-exclusion ledger;
+    # it may contain omitted stale, excluded, or continuation-only evidence
+    # and must never make a response look correct.
     selected = _selected_refs(rows)
     selected_set = set(selected)
     required = set(expected.get("required_evidence_refs", []))
@@ -890,12 +1483,12 @@ def _case_metrics(case: dict[str, Any], condition: str, projection: dict[str, An
         citation = 1.0 if expected_citations.issubset(citations) and all(row.get("citation_ref") for row in rows if row["evidence_ref"] in required) else 0.0
     else:
         citation = 1.0 if not citations else 0.0
-    response = projection.get("response")
-    valid = (
+    response_valid = (
         validate_continuous_cognition_response(response)
         if condition == "continuous_cognition"
         else validate_recall_response(response)
     )
+    valid = response_valid and binding_valid
     predicted_status = str(projection.get("status") or "")
     predicted_abstain = bool(projection.get("abstain"))
     if expected.get("status") == "answer":
@@ -906,12 +1499,28 @@ def _case_metrics(case: dict[str, Any], condition: str, projection: dict[str, An
     selected_required_rows = [row for row in rows if row["evidence_ref"] in required]
     currentness_values = {str(row.get("currentness")) for row in selected_required_rows}
     currentness = 1.0 if (not required and expected_currentness == "unknown" and not selected) or (expected_currentness in currentness_values and len(currentness_values) == 1) or (expected_currentness == "contested" and predicted_status == "verify") else 0.0
-    conflict_rows = [row for row in case["evidence"] if row.get("conflict_group")]
+    conflict_rows = [
+        row
+        for row in case["evidence"]
+        if row.get("conflict_group") and row.get("support") != "distractor"
+    ]
     conflict_refs = {row["evidence_ref"] for row in conflict_rows}
     if conflict_refs:
-        conflict = 1.0 if conflict_refs.issubset(selected_set) and predicted_status in {"verify", "abstain"} else 0.0
+        # A generic conflict marker or a verify/abstain posture is not evidence
+        # that the expected contradiction was handled. Only the closed static
+        # conflict receipt binds the exact group and its nonempty support and
+        # opposition memberships. Contracts without that surface receive no
+        # conflict-handling credit for this case.
+        conflict = 1.0 if (
+            condition == "static_recall_response"
+            and predicted_status in {"verify", "abstain"}
+            and _static_conflict_surface_matches(case, response)
+        ) else 0.0
     else:
-        conflict = 1.0 if not projection.get("conflict_groups") else 0.0
+        if condition == "static_recall_response":
+            conflict = 1.0 if _static_conflict_surface_matches(case, response) else 0.0
+        else:
+            conflict = 1.0 if not any(row.get("conflict_group") for row in rows) else 0.0
     abstention = 1.0 if predicted_abstain == bool(expected.get("abstain")) else 0.0
     next_action = 1.0 if projection.get("next_action") == expected.get("next_action") else 0.0
     decision_impact = 1.0 if projection.get("decision_impact") == expected.get("decision_impact") else 0.0
@@ -933,6 +1542,7 @@ def _case_metrics(case: dict[str, Any], condition: str, projection: dict[str, An
     public_value = rows if response is None else response
     privacy = 1.0 if not _walk_public(public_value) else 0.0
     determinism = 1.0 if projection.get("deterministic") else 0.0
+    response_failure = condition in {"static_recall_response", "continuous_cognition"} and not valid
     return {
         "contract_validity": 1.0 if valid else 0.0,
         "evidence_precision": round(precision, 6),
@@ -951,7 +1561,7 @@ def _case_metrics(case: dict[str, Any], condition: str, projection: dict[str, An
         "tokens_in": None,
         "tokens_out": None,
         "tool_calls": 0,
-        "failures": 0,
+        "failures": 1 if response_failure else 0,
         "privacy": privacy,
         "determinism": determinism,
         "split": case["_split"],
@@ -962,20 +1572,28 @@ def _case_metrics(case: dict[str, Any], condition: str, projection: dict[str, An
 def _project_case(case: dict[str, Any], condition: str) -> dict[str, Any]:
     if condition == "continuous_cognition":
         policy = _static_policy(case)
-        rows = policy["rows"]
         response = _build_continuous_cognition_response(case, policy)
         repeat = _build_continuous_cognition_response(case, policy)
+        binding = _served_projection_binding(case, condition, response)
+        repeat_binding = _served_projection_binding(case, condition, repeat)
+        if not binding["valid"] or not repeat_binding["valid"]:
+            raise ValueError("continuous cognition projection is not bound to its served source anchor")
         return {
             "available": True,
             "implemented": True,
-            "rows": rows,
+            "rows": binding["rows"],
+            "accounted_rows": policy["accounted_rows"],
             "response": response,
+            "served_projection_binding": binding["receipt"],
             "status": policy["status"],
             "abstain": policy["abstain"],
             "next_action": policy["next_action"],
             "decision_impact": policy["decision_impact"],
             "conflict_groups": policy["conflict_groups"],
-            "deterministic": _canonical(response) == _canonical(repeat),
+            "deterministic": (
+                _canonical(response) == _canonical(repeat)
+                and _canonical(binding["receipt"]) == _canonical(repeat_binding["receipt"])
+            ),
         }
     if condition == "no_recall":
         return {
@@ -1006,20 +1624,28 @@ def _project_case(case: dict[str, Any], condition: str) -> dict[str, Any]:
         }
     if condition == "static_recall_response":
         policy = _static_policy(case)
-        rows = policy["rows"]
         response = _build_static_response(case, policy)
         repeat = _build_static_response(case, policy)
+        binding = _served_projection_binding(case, condition, response)
+        repeat_binding = _served_projection_binding(case, condition, repeat)
+        if not binding["valid"] or not repeat_binding["valid"]:
+            raise ValueError("static projection is not bound to served response evidence")
         return {
             "available": True,
             "implemented": True,
-            "rows": rows,
+            "rows": binding["rows"],
+            "accounted_rows": policy["accounted_rows"],
             "response": response,
+            "served_projection_binding": binding["receipt"],
             "status": policy["status"],
             "abstain": policy["abstain"],
             "next_action": policy["next_action"],
             "decision_impact": policy["decision_impact"],
             "conflict_groups": policy["conflict_groups"],
-            "deterministic": _canonical(response) == _canonical(repeat),
+            "deterministic": (
+                _canonical(response) == _canonical(repeat)
+                and _canonical(binding["receipt"]) == _canonical(repeat_binding["receipt"])
+            ),
         }
     raise ValueError(f"unsupported offline condition: {condition}")
 
@@ -1034,6 +1660,20 @@ def _aggregate(case_metrics: dict[str, dict[str, Any]], available: bool) -> tupl
     return metrics, denominators
 
 
+def _response_integrity_gate(case_metrics: dict[str, dict[str, Any]], condition: str) -> dict[str, Any]:
+    required = condition in {"static_recall_response", "continuous_cognition"}
+    failures = sorted(
+        case_id
+        for case_id, metrics in case_metrics.items()
+        if required and (metrics.get("contract_validity") != 1.0 or metrics.get("failures") != 0)
+    )
+    return {
+        "status": "fail" if failures else "pass",
+        "required": required,
+        "failure_case_ids": failures,
+    }
+
+
 def _evaluate_condition(cases: list[dict[str, Any]], condition: str) -> dict[str, Any]:
     case_results: dict[str, dict[str, Any]] = {}
     projections: dict[str, dict[str, Any]] = {}
@@ -1042,6 +1682,11 @@ def _evaluate_condition(cases: list[dict[str, Any]], condition: str) -> dict[str
         response = projection.get("response")
         projections[case["case_id"]] = {
             "selected_evidence_refs": _selected_refs(projection["rows"]),
+            "served_projection_binding_digest": (
+                projection.get("served_projection_binding", {}).get("binding_digest")
+                if isinstance(projection.get("served_projection_binding"), dict)
+                else None
+            ),
             "status": projection.get("status"),
             "abstain": projection.get("abstain"),
             "next_action": projection.get("next_action"),
@@ -1079,6 +1724,7 @@ def _evaluate_condition(cases: list[dict[str, Any]], condition: str) -> dict[str
         "projections": projections,
         "metrics": metrics,
         "metric_denominators": denominators,
+        "response_integrity_gate": _response_integrity_gate(case_results, condition),
         "abstention_summary": {
             "posture": "advisory",
             "rate": round(sum(predicted_abstention) / len(predicted_abstention), 6) if predicted_abstention else 0.0,
@@ -1150,6 +1796,10 @@ def validate_ledger(
             if recorded_operation_matrix.get(key) != actual_operation_matrix.get(key):
                 errors.append("evaluation.continuous_cognition_operation_contract_matrix")
                 break
+        for condition in ("static_recall_response", "continuous_cognition"):
+            gate = result.get("results", {}).get(condition, {}).get("response_integrity_gate", {})
+            if gate != {"status": "pass", "required": True, "failure_case_ids": []}:
+                errors.append(f"evaluation.{condition}.response_integrity_gate")
     if ledger.get("limitations") in (None, [], ""):
         errors.append("limitations")
     public_violations = [violation for violation in _walk_public(ledger) if not violation.endswith(".tool_calls")]

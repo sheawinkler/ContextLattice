@@ -7,6 +7,7 @@
       "auto_session",
       "agent_state",
       "context_pack",
+      "context_pack_outcome",
       "checkpoint",
       "handoff",
       "completion"
@@ -19,9 +20,17 @@
       "MEMMCP_AGENT_ID",
       "CONTEXTLATTICE_SESSION_ID"
     ],
+    "task_binding_exports": [
+      "CONTEXTLATTICE_TASK_ID",
+      "CONTEXTLATTICE_ATTEMPT_ID",
+      "CONTEXTLATTICE_LEASE_ID",
+      "CONTEXTLATTICE_CONTEXT_SNAPSHOT_ID",
+      "CONTEXTLATTICE_CONTEXT_PACK_HASH"
+    ],
     "event_route": "/v1/agents/sessions/event",
     "preflight_route": "/v1/agents/preflight",
     "context_pack_route": "/memory/context-pack",
+    "context_pack_outcome_route": "/telemetry/context-pack-quality/outcome",
     "checkpoint_route": "/memory/write",
     "handoff_helper": "scripts/agent/compaction-handoff-payload",
     "agent_lifecycle": {
@@ -249,6 +258,177 @@
       "surfaces": [
         "claude-desktop"
       ]
+    }
+  },
+  "execution_profiles": {
+    "local-coding": {
+      "profile_id": "local-coding",
+      "version": "2026-08-10.1",
+      "heartbeat_interval_secs": 10,
+      "execution_mode": "oci_process",
+      "executable": {
+        "kind": "registered_fixture",
+        "path": "scripts/task_agent_coding_fixture.sh",
+        "sha256": "c1bf8ac882f59397d3d7468cb5973452b6675696db3bfcf40655f410997fcf13",
+        "argv": ["{path}"]
+      },
+      "capabilities": ["coding", "worktree", "process", "json_output"],
+      "working_directory": {
+        "mode": "task_worktree",
+        "base_sha_policy": "exact",
+        "require_clean": true,
+        "allow_task_cwd_override": false
+      },
+      "declared_mounts": [],
+      "network_egress": [],
+      "credential_refs": [],
+      "output_protocol": {
+        "schema_id": "runner_result.v1",
+        "artifact_route": "gateway_task_publication",
+        "redaction_required": true,
+        "required_result_fields": ["task_id", "attempt_id", "runner_version", "tests", "checks", "warnings"],
+        "optional_result_fields": ["boundary", "network_egress", "host_credentials"],
+        "max_envelope_bytes": 16384,
+        "max_result_items": 128,
+        "allow_skipped": false
+      },
+      "resource_limits": {
+        "max_runtime_secs": 30,
+        "max_processes": 16,
+        "max_file_bytes": 16777216,
+        "max_memory_bytes": 67108864,
+        "max_cpus": 0.25,
+        "max_workspace_bytes": 268435456,
+        "max_workspace_files": 10000
+      },
+      "output_limits": {
+        "stdout_bytes": 1048576,
+        "stderr_bytes": 1048576,
+        "combined_bytes": 2097152
+      },
+      "descendant_policy": {
+        "allow_descendants": false,
+        "require_process_group": true,
+        "terminate_on_lease_loss": true,
+        "verify_pid_executable_parent_cwd": true,
+        "quarantine_on_survival": true,
+        "termination_grace_secs": 2
+      },
+      "sandbox": {
+        "type": "orbstack_oci",
+        "image": "alpine@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc",
+        "platform": "linux/arm64",
+        "pull_policy": "never",
+        "network": "none",
+        "read_only_root": true,
+        "drop_capabilities": ["ALL"],
+        "no_new_privileges": true,
+        "workspace_mount": "/workspace",
+        "control_timeout_secs": 10,
+        "tmpfs_bytes": 16777216
+      }
+    },
+    "local-coding-provider": {
+      "profile_id": "local-coding-provider",
+      "version": "2026-08-10.1",
+      "enabled": false,
+      "governance": {
+        "status": "broker_required",
+        "required_controls": [
+          "provider_egress_broker",
+          "attempt_scoped_credentials",
+          "provider_runtime_image",
+          "provider_acceptance_fixture"
+        ]
+      }
+    },
+    "local-model": {
+      "profile_id": "local-model",
+      "version": "2026-08-10",
+      "heartbeat_interval_secs": 10,
+      "execution_mode": "gateway_inference",
+      "executable": {"mode": "gateway_inference"},
+      "capabilities": ["model", "non_repo", "json_output"],
+      "working_directory": {
+        "mode": "task_sandbox",
+        "base_sha_policy": "not_applicable",
+        "require_clean": true,
+        "allow_task_cwd_override": false
+      },
+      "declared_mounts": [],
+      "network_egress": ["gateway"],
+      "credential_refs": [],
+      "output_protocol": {
+        "schema_id": "runner_result.v1",
+        "artifact_route": "gateway_task_publication",
+        "redaction_required": true
+      },
+      "resource_limits": {
+        "max_runtime_secs": 900,
+        "max_processes": 1,
+        "max_file_bytes": 67108864,
+        "max_memory_bytes": 67108864,
+        "max_cpus": 0.25,
+        "max_workspace_bytes": 268435456,
+        "max_workspace_files": 10000
+      },
+      "output_limits": {
+        "stdout_bytes": 2097152,
+        "stderr_bytes": 2097152,
+        "combined_bytes": 8388608
+      },
+      "descendant_policy": {
+        "allow_descendants": false,
+        "require_process_group": false,
+        "terminate_on_lease_loss": true,
+        "verify_pid_executable_parent_cwd": false,
+        "quarantine_on_survival": true,
+        "termination_grace_secs": 2
+      }
+    },
+    "local-noncoding": {
+      "profile_id": "local-noncoding",
+      "version": "2026-08-10",
+      "heartbeat_interval_secs": 10,
+      "execution_mode": "gateway_inference",
+      "executable": {"mode": "gateway_inference"},
+      "capabilities": ["model", "non_repo", "json_output"],
+      "working_directory": {
+        "mode": "task_sandbox",
+        "base_sha_policy": "not_applicable",
+        "require_clean": true,
+        "allow_task_cwd_override": false
+      },
+      "declared_mounts": [],
+      "network_egress": ["gateway"],
+      "credential_refs": [],
+      "output_protocol": {
+        "schema_id": "runner_result.v1",
+        "artifact_route": "gateway_task_publication",
+        "redaction_required": true
+      },
+      "resource_limits": {
+        "max_runtime_secs": 900,
+        "max_processes": 1,
+        "max_file_bytes": 67108864,
+        "max_memory_bytes": 67108864,
+        "max_cpus": 0.25,
+        "max_workspace_bytes": 268435456,
+        "max_workspace_files": 10000
+      },
+      "output_limits": {
+        "stdout_bytes": 2097152,
+        "stderr_bytes": 2097152,
+        "combined_bytes": 8388608
+      },
+      "descendant_policy": {
+        "allow_descendants": false,
+        "require_process_group": false,
+        "terminate_on_lease_loss": true,
+        "verify_pid_executable_parent_cwd": false,
+        "quarantine_on_survival": true,
+        "termination_grace_secs": 2
+      }
     }
   }
 }

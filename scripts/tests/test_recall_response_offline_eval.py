@@ -91,6 +91,10 @@ class RecallResponseOfflineEvalTests(unittest.TestCase):
         self.assertEqual(cognition["contract_status"], "continuous_cognition.v1")
         self.assertEqual(cognition["metrics"]["contract_validity"], 1.0)
         self.assertEqual(cognition["metrics"]["privacy"], 1.0)
+        self.assertEqual(
+            cognition["response_integrity_gate"],
+            {"status": "pass", "required": True, "failure_case_ids": []},
+        )
         operation_matrix = cognition["operation_contract_matrix"]
         self.assertEqual(
             operation_matrix["operations"],
@@ -126,6 +130,35 @@ class RecallResponseOfflineEvalTests(unittest.TestCase):
         self.assertLessEqual(len(response["answer"]["proof_spine"]["proof_refs"]), 8)
         self.assertEqual(response["classification"]["facets"]["jobs"], ["look_up"])
 
+        holdout = self.module.load_fixture(HOLDOUT)
+        stale_case = next(case for case in holdout["cases"] if case["case_id"] == "holdout-stale")
+        stale_case["_split"] = "holdout"
+        stale_projection = self.module._project_case(stale_case, "static_recall_response")
+        stale_response = stale_projection["response"]
+        self.assertEqual(stale_projection["rows"], [])
+        self.assertEqual(stale_response["evidence"], [])
+        self.assertEqual(stale_response["state"]["status"], "verify")
+        self.assertEqual(stale_response["disclosure"]["union_counts"]["exclusions"], 1)
+        self.assertFalse(
+            set(stale_response["disclosure"]["proof_union"])
+            & set(stale_response["disclosure"]["exclusion_refs"])
+        )
+        stale_metrics = self.module._case_metrics(stale_case, "static_recall_response", stale_projection)
+        self.assertEqual(stale_metrics["evidence_precision"], 0.0)
+        self.assertEqual(stale_metrics["evidence_recall"], 0.0)
+        self.assertEqual(stale_metrics["citation_proof_integrity"], 0.0)
+        self.assertEqual(stale_metrics["currentness"], 0.0)
+        self.assertEqual(stale_metrics["rank"], 0.0)
+        self.assertEqual(stale_metrics["diversity"], 0.0)
+        self.assertEqual(stale_metrics["correctness"], 1.0)
+        self.assertEqual(stale_metrics["abstention"], 1.0)
+        tampered_accounting = copy.deepcopy(stale_projection)
+        tampered_accounting["accounted_rows"] = []
+        self.assertEqual(
+            self.module._case_metrics(stale_case, "static_recall_response", tampered_accounting),
+            stale_metrics,
+        )
+
         cognition = self.module._project_case(baseline["cases"][0], "continuous_cognition")["response"]
         self.assertEqual(cognition["next_action"], self.module._static_policy(baseline["cases"][0])["next_action"])
         self.assertEqual(cognition["silence"]["policy_version"], "continuous_cognition.offline_eval.v1")
@@ -145,9 +178,132 @@ class RecallResponseOfflineEvalTests(unittest.TestCase):
         static = result["results"]["static_recall_response"]
         self.assertGreaterEqual(static["case_metrics"]["baseline-abstain"]["abstention"], 1.0)
         self.assertGreaterEqual(static["case_metrics"]["holdout-conflict"]["conflict_handling"], 1.0)
+        cognition = result["results"]["continuous_cognition"]
+        self.assertEqual(cognition["case_metrics"]["holdout-conflict"]["conflict_handling"], 0.0)
+        self.assertEqual(cognition["metric_denominators"]["conflict_handling"], 11)
+        self.assertEqual(cognition["metrics"]["conflict_handling"], round(10 / 11, 6))
         no_recall = result["results"]["no_recall"]
         self.assertEqual(no_recall["metrics"]["abstention"], round(3 / 11, 6))
         self.assertEqual(no_recall["metrics"]["next_action"], 0.0)
+
+    def test_conflict_metric_requires_exact_expected_group_membership(self) -> None:
+        holdout = self.module.load_fixture(HOLDOUT)
+        case = copy.deepcopy(next(case for case in holdout["cases"] if case["case_id"] == "holdout-conflict"))
+        case["_split"] = "holdout"
+
+        def rebind(projection):
+            binding = self.module._served_projection_binding(
+                case, "static_recall_response", projection["response"]
+            )
+            self.assertTrue(binding["valid"])
+            projection["rows"] = binding["rows"]
+            projection["served_projection_binding"] = binding["receipt"]
+            return projection
+
+        projection = self.module._project_case(case, "static_recall_response")
+        baseline_metrics = self.module._case_metrics(case, "static_recall_response", projection)
+        self.assertEqual(baseline_metrics["contract_validity"], 1.0)
+        self.assertEqual(baseline_metrics["conflict_handling"], 1.0)
+        conflict = projection["response"]["conflicts"][0]
+        self.assertTrue(conflict["support_refs"])
+        self.assertTrue(conflict["opposition_refs"])
+
+        wrong_generic = copy.deepcopy(projection)
+        generic_ref = wrong_generic["response"]["evidence"][0]["ref_id"]
+        wrong_generic["response"]["conflicts"][0]["conflict_id"] = generic_ref
+        wrong_generic["response"]["answer"]["proof_spine"]["conflict_refs"] = [generic_ref]
+        wrong_generic["response"] = self.module._restamp_static_response(wrong_generic["response"])
+        wrong_generic = rebind(wrong_generic)
+        self.assertTrue(self.module.validate_recall_response(wrong_generic["response"]))
+        wrong_generic_metrics = self.module._case_metrics(case, "static_recall_response", wrong_generic)
+        self.assertEqual(wrong_generic_metrics["contract_validity"], 1.0)
+        self.assertEqual(wrong_generic_metrics["conflict_handling"], 0.0)
+
+        empty_membership = copy.deepcopy(projection)
+        empty_membership["response"]["conflicts"][0]["support_refs"] = []
+        empty_membership["response"]["conflicts"][0]["opposition_refs"] = []
+        empty_membership["response"] = self.module._restamp_static_response(empty_membership["response"])
+        empty_membership = rebind(empty_membership)
+        self.assertFalse(self.module.validate_recall_response(empty_membership["response"]))
+        empty_metrics = self.module._case_metrics(case, "static_recall_response", empty_membership)
+        self.assertEqual(empty_metrics["contract_validity"], 0.0)
+        self.assertEqual(empty_metrics["conflict_handling"], 0.0)
+
+        mismatched_case = copy.deepcopy(case)
+        extra_row = {
+            "evidence_ref": "ev_holdout_conflict_unrelated",
+            "source_ref": "source_unrelated",
+            "citation_ref": "proof_holdout_conflict_unrelated",
+            "rank": 3,
+            "support": "context",
+            "currentness": "current",
+            "conflict_group": "",
+            "numeric_value": None,
+        }
+        mismatched_case["evidence"].append(extra_row)
+        mismatched = self.module._project_case(mismatched_case, "static_recall_response")
+        scope_digest = mismatched["response"]["request_scope"]["scope_digest"]
+        unrelated_ref = self.module._evidence_projection(extra_row, scope_digest)[0]["ref_id"]
+        mismatched["response"]["conflicts"][0]["opposition_refs"] = [unrelated_ref]
+        mismatched["response"] = self.module._restamp_static_response(mismatched["response"])
+        binding = self.module._served_projection_binding(
+            mismatched_case, "static_recall_response", mismatched["response"]
+        )
+        self.assertTrue(binding["valid"])
+        mismatched["rows"] = binding["rows"]
+        mismatched["served_projection_binding"] = binding["receipt"]
+        self.assertTrue(self.module.validate_recall_response(mismatched["response"]))
+        mismatched_metrics = self.module._case_metrics(
+            mismatched_case, "static_recall_response", mismatched
+        )
+        self.assertEqual(mismatched_metrics["contract_validity"], 1.0)
+        self.assertEqual(mismatched_metrics["conflict_handling"], 0.0)
+
+    def test_projection_rows_are_exactly_bound_to_served_response_evidence(self) -> None:
+        baseline = self.module.load_fixture(BASELINE)
+        case = copy.deepcopy(next(case for case in baseline["cases"] if case["case_id"] == "baseline-ranking"))
+        case["_split"] = "baseline"
+        projection = self.module._project_case(case, "static_recall_response")
+        binding = self.module._served_projection_binding(
+            case, "static_recall_response", projection["response"]
+        )
+        self.assertTrue(binding["valid"])
+        self.assertEqual(projection["rows"], binding["rows"])
+        self.assertEqual(projection["served_projection_binding"], binding["receipt"])
+        self.assertEqual(binding["receipt"]["count"], len(projection["response"]["evidence"]))
+
+        baseline_metrics = self.module._case_metrics(case, "static_recall_response", projection)
+        projection_only_mutation = copy.deepcopy(projection)
+        projection_only_mutation["rows"] = list(reversed(projection_only_mutation["rows"]))
+        mutated_metrics = self.module._case_metrics(
+            case, "static_recall_response", projection_only_mutation
+        )
+        self.assertEqual(mutated_metrics["contract_validity"], 0.0)
+        self.assertEqual(mutated_metrics["failures"], 1)
+        self.assertEqual(
+            self.module._response_integrity_gate(
+                {case["case_id"]: mutated_metrics}, "static_recall_response"
+            ),
+            {
+                "status": "fail",
+                "required": True,
+                "failure_case_ids": [case["case_id"]],
+            },
+        )
+        for metric in (
+            "evidence_precision", "evidence_recall", "citation_proof_integrity", "correctness",
+            "currentness", "rank", "numeric", "diversity",
+        ):
+            with self.subTest(metric=metric):
+                self.assertEqual(mutated_metrics[metric], baseline_metrics[metric])
+
+        receipt_only_mutation = copy.deepcopy(projection)
+        receipt_only_mutation["served_projection_binding"]["binding_digest"] = "sha256:" + ("0" * 64)
+        receipt_metrics = self.module._case_metrics(
+            case, "static_recall_response", receipt_only_mutation
+        )
+        self.assertEqual(receipt_metrics["contract_validity"], 0.0)
+        self.assertEqual(receipt_metrics["evidence_recall"], baseline_metrics["evidence_recall"])
 
     def test_expectation_perturbation_changes_scores_not_projections(self) -> None:
         baseline = self.module.load_fixture(BASELINE)
@@ -192,6 +348,36 @@ class RecallResponseOfflineEvalTests(unittest.TestCase):
             response = self.module._build_continuous_cognition_response(baseline["cases"][0], policy, operation)
             self.assertEqual(response["operation"], operation)
             self.assertTrue(self.module.validate_continuous_cognition_response(response))
+
+    def test_static_response_nested_source_union_and_control_tamper_fail_closed(self) -> None:
+        baseline = self.module.load_fixture(BASELINE)
+        response = self.module._project_case(
+            baseline["cases"][0], "static_recall_response"
+        )["response"]
+        self.assertTrue(self.module.validate_recall_response(response))
+
+        tamper_cases = {}
+
+        source_tamper = copy.deepcopy(response)
+        source_tamper["disclosure"]["evidence_union"][0]["evidence_binding"][
+            "content_digest"
+        ] = "sha256:" + ("0" * 64)
+        tamper_cases["source_binding_digest"] = source_tamper
+
+        union_tamper = copy.deepcopy(response)
+        union_tamper["disclosure"]["union_digest"] = "sha256:" + ("0" * 64)
+        tamper_cases["union_digest"] = union_tamper
+
+        control_tamper = copy.deepcopy(response)
+        control_tamper["disclosure"]["control_receipt"]["artifact_digest"] = (
+            "sha256:" + ("0" * 64)
+        )
+        tamper_cases["control_receipt_digest"] = control_tamper
+
+        for name, tampered in tamper_cases.items():
+            with self.subTest(name=name):
+                restamped = self.module._restamp_static_response(tampered)
+                self.assertFalse(self.module.validate_recall_response(restamped))
 
     def test_fixture_hash_overlap_and_ledger_drift_fail_closed(self) -> None:
         baseline = self.module.load_fixture(BASELINE)

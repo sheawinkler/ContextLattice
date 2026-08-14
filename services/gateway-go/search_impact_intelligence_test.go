@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"math"
 	"net/http"
@@ -8,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -208,6 +210,474 @@ func searchImpactCanaryInput() searchImpactIntelligenceInput {
 			"enabled": true, "durability": "bounded_ndjson", "last_error": "",
 		},
 		ReceiptBinding: map[string]any{"pass": true, "missing_receipt_outcome_count": 0},
+	}
+}
+
+func TestSearchImpactProductionPromotionEvidenceUsesServerReceiptFieldsAndFailsClosed(t *testing.T) {
+	now := time.Date(2026, time.August, 10, 20, 0, 0, 0, time.UTC)
+	shadow := searchImpactValidComparativeShadow()
+	shadow["evaluated_at"] = now.Add(-time.Hour).Format(time.RFC3339Nano)
+	scope := normalizeSearchImpactScope("contextlattice", "coding", "decision", contextPackLearnedScopeRef("workspace", "workspace-test"), true)
+	evidence := map[string]any{
+		"project_scope_ref":          contextPackLearnedScopeRef("project", "contextlattice"),
+		"task_class_scope_ref":       contextPackLearnedScopeRef("task_class", "coding"),
+		"retrieval_intent_scope_ref": contextPackLearnedScopeRef("retrieval_intent", "decision"),
+		"workspace_ref":              scope.workspaceRef, "actuator_comparator_ref": "sha256:" + strings.Repeat("a", 64),
+	}
+	impact := map[string]any{
+		"activation_evidence": evidence,
+		"outcome_intelligence": map[string]any{"chronological_split": map[string]any{
+			"train": map[string]any{"outcome_count": 8}, "holdout": map[string]any{"outcome_count": 2},
+		}},
+	}
+	snapshotRef := contextPackLearnedCanonicalDigest(map[string]any{
+		"schema_id": "retrieval_promotion_same_snapshot.v1", "project_scope_ref": evidence["project_scope_ref"],
+		"task_class_scope_ref": evidence["task_class_scope_ref"], "retrieval_intent_scope_ref": evidence["retrieval_intent_scope_ref"],
+		"workspace_ref": evidence["workspace_ref"], "case_set_ref": shadow["case_set_ref"],
+		"comparator_evaluated_at": shadow["evaluated_at"], "actuator_comparator_ref": evidence["actuator_comparator_ref"],
+		"shadow_digest": contextPackLearnedCanonicalDigest(shadow),
+	})
+	resource := map[string]any{"complete": true, "exact_zero": true, "provider_calls": 0, "provider_tokens": 0, "provider_cost": 0, "external_network_calls": 0}
+	identity, err := loadOrCreateContextIdentity(filepath.Join(t.TempDir(), "promotion-identity.json"))
+	if err != nil {
+		t.Fatalf("create promotion identity: %v", err)
+	}
+	receipt := retrievalPromotionCanaryReceipt{
+		SchemaID: retrievalPromotionCanaryReceiptSchemaID, Version: 1, Operation: "configure", Generation: 1,
+		WorkspaceRef: scope.workspaceRef, ProjectRef: anyToString(evidence["project_scope_ref"]),
+		TaskClassRef: anyToString(evidence["task_class_scope_ref"]), RetrievalIntentRef: anyToString(evidence["retrieval_intent_scope_ref"]),
+		PolicyRef: retrievalPromotionTestRef("production-policy"), SnapshotRef: snapshotRef, CaseSetRef: anyToString(shadow["case_set_ref"]),
+		AssignmentSubjectRef: "sha256:" + strings.Repeat("c", 64), ShadowBasisPoints: 0, ControlBasisPoints: 9500, CanaryBasisPoints: 500,
+		MinimumCanarySamples: 30, MinimumDwellSeconds: 900, RecordedAt: now.Add(-30 * time.Minute).Format(time.RFC3339Nano),
+		ExpiresAt: now.Add(time.Hour).Format(time.RFC3339Nano), IdempotencyKey: "production-evidence-1",
+	}
+	if err := retrievalPromotionSignCanaryReceipt(&receipt, identity); err != nil {
+		t.Fatalf("sign promotion identity: %v", err)
+	}
+	authority := &searchImpactCanaryAuthority{receipt: receipt, trusted: identity, generation: receipt.Generation, headDigest: receipt.ReceiptDigest, headVerified: true, verifiedAt: now}
+	outcomes := make([]map[string]any, 0, 2)
+	for index := 0; index < 2; index++ {
+		outcomes = append(outcomes, map[string]any{
+			"promotion_authoritative": true, "promotion_authority": "trusted_signed_canary_ledger", "promotion_arm": "canary", "promotion_receipt_digest": receipt.ReceiptDigest,
+			"promotion_snapshot_ref": snapshotRef, "promotion_case_set_ref": shadow["case_set_ref"],
+			"promotion_assignment_subject_ref": receipt.AssignmentSubjectRef,
+			"promotion_canary_basis_points":    500, "promotion_minimum_canary_samples": 30, "promotion_minimum_dwell_seconds": 900,
+			"promotion_recorded_at": receipt.RecordedAt, "promotion_issuer": map[string]any{"instance_id": receipt.Issuer.InstanceID, "signing_key_id": receipt.Issuer.SigningKeyID},
+			"execution_receipt": resource, "outcome_id": strconv.Itoa(index),
+		})
+	}
+	resource = contextPackQualityServerExecutionReceipt(map[string]any{
+		"retrieval_debug": map[string]any{"source_owners": map[string]string{"qdrant": sourceOwnerGoNative}},
+		"source_summary":  map[string]any{"source_owners": map[string]string{"qdrant": sourceOwnerGoNative}},
+	})
+	if anyToInt(resource["observed_source_owner_count"], 0) != 1 || !anyToBool(resource["exact_zero"]) {
+		t.Fatalf("server execution receipt did not retain the Gateway owner map: %#v", resource)
+	}
+	for _, outcome := range outcomes {
+		outcome["execution_receipt"] = resource
+	}
+	attachSearchImpactProductionPromotionEvidenceWithAuthority(impact, scope, shadow, outcomes, nil, authority)
+	production := anyMap(evidence["promotion_evidence"])
+	if !anyToBool(production["available"]) || anyToString(evidence["snapshot_ref"]) != snapshotRef ||
+		anyToString(evidence["time_split"]) != "chronological_80_20" || anyToInt(evidence["train_count"], 0) != 8 ||
+		anyToInt(evidence["holdout_count"], 0) != 2 || anyToInt(evidence["canary_sample_count"], 0) != 2 ||
+		!anyToBool(anyMap(evidence["execution_receipt"])["exact_zero"]) {
+		t.Fatalf("production seam did not emit complete same-snapshot evidence: %#v", evidence)
+	}
+	sufficiency := anyMap(evidence["sample_sufficiency"])
+	if anyToBool(sufficiency["pass"]) || anyToInt(sufficiency["required_sample_count"], 0) != receipt.MinimumCanarySamples ||
+		anyToInt(sufficiency["observed_sample_count"], 0) != 2 || anyToBool(sufficiency["statistical_power_available"]) ||
+		anyToString(sufficiency["canary_receipt_digest"]) != receipt.ReceiptDigest {
+		t.Fatalf("two outcomes were not reported honestly against the signed 30-sample minimum: %#v", sufficiency)
+	}
+	for _, forbidden := range []string{"power", "statistical_power", "minimum_effect_size", "effect_size"} {
+		if _, present := sufficiency[forbidden]; present {
+			t.Fatalf("count-only sufficiency receipt fabricated %q: %#v", forbidden, sufficiency)
+		}
+	}
+	missingResource := cloneJSONMap(impact)
+	missingEvidence := anyMap(missingResource["activation_evidence"])
+	missingEvidence["promotion_evidence"] = nil
+	delete(outcomes[0], "execution_receipt")
+	delete(outcomes[1], "execution_receipt")
+	attachSearchImpactProductionPromotionEvidenceWithAuthority(missingResource, scope, shadow, outcomes, nil, authority)
+	if anyToBool(anyMap(missingEvidence["promotion_evidence"])["available"]) || anyToString(anyMap(missingEvidence["promotion_evidence"])["reason"]) != "execution_resource_receipt_missing" {
+		t.Fatalf("missing execution-resource receipt did not remain control: %#v", missingEvidence["promotion_evidence"])
+	}
+	fallback := contextPackQualityServerExecutionReceipt(map[string]any{"source_owner_class": sourceOwnerPythonBackendFallback})
+	if !anyToBool(fallback["complete"]) || anyToBool(fallback["exact_zero"]) || anyToInt(fallback["provider_calls"], 0) != 1 {
+		t.Fatalf("fallback owner was incorrectly admitted as exact-zero execution: %#v", fallback)
+	}
+}
+
+func TestSearchImpactPromotionDoesNotTrustReporterArmWithoutDurableReceipt(t *testing.T) {
+	row := searchImpactScopedCandidateFixture(t, "reporter-arm", "contextlattice", "coding", "decision", contextPackLearnedScopeRef("workspace", "workspace-test"), time.Date(2026, time.August, 10, 20, 0, 0, 0, time.UTC))
+	row["policy_arm"] = "canary"
+	outcomes := searchImpactReconciledCandidateOutcomesForWorkspace([]map[string]any{row}, "contextlattice", "coding", "decision", contextPackLearnedScopeRef("workspace", "workspace-test"))
+	if len(outcomes) != 1 || anyToBool(outcomes[0]["promotion_authoritative"]) {
+		t.Fatalf("reporter arm label became promotion authority: %#v", outcomes)
+	}
+}
+
+func TestSearchImpactProductionProjectionUsesDurableQualityReceipt(t *testing.T) {
+	sample := contextPackPersistenceTestQualitySample()
+	sample["sample_id"] = "cpq_production_receipt_projection"
+	telemetry, _ := contextPackOutcomeResponseBindingTelemetry(t, sample)
+	s := &server{contextPackQuality: telemetry}
+	row := searchImpactScopedCandidateFixture(t, "production-receipt-projection", "contextlattice", "coding", "decision", contextPackLearnedScopeRef("workspace", "workspace-test"), time.Date(2026, time.August, 10, 20, 0, 0, 0, time.UTC))
+	row["sample_id"] = sample["sample_id"]
+	anyMap(row["candidate_utility_verification"])["sample_id"] = sample["sample_id"]
+	row["policy_arm"] = "canary"
+	row["selection_receipt"] = map[string]any{"learned_activation": map[string]any{"arm": "canary"}, "retrieval_promotion": map[string]any{"status": "assigned"}}
+	enriched := searchImpactAttachDurableSelectionReceipts(s, []map[string]any{row})
+	if len(enriched) != 1 || len(contextPackSelectionReceiptFromSample(enriched[0]["selection_receipt"])) == 0 {
+		t.Fatalf("production projection did not resolve the durable quality receipt: %#v", enriched)
+	}
+	outcomes := searchImpactReconciledCandidateOutcomesForWorkspace(enriched, "contextlattice", "coding", "decision", contextPackLearnedScopeRef("workspace", "workspace-test"))
+	if len(outcomes) != 1 || anyToBool(outcomes[0]["promotion_authoritative"]) {
+		t.Fatalf("reporter promotion fields survived durable receipt projection: %#v", outcomes)
+	}
+}
+
+func TestSearchImpactDurableProjectionDropsReceiptWithoutSampleID(t *testing.T) {
+	sample := contextPackPersistenceTestQualitySample()
+	telemetry, _ := contextPackOutcomeResponseBindingTelemetry(t, sample)
+	s := &server{contextPackQuality: telemetry}
+	row := map[string]any{
+		"outcome_id":        "empty-sample-receipt",
+		"sample_id":         "",
+		"selection_receipt": map[string]any{"retrieval_promotion": map[string]any{"status": "assigned"}},
+	}
+	enriched := searchImpactAttachDurableSelectionReceipts(s, []map[string]any{row})
+	if len(enriched) != 1 {
+		t.Fatalf("empty-sample projection changed row cardinality: %#v", enriched)
+	}
+	if _, present := enriched[0]["selection_receipt"]; present {
+		t.Fatalf("row-provided receipt survived without a durable sample id: %#v", enriched[0])
+	}
+	if _, present := row["selection_receipt"]; !present {
+		t.Fatalf("projection mutated caller row while removing the receipt")
+	}
+}
+
+func TestSearchImpactCanaryAuthorityRejectsChangedOwnerHead(t *testing.T) {
+	now := time.Now().UTC()
+	identity, err := loadOrCreateContextIdentity(filepath.Join(t.TempDir(), "authority-fence-identity.json"))
+	if err != nil {
+		t.Fatalf("create authority-fence identity: %v", err)
+	}
+	receipt := retrievalPromotionTestCanaryReceipt(now, "configure", 1, "", "authority-fence-subject")
+	if err := retrievalPromotionSignCanaryReceipt(&receipt, identity); err != nil {
+		t.Fatalf("sign authority-fence receipt: %v", err)
+	}
+	owner := &retrievalPromotionCanaryLedger{
+		identity: identity, generation: receipt.Generation, anchor: receipt.ReceiptDigest, active: &receipt,
+	}
+	authority := &searchImpactCanaryAuthority{
+		receipt: receipt, trusted: identity, owner: owner, generation: receipt.Generation,
+		headDigest: receipt.ReceiptDigest, headVerified: true, verifiedAt: now,
+	}
+	if !searchImpactCanarySnapshotMatchesAuthority(retrievalPromotionCanaryReceiptSnapshot(receipt), authority) {
+		t.Fatal("current signed owner head was rejected before rollback")
+	}
+	owner.mu.Lock()
+	owner.rolledBack = true
+	owner.generation++
+	owner.anchor = retrievalPromotionTestRef("rollback-head")
+	owner.active = nil
+	owner.mu.Unlock()
+	if searchImpactCanarySnapshotMatchesAuthority(retrievalPromotionCanaryReceiptSnapshot(receipt), authority) {
+		t.Fatal("stale signed owner head remained promotion-authoritative after rollback")
+	}
+}
+
+func TestSearchImpactCanaryAuthorityRejectsOversizedSignedGeneration(t *testing.T) {
+	now := time.Now().UTC()
+	identity, err := loadOrCreateContextIdentity(filepath.Join(t.TempDir(), "oversized-authority-identity.json"))
+	if err != nil {
+		t.Fatalf("create oversized-authority identity: %v", err)
+	}
+	for _, generation := range []uint64{uint64(math.MaxInt64) + 1, math.MaxUint64} {
+		receipt := retrievalPromotionTestCanaryReceipt(now, "configure", generation, retrievalPromotionTestRef("previous-head"), "oversized-authority-subject")
+		if err := retrievalPromotionSignCanaryReceipt(&receipt, identity); err != nil {
+			t.Fatalf("sign oversized generation %d: %v", generation, err)
+		}
+		if !retrievalPromotionVerifyCanaryReceipt(receipt, now, identity) {
+			t.Fatalf("signed fixture generation %d did not reach the snapshot numeric boundary", generation)
+		}
+		authority := &searchImpactCanaryAuthority{
+			receipt: receipt, trusted: identity, generation: receipt.Generation,
+			headDigest: receipt.ReceiptDigest, headVerified: true, verifiedAt: now,
+		}
+		if searchImpactCanarySnapshotMatchesAuthority(retrievalPromotionCanaryReceiptSnapshot(receipt), authority) {
+			t.Fatalf("oversized signed generation %d became valid activation authority", generation)
+		}
+	}
+}
+
+func TestSearchImpactProductionEvidenceTraversesDurableQualityOutcomePath(t *testing.T) {
+	now := time.Now().UTC()
+	shadow := searchImpactValidComparativeShadow()
+	shadow["evaluated_at"] = now.Add(-time.Hour).Format(time.RFC3339Nano)
+	scope := normalizeSearchImpactScope("contextlattice", "coding", "decision", contextPackLearnedScopeRef("workspace", "production-path"), true)
+	evidence := map[string]any{
+		"project_scope_ref":          contextPackLearnedScopeRef("project", "contextlattice"),
+		"task_class_scope_ref":       contextPackLearnedScopeRef("task_class", "coding"),
+		"retrieval_intent_scope_ref": contextPackLearnedScopeRef("retrieval_intent", "decision"),
+		"workspace_ref":              scope.workspaceRef, "actuator_comparator_ref": retrievalPromotionTestRef("production-actuator"),
+	}
+	snapshotRef := contextPackLearnedCanonicalDigest(map[string]any{
+		"schema_id": "retrieval_promotion_same_snapshot.v1", "project_scope_ref": evidence["project_scope_ref"],
+		"task_class_scope_ref": evidence["task_class_scope_ref"], "retrieval_intent_scope_ref": evidence["retrieval_intent_scope_ref"],
+		"workspace_ref": evidence["workspace_ref"], "case_set_ref": shadow["case_set_ref"],
+		"comparator_evaluated_at": shadow["evaluated_at"], "actuator_comparator_ref": evidence["actuator_comparator_ref"],
+		"shadow_digest": contextPackLearnedCanonicalDigest(shadow),
+	})
+	identity, err := loadOrCreateContextIdentity(filepath.Join(t.TempDir(), "production-path-identity.json"))
+	if err != nil {
+		t.Fatalf("create production-path identity: %v", err)
+	}
+	weights := retrievalPromotionCohortWeights{ControlBasisPoints: 9500, CanaryBasisPoints: 500}
+	assignmentRef := ""
+	for index := 0; index < 10000; index++ {
+		candidate := contextPackLearnedScopeRef("assignment_subject", "production-path-"+strconv.Itoa(index))
+		candidateCohort := retrievalPromotionStableCohort(candidate, snapshotRef, retrievalPromotionTestRef("production-path-policy"), weights)
+		if anyToString(candidateCohort["arm"]) == "canary" {
+			assignmentRef = candidate
+			break
+		}
+	}
+	if assignmentRef == "" {
+		t.Fatal("could not find deterministic canary assignment subject")
+	}
+	receipt := retrievalPromotionCanaryReceipt{
+		SchemaID: retrievalPromotionCanaryReceiptSchemaID, Version: 1, Operation: "configure", Generation: 1,
+		WorkspaceRef: scope.workspaceRef, ProjectRef: evidence["project_scope_ref"].(string),
+		TaskClassRef: evidence["task_class_scope_ref"].(string), RetrievalIntentRef: evidence["retrieval_intent_scope_ref"].(string),
+		PolicyRef: retrievalPromotionTestRef("production-path-policy"), SnapshotRef: snapshotRef, CaseSetRef: anyToString(shadow["case_set_ref"]),
+		AssignmentSubjectRef: assignmentRef, ShadowBasisPoints: 0, ControlBasisPoints: 9500, CanaryBasisPoints: 500,
+		MinimumCanarySamples: 30, MinimumDwellSeconds: 900, RecordedAt: now.Add(-30 * time.Minute).Format(time.RFC3339Nano),
+		ExpiresAt: now.Add(time.Hour).Format(time.RFC3339Nano), IdempotencyKey: "production-path-1",
+	}
+	if err := retrievalPromotionSignCanaryReceipt(&receipt, identity); err != nil {
+		t.Fatalf("sign production-path receipt: %v", err)
+	}
+	authority := &searchImpactCanaryAuthority{
+		receipt: receipt, trusted: identity, generation: receipt.Generation, headDigest: receipt.ReceiptDigest,
+		headVerified: true, verifiedAt: now,
+	}
+	candidateID := "rtc_" + strings.Repeat("e", 24)
+	candidateRef := contextPackOpaqueCandidateRef(candidateID)
+	items := []contextPackEvidenceItem{{CandidateID: candidateID, Occurrence: 1, Kind: "memory", Score: 90}}
+	cohort := retrievalPromotionStableCohort(receipt.AssignmentSubjectRef, receipt.SnapshotRef, receipt.PolicyRef, weights)
+	cohort["receipt_digest"] = receipt.ReceiptDigest
+	cohort["case_set_ref"] = receipt.CaseSetRef
+	decision := contextPackLearnedActivationDecision{
+		Armed: true, Eligible: true, AssignedTreatment: true, Performed: true, Arm: "canary", Reason: "bounded_candidate_reputation_applied",
+		CanaryPercent: 5, RequestRef: receipt.AssignmentSubjectRef, AssignmentSubjectRef: receipt.AssignmentSubjectRef,
+		ProjectScopeRef: receipt.ProjectRef, TaskClassScopeRef: receipt.TaskClassRef, RetrievalIntentScopeRef: receipt.RetrievalIntentRef,
+		WorkspaceRef: receipt.WorkspaceRef, PolicyRef: receipt.PolicyRef, ImpactProofRef: retrievalPromotionTestRef("production-impact"),
+		SnapshotRef: receipt.SnapshotRef, ActuatorComparatorRef: retrievalPromotionTestRef("production-actuator"), ReputationSnapshotRef: retrievalPromotionTestRef("production-reputation"),
+		CandidateMultipliers: map[string]float64{}, ExposureBucket: anyToInt(cohort["bucket_basis_points"], 123),
+		RankingVectorDigest: contextPackLearnedCanonicalDigest([]map[string]any{{"candidate_ref": candidateRef, "occurrence": 1, "base_score": 90.0, "multiplier": 1.1, "final_score": 99.0}}), AppliedCandidateCount: 1,
+	}
+	decision.ActivationReceiptID = contextPackLearnedActivationReceiptID(decision)
+	decision.Promotion = map[string]any{
+		"promotion_eligible": true, "cohort": cohort, "metric_guard": map[string]any{"pass": true},
+		"canary_receipt_digest": receipt.ReceiptDigest, "canary_receipt": retrievalPromotionCanaryReceiptSnapshot(receipt),
+	}
+	decision.PromotionLease = &retrievalPromotionExposureLease{receipt: receipt}
+	activation := contextPackLearnedActivationReceipt(decision)
+	rankedEvidence := map[string]any{"candidate_id": candidateID, "kind": "memory", "rank": 1, "learned_influence_applied": true, "occurrence": 1, "learned_base_score": 90.0, "learned_multiplier": 1.1, "final_score": 99.0}
+	promotion := retrievalPromotionBuildContextEnvelope(
+		retrievalTrustResult{Eligible: items}, items, items, nil, items, items, nil, contextPackTokenBudget{}, nil, decision,
+	)
+	if len(contextPackLearnedActivationReceiptFromSample(activation)) == 0 {
+		t.Fatalf("production-path activation receipt did not normalize: %#v", activation)
+	}
+	if len(retrievalPromotionNormalizeReceipt(promotion)) == 0 {
+		t.Fatalf("production-path promotion envelope did not normalize: %#v", promotion)
+	}
+	telemetryServer := contextPackPersistenceTestServer(t, true)
+	telemetryServer.contextPackQuality.ledger.maxSamples = 100
+	telemetryServer.utility = nil
+	type productionRouteCase struct {
+		report map[string]any
+		impact map[string]any
+		event  map[string]any
+	}
+	routeCases := make([]productionRouteCase, 0, receipt.MinimumCanarySamples)
+	var durableOutcomeIDs []string
+	var expectedResource map[string]any
+	for index := 0; index < receipt.MinimumCanarySamples; index++ {
+		sampleID := "cpq_production_path_" + strconv.Itoa(index)
+		sessionID := "production-path-session-" + strconv.Itoa(index)
+		agentID := "production-path-agent"
+		sample := buildContextPackQualitySample(contextPackQualitySampleInput{
+			Query: "production durable evidence", Project: "contextlattice", TaskClass: "coding", RetrievalIntent: "decision", WorkspaceRef: scope.workspaceRef, SessionID: sessionID, AgentID: agentID,
+			TokenImpact: map[string]any{"tokenizer_exact": true, "tokenizer_encoding": "cl100k_base", "wire_tokens_exact": 90, "model_visible_context_tokens_exact": 72},
+			Compiled:    map[string]any{}, SearchResponse: map[string]any{"source_owner_class": sourceOwnerGoNative}, SourceCoverage: map[string]any{"complete": true}, GraphQuality: map[string]any{},
+			RankedEvidence: []any{rankedEvidence},
+		})
+		sample["sample_id"] = sampleID
+		sample["selection_receipt"] = contextPackSelectionReceiptWithActivation(
+			[]any{rankedEvidence}, nil, activation, promotion,
+		)
+		response := composeRecallResponse(recallResponseTestInput(true))
+		binding, bindingOK := recallResponseBindingFromResponse(response)
+		if !bindingOK || !recallResponseCopyBinding(sample, binding) {
+			t.Fatalf("production-path sample binding construction failed")
+		}
+		canonical := contextPackQualityEntryFromSample(sample)
+		if len(canonical) == 0 {
+			t.Fatalf("production-path sample was not canonicalized")
+		}
+		expectedResource = contextPackQualityServerExecutionReceiptFromAny(canonical["execution_receipt"])
+		if len(expectedResource) == 0 || !anyToBool(expectedResource["exact_zero"]) {
+			t.Fatalf("server execution receipt was not persisted from the Gateway observation: %#v", canonical["execution_receipt"])
+		}
+		if err := telemetryServer.contextPackQuality.recordQualityDurably(sample); err != nil {
+			t.Fatalf("persist production-path quality sample: %v", err)
+		}
+		verifierID := "production-path-verifier-" + strconv.Itoa(index)
+		evidenceDigest := "sha256:" + sha256Hex("production-path-evidence-"+strconv.Itoa(index))
+		verificationEventID := "production-path-verification-" + strconv.Itoa(index)
+		report := map[string]any{
+			"sample_id": sampleID, "outcome_id": "production-path-outcome-" + strconv.Itoa(index), "project": "contextlattice", "task_class": "coding", "retrieval_intent": "decision", "session_id": sessionID, "agent_id": agentID, "first_pass_success": true,
+			"candidate_attribution_attempts": map[string]any{"received": 1},
+			"evidence_attribution":           []any{map[string]any{"entity_type": "candidate", "entity_id": candidateID, "candidate_ref": candidateID, "attribution_method": "counterfactual", "role": "support", "verifier_id": verifierID, "verification_evidence_digest": evidenceDigest}},
+			"utility":                        map[string]any{"value": 1, "unit": "verified_tasks", "verification_event_id": verificationEventID, "verifier_kind": "deterministic_test", "evidence_digest": evidenceDigest, "verifier_id": verifierID, "verification_passed": true},
+			// These reporter values must be ignored. The bound entry must retain
+			// only the canonical Gateway receipt, and neither a caller power claim
+			// nor a caller count claim can become promotion authority.
+			"execution_receipt": map[string]any{"complete": true, "exact_zero": true, "provider_calls": 0, "provider_tokens": 0, "provider_cost": 0, "external_network_calls": 0, "source": "reporter"},
+			"sample_power":      map[string]any{"pass": true, "minimum_samples": 1, "sample_count": 1, "power": 1.0, "minimum_effect_size": 0.001},
+			"sample_sufficiency": map[string]any{
+				"schema_id": "contextlattice_search_impact_sample_sufficiency.v1", "pass": true,
+				"required_sample_count": 1, "observed_sample_count": 1,
+			},
+		}
+		impact := map[string]any{
+			"sample_id": sampleID, "session_id": sessionID, "project": "contextlattice", "agent_id": agentID,
+			"task_class": "coding", "retrieval_intent": "decision", "tokenizer_exact": true, "tokenizer_encoding": "cl100k_base",
+			"wire_tokens_exact": 90, "model_visible_context_tokens_exact": 72,
+		}
+		event := map[string]any{
+			"id": verificationEventID, "session_id": sessionID, "type": "verification.completed", "agent_id": verifierID,
+			"created_at": now.Add(-time.Duration(index) * time.Minute).Format(time.RFC3339Nano),
+			"metadata": map[string]any{"utility_verification": map[string]any{
+				"outcome_id": anyToString(report["outcome_id"]), "sample_id": sampleID, "utility_value": 1, "utility_unit": "verified_tasks",
+				"evidence_digest": evidenceDigest, "verification_passed": true, "verifier_kind": "deterministic_test", "verifier_id": verifierID,
+			}},
+		}
+		routeCases = append(routeCases, productionRouteCase{report: report, impact: impact, event: event})
+	}
+
+	// Restart on the exact owner-only ledger before accepting outcomes. The
+	// POST route must recover the canonical execution receipt from the durable
+	// execution_receipt field; reporter fields are never used for the join.
+	ledgerPath := telemetryServer.contextPackQuality.ledger.path
+	restartedLedger := &contextPackQualityLedger{
+		enabled: true, path: ledgerPath, maxBytes: 2 * 1024 * 1024, maxSamples: 100,
+		writeFile: writeOwnerOnlyDurableAtomicFile,
+	}
+	telemetryServer.contextPackQuality = newContextPackQualityTelemetryWithLedger(100, restartedLedger)
+	if !contextPackQualityLedgerAvailable(telemetryServer.contextPackQuality.ledger) {
+		t.Fatal("restarted owner-only quality ledger was unavailable")
+	}
+	canonicalOutcomes := make([]map[string]any, 0, len(routeCases))
+	for _, routeCase := range routeCases {
+		raw, err := json.Marshal(routeCase.report)
+		if err != nil {
+			t.Fatalf("marshal production-path outcome: %v", err)
+		}
+		response := httptest.NewRecorder()
+		telemetryServer.telemetryContextPackQualityOutcomeRoute(response, httptest.NewRequest(http.MethodPost, "/telemetry/context-pack-quality/outcome", bytes.NewReader(raw)))
+		if response.Code != http.StatusOK {
+			t.Fatalf("production-path outcome POST status=%d body=%s", response.Code, response.Body.String())
+		}
+		payload, err := parseJSONMap(response.Body.Bytes())
+		if err != nil {
+			t.Fatalf("parse production-path outcome POST: %v", err)
+		}
+		entry := anyMap(payload["outcome"])
+		if !contextPackOutcomeHasReceiptBoundCandidate(entry) {
+			t.Fatalf("production-path POST did not bind candidate to durable receipt: %#v", entry)
+		}
+		if anyToString(anyMap(entry["execution_receipt"])["source"]) != contextPackQualityExecutionReceiptSource ||
+			contextPackLearnedCanonicalDigest(anyMap(entry["execution_receipt"])) != contextPackLearnedCanonicalDigest(expectedResource) {
+			t.Fatalf("reporter execution receipt replaced canonical durable server receipt: %#v", entry["execution_receipt"])
+		}
+		if _, present := entry["sample_power"]; present {
+			t.Fatalf("reporter sample power survived production POST binding: %#v", entry)
+		}
+		if _, present := entry["sample_sufficiency"]; present {
+			t.Fatalf("reporter sample sufficiency survived production POST binding: %#v", entry)
+		}
+		durableOutcomeIDs = append(durableOutcomeIDs, anyToString(entry["outcome_id"]))
+		canonicalOutcomes = append(canonicalOutcomes, entry)
+	}
+
+	telemetryServer.utility = newUtilityTelemetry(100)
+	telemetryServer.utility.store = nil
+	for index, routeCase := range routeCases {
+		canonical, found, err := telemetryServer.contextPackQuality.durableQualitySampleForOutcome(anyToString(routeCase.report["sample_id"]))
+		if err != nil || !found {
+			t.Fatalf("reload production-path quality sample: found=%v err=%v", found, err)
+		}
+		utilityObservation := buildUtilityObservation(canonicalOutcomes[index], canonical, routeCase.impact, []map[string]any{routeCase.event})
+		if !anyToBool(anyMap(utilityObservation["eligibility"])["observed_yield_eligible"]) {
+			t.Fatalf("production-path utility observation was not independently verified: %#v", utilityObservation)
+		}
+		if storedUtility, recordedUtility, err := telemetryServer.utility.record(utilityObservation); err != nil || !recordedUtility {
+			t.Fatalf("record production-path utility observation: stored=%#v recorded=%v err=%v", storedUtility, recordedUtility, err)
+		}
+	}
+	rows, receiptBinding := telemetryServer.contextPackQuality.receiptDurableOutcomeRows(100)
+	if len(rows) != len(durableOutcomeIDs) {
+		t.Fatalf("durable quality outcome path returned %d rows, want %d: %#v", len(rows), len(durableOutcomeIDs), rows)
+	}
+	if !anyToBool(receiptBinding["pass"]) || anyToInt(receiptBinding["receipt_bound_outcome_count"], 0) != len(durableOutcomeIDs) {
+		t.Fatalf("durable quality receipt binding was not complete: %#v", receiptBinding)
+	}
+	rows = reconcileCandidateUtilityVerification(rows, telemetryServer.utility)
+	enrichedRows := searchImpactAttachDurableSelectionReceipts(telemetryServer, rows)
+	productionSelection := contextPackSelectionReceiptFromSample(enrichedRows[0]["selection_receipt"])
+	productionPromotion := retrievalPromotionNormalizeReceipt(anyMap(productionSelection["retrieval_promotion"]))
+	if len(productionSelection) == 0 || len(productionPromotion) == 0 || len(anyMap(anyMap(productionPromotion["cohort"])["canary_receipt"])) == 0 {
+		t.Fatalf("durable selection receipt lost the normalized signed canary snapshot: selection=%#v promotion=%#v", productionSelection, productionPromotion)
+	}
+	reconciled := searchImpactReconciledCandidateOutcomesCoreWithAuthority(enrichedRows, scope, authority, true)
+	if len(reconciled) != receipt.MinimumCanarySamples || !anyToBool(reconciled[0]["promotion_authoritative"]) ||
+		!anyToBool(reconciled[len(reconciled)-1]["promotion_authoritative"]) {
+		t.Fatalf("durable quality outcome path did not produce signed-authority canary outcomes: %#v", reconciled)
+	}
+	impact := map[string]any{
+		"activation_evidence": evidence,
+		"outcome_intelligence": map[string]any{"chronological_split": map[string]any{
+			"train": map[string]any{"outcome_count": 8}, "holdout": map[string]any{"outcome_count": 2},
+		}},
+	}
+	attachSearchImpactProductionPromotionEvidenceWithAuthority(impact, scope, shadow, reconciled, nil, authority)
+	production := anyMap(evidence["promotion_evidence"])
+	sufficiency := anyMap(production["sample_sufficiency"])
+	if !anyToBool(production["available"]) || anyToInt(production["canary_sample_count"], 0) != receipt.MinimumCanarySamples ||
+		anyToString(anyMap(production["execution_receipt"])["source"]) != contextPackQualityExecutionReceiptSource ||
+		anyToString(production["promotion_authority"]) != "trusted_signed_canary_ledger" ||
+		!anyToBool(production["canary_head_verified"]) || !anyToBool(production["canary_current_active"]) ||
+		anyToInt(production["canary_generation"], 0) != int(authority.receipt.Generation) ||
+		anyToString(production["canary_head_digest"]) != authority.headDigest ||
+		anyToString(anyMap(production["promotion_issuer"])["instance_id"]) != authority.receipt.Issuer.InstanceID ||
+		anyToString(anyMap(production["promotion_issuer"])["signing_key_id"]) != authority.receipt.Issuer.SigningKeyID ||
+		anyToInt(sufficiency["observed_sample_count"], 0) != receipt.MinimumCanarySamples ||
+		anyToInt(sufficiency["required_sample_count"], 0) != receipt.MinimumCanarySamples || !anyToBool(sufficiency["pass"]) ||
+		anyToBool(sufficiency["statistical_power_available"]) || anyToString(sufficiency["canary_receipt_digest"]) != receipt.ReceiptDigest {
+		t.Fatalf("durable production promotion evidence was incomplete or reporter-derived: %#v", production)
+	}
+	for _, forbidden := range []string{"power", "statistical_power", "minimum_effect_size", "effect_size"} {
+		if _, present := sufficiency[forbidden]; present {
+			t.Fatalf("durable count-only sufficiency evidence fabricated %q: %#v", forbidden, sufficiency)
+		}
 	}
 }
 

@@ -307,7 +307,7 @@ func TestRecallEvalV3ValidationRejectsDuplicateLeakageAndSynthetic(t *testing.T)
 	if anyToBool(health["valid"]) || anyToBool(health["benchmark_eligible"]) {
 		t.Fatalf("synthetic malformed v3 set unexpectedly valid: %#v", health)
 	}
-	issues := anyToSliceOfMaps(health["issues"])
+	issues := anyToMapSlice(health["issues"])
 	want := map[string]bool{"synthetic_case_set": true, "case_set_digest_mismatch": true, "duplicate_case_id": true, "duplicate_expected_file": true, "query_contains_expected_file": true}
 	found := map[string]bool{}
 	for _, issue := range issues {
@@ -359,19 +359,4 @@ func TestRecallEvalCasesForSplitIsExactAndDeterministic(t *testing.T) {
 	if got := recallEvalCasesForSplit(cases, "unknown"); len(got) != 0 {
 		t.Fatalf("unknown split should be empty for caller validation, got %#v", got)
 	}
-}
-
-func anyToSliceOfMaps(value any) []map[string]any {
-	items, _ := value.([]map[string]any)
-	if items != nil {
-		return items
-	}
-	itemsAny, _ := value.([]any)
-	result := make([]map[string]any, 0, len(itemsAny))
-	for _, item := range itemsAny {
-		if mapped, ok := item.(map[string]any); ok {
-			result = append(result, mapped)
-		}
-	}
-	return result
 }

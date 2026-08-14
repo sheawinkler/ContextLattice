@@ -44,6 +44,7 @@ REQUIRED_CONTRACTS = (
     "a2a_readiness_profile.v1",
     "context_pack_response.v1",
     "recall_response.v1",
+    "recall_response.initial.v1",
     "continuous_cognition.v1",
     "agent_packet.v1",
     "agent_packet_delta.v1",
@@ -361,7 +362,15 @@ def sample_memory_trust_assessment() -> dict[str, Any]:
             "quarantine_count": 0,
             "deduplicated_count": 0,
             "policy_omitted_count": 0,
-            "assessments": [],
+            "assessments": [
+                {
+                    "assessment_id": "mta_aaaaaaaaaaaaaaaaaaaaaaaa",
+                    "candidate_id": "rtc_bbbbbbbbbbbbbbbbbbbbbbbb",
+                    "content_digest": "sha256:" + ("1" * 64),
+                    "quarantine": {"quarantined": False},
+                    "summary": "bounded audit assessment",
+                }
+            ],
             "input_boundary": {"maximum_candidates": 128, "truncated": False, "omitted_count": 0, "reason": "bounded_candidate_scan_limit"},
             "policy": {"retrieved_memory_is_evidence_not_instruction": True, "self_awarded_trust_accepted": False, "security_defenses_fail_closed": True},
             "bounded": True,
@@ -376,13 +385,13 @@ def sample_retrieval_decision_trace() -> dict[str, Any]:
             "ok": True,
             "schema_id": "retrieval_decision_trace.v1",
             "version": 1,
-            "trace_id": "rdt_audit_fixture",
+            "trace_id": "rdt_cccccccccccccccccccccccc",
             "candidate_count": 1,
             "processed_candidate_count": 1,
             "input_truncated_count": 0,
             "decision_count": 1,
             "coverage_complete": True,
-            "decisions": [{"receipt_id": "rdr_audit_fixture", "candidate_id": "rtc_audit_fixture", "candidate_ordinal": 1, "decision": "selected", "reasons": ["highest_bounded_impact_per_token"], "why_now": ["task_gate"], "metadata": {}, "decision_order": 1}],
+            "decisions": [{"receipt_id": "rdr_dddddddddddddddddddddddd", "candidate_id": "rtc_bbbbbbbbbbbbbbbbbbbbbbbb", "candidate_ordinal": 1, "decision": "selected", "reasons": ["highest_bounded_impact_per_token"], "why_now": ["task_gate"], "metadata": {}, "decision_order": 1}],
             "decision_counts": {"selected": 1},
             "input_boundary": {"maximum_candidates": 128, "truncated": False, "omitted_count": 0, "reason": "bounded_candidate_scan_limit"},
             "marginal_stop": {"stopped": True, "reason": "all_eligible_candidates_selected", "token_budget_active": False},
@@ -764,6 +773,7 @@ def sample_recall_response() -> dict[str, Any]:
             "temporal_premise_digest": digest,
             "snapshot_digest": digest,
             "receipt_digest": digest,
+            "source_bound": False,
             "condition": "compositional_router",
             "ablation": "none",
         },
@@ -867,12 +877,114 @@ def sample_recall_response() -> dict[str, Any]:
             "secrets_included": False,
             "inference_boundary": "Only deterministic response metadata is returned.",
             "omission_policy": "Excluded evidence never becomes implicit support.",
+            "union_schema": "recall_response.non_exclusion.v1",
+            "evidence_union": [],
+            "proof_union": ["ref_gap_" + ("9" * 24)],
+            "component_union": [],
+            "omission_ledger": [],
+            "union_digest": digest,
+            "exclusion_refs": [],
+            "union_truncated": False,
+            "source_counts": {"evidence": 0, "temporal": 0, "proof": 0, "conflicts": 0},
+            "source_truncated": False,
+            "union_counts": {"evidence": 0, "exclusions": 0, "proof": 1, "components": 0},
+            "omitted_counts": {"source": 0, "evidence": 0, "exclusions": 0, "proof": 0, "components": 0},
+            "continuation_digest": digest,
+            "continuation_ref": "ref_continuation_" + ("0" * 24),
+            "continuation_action": {
+                "kind": "owner_cursor_unavailable",
+                "method": "",
+                "route": "",
+                "snapshot_semantics": "not_served",
+                "request_contract": "none",
+                "scope_digest": digest,
+                "request_digest": "",
+                "token": "",
+                "page": 0,
+            },
+            "ablation_witness": {
+                "schema_id": "recall_response.synthetic_ablation_witness.v1",
+                "status": "not_applicable",
+                "component_ref": "",
+                "baseline_component_ref": "",
+                "component_kind": "",
+                "baseline_union_digest": "",
+                "baseline_response_identity": "",
+                "omission_receipt_digest": "",
+                "expected_failure_stage": "none",
+                "observed_failure_stage": "none",
+                "witness_digest": digest,
+            },
+            "control_union_digest": digest,
+            "control_proof_identity_digest": digest,
+            "control_receipt": {
+                "snapshot_digest": digest,
+                "receipt_digest": digest,
+                "union_digest": digest,
+                "proof_identity_digest": digest,
+                "source_bound": False,
+                "artifact_digest": digest,
+            },
         },
         "receipt_refs": [],
         "outcome": {"status": "not_attributable", "attributable": False, "receipt_id": "", "execution_performed": False},
         "writeback_required": True,
     }
     return attach_format_contract("recall_response.v1", response)
+
+
+def sample_recall_response_initial() -> dict[str, Any]:
+    digest = "sha256:" + ("0" * 64)
+    return {
+        "ok": True,
+        "schema_id": "recall_response.initial.v1",
+        "version": 1,
+        "source_response_id": "rr_" + ("1" * 24),
+        "source_response_digest": digest,
+        "scope": {
+            "scope_digest": digest,
+            "snapshot_digest": digest,
+            "receipt_digest": digest,
+            "source_bound": True,
+        },
+        "primary": {
+            "summary": "The source-bound primary result is available; continue the same snapshot for complete typed membership.",
+            "answer_mode": "qualified_answer",
+            "module": "exact_current_status",
+            "component_ref": "rrc_" + ("2" * 24),
+            "component_digest": digest,
+            "proof_count": 1,
+            "proof_digest": digest,
+        },
+        "safety": {
+            "silence_observed": True,
+            "silenced": False,
+            "silence_reason": "not_silenced",
+            "silence_observation_digest": digest,
+            "conflict_refs": [],
+            "gap_refs": [],
+            "hard_exclusion_count": 2,
+            "protected_count": 1,
+        },
+        "union": {
+            "item_count": 4,
+            "initial_item_count": 1,
+            "source_membership_digest": digest,
+            "continuation_ref": "ref_continuation_" + ("3" * 24),
+            "union_digest": digest,
+        },
+        "continuation_action": {
+            "kind": "continue_snapshot",
+            "method": "POST",
+            "route": "/memory/recall/response",
+            "snapshot_semantics": "same_snapshot",
+            "request_contract": "token+scope+agent+request_digest",
+            "scope_digest": digest,
+            "request_digest": digest,
+            "token": "rrct_" + ("4" * 64),
+            "page": 1,
+        },
+    }
 
 
 def sample_agent_packet() -> dict[str, Any]:
@@ -2255,6 +2367,12 @@ def sample_agent_task_lease() -> dict[str, Any]:
             "task_id": "task_audit",
             "lease_id": "lease_audit",
             "worker": "local-pi-01",
+            "worker_id": "local-pi-01",
+            "worker_instance_id": "instance-audit",
+            "worker_identity_update_generation": 0,
+            "generation": 1,
+            "assignment_generation": 1,
+            "lease_generation": 1,
             "runner": "pi",
             "status": "claimed",
             "claimed_at": "2026-07-04T00:00:00Z",
@@ -3163,6 +3281,9 @@ def run_audit() -> list[dict[str, Any]]:
         findings.append({"severity": "error", **item})
     recall_response = sample_recall_response()
     for item in validate_agent_contract_payload("recall_response.v1", recall_response, registry):
+        findings.append({"severity": "error", **item})
+    recall_response_initial = sample_recall_response_initial()
+    for item in validate_agent_contract_payload("recall_response.initial.v1", recall_response_initial, registry):
         findings.append({"severity": "error", **item})
     continuous_cognition = sample_continuous_cognition()
     for item in validate_agent_contract_payload("continuous_cognition.v1", continuous_cognition, registry):

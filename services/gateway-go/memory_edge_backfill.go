@@ -14,35 +14,42 @@ import (
 
 const memoryEdgeBackfillVersion = "typed_edge_backfill.v1"
 const memoryEdgeInferredScoringVersion = "memory_edge_inferred_scoring.v1"
+const memoryEdgeBackfillWriteBatchLimit = 64
 
 type memoryEdgeBackfillRequest struct {
-	DryRun              bool
-	Project             string
-	IncludeCold         bool
-	IncludeEphemeral    bool
-	MinConfidence       float64
-	MaxCandidates       int
-	MaxWrites           int
-	MaxHistoryLines     int
-	TopicPeerLimit      int
-	SampleLimit         int
-	IncludeLowAudit     bool
-	IncludeInferred     bool
-	InferredRelation    string
-	InferredPeerLimit   int
-	InferredScanLimit   int
-	InferredMinScore    float64
-	InferredMinShared   int
-	InferredMaxPostings int
-	Corpus              string
-	AllowedRelation     map[string]struct{}
-	RequestedRelations  []string
+	DryRun                bool
+	Project               string
+	IncludeCold           bool
+	IncludeEphemeral      bool
+	MinConfidence         float64
+	MaxCandidates         int
+	MaxWrites             int
+	MaxHistoryLines       int
+	TopicPeerLimit        int
+	SampleLimit           int
+	IncludeLowAudit       bool
+	IncludeInferred       bool
+	InferredRelation      string
+	InferredPeerLimit     int
+	InferredScanLimit     int
+	InferredMinScore      float64
+	InferredMinShared     int
+	InferredMaxPostings   int
+	Corpus                string
+	AllowedRelation       map[string]struct{}
+	RequestedRelations    []string
+	ReferenceContent      bool
+	ReferenceMaxBlobs     int
+	ReferenceBlobBytes    int64
+	ReferenceTotalBytes   int64
+	ReferenceContinuation string
 }
 
 type memoryEdgeBackfillCandidate struct {
-	Edge     memoryEdgeEntry
-	Strategy string
-	Reason   string
+	Edge      memoryEdgeEntry
+	Strategy  string
+	Reason    string
+	AuditOnly bool
 }
 
 type memoryEdgeBackfillRelationStats struct {
@@ -54,14 +61,20 @@ type memoryEdgeBackfillRelationStats struct {
 }
 
 type memoryEdgeBackfillDoc struct {
-	Project   string
-	FileName  string
-	MemoryID  string
-	TopicPath string
-	Summary   string
-	UpdatedAt time.Time
-	LastTouch time.Time
-	Lifecycle string
+	Project     string
+	FileName    string
+	MemoryID    string
+	TopicPath   string
+	Summary     string
+	UpdatedAt   time.Time
+	LastTouch   time.Time
+	Lifecycle   string
+	ContentHash string
+	ContentRef  string
+	EventID     string
+	AgentID     string
+	SessionID   string
+	References  []memoryStructuredReference
 }
 
 func normalizeMemoryEdgeBackfillRequest(payload map[string]any, policy memoryStorePolicy) (memoryEdgeBackfillRequest, error) {
@@ -84,6 +97,9 @@ func normalizeMemoryEdgeBackfillRequest(payload map[string]any, policy memorySto
 		Corpus:              "history_index",
 		AllowedRelation:     map[string]struct{}{},
 		RequestedRelations:  []string{},
+		ReferenceMaxBlobs:   memoryReferenceBackfillMaxBlobCount,
+		ReferenceBlobBytes:  memoryReferenceBackfillMaxBlobBytes,
+		ReferenceTotalBytes: memoryReferenceBackfillMaxTotalBytes,
 	}
 	if req.MaxHistoryLines < 1 {
 		req.MaxHistoryLines = 20000
@@ -136,6 +152,22 @@ func normalizeMemoryEdgeBackfillRequest(payload map[string]any, policy memorySto
 	if _, ok := payload["include_inferred"]; ok {
 		req.IncludeInferred = anyToBool(payload["include_inferred"])
 	}
+	if _, ok := payload["include_reference_content"]; ok {
+		req.ReferenceContent = anyToBool(payload["include_reference_content"])
+	}
+	if _, ok := payload["reference_max_blobs"]; ok {
+		req.ReferenceMaxBlobs = clampInt(anyToInt(payload["reference_max_blobs"], req.ReferenceMaxBlobs), 1, memoryReferenceBackfillMaxBlobCount)
+	}
+	if _, ok := payload["reference_blob_bytes"]; ok {
+		req.ReferenceBlobBytes = clampMemoryReferenceInt64(anyToInt64(payload["reference_blob_bytes"], req.ReferenceBlobBytes), 1, memoryReferenceBackfillMaxBlobBytes)
+	}
+	if _, ok := payload["reference_total_bytes"]; ok {
+		req.ReferenceTotalBytes = clampMemoryReferenceInt64(anyToInt64(payload["reference_total_bytes"], req.ReferenceTotalBytes), 1, memoryReferenceBackfillMaxTotalBytes)
+	}
+	req.ReferenceContinuation = strings.TrimSpace(anyToString(payload["reference_continuation"]))
+	if len(req.ReferenceContinuation) > 4096 || strings.ContainsAny(req.ReferenceContinuation, " \t\r\n") {
+		return req, errors.New("reference_continuation must be an opaque cursor token")
+	}
 	if rawRelation := strings.TrimSpace(anyToString(payload["inferred_relation"])); rawRelation != "" {
 		relation, err := normalizeMemoryEdgeRelation(rawRelation)
 		if err != nil {
@@ -185,6 +217,9 @@ func normalizeMemoryEdgeBackfillRequest(payload map[string]any, policy memorySto
 			if err != nil {
 				return req, err
 			}
+			if _, exists := req.AllowedRelation[relation]; exists {
+				continue
+			}
 			req.AllowedRelation[relation] = struct{}{}
 			req.RequestedRelations = append(req.RequestedRelations, relation)
 		}
@@ -203,6 +238,22 @@ func (req memoryEdgeBackfillRequest) relationAllowed(relation string) bool {
 	return ok
 }
 
+func (m *memoryStore) memoryEdgeVersionExists(candidate memoryEdgeEntry) bool {
+	if m == nil || strings.TrimSpace(candidate.EdgeID) == "" {
+		return false
+	}
+	m.mu.RLock()
+	existing, exists := m.edges[candidate.EdgeID]
+	m.mu.RUnlock()
+	if !exists {
+		return false
+	}
+	if candidate.Binding == nil {
+		return true
+	}
+	return m.referenceEdgeCurrent(existing)
+}
+
 func (m *memoryStore) memoryEdgeExists(edgeID string) bool {
 	if m == nil || strings.TrimSpace(edgeID) == "" {
 		return false
@@ -211,6 +262,25 @@ func (m *memoryStore) memoryEdgeExists(edgeID string) bool {
 	_, exists := m.edges[edgeID]
 	m.mu.RUnlock()
 	return exists
+}
+
+func (m *memoryStore) memoryEdgeVersionExistsWithFence(candidate memoryEdgeEntry, fence *memoryEdgeLogFenceToken) bool {
+	if m == nil || strings.TrimSpace(candidate.EdgeID) == "" {
+		return false
+	}
+	if err := requireMemoryEdgeLogFenceOptional(m, fence); err != nil {
+		return false
+	}
+	m.mu.RLock()
+	existing, exists := m.edges[candidate.EdgeID]
+	m.mu.RUnlock()
+	if !exists {
+		return false
+	}
+	if candidate.Binding == nil {
+		return true
+	}
+	return m.referenceEdgeCurrentWithFence(existing, fence)
 }
 
 func (m *memoryStore) memoryBackfillHistoryEntries(maxLines int) []memoryStoreEntry {
@@ -244,7 +314,7 @@ func (m *memoryStore) memoryBackfillHistoryEntries(maxLines int) []memoryStoreEn
 	return entries
 }
 
-func (m *memoryStore) memoryBackfillDocsFromStoreDocs(docs []memoryStoreDoc) ([]memoryEdgeBackfillDoc, int) {
+func (m *memoryStore) memoryBackfillDocsFromStoreDocs(docs []memoryStoreDoc, snapshot *memoryReferenceSnapshot, includeUnboundDiskAudit bool) ([]memoryEdgeBackfillDoc, int) {
 	out := make([]memoryEdgeBackfillDoc, 0, len(docs))
 	skipped := 0
 	for _, doc := range docs {
@@ -252,30 +322,162 @@ func (m *memoryStore) memoryBackfillDocsFromStoreDocs(docs []memoryStoreDoc) ([]
 		if err != nil {
 			continue
 		}
-		topicPath := sanitizeTopicPath(doc.TopicPath, fileName)
+		current, ok := snapshot.Entries[strings.ToLower(memoryID)]
+		if !ok {
+			if !includeUnboundDiskAudit {
+				skipped++
+				continue
+			}
+			topicPath := sanitizeTopicPath(doc.TopicPath, fileName)
+			if excluded, _ := m.memoryGraphArtifactExcluded(project, fileName, topicPath); excluded {
+				skipped++
+				continue
+			}
+			lastTouch := doc.LastTouch
+			if lastTouch.IsZero() {
+				lastTouch = doc.UpdatedAt
+			}
+			out = append(out, memoryEdgeBackfillDoc{
+				Project: project, FileName: fileName, MemoryID: memoryID, TopicPath: topicPath,
+				Summary: strings.TrimSpace(doc.Summary), UpdatedAt: doc.UpdatedAt, LastTouch: lastTouch,
+				Lifecycle: normalizeMemoryLifecycle(doc.Lifecycle),
+			})
+			continue
+		}
+		topicPath := sanitizeTopicPath(current.TopicPath, fileName)
 		if excluded, _ := m.memoryGraphArtifactExcluded(project, fileName, topicPath); excluded {
 			skipped += 1
 			continue
 		}
-		lastTouch := doc.UpdatedAt
+		lastTouch := doc.LastTouch
 		if lastTouch.IsZero() {
 			lastTouch = doc.UpdatedAt
 		}
 		out = append(out, memoryEdgeBackfillDoc{
-			Project:   project,
-			FileName:  fileName,
-			MemoryID:  memoryID,
-			TopicPath: topicPath,
-			Summary:   strings.TrimSpace(doc.Summary),
-			UpdatedAt: doc.UpdatedAt,
-			LastTouch: lastTouch,
-			Lifecycle: "durable",
+			Project:     project,
+			FileName:    fileName,
+			MemoryID:    memoryID,
+			TopicPath:   topicPath,
+			Summary:     strings.TrimSpace(current.Summary),
+			UpdatedAt:   doc.UpdatedAt,
+			LastTouch:   lastTouch,
+			Lifecycle:   normalizeMemoryLifecycle(current.Lifecycle),
+			ContentHash: current.ContentHash,
+			ContentRef:  current.ContentRef,
+			EventID:     current.EventID,
+			AgentID:     current.AgentID,
+			SessionID:   current.SessionID,
+			References:  append([]memoryStructuredReference(nil), current.References...),
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {
 		return memoryBackfillDocLess(out[i], out[j])
 	})
 	return out, skipped
+}
+
+func (m *memoryStore) memoryBackfillStoreDocsFromReferenceSnapshot(ctx context.Context, snapshot *memoryReferenceSnapshot, req memoryEdgeBackfillRequest) []memoryStoreDoc {
+	docs := make([]memoryStoreDoc, 0, len(snapshot.Entries))
+	writePolicy := loadWriteIngressPolicy()
+	now := time.Now().UTC()
+	for _, entry := range snapshot.Entries {
+		select {
+		case <-ctx.Done():
+			return docs
+		default:
+		}
+		if req.Project != "" && !strings.EqualFold(entry.Project, req.Project) {
+			continue
+		}
+		topic := sanitizeTopicPath(entry.TopicPath, entry.FileName)
+		lifecycle := normalizeMemoryLifecycle(entry.Lifecycle)
+		if isEphemeralMemoryIdentity(entry.FileName, topic, entry.Summary, lifecycle) {
+			lifecycle = "test"
+		}
+		if !shouldSurfaceMemoryLifecycle(lifecycle, req.IncludeEphemeral) || writePolicy.isDurableMemoryFile(normalizedWrite{project: entry.Project, fileName: entry.FileName}) {
+			continue
+		}
+		storageTier := normalizeMemoryStorageTier(entry.StorageTier)
+		if !req.IncludeCold && (storageTier == "deep" || storageTier == "retired") {
+			continue
+		}
+		updated, _ := parseTimeBestEffort(entry.CreatedAt)
+		lastTouch := updated
+		if accessed, ok := parseTimeBestEffort(entry.LastAccess); ok && (lastTouch.IsZero() || accessed.After(lastTouch)) {
+			lastTouch = accessed
+		}
+		horizon := entry.HorizonDays
+		if horizon == 0 {
+			horizon = m.policy.hotIndexMaxAgeDays
+		} else if horizon < 0 {
+			horizon = 0
+		}
+		if !req.IncludeCold && horizon > 0 && !lastTouch.IsZero() && lastTouch.Before(now.Add(-time.Duration(horizon)*24*time.Hour)) {
+			continue
+		}
+		docs = append(docs, memoryStoreDoc{
+			Project: entry.Project, FileName: entry.FileName, TopicPath: topic, Summary: entry.Summary,
+			UpdatedAt: updated, ObjectID: entry.ObjectID, Horizon: horizon, Score: entry.Confidence,
+			LastTouch: lastTouch, Lifecycle: lifecycle, StorageTier: storageTier,
+		})
+	}
+	return docs
+}
+
+func memoryReferenceHistoryIndexConsistent(snapshot *memoryReferenceSnapshot, project string) bool {
+	if snapshot == nil || !snapshot.IndexAvailable {
+		return false
+	}
+	if project != "" {
+		key := normalizeCurrentKeyIndexProject(project)
+		size, sizeOK := snapshot.IndexSizes[key]
+		count, countOK := snapshot.IndexCounts[key]
+		return sizeOK == countOK && (!sizeOK || count >= 0 && size == count)
+	}
+	for key, size := range snapshot.IndexSizes {
+		count, ok := snapshot.IndexCounts[key]
+		if !ok || count < 0 || size != count {
+			return false
+		}
+	}
+	for key := range snapshot.IndexCounts {
+		if _, ok := snapshot.IndexSizes[key]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func memoryReferenceBackfillRequestDigest(req memoryEdgeBackfillRequest) string {
+	relations := append([]string(nil), req.RequestedRelations...)
+	sort.Strings(relations)
+	material := map[string]any{
+		"dry_run": req.DryRun, "project": strings.ToLower(req.Project), "corpus": req.Corpus,
+		"include_cold": req.IncludeCold, "include_ephemeral": req.IncludeEphemeral,
+		"min_confidence": req.MinConfidence, "max_candidates": req.MaxCandidates, "max_writes": req.MaxWrites,
+		"max_history_lines": req.MaxHistoryLines, "topic_peer_limit": req.TopicPeerLimit,
+		"include_low_confidence_audit": req.IncludeLowAudit, "include_inferred": req.IncludeInferred,
+		"inferred_relation": req.InferredRelation, "inferred_peer_limit": req.InferredPeerLimit, "inferred_scan_limit": req.InferredScanLimit,
+		"inferred_min_score": req.InferredMinScore, "inferred_min_shared_terms": req.InferredMinShared, "inferred_max_token_postings": req.InferredMaxPostings,
+		"relations": relations, "reference_content": req.ReferenceContent, "reference_max_blobs": req.ReferenceMaxBlobs,
+		"reference_blob_bytes": req.ReferenceBlobBytes, "reference_total_bytes": req.ReferenceTotalBytes,
+	}
+	raw, _ := json.Marshal(material)
+	return "sha256:" + sha256Hex(string(raw))
+}
+
+func memoryReferenceBackfillDocsDigest(docs []memoryEdgeBackfillDoc) string {
+	rows := make([]string, 0, len(docs))
+	for _, doc := range docs {
+		references, _ := json.Marshal(doc.References)
+		rows = append(rows, strings.Join([]string{
+			strings.ToLower(doc.MemoryID), strings.ToLower(strings.Trim(doc.TopicPath, "/")), doc.EventID,
+			strings.ToLower(strings.TrimPrefix(doc.ContentHash, "sha256:")), normalizeMemoryLifecycle(doc.Lifecycle),
+			"sha256:" + sha256Hex(doc.Summary), "sha256:" + sha256Hex(string(references)),
+		}, "\x00"))
+	}
+	sort.Strings(rows)
+	return "sha256:" + sha256Hex(strings.Join(rows, "\n"))
 }
 
 func memoryBackfillDocLess(left memoryEdgeBackfillDoc, right memoryEdgeBackfillDoc) bool {
@@ -357,30 +559,71 @@ func (m *memoryStore) deterministicMemoryEdgeBackfill(ctx context.Context, req m
 	if m == nil || !m.isEnabled() {
 		return nil, errors.New("go memory store is disabled")
 	}
+	snapshot, err := m.captureMemoryReferenceSnapshot(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
 	var storeDocs []memoryStoreDoc
-	var err error
 	if req.Corpus == "disk" {
 		storeDocs, err = m.collectDocsFromDisk(ctx, req.Project, req.IncludeCold, req.IncludeEphemeral)
 	} else {
-		var indexOK bool
-		storeDocs, indexOK = m.collectDocsFromHistoryIndex(ctx, req.Project, req.IncludeCold, req.IncludeEphemeral)
-		if !indexOK {
+		if !memoryReferenceHistoryIndexConsistent(snapshot, req.Project) {
 			return nil, errors.New("memory history index is unavailable or inconsistent")
 		}
+		storeDocs = m.memoryBackfillStoreDocsFromReferenceSnapshot(ctx, snapshot, req)
 	}
 	if err != nil {
 		return nil, err
 	}
-	docs, skippedLowValueDocs := m.memoryBackfillDocsFromStoreDocs(storeDocs)
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+	docs, skippedLowValueDocs := m.memoryBackfillDocsFromStoreDocs(storeDocs, snapshot, req.Corpus == "disk")
+	if req.Corpus != "disk" {
+		skippedLowValueDocs += snapshot.excludedGraphDocCount(req.Project)
+	}
+	requestDigest := memoryReferenceBackfillRequestDigest(req)
+	relationRows := append([]string(nil), req.RequestedRelations...)
+	sort.Strings(relationRows)
+	relationDigest := "sha256:" + sha256Hex(strings.Join(relationRows, "\n"))
+	docsDigest := memoryReferenceBackfillDocsDigest(docs)
+	cursorExpected := memoryReferenceCursorPayload{
+		Version: 1, RequestDigest: requestDigest, Project: strings.ToLower(req.Project), Corpus: req.Corpus, RelationDigest: relationDigest,
+		SnapshotDigest: "sha256:" + sha256Hex(snapshot.DocSetDigest+"\x00"+docsDigest), GenerationDigest: snapshot.GenerationDigest, DocSetDigest: docsDigest,
+	}
+	referenceStartKey := ""
+	referenceStartEdgeID := ""
+	referenceCursorID := ""
+	referenceReservation := ""
+	if req.ReferenceContinuation != "" {
+		cursor, reservation, err := m.decodeAndReserveMemoryReferenceCursor(req.ReferenceContinuation, cursorExpected)
+		if err != nil {
+			return nil, err
+		}
+		referenceStartKey = cursor.LastDocKey
+		referenceStartEdgeID = cursor.LastEdgeID
+		referenceCursorID = cursor.CursorID
+		referenceReservation = reservation
+		defer func() {
+			if referenceReservation != "" {
+				_ = m.finishMemoryReferenceCursor(req.ReferenceContinuation, referenceCursorID, referenceReservation, false)
+			}
+		}()
+	}
 	historyEntries := m.memoryBackfillHistoryEntries(req.MaxHistoryLines)
 	generator := &memoryEdgeBackfillGenerator{
-		store:               m,
-		request:             req,
-		docs:                docs,
-		knownIDs:            map[string]memoryEdgeBackfillDoc{},
-		stats:               map[string]*memoryEdgeBackfillRelationStats{},
-		sampleRows:          []map[string]any{},
-		skippedLowValueDocs: skippedLowValueDocs,
+		store:                m,
+		request:              req,
+		docs:                 docs,
+		snapshot:             snapshot,
+		referenceStartKey:    referenceStartKey,
+		referenceStartEdgeID: referenceStartEdgeID,
+		knownIDs:             map[string]memoryEdgeBackfillDoc{},
+		stats:                map[string]*memoryEdgeBackfillRelationStats{},
+		sampleRows:           []map[string]any{},
+		skippedLowValueDocs:  skippedLowValueDocs,
 	}
 	for _, doc := range docs {
 		generator.knownIDs[strings.ToLower(doc.MemoryID)] = doc
@@ -394,8 +637,23 @@ func (m *memoryStore) deterministicMemoryEdgeBackfill(ctx context.Context, req m
 	if req.IncludeLowAudit {
 		generator.generateHistorySequenceEdges(ctx, historyEntries, "same_agent", 0.82)
 	}
+	generator.flushWrites(ctx)
 	if generator.ctxErr != nil {
 		return nil, generator.ctxErr
+	}
+	referenceContinuation := ""
+	if !generator.referenceComplete {
+		now := time.Now().UTC()
+		cursorPayload := cursorExpected
+		cursorPayload.CursorID = "ref_cursor_" + sha256Hex(now.Format(time.RFC3339Nano) + "\x00" + requestDigest + "\x00" + generator.referenceCursorDocKey + "\x00" + generator.referenceCursorEdgeID)[:24]
+		cursorPayload.LastDocKey = generator.referenceCursorDocKey
+		cursorPayload.LastEdgeID = generator.referenceCursorEdgeID
+		cursorPayload.IssuedAt = now.Format(time.RFC3339Nano)
+		cursorPayload.ExpiresAt = now.Add(memoryReferenceCursorTTL).Format(time.RFC3339Nano)
+		referenceContinuation, err = m.encodeMemoryReferenceCursor(cursorPayload)
+		if err != nil {
+			return nil, err
+		}
 	}
 	totalGenerated := 0
 	totalEligible := 0
@@ -411,7 +669,7 @@ func (m *memoryStore) deterministicMemoryEdgeBackfill(ctx context.Context, req m
 	}
 	missingCandidates := maxInt(0, totalEligible-totalExisting)
 	remainingWrites := maxInt(0, missingCandidates-totalWritten)
-	return map[string]any{
+	report := map[string]any{
 		"ok":                           len(generator.errorsList) == 0,
 		"dry_run":                      req.DryRun,
 		"source":                       "go_memory_store",
@@ -419,6 +677,7 @@ func (m *memoryStore) deterministicMemoryEdgeBackfill(ctx context.Context, req m
 		"project":                      req.Project,
 		"scanned_docs":                 len(docs),
 		"skipped_low_value_docs":       generator.skippedLowValueDocs,
+		"audit_only_candidates":        generator.auditOnlyCandidates,
 		"skipped_low_value_history":    generator.skippedLowValueHistory,
 		"scanned_history_entries":      len(historyEntries),
 		"generated":                    totalGenerated,
@@ -431,6 +690,8 @@ func (m *memoryStore) deterministicMemoryEdgeBackfill(ctx context.Context, req m
 		"truncated":                    generator.truncated,
 		"max_candidates":               req.MaxCandidates,
 		"max_writes":                   req.MaxWrites,
+		"write_batches":                generator.writeBatches,
+		"write_batch_limit":            memoryEdgeBackfillWriteBatchLimit,
 		"write_limit_reached":          !req.DryRun && generator.writeLimitReached,
 		"min_confidence":               req.MinConfidence,
 		"topic_peer_limit":             req.TopicPeerLimit,
@@ -450,31 +711,77 @@ func (m *memoryStore) deterministicMemoryEdgeBackfill(ctx context.Context, req m
 		"quality_audit":                generator.qualityAudit(),
 		"samples":                      generator.sampleRows,
 		"errors":                       generator.errorsList,
-	}, nil
+		"reference_population": map[string]any{
+			"structured_claims":      generator.referenceStructured,
+			"textual_summary_claims": generator.referenceTextual,
+			"content_blob_claims":    generator.referenceContent,
+			"rejected_claims":        generator.referenceRejected,
+			"content_bytes":          generator.referenceBytes,
+			"content_blobs":          generator.referenceBlobs,
+			"continuation_start":     generator.referenceStartKey,
+			"continuation_next":      referenceContinuation,
+			"continuation_last_key":  generator.referenceLastCompletedKey,
+			"continuation_last_edge": generator.referenceCursorEdgeID,
+			"continuation_complete":  generator.referenceComplete,
+			"snapshot_digest":        cursorExpected.SnapshotDigest,
+			"generation_digest":      cursorExpected.GenerationDigest,
+			"doc_set_digest":         cursorExpected.DocSetDigest,
+		},
+	}
+	ledger, ledgerErr := m.appendMemoryReferenceBackfillLedger(report)
+	if ledgerErr != nil {
+		return nil, ledgerErr
+	}
+	report["audit_ledger"] = ledger
+	if referenceReservation != "" {
+		if err := m.finishMemoryReferenceCursor(req.ReferenceContinuation, referenceCursorID, referenceReservation, true); err != nil {
+			return nil, err
+		}
+		referenceReservation = ""
+	}
+	return report, nil
 }
 
 type memoryEdgeBackfillGenerator struct {
-	store                  *memoryStore
-	request                memoryEdgeBackfillRequest
-	docs                   []memoryEdgeBackfillDoc
-	knownIDs               map[string]memoryEdgeBackfillDoc
-	stats                  map[string]*memoryEdgeBackfillRelationStats
-	sampleRows             []map[string]any
-	seen                   map[string]struct{}
-	generated              int
-	written                int
-	truncated              bool
-	writeLimitReached      bool
-	skippedLowValueDocs    int
-	skippedLowValueHistory int
-	qualityTotal           int
-	qualityHigh            int
-	qualityReview          int
-	qualityLow             int
-	qualityInferred        int
-	qualityConfidenceSum   float64
-	errorsList             []string
-	ctxErr                 error
+	store                     *memoryStore
+	snapshot                  *memoryReferenceSnapshot
+	request                   memoryEdgeBackfillRequest
+	docs                      []memoryEdgeBackfillDoc
+	knownIDs                  map[string]memoryEdgeBackfillDoc
+	candidates                []memoryEdgeBackfillCandidate
+	stats                     map[string]*memoryEdgeBackfillRelationStats
+	sampleRows                []map[string]any
+	seen                      map[string]struct{}
+	generated                 int
+	written                   int
+	writeBatches              int
+	pendingWrites             []memoryEdgeBackfillCandidate
+	truncated                 bool
+	writeLimitReached         bool
+	skippedLowValueDocs       int
+	skippedLowValueHistory    int
+	qualityTotal              int
+	qualityHigh               int
+	qualityReview             int
+	qualityLow                int
+	qualityInferred           int
+	qualityConfidenceSum      float64
+	errorsList                []string
+	ctxErr                    error
+	referenceStructured       int
+	referenceTextual          int
+	referenceContent          int
+	referenceRejected         int
+	referenceBytes            int64
+	referenceBlobs            int
+	referenceStartKey         string
+	referenceStartEdgeID      string
+	referenceLastCompletedKey string
+	referenceCursorDocKey     string
+	referenceCursorEdgeID     string
+	referenceResumeMatched    bool
+	referenceComplete         bool
+	auditOnlyCandidates       int
 }
 
 func (g *memoryEdgeBackfillGenerator) stat(relation string) *memoryEdgeBackfillRelationStats {
@@ -489,26 +796,39 @@ func (g *memoryEdgeBackfillGenerator) stat(relation string) *memoryEdgeBackfillR
 	return stat
 }
 
-func (g *memoryEdgeBackfillGenerator) add(ctx context.Context, candidate memoryEdgeBackfillCandidate) {
+func (g *memoryEdgeBackfillGenerator) add(ctx context.Context, candidate memoryEdgeBackfillCandidate) bool {
 	if g.ctxErr != nil || g.truncated {
-		return
+		return false
 	}
 	select {
 	case <-ctx.Done():
 		g.ctxErr = ctx.Err()
-		return
+		return false
 	default:
 	}
 	if !g.request.relationAllowed(candidate.Edge.Relation) {
-		return
+		return false
+	}
+	if memoryGraphRelationRequiresBinding(candidate.Edge.Relation) {
+		bound, err := g.store.bindPromotedMemoryEdge(g.snapshot, candidate.Edge)
+		if err == nil {
+			candidate.Edge = bound
+		} else if g.request.DryRun && g.request.Corpus == "disk" {
+			candidate.AuditOnly = true
+		} else {
+			return false
+		}
 	}
 	if g.seen == nil {
 		g.seen = map[string]struct{}{}
 	}
 	if _, exists := g.seen[candidate.Edge.EdgeID]; exists {
-		return
+		return false
 	}
 	g.seen[candidate.Edge.EdgeID] = struct{}{}
+	if g.candidates != nil {
+		g.candidates = append(g.candidates, candidate)
+	}
 	stat := g.stat(candidate.Edge.Relation)
 	stat.Generated += 1
 	g.generated += 1
@@ -516,10 +836,10 @@ func (g *memoryEdgeBackfillGenerator) add(ctx context.Context, candidate memoryE
 	g.recordQualityAudit(candidate, quality)
 	if g.generated > g.request.MaxCandidates {
 		g.truncated = true
-		return
+		return false
 	}
-	wouldWrite := candidate.Edge.Confidence >= g.request.MinConfidence &&
-		!g.store.memoryEdgeExists(candidate.Edge.EdgeID)
+	existing := g.store.memoryEdgeVersionExists(candidate.Edge)
+	wouldWrite := candidate.Edge.Confidence >= g.request.MinConfidence && !existing && !candidate.AuditOnly
 	if len(g.sampleRows) < g.request.SampleLimit {
 		g.sampleRows = append(g.sampleRows, map[string]any{
 			"edge_id":     candidate.Edge.EdgeID,
@@ -531,30 +851,79 @@ func (g *memoryEdgeBackfillGenerator) add(ctx context.Context, candidate memoryE
 			"reason":      candidate.Reason,
 			"quality":     quality,
 			"would_write": wouldWrite,
+			"audit_only":  candidate.AuditOnly,
 		})
 	}
 	if candidate.Edge.Confidence < g.request.MinConfidence {
 		stat.SkippedBelowConfidence += 1
-		return
+		return true
+	}
+	if candidate.AuditOnly {
+		g.auditOnlyCandidates++
+		return true
 	}
 	stat.Eligible += 1
-	if g.store.memoryEdgeExists(candidate.Edge.EdgeID) {
+	if existing {
 		stat.Existing += 1
-		return
+		return true
 	}
 	if g.request.DryRun {
-		return
+		return true
 	}
-	if g.written >= g.request.MaxWrites {
+	if g.written+len(g.pendingWrites) >= g.request.MaxWrites {
 		g.writeLimitReached = true
+		return true
+	}
+	g.pendingWrites = append(g.pendingWrites, candidate)
+	if len(g.pendingWrites) >= memoryEdgeBackfillWriteBatchLimit {
+		g.flushWrites(ctx)
+	}
+	return g.ctxErr == nil
+}
+
+func (g *memoryEdgeBackfillGenerator) flushWrites(ctx context.Context) {
+	if g == nil || len(g.pendingWrites) == 0 || g.ctxErr != nil {
 		return
 	}
-	if _, err := g.store.upsertMemoryEdge(ctx, candidate.Edge); err != nil {
-		g.errorsList = append(g.errorsList, candidate.Edge.EdgeID+": "+err.Error())
-		return
+	pending := g.pendingWrites
+	g.pendingWrites = nil
+	for len(pending) > 0 {
+		select {
+		case <-ctx.Done():
+			g.ctxErr = ctx.Err()
+			return
+		default:
+		}
+		results, err := g.store.upsertMemoryEdgesBatch(ctx, candidateEdges(pending))
+		g.writeBatches++
+		for idx, result := range results {
+			stat := g.stat(pending[idx].Edge.Relation)
+			if result.Existing {
+				stat.Existing++
+				continue
+			}
+			stat.Written++
+			g.written++
+		}
+		if err == nil {
+			return
+		}
+		failed := len(results)
+		if failed >= len(pending) {
+			g.errorsList = append(g.errorsList, err.Error())
+			return
+		}
+		g.errorsList = append(g.errorsList, pending[failed].Edge.EdgeID+": "+err.Error())
+		pending = pending[failed+1:]
 	}
-	stat.Written += 1
-	g.written += 1
+}
+
+func candidateEdges(candidates []memoryEdgeBackfillCandidate) []memoryEdgeEntry {
+	edges := make([]memoryEdgeEntry, len(candidates))
+	for idx := range candidates {
+		edges[idx] = candidates[idx].Edge
+	}
+	return edges
 }
 
 func (g *memoryEdgeBackfillGenerator) recordQualityAudit(candidate memoryEdgeBackfillCandidate, quality map[string]any) {
@@ -698,31 +1067,137 @@ func (g *memoryEdgeBackfillGenerator) generateTopicEdges(ctx context.Context) {
 
 func (g *memoryEdgeBackfillGenerator) generateReferenceEdges(ctx context.Context) {
 	if len(g.knownIDs) == 0 {
+		g.referenceComplete = true
 		return
 	}
-	for _, source := range g.docs {
-		targetIDs := referencedMemoryIDs(source.Project, source.Summary, g.knownIDs)
+	referenceDocs := append([]memoryEdgeBackfillDoc(nil), g.docs...)
+	sort.Slice(referenceDocs, func(i, j int) bool {
+		return strings.ToLower(referenceDocs[i].MemoryID) < strings.ToLower(referenceDocs[j].MemoryID)
+	})
+	start := 0
+	if key := strings.TrimSpace(strings.ToLower(g.referenceStartKey)); key != "" {
+		g.referenceCursorDocKey = key
+		g.referenceCursorEdgeID = strings.TrimSpace(g.referenceStartEdgeID)
+		matches := 0
+		for index, doc := range referenceDocs {
+			if strings.ToLower(doc.MemoryID) == key {
+				start = index
+				if g.referenceCursorEdgeID == "" {
+					start++
+				}
+				matches++
+			}
+		}
+		if matches != 1 {
+			g.ctxErr = errors.New("reference continuation last document key does not match the exact snapshot")
+			return
+		}
+	}
+	for index, source := range referenceDocs {
+		if index < start {
+			continue
+		}
+		if len(source.References) == 0 && g.request.ReferenceContent && strings.TrimSpace(source.ContentRef) != "" &&
+			(g.referenceBlobs >= g.request.ReferenceMaxBlobs || g.referenceBytes >= g.request.ReferenceTotalBytes) {
+			return
+		}
+		if len(source.References) > 0 {
+			for _, claim := range source.References {
+				g.addReferenceClaim(ctx, source, claim, "structured_write")
+				g.referenceStructured++
+				if g.ctxErr != nil || g.truncated {
+					return
+				}
+			}
+		}
+		text := source.Summary
+		claimKind := "textual_summary"
+		if len(source.References) == 0 && g.request.ReferenceContent && strings.TrimSpace(source.ContentRef) != "" {
+			blobLimit := minInt64(g.request.ReferenceBlobBytes, g.request.ReferenceTotalBytes-g.referenceBytes)
+			content, used, err := g.store.readReferenceContentBlob(ctx, source.ContentRef, blobLimit)
+			if err == nil {
+				text = content
+				claimKind = "textual_content_blob"
+				g.referenceBytes += int64(used)
+				g.referenceBlobs++
+			} else {
+				g.referenceRejected++
+			}
+		}
+		targetIDs := referencedMemoryIDs(source.Project, text, g.knownIDs)
 		sort.Strings(targetIDs)
 		for _, targetID := range targetIDs {
-			if strings.EqualFold(source.MemoryID, targetID) {
-				continue
-			}
-			candidate, err := memoryEdgeBackfillCandidateEdge(
-				source.MemoryID,
-				targetID,
-				"references",
-				0.99,
-				source.TopicPath,
-				"explicit_reference",
-				"summary_memory_id_match",
-			)
-			if err == nil {
-				g.add(ctx, candidate)
+			g.addReferenceClaim(ctx, source, memoryStructuredReference{TargetID: targetID, Relation: "references", Confidence: 0.99}, claimKind)
+			g.referenceTextual++
+			if claimKind == "textual_content_blob" {
+				g.referenceContent++
 			}
 			if g.ctxErr != nil || g.truncated {
 				return
 			}
 		}
+		sourceKey := strings.ToLower(source.MemoryID)
+		if g.referenceStartEdgeID != "" && sourceKey == strings.ToLower(g.referenceStartKey) && !g.referenceResumeMatched {
+			g.ctxErr = errors.New("reference continuation edge key does not match the exact source document")
+			return
+		}
+		g.referenceLastCompletedKey = sourceKey
+		g.referenceCursorDocKey = sourceKey
+		g.referenceCursorEdgeID = ""
+	}
+	g.referenceComplete = true
+}
+
+func (g *memoryEdgeBackfillGenerator) addReferenceClaim(ctx context.Context, source memoryEdgeBackfillDoc, claim memoryStructuredReference, claimKind string) {
+	if g.ctxErr != nil || g.truncated {
+		return
+	}
+	canonicalClaims, err := canonicalizeMemoryStructuredReferences([]memoryStructuredReference{claim})
+	if err != nil || len(canonicalClaims) != 1 {
+		g.referenceRejected++
+		return
+	}
+	claim = canonicalClaims[0]
+	if strings.EqualFold(source.MemoryID, claim.TargetID) {
+		g.referenceRejected++
+		return
+	}
+	sourceEntry, sourceGeneration, err := g.snapshot.entry(source.MemoryID)
+	if err != nil {
+		g.referenceRejected++
+		return
+	}
+	targetEntry, targetGeneration, err := g.snapshot.entry(claim.TargetID)
+	if err != nil {
+		g.referenceRejected++
+		return
+	}
+	candidateEdge, err := g.store.buildMemoryReferenceEdge(sourceEntry, targetEntry, sourceGeneration, targetGeneration, g.snapshot.DocSetDigest, g.snapshot.ExclusionDigest, claim, claimKind)
+	if err != nil {
+		g.referenceRejected++
+		return
+	}
+	candidateEdge.Metadata["backfill"] = true
+	candidateEdge.Metadata["claim_kind"] = claimKind
+	candidateEdge.Provenance["reason"] = map[string]string{
+		"structured_write":     "persisted_typed_claim",
+		"textual_summary":      "exact_project_file_token_in_current_summary",
+		"textual_content_blob": "exact_project_file_token_in_bounded_current_content_blob",
+	}[claimKind]
+	sourceKey := strings.ToLower(source.MemoryID)
+	if g.referenceStartEdgeID != "" && sourceKey == strings.ToLower(g.referenceStartKey) && !g.referenceResumeMatched {
+		if g.seen == nil {
+			g.seen = map[string]struct{}{}
+		}
+		g.seen[candidateEdge.EdgeID] = struct{}{}
+		if candidateEdge.EdgeID == g.referenceStartEdgeID {
+			g.referenceResumeMatched = true
+		}
+		return
+	}
+	if g.add(ctx, memoryEdgeBackfillCandidate{Edge: candidateEdge, Strategy: "explicit_reference", Reason: anyToString(candidateEdge.Provenance["reason"])}) {
+		g.referenceCursorDocKey = sourceKey
+		g.referenceCursorEdgeID = candidateEdge.EdgeID
 	}
 }
 
@@ -847,6 +1322,8 @@ func (g *memoryEdgeBackfillGenerator) generateInferredRelatedEdges(ctx context.C
 			candidate.Edge.Provenance["min_score"] = g.request.InferredMinScore
 			candidate.Edge.Metadata["inferred"] = true
 			candidate.Edge.Metadata["shared_terms"] = item.shared
+			candidate.Edge.Metadata["min_shared_terms"] = g.request.InferredMinShared
+			candidate.Edge.Metadata["min_score"] = g.request.InferredMinScore
 			candidate.Edge.Metadata["scoring_version"] = memoryEdgeInferredScoringVersion
 			g.add(ctx, candidate)
 			addedForSource += 1
@@ -981,15 +1458,12 @@ func referencedMemoryIDs(sourceProject string, text string, knownIDs map[string]
 			continue
 		}
 		candidates := []string{}
+		// A textual reference is accepted only when it carries its project
+		// namespace. Bare paths are intentionally not resolved relative to the
+		// source: the same path can exist in several projects and would turn an
+		// ambiguous token into a false graph edge.
 		if strings.Contains(token, "::") {
 			candidates = append(candidates, token)
-		}
-		if strings.Contains(token, "/") {
-			candidates = append(candidates, sourceProject+"::"+token)
-			parts := strings.SplitN(token, "/", 2)
-			if len(parts) == 2 {
-				candidates = append(candidates, parts[0]+"::"+parts[1])
-			}
 		}
 		for _, candidate := range candidates {
 			_, _, canonical, _, err := canonicalMemoryID(candidate)
@@ -1031,6 +1505,10 @@ func (g *memoryEdgeBackfillGenerator) generateHistorySequenceEdges(
 		if g.request.Project != "" && !strings.EqualFold(entry.Project, g.request.Project) {
 			continue
 		}
+		lifecycle := normalizeMemoryLifecycle(entry.Lifecycle)
+		if !shouldSurfaceMemoryLifecycle(lifecycle, g.request.IncludeEphemeral) {
+			continue
+		}
 		project, fileName, memoryID, _, err := canonicalMemoryID(entry.Project + "::" + entry.FileName)
 		if err != nil {
 			continue
@@ -1040,6 +1518,12 @@ func (g *memoryEdgeBackfillGenerator) generateHistorySequenceEdges(
 			g.skippedLowValueHistory += 1
 			continue
 		}
+		current, _, currentErr := g.snapshot.entry(memoryID)
+		if currentErr != nil || current.EventID != entry.EventID || !strings.EqualFold(strings.TrimPrefix(current.ContentHash, "sha256:"), strings.TrimPrefix(entry.ContentHash, "sha256:")) {
+			continue
+		}
+		entry = current
+		topicPath = sanitizeTopicPath(entry.TopicPath, fileName)
 		groupToken := ""
 		switch relation {
 		case "same_session":
@@ -1143,6 +1627,10 @@ func (s *server) memoryV1EdgesBackfill(w http.ResponseWriter, r *http.Request) {
 	}
 	report, err := s.memoryStore.deterministicMemoryEdgeBackfill(r.Context(), req)
 	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "reference continuation") || strings.Contains(strings.ToLower(err.Error()), "reference cursor") {
+			writeJSON(w, http.StatusConflict, map[string]any{"ok": false, "error": "reference continuation rejected", "detail": err.Error()})
+			return
+		}
 		writeJSON(w, http.StatusBadGateway, map[string]any{"ok": false, "error": "memory edge backfill failed", "detail": err.Error()})
 		return
 	}

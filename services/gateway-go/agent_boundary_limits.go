@@ -846,6 +846,9 @@ func nonnegativePreflightStatusInteger(value any) (int64, bool) {
 		if !math.IsNaN(typed) && !math.IsInf(typed, 0) && typed >= 0 && typed <= maxExactJSONInteger && typed == math.Trunc(typed) {
 			return int64(typed), true
 		}
+	case json.Number:
+		parsed, ok := strictAgentContractInteger(typed)
+		return parsed, ok && parsed >= 0
 	}
 	return 0, false
 }

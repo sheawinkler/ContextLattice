@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"net/http"
 )
 
@@ -52,6 +53,32 @@ var optionalFrontierT1ProjectBoundary = func(*server, http.ResponseWriter, *http
 
 var optionalFrontierT1ProjectBoundaryLock = func(*server) func() {
 	return func() {}
+}
+
+// Optional task-delivery authority hooks keep paid workspace governance and
+// signed runtime-license identity out of the public core. Public builds fail
+// closed unless an entitled extension installs these resolvers; service-key
+// operations remain independently authenticated by the Gateway.
+var optionalAgentTaskProjectWorkspace = func(_ *server, _ string) (string, error) {
+	return "", errors.New("workspace project binding governance is unavailable")
+}
+
+var optionalAgentTaskSignedRouteAuthorization = func(_ *server, _ *http.Request) (agentTaskRouteAuth, bool, error) {
+	return agentTaskRouteAuth{}, false, nil
+}
+
+var optionalMemoryGraphRepairApplyAuthorization = func(_ *server, w http.ResponseWriter, _ *http.Request, _ *memoryGraphRepairRequest) (string, bool) {
+	writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+		"ok": false, "error": "signed runtime-license entitlement enforcement is required for graph repair apply",
+	})
+	return "", false
+}
+
+var optionalRetrievalPromotionGovernanceAuthorization = func(_ *server, w http.ResponseWriter, _ *http.Request, _ map[string]any, _, _ string) (string, map[string]any, bool) {
+	writeJSON(w, http.StatusNotFound, map[string]any{
+		"ok": false, "error": "premium_retrieval_promotion_governance_unavailable",
+	})
+	return "", nil, false
 }
 
 // Public builds retain outcome and impact intelligence but cannot apply paid

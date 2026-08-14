@@ -144,7 +144,14 @@ type contextPackCompilationHook func(
 ) contextPackCompilationArtifacts
 
 type contextPackResponseBuildOptions struct {
-	compilationHook contextPackCompilationHook
+	compilationHook            contextPackCompilationHook
+	useProvidedSearchResponse  bool
+	providedSearchResponse     map[string]any
+	providedSearchStatus       int
+	suppressSideEffects        bool
+	graphDisabled              bool
+	disableActiveContextPolicy bool
+	disableLearnedActivation   bool
 }
 
 const contextPackTransportLegacyEvidenceLimit = 1
@@ -192,6 +199,14 @@ func projectContextPackForTransport(contextPack map[string]any) map[string]any {
 	out := cloneJSONMap(contextPack)
 	if len(out) == 0 {
 		return out
+	}
+	delete(out, "_recall_response_source_rows")
+	delete(out, "_recall_response_source_snapshot")
+	delete(out, recallResponseGraphRowsKey)
+	delete(out, recallResponseSourceInputKey)
+	delete(out, recallResponseTemporalPartitionKey)
+	for _, raw := range contextPackAnyList(out["results"]) {
+		delete(anyMap(raw), "_gateway_source_observed")
 	}
 
 	preProjectionCounts := map[string]any{}
@@ -346,9 +361,11 @@ func buildContextPackCompilationArtifacts(input contextPackCompilationInput) con
 		TaskIdentityID:  strings.TrimSpace(firstNonEmptyStrings(anyToString(input.RequestPayload["task_identity_id"]), anyToString(input.RequestPayload["taskIdentityId"]))),
 		ExecutionLaneID: strings.TrimSpace(firstNonEmptyStrings(anyToString(input.RequestPayload["execution_lane_id"]), anyToString(input.RequestPayload["executionLaneId"]))),
 		AgentID:         input.AgentID, TokenImpact: tokenImpact, Compiled: compiled, SourceCoverage: input.SourceCoverage,
-		GraphQuality: input.GraphQuality, RankedEvidence: compiled["ranked_evidence"],
+		SearchResponse: input.SearchResponse,
+		GraphQuality:   input.GraphQuality, RankedEvidence: compiled["ranked_evidence"],
 		SelectionReceiptRankedRefs: compiled["selection_receipt_ranked_refs"],
 		OmittedHighValueRefs:       compiled["omitted_high_value_refs"], OmittedSelectionRefs: compiled["selection_receipt_omitted_refs"],
+		Promotion:         compiled["retrieval_promotion"],
 		LearnedActivation: learnedActivation, Warnings: input.Warnings,
 	})
 	proofIdentity := map[string]any{
@@ -384,10 +401,50 @@ func contextPackResponseRetrievalProofs(
 	decisionTrace map[string]any,
 	includeRetrievalDebug bool,
 ) (map[string]any, map[string]any) {
-	if includeRetrievalDebug {
-		return trustAssessment, decisionTrace
+	canonicalAssessment := canonicalContextPackRetrievalProof(
+		trustAssessment, memoryTrustAssessmentContractID, "assessments", "$.memory_trust_assessment", false,
+	)
+	canonicalTrace := canonicalContextPackRetrievalProof(
+		decisionTrace, retrievalDecisionTraceContractID, "decisions", "$.retrieval_decision_trace", false,
+	)
+	if len(canonicalAssessment) == 0 || len(canonicalTrace) == 0 ||
+		!contextPackRetrievalProofPairValid(canonicalAssessment, canonicalTrace) {
+		reason := "retrieval proof pair failed reconciliation before the outer boundary"
+		return contextPackUnavailableRetrievalProof(memoryTrustAssessmentContractID, reason),
+			contextPackUnavailableRetrievalProof(retrievalDecisionTraceContractID, reason)
 	}
-	return memoryTrustAssessmentReference(trustAssessment), retrievalDecisionTraceReference(decisionTrace)
+	if includeRetrievalDebug {
+		assessment := contextPackUnavailableRetrievalProof(
+			memoryTrustAssessmentContractID, "trust assessment failed validation before debug projection",
+		)
+		if len(canonicalAssessment) > 0 {
+			assessment = contextPackRetrievalProofForOuterBoundary(canonicalAssessment, memoryTrustAssessmentContractID)
+		}
+		trace := contextPackUnavailableRetrievalProof(
+			retrievalDecisionTraceContractID, "retrieval decision trace failed validation before debug projection",
+		)
+		if len(canonicalTrace) > 0 {
+			trace = contextPackRetrievalProofForOuterBoundary(canonicalTrace, retrievalDecisionTraceContractID)
+		}
+		return assessment, trace
+	}
+	assessment := contextPackUnavailableRetrievalProof(
+		memoryTrustAssessmentContractID, "trust assessment failed validation before summary projection",
+	)
+	if len(canonicalAssessment) > 0 {
+		assessment = memoryTrustAssessmentReference(canonicalAssessment)
+	}
+	trace := contextPackUnavailableRetrievalProof(
+		retrievalDecisionTraceContractID, "retrieval decision trace failed validation before summary projection",
+	)
+	if len(canonicalTrace) > 0 {
+		if _, traceIDOK := contextPackPublicTraceID(canonicalTrace["trace_id"]); traceIDOK {
+			trace = retrievalDecisionTraceReference(canonicalTrace)
+		} else {
+			trace = contextPackRetrievalProofForOuterBoundary(canonicalTrace, retrievalDecisionTraceContractID)
+		}
+	}
+	return assessment, trace
 }
 
 func (s *server) persistContextPackCompilationOrFallback(
@@ -560,9 +617,22 @@ func (s *server) buildContextPackResponseForSurfaceWithOptions(
 	if defaultedBlockingSources {
 		retrievalCtx = withContextPackDefaultBlockingSources(retrievalCtx)
 	}
-	searchResponse, status, execErr := s.executeRetrieval(retrievalCtx, incomingHeaders, searchRequest, true)
-	if execErr != nil {
-		return nil, 0, execErr
+	searchResponse := map[string]any(nil)
+	status := options.providedSearchStatus
+	if options.useProvidedSearchResponse {
+		searchResponse = cloneJSONMap(options.providedSearchResponse)
+		if status == 0 {
+			status = http.StatusOK
+		}
+	} else {
+		var execErr error
+		searchResponse, status, execErr = s.executeRetrieval(retrievalCtx, incomingHeaders, searchRequest, true)
+		if execErr != nil {
+			return nil, 0, execErr
+		}
+	}
+	if len(searchResponse) == 0 {
+		return map[string]any{"error": "retrieval response is required"}, http.StatusBadGateway, nil
 	}
 	retrievalMode := normalizeRetrievalMode(anyToString(searchRequest["retrieval_mode"]))
 	retrievalIntent := strings.TrimSpace(strings.ToLower(anyToString(searchRequest["retrieval_intent"])))
@@ -590,16 +660,28 @@ func (s *server) buildContextPackResponseForSurfaceWithOptions(
 	stripContextPackCompilerEvidence(searchResponse)
 	contextPack["project"] = strings.TrimSpace(anyToString(searchRequest["project"]))
 	contextPack["topic_path"] = strings.TrimSpace(anyToString(searchRequest["topic_path"]))
-	graphQuality := s.enrichContextPackWithGraph(ctx, contextPack, requestPayload)
+	graphQuality := map[string]any{}
+	if options.graphDisabled {
+		graphQuality = contextPackGraphDisabledQuality("evaluation_graph_disabled_control")
+		contextPack["graph_neighbors"] = []any{}
+		contextPack["graphNeighbors"] = []any{}
+		contextPack["graph_context"] = graphQuality
+		contextPack["graphContext"] = graphQuality
+	} else {
+		graphQuality = s.enrichContextPackWithGraph(ctx, contextPack, requestPayload)
+	}
 	sourceCoverage := contextPackSourceCoverage(searchResponse)
 	sourceCoverage = contextPackSourceCoverageWithGraph(sourceCoverage, graphQuality)
 	contextPack["sourceCoverage"] = sourceCoverage
 	contextPack["combinedSources"] = combinedSources
 	project := strings.TrimSpace(anyToString(requestPayload["project"]))
 	taskClass := strings.TrimSpace(strings.ToLower(anyToString(requestPayload["task_class"])))
-	learnedDecision := s.contextPackLearnedActivationDecision(
-		ctx, requestPayload, project, taskClass, retrievalIntent, trafficClass, len(activeContextPolicy) > 0,
-	)
+	learnedDecision := contextPackLearnedActivationDecision{}
+	if !options.disableLearnedActivation {
+		learnedDecision = s.contextPackLearnedActivationDecision(
+			ctx, requestPayload, project, taskClass, retrievalIntent, trafficClass, len(activeContextPolicy) > 0,
+		)
+	}
 	agentID := strings.TrimSpace(firstNonEmptyStrings(
 		anyToString(searchResponse["agent_id"]),
 		anyToString(requestPayload["agent_id"]),
@@ -627,7 +709,18 @@ func (s *server) buildContextPackResponseForSurfaceWithOptions(
 		ActiveContextPolicy: activeContextPolicy, Learned: learnedDecision,
 	}
 	artifacts := buildContextPackCompilationArtifacts(compilationInput)
-	artifacts = s.persistContextPackCompilationOrFallbackWithHook(compilationInput, artifacts, options.compilationHook)
+	compilationHook := options.compilationHook
+	if options.suppressSideEffects {
+		upstreamHook := compilationHook
+		compilationHook = func(input contextPackCompilationInput, artifacts contextPackCompilationArtifacts, durable bool) contextPackCompilationArtifacts {
+			if upstreamHook != nil {
+				artifacts = upstreamHook(input, artifacts, durable)
+			}
+			artifacts.SideEffectsSuppressed = true
+			return artifacts
+		}
+	}
+	artifacts = s.persistContextPackCompilationOrFallbackWithHook(compilationInput, artifacts, compilationHook)
 	contextPack = artifacts.ContextPack
 	compiled := artifacts.Compiled
 	learnedDecision = artifacts.Learned
@@ -795,6 +888,20 @@ func contextPackGraphNeighborPerSeed() int {
 	return clampInt(envInt("GO_CONTEXT_PACK_GRAPH_NEIGHBOR_PER_SEED", 2), 1, 6)
 }
 
+func contextPackGraphDisabledQuality(reason string) map[string]any {
+	return map[string]any{
+		"status": "disabled",
+		"score":  0,
+		"used":   false,
+		"signals": map[string]any{
+			"seed_count": 0, "candidate_count": 0, "added_evidence_count": 0,
+			"relations": map[string]any{},
+		},
+		"skipped_reason": firstNonEmptyStrings(strings.TrimSpace(reason), "graph_disabled"),
+		"recommendation": "Graph enrichment was intentionally disabled for the paired control.",
+	}
+}
+
 func (s *server) enrichContextPackWithGraph(
 	ctx context.Context,
 	contextPack map[string]any,
@@ -819,6 +926,7 @@ func (s *server) enrichContextPackWithGraph(
 		quality["recommendation"] = "Graph-neighbor context enrichment is disabled by configuration."
 		contextPack["graph_context"] = quality
 		contextPack["graphContext"] = quality
+		recallResponseRefreshSourceCarrier(contextPack, quality)
 		return quality
 	}
 	backend := s.memoryGraphBackend()
@@ -828,6 +936,7 @@ func (s *server) enrichContextPackWithGraph(
 		quality["recommendation"] = "Enable the Go memory store to sample graph neighbors for context packs."
 		contextPack["graph_context"] = quality
 		contextPack["graphContext"] = quality
+		recallResponseRefreshSourceCarrier(contextPack, quality)
 		return quality
 	}
 	seedLimit := contextPackGraphSeedMax()
@@ -838,10 +947,14 @@ func (s *server) enrichContextPackWithGraph(
 		quality["recommendation"] = "Raise graph context caps if first-hop memory-edge evidence should be sampled."
 		contextPack["graph_context"] = quality
 		contextPack["graphContext"] = quality
+		recallResponseRefreshSourceCarrier(contextPack, quality)
 		return quality
 	}
 
-	results := contextPackAnyList(contextPack["results"])
+	results := contextPackAnyList(contextPack["_recall_response_source_rows"])
+	if len(results) == 0 {
+		results = contextPackAnyList(contextPack["results"])
+	}
 	topicFilter := strings.Trim(strings.TrimSpace(anyToString(requestPayload["topic_path"])), "/")
 	includeEphemeral := requestIncludesEphemeralMemory(requestPayload)
 	perSeed := contextPackGraphNeighborPerSeed()
@@ -927,6 +1040,7 @@ func (s *server) enrichContextPackWithGraph(
 		contextPack["graphNeighbors"] = []any{}
 		contextPack["graph_context"] = quality
 		contextPack["graphContext"] = quality
+		recallResponseRefreshSourceCarrier(contextPack, quality)
 		return quality
 	}
 
@@ -941,6 +1055,7 @@ func (s *server) enrichContextPackWithGraph(
 	quality["recommendation"] = "Use high-confidence first-hop memory edges as supporting context, then inspect cited files before making code claims."
 	contextPack["graph_context"] = quality
 	contextPack["graphContext"] = quality
+	recallResponseRefreshSourceCarrier(contextPack, quality)
 	return quality
 }
 
@@ -1079,6 +1194,7 @@ type contextPackEvidenceAllocation struct {
 	CompressionLevel     string
 	TrustAssessment      map[string]any
 	DecisionTrace        map[string]any
+	Promotion            map[string]any
 	LearnedActivation    contextPackLearnedActivationDecision
 	// Internal evaluator fields preserve the exact candidate and allocation
 	// boundaries without exposing raw evidence through the public response.
@@ -1101,7 +1217,9 @@ type contextPackEvidenceItem struct {
 	Project                 string
 	File                    string
 	Source                  string
+	SourceRef               string
 	SourceOwner             string
+	GatewaySourceObserved   bool
 	MemoryID                string
 	TopicPath               string
 	RetrievalScope          string
@@ -1254,6 +1372,7 @@ func compileContextPackForAgentWithLearning(
 		"reference_prompt":               contextPackReferencePrompt(promptSections),
 		"memory_trust_assessment":        allocation.TrustAssessment,
 		"retrieval_decision_trace":       allocation.DecisionTrace,
+		"retrieval_promotion":            allocation.Promotion,
 	}
 	if allocation.LearnedActivation.Reason != "" {
 		result["learned_activation"] = contextPackLearnedActivationReceipt(allocation.LearnedActivation)
@@ -1263,6 +1382,10 @@ func compileContextPackForAgentWithLearning(
 
 func contextPackRankedEvidence(query string, contextPack map[string]any, tokenBudget contextPackTokenBudget) contextPackEvidenceAllocation {
 	return contextPackRankedEvidenceWithLearning(query, contextPack, tokenBudget, contextPackLearnedActivationDecision{})
+}
+
+func contextPackEvidenceCandidateText(text string) string {
+	return clipText(text, 520)
 }
 
 func contextPackRankedEvidenceWithLearning(
@@ -1377,24 +1500,29 @@ func contextPackRankedEvidenceWithLearningAt(
 				score += 2
 			}
 		}
-		clippedText := clipText(text, 520)
+		clippedText := contextPackEvidenceCandidateText(text)
 		displayTruncated := clippedText != text
 		estimatedTokens := contextPackEstimateTokens(clippedText + " " + reason + " " + project + " " + fileName + " " + sourceName + " " + topicPath)
 		diversityKey := firstNonEmptyStrings(fileName, topicPath, sourceName, kind)
+		gatewaySourceObserved := anyToBool(source["_gateway_source_observed"])
 		out = append(out, contextPackEvidenceItem{
-			Occurrence:     len(out) + 1,
-			Kind:           kind,
-			Score:          score,
-			ImpactScore:    score,
-			Reason:         reason,
-			Text:           clippedText,
-			Project:        project,
-			File:           fileName,
-			Source:         sourceName,
-			SourceOwner:    retrievalReceiptPortable(source["source_owner"], 120),
-			MemoryID:       retrievalReceiptPortable(firstPresentAny(source["memory_id"], source["id"]), 360),
-			TopicPath:      topicPath,
-			RetrievalScope: retrievalReceiptPortable(source["retrieval_scope"], 80),
+			Occurrence:            len(out) + 1,
+			CandidateID:           strings.TrimSpace(anyToString(source["candidate_id"])),
+			ContentDigest:         strings.TrimSpace(anyToString(source["content_digest"])),
+			Kind:                  kind,
+			Score:                 score,
+			ImpactScore:           score,
+			Reason:                reason,
+			Text:                  clippedText,
+			Project:               project,
+			File:                  fileName,
+			Source:                sourceName,
+			SourceRef:             retrievalReceiptPortable(source["source_ref"], 240),
+			SourceOwner:           retrievalReceiptPortable(source["source_owner"], 120),
+			GatewaySourceObserved: gatewaySourceObserved,
+			MemoryID:              retrievalReceiptPortable(firstPresentAny(source["memory_id"], source["id"]), 360),
+			TopicPath:             topicPath,
+			RetrievalScope:        retrievalReceiptPortable(source["retrieval_scope"], 80),
 			RetrievalAncestorPrefix: retrievalReceiptPortable(
 				source["retrieval_ancestor_prefix"], 240,
 			),
@@ -1463,10 +1591,17 @@ func contextPackRankedEvidenceWithLearningAt(
 	nativeEligible := trust.Eligible
 	eligible, learned := applyContextPackLearnedRanking(trust.Eligible, learned)
 	selected, omitted, usedTokens, compressionLevel := allocateContextPackEvidence(eligible, tokenBudget)
+	nativeSelected, nativeOmitted, nativeUsedTokens, nativeCompressionLevel := selected, omitted, usedTokens, compressionLevel
 	if learned.Performed {
-		nativeSelected, nativeOmitted, nativeUsedTokens, nativeCompressionLevel := allocateContextPackEvidence(nativeEligible, tokenBudget)
+		nativeSelected, nativeOmitted, nativeUsedTokens, nativeCompressionLevel = allocateContextPackEvidence(nativeEligible, tokenBudget)
 		fallbackReason := ""
-		if !contextPackLearnedProtectedSelectionPreserved(nativeSelected, selected) {
+		lossGuard := retrievalPromotionLossGuard(
+			retrievalPromotionContextItemsProjection(nativeEligible),
+			retrievalPromotionContextItemsProjection(eligible),
+		)
+		if !anyToBool(lossGuard["pass"]) {
+			fallbackReason = "safe_union_loss_guard_failed"
+		} else if !contextPackLearnedProtectedSelectionPreserved(nativeSelected, selected) {
 			fallbackReason = "protected_evidence_invariant_failed"
 		} else if !contextPackLearnedSelectionReceiptCaptureComplete(learned, selected, omitted) {
 			fallbackReason = "candidate_receipt_capture_incomplete"
@@ -1477,6 +1612,11 @@ func contextPackRankedEvidenceWithLearningAt(
 			selected, omitted, usedTokens, compressionLevel = nativeSelected, nativeOmitted, nativeUsedTokens, nativeCompressionLevel
 		}
 	}
+	promotion := retrievalPromotionBuildContextEnvelope(
+		trust, nativeEligible, nativeSelected, nativeOmitted,
+		eligible, selected, omitted, tokenBudget,
+		anyMap(contextPack["retrieval_input_boundary"]), learned,
+	)
 	trust.TrustEnvelope = attachPayloadFormatContract(
 		memoryTrustAssessmentContractID,
 		trust.TrustEnvelope,
@@ -1486,7 +1626,7 @@ func contextPackRankedEvidenceWithLearningAt(
 	)
 	decisionTrace := attachPayloadFormatContract(
 		retrievalDecisionTraceContractID,
-		buildRetrievalDecisionTrace(trust, selected, omitted, tokenBudget),
+		buildRetrievalDecisionTrace(trust, selected, omitted, tokenBudget, promotion),
 		"",
 		"retrieval_decision_trace",
 		"/memory/context-pack",
@@ -1531,6 +1671,12 @@ func contextPackRankedEvidenceWithLearningAt(
 		if item.Source != "" {
 			renderedItem["source"] = item.Source
 		}
+		if item.SourceRef != "" {
+			renderedItem["source_ref"] = item.SourceRef
+		}
+		if strings.HasPrefix(item.ContentDigest, "sha256:") {
+			renderedItem["content_digest"] = item.ContentDigest
+		}
 		if item.EvidenceBasis != "" {
 			renderedItem["evidence_basis"] = item.EvidenceBasis
 		}
@@ -1572,6 +1718,7 @@ func contextPackRankedEvidenceWithLearningAt(
 		CompressionLevel:     compressionLevel,
 		TrustAssessment:      trust.TrustEnvelope,
 		DecisionTrace:        decisionTrace,
+		Promotion:            promotion,
 		LearnedActivation:    learned,
 		EligibleItems:        append([]contextPackEvidenceItem(nil), eligible...),
 		SelectedItems:        append([]contextPackEvidenceItem(nil), selected...),
@@ -2211,6 +2358,24 @@ func buildContextPackPayload(
 	maxResults int,
 ) map[string]any {
 	results := parseRows(searchResponse["results"])
+	sourceInputComplete := true
+	sourceCandidateCount := len(results)
+	sourceMembershipDigest := recallResponseSourceIdentityDigest(rowsToAny(results))
+	if rawSourceInput, present := searchResponse[recallResponseSourceInputKey]; present {
+		if sourceRows, valid := recallResponseSourceInputRows(rawSourceInput); valid {
+			results = sourceRows
+			sourceInput := anyMap(rawSourceInput)
+			sourceCandidateCount = anyToInt(sourceInput["candidate_count"], len(results))
+			sourceMembershipDigest = anyToString(sourceInput["membership_digest"])
+			sourceInputComplete = anyToBool(sourceInput["complete"])
+		} else {
+			// A compiler-only source envelope that fails validation is evidence of
+			// an unproven custody boundary. Keep the ordinary clipped rows, but
+			// carry incompleteness into the response snapshot rather than silently
+			// treating the presentation view as the complete source.
+			sourceInputComplete = false
+		}
+	}
 	grounding, _ := searchResponse["grounding"].(map[string]any)
 	if grounding == nil {
 		grounding = map[string]any{
@@ -2228,7 +2393,6 @@ func buildContextPackPayload(
 		numericFactsAny = []any{}
 	}
 	factInputCount := len(factsAny)
-	resultInputCount := len(results)
 	factsAny = retrievalReceiptSanitizeFacts(factsAny)
 	maxFacts = clampInt(maxFacts, 1, 100)
 	maxResults = clampInt(maxResults, 1, 100)
@@ -2241,10 +2405,12 @@ func buildContextPackPayload(
 
 	citations := contextPackCitations(factsAny, results)
 	resultRows := make([]map[string]any, 0, minInt(len(results), maxResults))
+	// Keep a bounded server-owned carrier for recall response compilation. The
+	// public context-pack result remains limit-clipped, but response policy must
+	// see the complete retrieval attempt before presentation and graph append.
+	allResultRows := make([]map[string]any, 0, minInt(len(results), recallResponseMaxSourceInputCapture))
+	compiledProofClaims := []any{}
 	for idx, row := range results {
-		if idx >= maxResults {
-			break
-		}
 		rendered := map[string]any{
 			"project":    row["project"],
 			"file":       row["file"],
@@ -2256,6 +2422,14 @@ func buildContextPackPayload(
 		}
 		// Search rows are data, so discard any self-supplied trust envelope and issue one server-side.
 		assessment := memoryTrustAssessmentForCandidate("memory", anyToString(row["summary"]), row)
+		if _, gatewayObserved := row["gateway_provenance"].(searchIntelligenceGatewayProvenanceEnvelope); gatewayObserved {
+			assessment = memoryTrustAssessmentForServerCandidate(
+				"memory", anyToString(row["summary"]), row,
+				strings.TrimSpace(anyToString(row["candidate_id"])),
+				strings.TrimSpace(anyToString(row["content_digest"])),
+			)
+			rendered["_gateway_source_observed"] = true
+		}
 		if len(assessment) > 0 {
 			rendered["memory_trust_assessment"] = retrievalReceiptAssessmentProjection(assessment)
 			if anyToBool(anyMap(assessment["quarantine"])["quarantined"]) {
@@ -2279,14 +2453,65 @@ func buildContextPackPayload(
 		if topicRollup, ok := row["topic_rollup"].(map[string]any); ok {
 			rendered["topic_rollup"] = contextPackTopicRollup(topicRollup)
 		}
+		// These are server-derived source identity and temporal-policy fields.
+		// Preserve them through the context-pack compilation boundary so the
+		// recall response can apply the same as_of/hard-exclusion policy to every
+		// source row, including rows that are not presentation-visible. Caller
+		// request fields never populate this map; it is built from retrieval rows.
+		for _, key := range []string{
+			"candidate_id", "ref_id", "memory_id", "record_ref", "claim_id", "conflict_id", "kind",
+			"status", "proof_status", "support", "relation", "source_ref", "content_digest", "observed_at", "occurred_at",
+			"as_of", "valid_at", "valid_from", "valid_to", "status_transitions", "state", "authorized",
+			"owner_authorized", "source_authorized", "eligible", "policy_eligible", "retrieval_eligible",
+			"forgetting_eligible", "lifecycle_status", "revocation_status", "quarantine_status", "trust_class",
+			"safety_class", "sensitivity", "freshness", "required_for_action", "required_for_proof",
+			"is_test", "test", "test_memory", "synthetic", "fixture", "forgotten", "retired", "memory_type",
+			"record_type", "memory_class", "classification", "data_class", "forgetting_status",
+			"opposition", "conflicts", "missing_proof", "action", "action_boundary",
+		} {
+			if value, present := row[key]; present {
+				rendered[key] = cloneJSONValue(value)
+			}
+		}
 		// Structured action metadata is server-derived evidence, not caller
 		// instructions. Project it through the closed opaque-reference bridge
 		// before the row crosses into context-pack compilation.
 		if recallMetadata := recallResponseProjectEvidenceMetadata(row); len(recallMetadata) > 0 {
 			rendered["recall_metadata"] = recallMetadata
 		}
-		resultRows = append(resultRows, rendered)
+		for _, rawClaim := range contextPackAnyList(row["proof_claims"]) {
+			compiledProofClaims = append(compiledProofClaims, cloneJSONValue(rawClaim))
+		}
+		if len(allResultRows) < recallResponseMaxSourceInputCapture {
+			allResultRows = append(allResultRows, rendered)
+		}
+		if idx < maxResults {
+			resultRows = append(resultRows, rendered)
+		}
 	}
+	sourceInputRows := make([]any, 0, len(results))
+	for _, row := range results {
+		sourceInputRows = append(sourceInputRows, row)
+	}
+	sourceCapturedRows := make([]any, 0, len(allResultRows))
+	for _, row := range allResultRows {
+		sourceCapturedRows = append(sourceCapturedRows, row)
+	}
+	sourceSnapshot := recallResponseBuildSourceSnapshot(
+		sourceInputRows,
+		sourceCapturedRows,
+		[]any{},
+		sourceInputComplete && sourceCandidateCount == len(sourceCapturedRows),
+		nil,
+	)
+	sourceSnapshot["source_candidate_count"] = sourceCandidateCount
+	sourceSnapshot["source_captured_count"] = len(sourceCapturedRows)
+	sourceSnapshot["source_omitted_count"] = maxInt(sourceCandidateCount-len(sourceCapturedRows), 0)
+	sourceSnapshot["source_membership_digest"] = sourceMembershipDigest
+	sourceSnapshot["source_complete"] = sourceInputComplete && sourceCandidateCount == len(sourceCapturedRows)
+	sourceSnapshot["complete"] = anyToBool(sourceSnapshot["source_complete"]) && anyToBool(sourceSnapshot["graph_complete"])
+	sourceSnapshot["coverage_digest"] = recallResponseSourceSnapshotDigest(sourceSnapshot)
+	resultInputCount := sourceCandidateCount
 	evidencePoints := contextPackResultEvidencePoints(query, results, resultRows, 6)
 	sections := contextPackAgentSections(factsAny, resultRows, evidencePoints)
 	generatedAt := nowUTCISO()
@@ -2304,7 +2529,14 @@ func buildContextPackPayload(
 		"numeric_facts":       numericFactsAny,
 		"citations":           citations,
 		"results":             resultRows,
-		"evidence_points":     evidencePoints,
+		// The compiler may present fewer ranked rows to the wire than the
+		// retrieval attempt actually observed. This server-owned carrier keeps
+		// complete source identity/status available to bounded response policy;
+		// it is removed from public context-pack transport below.
+		"_recall_response_source_rows":     cloneJSONValue(allResultRows),
+		"_recall_response_source_snapshot": sourceSnapshot,
+		"proof_claims":                     compiledProofClaims,
+		"evidence_points":                  evidencePoints,
 		"retrieval_input_boundary": map[string]any{
 			"source_candidate_count": factInputCount + resultInputCount,
 			"source_retained_count":  len(factsAny) + len(resultRows),
@@ -2632,6 +2864,7 @@ func stripContextPackCompilerEvidence(searchResponse map[string]any) {
 		delete(row, "_compiler_evidence_basis")
 		delete(row, "_compiler_evidence_content_hash")
 	}
+	delete(searchResponse, recallResponseSourceInputKey)
 }
 
 func contextPackEvidenceSegments(text string, limit int) []string {

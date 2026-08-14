@@ -1,0 +1,209 @@
+#!/usr/bin/env python3
+"""Verify an immutable installer/SBOM binding receipt for draft recovery."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+from typing import Any, Mapping
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from release_artifact_manifest import (  # noqa: E402
+    INTEGRITY_RECEIPT_SCHEMA_ID,
+    ReleaseMetadataError,
+    _canonical_json,
+    _portable_asset_name,
+    _read_json,
+    _write_immutable,
+    _walk_metadata,
+    build_integrity_receipt,
+    sha256_file,
+)
+
+
+def _reject_machine_path_keys(value: Any, location: str = "metadata") -> None:
+    if isinstance(value, Mapping):
+        for key, child in value.items():
+            if str(key).lower() in {"path", "absolute_path", "output_dir", "root_dir", "workspace"}:
+                raise ReleaseMetadataError(f"SBOM contains a machine-path field: {location}.{key}")
+            _reject_machine_path_keys(child, f"{location}.{key}")
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            _reject_machine_path_keys(child, f"{location}[{index}]")
+
+
+def _regular_file(path: Path, label: str) -> None:
+    if path.is_symlink() or not path.is_file() or path.stat().st_size <= 0:
+        raise ReleaseMetadataError(f"{label} is missing, empty, or not a regular file: {path.name}")
+
+
+def _validate_sbom(
+    sbom_path: Path,
+    *,
+    artifact_name: str,
+    artifact_sha256: str,
+    public_safe: bool,
+) -> dict[str, object]:
+    sbom = _read_json(sbom_path)
+    _walk_metadata(sbom, public_safe=public_safe)
+    _reject_machine_path_keys(sbom)
+    version = sbom.get("spdxVersion")
+    if not isinstance(version, str) or not version.startswith("SPDX-"):
+        raise ReleaseMetadataError(f"SBOM SPDX version is invalid: {sbom_path.name}")
+    packages = sbom.get("packages")
+    if not isinstance(packages, list) or not all(isinstance(package, Mapping) for package in packages):
+        raise ReleaseMetadataError(f"SBOM package set is invalid: {sbom_path.name}")
+    creation_info = sbom.get("creationInfo")
+    creators = creation_info.get("creators") if isinstance(creation_info, Mapping) else None
+    if not isinstance(creators, list) or not any(
+        isinstance(creator, str) and creator.lower().startswith("tool: syft") for creator in creators
+    ):
+        raise ReleaseMetadataError(f"SBOM is not identified as Syft output: {sbom_path.name}")
+    file_entries = sbom.get("files")
+    if not isinstance(file_entries, list):
+        raise ReleaseMetadataError(f"SBOM file set is invalid: {sbom_path.name}")
+    file_binding = False
+    for file_entry in file_entries:
+        if not isinstance(file_entry, Mapping) or Path(str(file_entry.get("fileName", ""))).name != artifact_name:
+            continue
+        checksums = file_entry.get("checksums")
+        if isinstance(checksums, list) and any(
+            isinstance(checksum, Mapping)
+            and checksum.get("algorithm") == "SHA256"
+            and checksum.get("checksumValue") == artifact_sha256
+            for checksum in checksums
+        ):
+            file_binding = True
+            break
+    if not file_binding:
+        raise ReleaseMetadataError(f"SBOM does not bind final digest: {sbom_path.name}")
+    return {
+        "name": sbom_path.name,
+        "size_bytes": sbom_path.stat().st_size,
+        "sha256": sha256_file(sbom_path),
+    }
+
+
+def _write_failure_report(args: argparse.Namespace, reason: str) -> None:
+    if not args.failure_report:
+        return
+    report_path = Path(args.failure_report)
+    report = {
+        "schema_id": "contextlattice_release_sbom_repair_required.v1",
+        "lane": args.lane,
+        "tag": args.tag,
+        "release_ref": f"refs/tags/{args.tag}",
+        "commit": args.commit,
+        "artifact": Path(args.artifact).name,
+        "sbom": Path(args.sbom).name,
+        "receipt": Path(args.receipt).name,
+        "reason": reason,
+    }
+    _write_immutable(report_path, _canonical_json(report))
+
+
+def verify(args: argparse.Namespace) -> dict[str, object]:
+    artifact_path = Path(args.artifact)
+    sbom_path = Path(args.sbom)
+    receipt_path = Path(args.receipt)
+    _regular_file(artifact_path, "installer")
+    _regular_file(sbom_path, "SBOM")
+    receipt_present = receipt_path.exists() or receipt_path.is_symlink()
+    if receipt_present:
+        _regular_file(receipt_path, "integrity receipt")
+    elif not args.write_receipt:
+        raise ReleaseMetadataError(f"integrity receipt is missing: {receipt_path.name}")
+    artifact_path = artifact_path.resolve()
+    sbom_path = sbom_path.resolve()
+    receipt_path = receipt_path.resolve()
+
+    artifact_name = _portable_asset_name(artifact_path.name)
+    artifact_binding = {
+        "name": artifact_name,
+        "size_bytes": artifact_path.stat().st_size,
+        "sha256": sha256_file(artifact_path),
+    }
+    sbom_binding = _validate_sbom(
+        sbom_path,
+        artifact_name=artifact_name,
+        artifact_sha256=str(artifact_binding["sha256"]),
+        public_safe=args.lane == "public",
+    )
+
+    if receipt_present:
+        receipt = _read_json(receipt_path)
+        expected_keys = {
+            "schema_id",
+            "lane",
+            "tag",
+            "release_ref",
+            "commit",
+            "artifact",
+            "sbom",
+        }
+        if set(receipt) != expected_keys or receipt.get("schema_id") != INTEGRITY_RECEIPT_SCHEMA_ID:
+            raise ReleaseMetadataError(f"integrity receipt schema or fields are invalid: {receipt_path.name}")
+        expected_ref = f"refs/tags/{args.tag}"
+        if (
+            receipt.get("lane") != args.lane
+            or receipt.get("tag") != args.tag
+            or receipt.get("release_ref") != expected_ref
+            or receipt.get("commit") != args.commit
+        ):
+            raise ReleaseMetadataError(f"integrity receipt identity mismatch: {receipt_path.name}")
+        if receipt.get("artifact") != artifact_binding:
+            raise ReleaseMetadataError(f"integrity receipt installer digest mismatch: {receipt_path.name}")
+        if receipt.get("sbom") != sbom_binding:
+            raise ReleaseMetadataError(f"integrity receipt SBOM digest mismatch: {receipt_path.name}")
+        state = "bound_pair_verified"
+    else:
+        receipt = build_integrity_receipt(
+            lane=args.lane,
+            tag=args.tag,
+            commit=args.commit,
+            artifact=artifact_binding,
+            sbom=sbom_binding,
+        )
+        _walk_metadata(receipt, public_safe=args.lane == "public")
+        _write_immutable(receipt_path, _canonical_json(receipt))
+        state = "sbom_only_recovered"
+
+    return {
+        "ok": True,
+        "state": state,
+        "artifact": artifact_name,
+        "artifact_sha256": artifact_binding["sha256"],
+        "sbom": sbom_binding["name"],
+        "sbom_sha256": sbom_binding["sha256"],
+        "receipt": receipt_path.name,
+    }
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--artifact", required=True)
+    parser.add_argument("--sbom", required=True)
+    parser.add_argument("--receipt", required=True)
+    parser.add_argument("--lane", required=True, choices=["public", "paid"])
+    parser.add_argument("--tag", required=True)
+    parser.add_argument("--commit", required=True)
+    parser.add_argument("--write-receipt", action="store_true")
+    parser.add_argument("--failure-report", default="")
+    args = parser.parse_args()
+    try:
+        print(json.dumps(verify(args), sort_keys=True))
+    except (OSError, ReleaseMetadataError, TypeError, ValueError) as exc:
+        try:
+            _write_failure_report(args, str(exc))
+        except (OSError, ReleaseMetadataError, TypeError, ValueError) as report_exc:
+            print(f"release SBOM binding: repair report failed: {report_exc}", file=sys.stderr)
+        print(f"release SBOM binding: ERROR: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+
+
+if __name__ == "__main__":
+    main()

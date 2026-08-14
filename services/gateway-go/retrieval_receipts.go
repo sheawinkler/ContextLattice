@@ -183,6 +183,23 @@ func memoryTrustAssessmentForCandidate(kind, text string, metadata map[string]an
 	}
 }
 
+// memoryTrustAssessmentForServerCandidate preserves a canonical identity that
+// was attached by the gateway after source-row normalization. Backend JSON
+// cannot satisfy the typed provenance marker, so reporter-controlled rows still
+// use the derived assessment above. A source content digest is an identity
+// fact, not a trust assertion; the trust policy remains computed from the
+// normalized summary and metadata.
+func memoryTrustAssessmentForServerCandidate(kind, text string, metadata map[string]any, candidateID, contentDigest string) map[string]any {
+	assessment := memoryTrustAssessmentForCandidate(kind, text, metadata)
+	if !recallResponseExactOpaqueID(candidateID, "rtc_") || !recallResponseValidDigest(contentDigest) {
+		return assessment
+	}
+	assessment["candidate_id"] = candidateID
+	assessment["content_digest"] = contentDigest
+	assessment["assessment_id"] = "mta_" + sha256Hex(candidateID + "\x00" + contentDigest)[:24]
+	return assessment
+}
+
 func applyMemoryTrustPolicy(items []contextPackEvidenceItem) retrievalTrustResult {
 	inputCandidateCount := len(items)
 	if len(items) > retrievalReceiptMaxCandidates {
@@ -198,7 +215,14 @@ func applyMemoryTrustPolicy(items []contextPackEvidenceItem) retrievalTrustResul
 				"topic_path": items[index].TopicPath, "source_owner": items[index].SourceOwner,
 				"memory_id": items[index].MemoryID,
 			}
-			assessment = memoryTrustAssessmentForCandidate(items[index].Kind, items[index].Text, metadata)
+			if items[index].GatewaySourceObserved {
+				assessment = memoryTrustAssessmentForServerCandidate(
+					items[index].Kind, items[index].Text, metadata,
+					items[index].CandidateID, items[index].ContentDigest,
+				)
+			} else {
+				assessment = memoryTrustAssessmentForCandidate(items[index].Kind, items[index].Text, metadata)
+			}
 		}
 		items[index].CandidateID = anyToString(assessment["candidate_id"])
 		items[index].ContentDigest = anyToString(assessment["content_digest"])
@@ -368,6 +392,7 @@ func buildRetrievalDecisionTrace(
 	selected []contextPackEvidenceItem,
 	omitted []contextPackEvidenceItem,
 	tokenBudget contextPackTokenBudget,
+	promotion ...map[string]any,
 ) map[string]any {
 	decisions := append([]retrievalDecisionRecord{}, trust.PreDecisions...)
 	for _, item := range selected {
@@ -426,7 +451,7 @@ func buildRetrievalDecisionTrace(
 	} else if len(omitted) > 0 {
 		marginalReason = "ranked_candidate_limit_reached"
 	}
-	return map[string]any{
+	trace := map[string]any{
 		"ok": true, "schema_id": retrievalDecisionTraceContractID, "version": 1,
 		"trace_id":        "rdt_" + sha256Hex(retrievalDecisionTraceDigestBasis(rendered, marginalReason))[:24],
 		"candidate_count": trust.CandidateCount, "processed_candidate_count": trust.ProcessedCandidateCount,
@@ -445,6 +470,10 @@ func buildRetrievalDecisionTrace(
 		"redaction": map[string]any{"raw_candidate_text_included": false, "secret_values_included": false},
 		"bounded":   true,
 	}
+	if len(promotion) > 0 && len(promotion[0]) > 0 {
+		trace["promotion"] = cloneJSONMap(promotion[0])
+	}
+	return trace
 }
 
 func retrievalDecisionTraceDigestBasis(decisions []any, marginalReason string) string {

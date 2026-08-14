@@ -46,7 +46,7 @@ func TestRecallResponseCanaryBindingIsClosedAndDigestBound(t *testing.T) {
 	for index, raw := range components {
 		component := anyMap(raw)
 		componentBinding := anyMap(component["binding"])
-		if !recallResponseExactFields(componentBinding, recallResponseCanonicalBindingFields) || len(componentBinding) != 15 {
+		if !recallResponseExactFields(componentBinding, recallResponseCanonicalBindingFields) || len(componentBinding) != len(recallResponseCanonicalBindingFields) {
 			t.Fatalf("component binding is not the exact closed schema: %#v", componentBinding)
 		}
 		if anyToString(componentBinding["arm"]) != recallResponseCanaryArmCandidate ||
@@ -166,7 +166,7 @@ func TestRecallResponseCanaryRejectsForgedCollisionAndInexactBindings(t *testing
 	}
 
 	partial := cloneJSONMap(binding)
-	delete(anyMap(anyMap(contextPackAnyList(partial["response_component_refs"])[0])["binding"]), "intent")
+	delete(anyMap(anyMap(contextPackAnyList(partial["response_component_refs"])[0])["binding"]), "scope_binding_digest")
 	if _, ok := recallResponseBindingFromSample(partial); ok {
 		t.Fatal("partial nested binding was accepted")
 	}

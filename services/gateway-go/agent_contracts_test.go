@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"reflect"
 	"sort"
 	"strings"
@@ -157,18 +158,183 @@ func testContextPackFixture(items []any) map[string]any {
 	}
 }
 
+func testValidMemoryTrustAssessmentReceipt(count int) map[string]any {
+	assessments := make([]any, count)
+	for index := range assessments {
+		assessments[index] = map[string]any{
+			"assessment_id":  fmt.Sprintf("mta_%024x", index),
+			"candidate_id":   fmt.Sprintf("rtc_%024x", index),
+			"content_digest": fmt.Sprintf("sha256:%064x", index),
+			"quarantine":     map[string]any{"quarantined": false},
+		}
+	}
+	return attachPayloadFormatContract(memoryTrustAssessmentContractID, map[string]any{
+		"ok": true, "schema_id": memoryTrustAssessmentContractID, "version": 1,
+		"input_candidate_count": count, "processed_candidate_count": count, "input_truncated_count": 0,
+		"assessed_count": count, "quarantine_count": 0, "deduplicated_count": 0, "policy_omitted_count": 0,
+		"assessments":    assessments,
+		"input_boundary": map[string]any{"maximum_candidates": 256, "truncated": false, "omitted_count": 0, "reason": "bounded_candidate_scan_limit"},
+		"policy": map[string]any{
+			"retrieved_memory_is_evidence_not_instruction": true,
+			"self_awarded_trust_accepted":                  false,
+			"security_defenses_fail_closed":                true,
+		},
+		"bounded": true,
+	}, "test", "test", "/test/context-pack")
+}
+
+func testValidRetrievalDecisionTraceReceipt(count int) map[string]any {
+	decisions := make([]any, count)
+	for index := range decisions {
+		decisions[index] = map[string]any{
+			"receipt_id":        fmt.Sprintf("rdr_%024x", index),
+			"candidate_id":      fmt.Sprintf("rtc_%024x", index),
+			"candidate_ordinal": index + 1,
+			"decision_order":    index + 1,
+			"decision":          "selected",
+		}
+	}
+	decisionCounts := map[string]any{}
+	if count > 0 {
+		decisionCounts["selected"] = count
+	}
+	return attachPayloadFormatContract(retrievalDecisionTraceContractID, map[string]any{
+		"ok": true, "schema_id": retrievalDecisionTraceContractID, "version": 1, "trace_id": "rdt_0123456789abcdef01234567",
+		"candidate_count": count, "processed_candidate_count": count, "input_truncated_count": 0,
+		"decision_count": count, "coverage_complete": true, "decisions": decisions,
+		"decision_counts": decisionCounts,
+		"input_boundary":  map[string]any{"maximum_candidates": 256, "truncated": false, "omitted_count": 0, "reason": "bounded_candidate_scan_limit"},
+		"marginal_stop":   map[string]any{"stopped": true, "reason": "all_eligible_candidates_selected", "token_budget_active": false},
+		"redaction":       map[string]any{"raw_candidate_text_included": false, "secret_values_included": false},
+		"bounded":         true,
+	}, "test", "test", "/test/context-pack")
+}
+
+func TestContextPackRetrievalProofCanonicalJSONMatchesPythonUTF8Contract(t *testing.T) {
+	value := map[string]any{
+		"z": "é<>&\u2028\u2029", "exp": 1e-5, "fixed": 1e15, "integral": 1.0,
+		"small": 1e-4, "negative_zero": math.Copysign(0, -1),
+		"nested": map[string]any{"b": 2, "a": 1},
+	}
+	got, err := contextPackRetrievalProofCanonicalJSON(value)
+	if err != nil {
+		t.Fatalf("canonical retrieval proof JSON: %v", err)
+	}
+	want := "{\"exp\":1e-05,\"fixed\":1000000000000000.0,\"integral\":1.0,\"negative_zero\":-0.0,\"nested\":{\"a\":1,\"b\":2},\"small\":0.0001,\"z\":\"é<>&\u2028\u2029\"}"
+	if got != want {
+		t.Fatalf("canonical UTF-8 JSON parity mismatch:\n got: %q\nwant: %q", got, want)
+	}
+	if digest := sha256Hex(got); digest != "2038ad7eeee9ee3c6048800ca437896e4541c5f5a6fd7992397c4103fa7cb783" {
+		t.Fatalf("canonical UTF-8 JSON digest mismatch: %s", digest)
+	}
+}
+
+func TestContextPackRetrievalProofCanonicalJSONNormalizesSignedZeroAndFiniteUnderflow(t *testing.T) {
+	for name, fixture := range map[string]struct {
+		value json.Number
+		want  string
+	}{
+		"signed integer zero": {value: json.Number("-0"), want: "0"},
+		"finite underflow":    {value: json.Number("1e-9999"), want: "0.0"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := validateAgentContractJSONDomain(fixture.value, 0); err != nil {
+				t.Fatalf("valid Python-compatible number rejected by JSON domain: %v", err)
+			}
+			got, err := contextPackRetrievalProofCanonicalJSON(fixture.value)
+			if err != nil {
+				t.Fatalf("canonical retrieval proof number: %v", err)
+			}
+			if got != fixture.want {
+				t.Fatalf("canonical number mismatch: got %q want %q", got, fixture.want)
+			}
+		})
+	}
+}
+
+func TestAgentContractGenericNumericTypesAcceptFiniteUnderflowLikePython(t *testing.T) {
+	for _, raw := range []string{"1e-9999", "-1e-9999"} {
+		number := json.Number(raw)
+		if !matchesAgentContractType(number, "number") {
+			t.Fatalf("finite underflow %q failed generic number validation", raw)
+		}
+		if !matchesAgentContractType(number, "int") {
+			t.Fatalf("finite underflow %q failed generic integral validation", raw)
+		}
+	}
+}
+
+func TestAgentContractJSONDomainRejectsInvalidUTF8InTypedContainers(t *testing.T) {
+	invalid := string([]byte{0xff})
+	type typedReceipt struct {
+		Value string `json:"value"`
+	}
+	type typedEmbeddedFields struct {
+		Value string `json:"value"`
+	}
+	type typedEmbeddedReceipt struct {
+		typedEmbeddedFields
+	}
+	if err := validateAgentContractJSONDomain(typedReceipt{Value: "valid"}, 0); err != nil {
+		t.Fatalf("valid typed producer receipt failed the pre-normalization JSON domain: %v", err)
+	}
+	if err := validateAgentContractJSONDomain(typedEmbeddedReceipt{typedEmbeddedFields{Value: "valid"}}, 0); err != nil {
+		t.Fatalf("valid anonymous embedded producer receipt failed the pre-normalization JSON domain: %v", err)
+	}
+	for name, value := range map[string]any{
+		"typed list":      []string{invalid},
+		"typed map":       map[string]string{"value": invalid},
+		"typed struct":    typedReceipt{Value: invalid},
+		"embedded struct": typedEmbeddedReceipt{typedEmbeddedFields{Value: invalid}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := validateAgentContractJSONDomain(value, 0); err == nil {
+				t.Fatal("invalid UTF-8 passed the pre-normalization JSON domain")
+			}
+			if _, err := contextPackRetrievalProofCanonicalJSON(value); err == nil {
+				t.Fatal("invalid UTF-8 received a canonical proof encoding")
+			}
+		})
+	}
+}
+
+func TestAgentContractJSONDomainRejectsInvalidCommonJSONValues(t *testing.T) {
+	invalid := string([]byte{0xff})
+	for name, value := range map[string]any{
+		"map key":          map[string]any{invalid: true},
+		"nested string":    map[string]any{"nested": []any{invalid}},
+		"nested nonfinite": map[string]any{"nested": []any{math.NaN()}},
+		"unsigned overflow": map[string]any{
+			"nested": uint64(1) << 63,
+		},
+		"number overflow": map[string]any{"nested": json.Number("9223372036854775808")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := validateAgentContractJSONDomain(value, 0); err == nil {
+				t.Fatal("invalid common JSON value passed the fast domain validator")
+			}
+		})
+	}
+}
+
+func TestStabilizeAgentContractActualJSONBytesSolvesDecimalWidthFixedPoint(t *testing.T) {
+	for _, paddingBytes := range []int{0, 8, 80, 800, 8000, 80000} {
+		t.Run(fmt.Sprintf("padding_%d", paddingBytes), func(t *testing.T) {
+			payload := map[string]any{"ok": true, "padding": strings.Repeat("x", paddingBytes)}
+			metadata := map[string]any{"schema_id": "test_contract.v1"}
+			stabilizeAgentContractActualJSONBytes(payload, "format_contract", metadata)
+			payload["format_contract"] = metadata
+			reported := anyToInt(metadata["actual_json_bytes"], 0)
+			if actual := jsonByteLen(payload); reported != actual {
+				t.Fatalf("fixed-point byte accounting mismatch: reported=%d actual=%d", reported, actual)
+			}
+		})
+	}
+}
+
 func TestContextPackRetrievalProofReferencesStayCanonicalAndBounded(t *testing.T) {
-	assessment := map[string]any{
-		"schema_id":      memoryTrustAssessmentContractID,
-		"assessed_count": 3,
-		"assessments":    []any{map[string]any{"candidate_id": "candidate-a"}},
-	}
-	trace := map[string]any{
-		"schema_id":       retrievalDecisionTraceContractID,
-		"trace_id":        "trace-a",
-		"candidate_count": 3,
-		"decisions":       []any{map[string]any{"candidate_id": "candidate-a"}},
-	}
+	assessment := testValidMemoryTrustAssessmentReceipt(3)
+	trace := testValidRetrievalDecisionTraceReceipt(3)
 	pack := testContextPackFixture(nil)
 	compiler := cloneContractMap(anyMap(pack["context_compiler"]))
 	payload := map[string]any{
@@ -206,6 +372,648 @@ func TestContextPackRetrievalProofReferencesStayCanonicalAndBounded(t *testing.T
 	if anyToString(anyMap(compiler["memory_trust_assessment"])["canonical_path"]) != "$.memory_trust_assessment" ||
 		anyToString(anyMap(compiler["retrieval_decision_trace"])["canonical_path"]) != "$.retrieval_decision_trace" {
 		t.Fatalf("compiler proof references lost canonical paths: %#v", compiler)
+	}
+}
+
+func TestContextPackRetrievalProofReferencesCannotBecomeCanonicalRootReceipts(t *testing.T) {
+	pack := testContextPackFixture(nil)
+	compiler := cloneContractMap(anyMap(pack["context_compiler"]))
+	payload := map[string]any{
+		"ok":                 true,
+		"context_pack":       pack,
+		"context_compiler":   compiler,
+		"source_coverage":    map[string]any{"configured": []any{}, "returned": []any{}, "complete": false},
+		"reference_prompt":   "No canonical retrieval proof was supplied.",
+		"writeback_required": true,
+	}
+
+	ensureContextPackRetrievalProofReferences(payload)
+	assessment := anyMap(payload["memory_trust_assessment"])
+	trace := anyMap(payload["retrieval_decision_trace"])
+	if available, exists := assessment["available"]; !exists || anyToBool(available) {
+		t.Fatalf("nested trust reference was promoted to canonical root custody: %#v", assessment)
+	}
+	if available, exists := trace["available"]; !exists || anyToBool(available) {
+		t.Fatalf("nested trace reference was promoted to canonical root custody: %#v", trace)
+	}
+	if anyToString(assessment["canonical_path"]) != "$.memory_trust_assessment" ||
+		anyToString(trace["canonical_path"]) != "$.retrieval_decision_trace" {
+		t.Fatalf("unavailable roots lost their canonical paths: assessment=%#v trace=%#v", assessment, trace)
+	}
+
+	attached := attachContextPackFormatContract(payload)
+	if findings := validateAgentContractPayload(contextPackResponseContractID, attached); len(findings) != 0 {
+		t.Fatalf("typed unavailable proof roots must preserve a valid context-pack response: %#v", findings)
+	}
+}
+
+func TestContextPackMalformedReceiptListsCannotClaimCanonicalRootCustody(t *testing.T) {
+	for _, owner := range []string{"root", "nested", "compiler"} {
+		t.Run(owner, func(t *testing.T) {
+			pack := testContextPackFixture(nil)
+			compiler := cloneContractMap(anyMap(pack["context_compiler"]))
+			assessment := map[string]any{"schema_id": memoryTrustAssessmentContractID, "assessments": []any{}}
+			trace := map[string]any{"schema_id": retrievalDecisionTraceContractID, "decisions": []any{}}
+			payload := map[string]any{
+				"ok": true, "context_pack": pack, "context_compiler": compiler,
+				"source_coverage":  map[string]any{"configured": []any{}, "returned": []any{}, "complete": false},
+				"reference_prompt": "malformed receipt custody", "writeback_required": true,
+			}
+			switch owner {
+			case "root":
+				payload["memory_trust_assessment"] = assessment
+				payload["retrieval_decision_trace"] = trace
+			case "nested":
+				pack["memory_trust_assessment"] = assessment
+				pack["retrieval_decision_trace"] = trace
+			case "compiler":
+				compiler["memory_trust_assessment"] = assessment
+				compiler["retrieval_decision_trace"] = trace
+			}
+
+			ensureContextPackRetrievalProofReferences(payload)
+			rootAssessment := anyMap(payload["memory_trust_assessment"])
+			rootTrace := anyMap(payload["retrieval_decision_trace"])
+			if available, exists := rootAssessment["available"]; !exists || anyToBool(available) {
+				t.Fatalf("malformed trust receipt claimed canonical root custody: %#v", rootAssessment)
+			}
+			if available, exists := rootTrace["available"]; !exists || anyToBool(available) {
+				t.Fatalf("malformed trace receipt claimed canonical root custody: %#v", rootTrace)
+			}
+		})
+	}
+}
+
+func TestContextPackMalformedProjectedAndUnavailableProofsAreCanonicalizedFailClosed(t *testing.T) {
+	for _, owner := range []string{"root", "nested", "compiler"} {
+		for _, shape := range []string{"projected", "unavailable"} {
+			t.Run(owner+"/"+shape, func(t *testing.T) {
+				pack := testContextPackFixture(nil)
+				compiler := cloneContractMap(anyMap(pack["context_compiler"]))
+				assessment := map[string]any{
+					"schema_id": memoryTrustAssessmentContractID, "canonical_path": "$.memory_trust_assessment",
+				}
+				trace := map[string]any{
+					"schema_id": retrievalDecisionTraceContractID, "canonical_path": "$.retrieval_decision_trace",
+				}
+				if shape == "projected" {
+					assessment["bounded_projection"] = true
+					assessment["canonical_digest"] = "sha256:" + strings.Repeat("a", 64)
+					trace["bounded_projection"] = true
+					trace["canonical_digest"] = "sha256:" + strings.Repeat("b", 64)
+				} else {
+					assessment["available"] = false
+					assessment["reason"] = "caller supplied"
+					assessment["note"] = "must not survive"
+					trace["available"] = false
+					trace["reason"] = "caller supplied"
+					trace["note"] = "must not survive"
+				}
+				payload := map[string]any{"context_pack": pack, "context_compiler": compiler}
+				switch owner {
+				case "root":
+					payload["memory_trust_assessment"] = assessment
+					payload["retrieval_decision_trace"] = trace
+				case "nested":
+					pack["memory_trust_assessment"] = assessment
+					pack["retrieval_decision_trace"] = trace
+				case "compiler":
+					compiler["memory_trust_assessment"] = assessment
+					compiler["retrieval_decision_trace"] = trace
+				}
+				ensureContextPackRetrievalProofReferences(payload)
+				for label, proof := range map[string]map[string]any{
+					"assessment": anyMap(payload["memory_trust_assessment"]),
+					"trace":      anyMap(payload["retrieval_decision_trace"]),
+				} {
+					if available, ok := proof["available"].(bool); !ok || available || len(proof) != 4 {
+						t.Fatalf("%s malformed proof did not fail closed: %#v", label, proof)
+					}
+					if _, leaked := proof["note"]; leaked {
+						t.Fatalf("%s caller proof metadata crossed unavailable boundary: %#v", label, proof)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestContextPackFullProofCustodyRequiresExactCardinalityAndMetadataTypes(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(map[string]any, map[string]any)
+	}{
+		{name: "trust cardinality", mutate: func(assessment, _ map[string]any) { assessment["assessed_count"] = 1 }},
+		{name: "trace cardinality", mutate: func(_, trace map[string]any) { trace["decision_count"] = 1 }},
+		{name: "ok type", mutate: func(assessment, _ map[string]any) { assessment["ok"] = "true" }},
+		{name: "bounded type", mutate: func(_, trace map[string]any) { trace["bounded"] = 1 }},
+		{name: "contract valid type", mutate: func(assessment, _ map[string]any) {
+			anyMap(assessment["format_contract"])["contract_valid"] = "true"
+		}},
+		{name: "errors type", mutate: func(_, trace map[string]any) {
+			anyMap(anyMap(trace["format_contract"])["validation"])["errors"] = "[]"
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assessment := testValidMemoryTrustAssessmentReceipt(2)
+			trace := testValidRetrievalDecisionTraceReceipt(2)
+			tc.mutate(assessment, trace)
+			if canonicalContextPackRetrievalProof(assessment, memoryTrustAssessmentContractID, "assessments", "$.memory_trust_assessment", false) != nil &&
+				canonicalContextPackRetrievalProof(trace, retrievalDecisionTraceContractID, "decisions", "$.retrieval_decision_trace", false) != nil {
+				t.Fatal("malformed proof metadata or cardinality claimed canonical custody")
+			}
+		})
+	}
+}
+
+func TestContextPackImpossibleRetrievalCountRelationshipsFailClosedAtEveryOrigin(t *testing.T) {
+	for _, owner := range []string{"root", "nested", "compiler"} {
+		t.Run(owner, func(t *testing.T) {
+			assessment := testValidMemoryTrustAssessmentReceipt(1)
+			trace := testValidRetrievalDecisionTraceReceipt(1)
+			assessment["quarantine_count"] = 1
+			assessment["deduplicated_count"] = 1
+			trace["processed_candidate_count"] = 0
+			trace["coverage_complete"] = false
+
+			if len(validateAgentContractPayload(memoryTrustAssessmentContractID, assessment)) == 0 ||
+				len(validateAgentContractPayload(retrievalDecisionTraceContractID, trace)) == 0 {
+				t.Fatal("impossible proof count relationships passed registered validation")
+			}
+
+			pack := testContextPackFixture(nil)
+			compiler := cloneContractMap(anyMap(pack["context_compiler"]))
+			payload := map[string]any{"context_pack": pack, "context_compiler": compiler}
+			switch owner {
+			case "root":
+				payload["memory_trust_assessment"] = assessment
+				payload["retrieval_decision_trace"] = trace
+			case "nested":
+				pack["memory_trust_assessment"] = assessment
+				pack["retrieval_decision_trace"] = trace
+			case "compiler":
+				compiler["memory_trust_assessment"] = assessment
+				compiler["retrieval_decision_trace"] = trace
+			}
+			ensureContextPackRetrievalProofReferences(payload)
+			for label, proof := range map[string]map[string]any{
+				"assessment": anyMap(payload["memory_trust_assessment"]),
+				"trace":      anyMap(payload["retrieval_decision_trace"]),
+			} {
+				if proof["available"] != false {
+					t.Fatalf("%s impossible count receipt claimed custody: %#v", label, proof)
+				}
+			}
+		})
+	}
+}
+
+func TestContextPackRetrievalReceiptCardinalityAndCategoryHistogramFailClosedAtEveryOrigin(t *testing.T) {
+	mutations := []struct {
+		name   string
+		mutate func(map[string]any, map[string]any)
+	}{
+		{name: "trust list cardinality", mutate: func(assessment, _ map[string]any) {
+			assessment["assessments"] = []any{}
+		}},
+		{name: "trace list cardinality", mutate: func(_ map[string]any, trace map[string]any) {
+			trace["decisions"] = []any{}
+		}},
+		{name: "trace category histogram", mutate: func(_ map[string]any, trace map[string]any) {
+			anyMap(contextPackAnyList(trace["decisions"])[0])["decision"] = "omitted"
+		}},
+	}
+	for _, owner := range []string{"root", "nested", "compiler"} {
+		for _, tc := range mutations {
+			t.Run(owner+"/"+tc.name, func(t *testing.T) {
+				assessment := testValidMemoryTrustAssessmentReceipt(1)
+				trace := testValidRetrievalDecisionTraceReceipt(1)
+				tc.mutate(assessment, trace)
+				assessmentInvalid := len(validateAgentContractPayload(memoryTrustAssessmentContractID, assessment)) > 0
+				traceInvalid := len(validateAgentContractPayload(retrievalDecisionTraceContractID, trace)) > 0
+				if !assessmentInvalid && !traceInvalid {
+					t.Fatal("receipt cardinality or category mismatch passed registered validation")
+				}
+
+				pack := testContextPackFixture(nil)
+				compiler := cloneContractMap(anyMap(pack["context_compiler"]))
+				payload := map[string]any{"context_pack": pack, "context_compiler": compiler}
+				switch owner {
+				case "root":
+					payload["memory_trust_assessment"] = assessment
+					payload["retrieval_decision_trace"] = trace
+				case "nested":
+					pack["memory_trust_assessment"] = assessment
+					pack["retrieval_decision_trace"] = trace
+				case "compiler":
+					compiler["memory_trust_assessment"] = assessment
+					compiler["retrieval_decision_trace"] = trace
+				}
+				ensureContextPackRetrievalProofReferences(payload)
+				if assessmentInvalid && anyMap(payload["memory_trust_assessment"])["available"] != false {
+					t.Fatalf("invalid assessment claimed custody: %#v", payload["memory_trust_assessment"])
+				}
+				if traceInvalid && anyMap(payload["retrieval_decision_trace"])["available"] != false {
+					t.Fatalf("invalid trace claimed custody: %#v", payload["retrieval_decision_trace"])
+				}
+			})
+		}
+	}
+}
+
+func TestContextPackRetrievalProofPairMismatchesFailClosedAtEveryOrigin(t *testing.T) {
+	for _, owner := range []string{"root", "nested", "compiler"} {
+		for _, mismatch := range []string{"candidate counts", "candidate identity", "large candidate identity", "quarantine disposition"} {
+			t.Run(owner+"/"+mismatch, func(t *testing.T) {
+				count := 1
+				if mismatch == "large candidate identity" {
+					count = 65
+				}
+				assessment := testValidMemoryTrustAssessmentReceipt(count)
+				traceCount := count
+				if mismatch == "candidate counts" {
+					traceCount = 2
+				}
+				trace := testValidRetrievalDecisionTraceReceipt(traceCount)
+				switch mismatch {
+				case "candidate identity":
+					anyMap(contextPackAnyList(trace["decisions"])[0])["candidate_id"] = "rtc_ffffffffffffffffffffffff"
+				case "large candidate identity":
+					rows := contextPackAnyList(trace["decisions"])
+					anyMap(rows[len(rows)-1])["candidate_id"] = "rtc_ffffffffffffffffffffffff"
+				case "quarantine disposition":
+					anyMap(anyMap(contextPackAnyList(assessment["assessments"])[0])["quarantine"])["quarantined"] = true
+					assessment["quarantine_count"] = 1
+				}
+				assessment = attachPayloadFormatContract(
+					memoryTrustAssessmentContractID, assessment, "test", "test", "/test/context-pack",
+				)
+				trace = attachPayloadFormatContract(
+					retrievalDecisionTraceContractID, trace, "test", "test", "/test/context-pack",
+				)
+				if findings := validateAgentContractPayload(memoryTrustAssessmentContractID, assessment); len(findings) != 0 {
+					t.Fatalf("independently valid trust proof failed validation: %#v", findings)
+				}
+				if findings := validateAgentContractPayload(retrievalDecisionTraceContractID, trace); len(findings) != 0 {
+					t.Fatalf("independently valid trace proof failed validation: %#v", findings)
+				}
+
+				pack := testContextPackFixture(nil)
+				compiler := cloneContractMap(anyMap(pack["context_compiler"]))
+				payload := map[string]any{"context_pack": pack, "context_compiler": compiler}
+				switch owner {
+				case "root":
+					payload["memory_trust_assessment"] = assessment
+					payload["retrieval_decision_trace"] = trace
+				case "nested":
+					pack["memory_trust_assessment"] = assessment
+					pack["retrieval_decision_trace"] = trace
+				case "compiler":
+					compiler["memory_trust_assessment"] = assessment
+					compiler["retrieval_decision_trace"] = trace
+				}
+				ensureContextPackRetrievalProofReferences(payload)
+				if anyMap(payload["memory_trust_assessment"])["available"] != false ||
+					anyMap(payload["retrieval_decision_trace"])["available"] != false {
+					t.Fatalf("mismatched proof pair claimed custody: assessment=%#v trace=%#v", payload["memory_trust_assessment"], payload["retrieval_decision_trace"])
+				}
+			})
+		}
+	}
+}
+
+func TestContextPackRetrievalProofPairNeverCombinesDifferentOrigins(t *testing.T) {
+	nestedAssessment := testValidMemoryTrustAssessmentReceipt(1)
+	nestedTrace := testValidRetrievalDecisionTraceReceipt(1)
+	rootAssessment := memoryTrustAssessmentReference(nestedAssessment)
+	rootTrace := retrievalDecisionTraceReference(nestedTrace)
+	for name, root := range map[string]map[string]any{
+		"root trust only": {"memory_trust_assessment": rootAssessment},
+		"root trace only": {"retrieval_decision_trace": rootTrace},
+	} {
+		t.Run(name, func(t *testing.T) {
+			pack := testContextPackFixture(nil)
+			pack["memory_trust_assessment"] = cloneAnyMap(nestedAssessment)
+			pack["retrieval_decision_trace"] = cloneAnyMap(nestedTrace)
+			payload := map[string]any{"context_pack": pack}
+			for key, value := range root {
+				payload[key] = cloneAnyMap(anyMap(value))
+			}
+			ensureContextPackRetrievalProofReferences(payload)
+			if anyMap(payload["memory_trust_assessment"])["available"] != false ||
+				anyMap(payload["retrieval_decision_trace"])["available"] != false {
+				t.Fatalf("mixed origins claimed proof custody: assessment=%#v trace=%#v", payload["memory_trust_assessment"], payload["retrieval_decision_trace"])
+			}
+		})
+	}
+}
+
+func TestContextPackRetrievalProofProjectionAndRootReferencePairsReconcile(t *testing.T) {
+	fullAssessment := testValidMemoryTrustAssessmentReceipt(1)
+	fullTrace := testValidRetrievalDecisionTraceReceipt(1)
+	projectedAssessment := contextPackRetrievalProofForOuterBoundary(fullAssessment, memoryTrustAssessmentContractID)
+	projectedTrace := contextPackRetrievalProofForOuterBoundary(fullTrace, retrievalDecisionTraceContractID)
+	projectedTrace["candidate_count"] = 2
+	projectedTrace["decision_count"] = 1
+	projectedTrace["input_truncated_count"] = 1
+	projectedTrace["coverage_complete"] = false
+	referenceAssessment := memoryTrustAssessmentReference(fullAssessment)
+	referenceTrace := retrievalDecisionTraceReference(fullTrace)
+	referenceTrace["candidate_count"] = 3
+	referenceTrace["decision_count"] = 2
+	referenceTrace["input_truncated_count"] = 1
+	referenceTrace["coverage_complete"] = false
+
+	for name, pair := range map[string][2]map[string]any{
+		"projection": {projectedAssessment, projectedTrace},
+		"reference":  {referenceAssessment, referenceTrace},
+		"reference max-int dispositions": {
+			map[string]any{
+				"schema_id": memoryTrustAssessmentContractID, "canonical_path": "$.memory_trust_assessment",
+				"assessed_count": int64(1), "quarantine_count": int64(math.MaxInt64),
+				"deduplicated_count": int64(math.MaxInt64), "policy_omitted_count": int64(math.MaxInt64),
+				"input_truncated_count": int64(0),
+			},
+			map[string]any{
+				"schema_id": retrievalDecisionTraceContractID, "canonical_path": "$.retrieval_decision_trace",
+				"trace_id": "rdt_0123456789abcdef01234567", "candidate_count": int64(1),
+				"decision_count": int64(1), "input_truncated_count": int64(0), "coverage_complete": true,
+			},
+		},
+		"available trust with unavailable trace": {
+			referenceAssessment,
+			contextPackUnavailableRetrievalProof(retrievalDecisionTraceContractID, "trace missing"),
+		},
+		"unavailable trust with available trace": {
+			contextPackUnavailableRetrievalProof(memoryTrustAssessmentContractID, "assessment missing"),
+			referenceTrace,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			pack := testContextPackFixture(nil)
+			payload := map[string]any{
+				"context_pack":             pack,
+				"memory_trust_assessment":  cloneAnyMap(pair[0]),
+				"retrieval_decision_trace": cloneAnyMap(pair[1]),
+			}
+			ensureContextPackRetrievalProofReferences(payload)
+			if anyMap(payload["memory_trust_assessment"])["available"] != false ||
+				anyMap(payload["retrieval_decision_trace"])["available"] != false {
+				t.Fatalf("mismatched %s pair claimed custody: assessment=%#v trace=%#v", name, payload["memory_trust_assessment"], payload["retrieval_decision_trace"])
+			}
+		})
+	}
+}
+
+func TestContextPackRetrievalPolicyAndInputBoundarySemanticsFailClosed(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(map[string]any, map[string]any)
+	}{
+		{name: "retrieved memory remains evidence", mutate: func(assessment, _ map[string]any) {
+			anyMap(assessment["policy"])["retrieved_memory_is_evidence_not_instruction"] = false
+		}},
+		{name: "security defenses remain fail closed", mutate: func(assessment, _ map[string]any) {
+			anyMap(assessment["policy"])["security_defenses_fail_closed"] = false
+		}},
+		{name: "trust omitted count reconciles", mutate: func(assessment, _ map[string]any) {
+			anyMap(assessment["input_boundary"])["omitted_count"] = 1
+		}},
+		{name: "trace truncated flag reconciles", mutate: func(_ map[string]any, trace map[string]any) {
+			anyMap(trace["input_boundary"])["truncated"] = true
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assessment := testValidMemoryTrustAssessmentReceipt(1)
+			trace := testValidRetrievalDecisionTraceReceipt(1)
+			tc.mutate(assessment, trace)
+			assessmentValid := len(validateAgentContractPayload(memoryTrustAssessmentContractID, assessment)) == 0
+			traceValid := len(validateAgentContractPayload(retrievalDecisionTraceContractID, trace)) == 0
+			if assessmentValid && traceValid {
+				t.Fatal("invalid policy or input-boundary semantics passed registered validation")
+			}
+			assessmentCanonical := canonicalContextPackRetrievalProof(
+				assessment, memoryTrustAssessmentContractID, "assessments", "$.memory_trust_assessment", false,
+			)
+			traceCanonical := canonicalContextPackRetrievalProof(
+				trace, retrievalDecisionTraceContractID, "decisions", "$.retrieval_decision_trace", false,
+			)
+			if assessmentValid && assessmentCanonical == nil || traceValid && traceCanonical == nil {
+				t.Fatal("unchanged valid companion proof unexpectedly failed custody")
+			}
+			if !assessmentValid && assessmentCanonical != nil || !traceValid && traceCanonical != nil {
+				t.Fatal("invalid policy or input-boundary semantics claimed canonical custody")
+			}
+		})
+	}
+}
+
+func TestContextPackDuplicateRetrievalReceiptIdentitiesFailClosed(t *testing.T) {
+	assessment := testValidMemoryTrustAssessmentReceipt(2)
+	trace := testValidRetrievalDecisionTraceReceipt(2)
+	assessmentRows := contextPackAnyList(assessment["assessments"])
+	traceRows := contextPackAnyList(trace["decisions"])
+	anyMap(assessmentRows[1])["assessment_id"] = anyMap(assessmentRows[0])["assessment_id"]
+	anyMap(assessmentRows[1])["candidate_id"] = anyMap(assessmentRows[0])["candidate_id"]
+	anyMap(traceRows[1])["receipt_id"] = anyMap(traceRows[0])["receipt_id"]
+	anyMap(traceRows[1])["candidate_id"] = anyMap(traceRows[0])["candidate_id"]
+	anyMap(traceRows[1])["candidate_ordinal"] = anyMap(traceRows[0])["candidate_ordinal"]
+	if len(validateAgentContractPayload(memoryTrustAssessmentContractID, assessment)) == 0 ||
+		len(validateAgentContractPayload(retrievalDecisionTraceContractID, trace)) == 0 {
+		t.Fatal("duplicate logical retrieval receipt identities passed registered validation")
+	}
+	if canonicalContextPackRetrievalProof(
+		assessment, memoryTrustAssessmentContractID, "assessments", "$.memory_trust_assessment", false,
+	) != nil || canonicalContextPackRetrievalProof(
+		trace, retrievalDecisionTraceContractID, "decisions", "$.retrieval_decision_trace", false,
+	) != nil {
+		t.Fatal("duplicate logical retrieval receipt identities claimed canonical custody")
+	}
+}
+
+func TestContextPackFullRetrievalProofRequiresExactFormatContractProvenance(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(map[string]any)
+	}{
+		{name: "registry id", mutate: func(contract map[string]any) { contract["registry_id"] = "other_registry" }},
+		{name: "registry version", mutate: func(contract map[string]any) {
+			contract["registry_version"] = GeneratedAgentContractRegistryVersion - 1
+		}},
+		{name: "contract version", mutate: func(contract map[string]any) { contract["contract_version"] = 2 }},
+		{name: "output mode", mutate: func(contract map[string]any) { contract["required_output_mode"] = "text" }},
+		{name: "validator", mutate: func(contract map[string]any) { contract["validator"] = "other.validator" }},
+		{name: "maximum total bytes", mutate: func(contract map[string]any) { contract["max_total_json_bytes"] = 1 }},
+		{name: "maximum string bytes", mutate: func(contract map[string]any) { contract["max_string_bytes"] = 1 }},
+		{name: "maximum list items", mutate: func(contract map[string]any) { contract["max_list_items"] = 1 }},
+		{name: "actual bytes", mutate: func(contract map[string]any) { contract["actual_json_bytes"] = 1 }},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assessment := cloneContractMap(testValidMemoryTrustAssessmentReceipt(1))
+			trace := cloneContractMap(testValidRetrievalDecisionTraceReceipt(1))
+			tc.mutate(anyMap(assessment["format_contract"]))
+			tc.mutate(anyMap(trace["format_contract"]))
+			if canonicalContextPackRetrievalProof(
+				assessment, memoryTrustAssessmentContractID, "assessments", "$.memory_trust_assessment", false,
+			) != nil || canonicalContextPackRetrievalProof(
+				trace, retrievalDecisionTraceContractID, "decisions", "$.retrieval_decision_trace", false,
+			) != nil {
+				t.Fatal("false format-contract provenance claimed canonical proof custody")
+			}
+		})
+	}
+}
+
+func TestContextPackProjectedTraceOmissionRequiresTypedEmptyIdentity(t *testing.T) {
+	projection := map[string]any{
+		"schema_id": retrievalDecisionTraceContractID, "canonical_path": "$.retrieval_decision_trace",
+		"available": true, "bounded_projection": true, "canonical_digest": "sha256:" + strings.Repeat("a", 64),
+		"candidate_count": 1, "decision_count": 1, "input_truncated_count": 0,
+		"trace_id": nil, "trace_id_omitted": true, "coverage_complete": true,
+	}
+	if canonicalContextPackRetrievalProof(
+		projection, retrievalDecisionTraceContractID, "decisions", "$.retrieval_decision_trace", true,
+	) != nil {
+		t.Fatal("null projected trace identity passed the typed omission contract")
+	}
+	projection["trace_id"] = ""
+	if canonicalContextPackRetrievalProof(
+		projection, retrievalDecisionTraceContractID, "decisions", "$.retrieval_decision_trace", true,
+	) == nil {
+		t.Fatal("typed empty projected trace identity did not pass its omission contract")
+	}
+}
+
+func TestContextPackFractionalReceiptIntegersCannotClaimCanonicalRootCustody(t *testing.T) {
+	for _, owner := range []string{"root", "nested", "compiler"} {
+		t.Run(owner, func(t *testing.T) {
+			pack := testContextPackFixture(nil)
+			compiler := cloneContractMap(anyMap(pack["context_compiler"]))
+			assessment := testValidMemoryTrustAssessmentReceipt(1)
+			trace := testValidRetrievalDecisionTraceReceipt(1)
+			assessment["version"] = 1.5
+			trace["candidate_count"] = 1.5
+			if len(validateAgentContractPayload(memoryTrustAssessmentContractID, assessment)) == 0 ||
+				len(validateAgentContractPayload(retrievalDecisionTraceContractID, trace)) == 0 {
+				t.Fatal("fractional integer fields unexpectedly passed the Go contract validator")
+			}
+			payload := map[string]any{
+				"ok": true, "context_pack": pack, "context_compiler": compiler,
+				"source_coverage":  map[string]any{"configured": []any{}, "returned": []any{}, "complete": false},
+				"reference_prompt": "fractional receipt custody", "writeback_required": true,
+			}
+			switch owner {
+			case "root":
+				payload["memory_trust_assessment"] = assessment
+				payload["retrieval_decision_trace"] = trace
+			case "nested":
+				pack["memory_trust_assessment"] = assessment
+				pack["retrieval_decision_trace"] = trace
+			case "compiler":
+				compiler["memory_trust_assessment"] = assessment
+				compiler["retrieval_decision_trace"] = trace
+			}
+
+			ensureContextPackRetrievalProofReferences(payload)
+			rootAssessment := anyMap(payload["memory_trust_assessment"])
+			rootTrace := anyMap(payload["retrieval_decision_trace"])
+			if available, exists := rootAssessment["available"]; !exists || anyToBool(available) {
+				t.Fatalf("fractional trust receipt claimed canonical root custody: %#v", rootAssessment)
+			}
+			if available, exists := rootTrace["available"]; !exists || anyToBool(available) {
+				t.Fatalf("fractional trace receipt claimed canonical root custody: %#v", rootTrace)
+			}
+		})
+	}
+}
+
+func TestContextPackIntegralFloatReceiptIntegersFailRegisteredValidationAndCustody(t *testing.T) {
+	assessment := testValidMemoryTrustAssessmentReceipt(1)
+	trace := testValidRetrievalDecisionTraceReceipt(1)
+	assessment["version"] = 1.0
+	trace["candidate_count"] = 1.0
+	if len(validateAgentContractPayload(memoryTrustAssessmentContractID, assessment)) == 0 ||
+		len(validateAgentContractPayload(retrievalDecisionTraceContractID, trace)) == 0 {
+		t.Fatal("integral float receipt integers passed strict registered proof validation")
+	}
+	if canonicalContextPackRetrievalProof(assessment, memoryTrustAssessmentContractID, "assessments", "$.memory_trust_assessment", true) != nil ||
+		canonicalContextPackRetrievalProof(trace, retrievalDecisionTraceContractID, "decisions", "$.retrieval_decision_trace", true) != nil {
+		t.Fatal("integral float receipt claimed canonical root custody")
+	}
+	for _, value := range []any{json.Number("9223372036854775808"), json.Number("-9223372036854775809")} {
+		if _, ok := agentContractInteger(value); ok {
+			t.Fatalf("out-of-range plain JSON integer passed generic contract validation: %v", value)
+		}
+	}
+}
+
+func TestAgentContractNormalizationPreservesJSONNumbersForNumberFields(t *testing.T) {
+	normalized, err := normalizeAgentContractJSONObject(map[string]any{
+		"score":  0.75,
+		"labels": []string{"bounded"},
+	})
+	if err != nil {
+		t.Fatalf("normalize mixed typed payload: %v", err)
+	}
+	score, ok := normalized["score"].(json.Number)
+	if !ok {
+		t.Fatalf("normalization did not preserve numeric lexical form: %T", normalized["score"])
+	}
+	if !matchesAgentContractType(score, "number") {
+		t.Fatalf("normalized finite number failed generic number validation: %v", score)
+	}
+	if matchesAgentContractType(json.Number("1e9999"), "number") ||
+		matchesAgentContractType(json.Number("9223372036854775808"), "number") ||
+		matchesAgentContractType(uint64(1)<<63, "number") ||
+		matchesAgentContractType(math.Inf(1), "number") ||
+		matchesAgentContractType(math.NaN(), "number") {
+		t.Fatal("nonfinite or overflowing value passed generic number validation")
+	}
+}
+
+func TestContextPackOutOfRangeReceiptIntegersCannotClaimCanonicalRootCustody(t *testing.T) {
+	for _, owner := range []string{"root", "nested", "compiler"} {
+		t.Run(owner, func(t *testing.T) {
+			pack := testContextPackFixture(nil)
+			compiler := cloneContractMap(anyMap(pack["context_compiler"]))
+			assessment := testValidMemoryTrustAssessmentReceipt(1)
+			trace := testValidRetrievalDecisionTraceReceipt(1)
+			assessment["assessed_count"] = uint64(1) << 63
+			trace["decision_count"] = uint64(1) << 63
+			if len(validateAgentContractPayload(memoryTrustAssessmentContractID, assessment)) == 0 ||
+				len(validateAgentContractPayload(retrievalDecisionTraceContractID, trace)) == 0 {
+				t.Fatal("out-of-range integer fields unexpectedly passed the Go contract validator")
+			}
+			payload := map[string]any{
+				"ok": true, "context_pack": pack, "context_compiler": compiler,
+				"source_coverage":  map[string]any{"configured": []any{}, "returned": []any{}, "complete": false},
+				"reference_prompt": "out-of-range receipt custody", "writeback_required": true,
+			}
+			switch owner {
+			case "root":
+				payload["memory_trust_assessment"] = assessment
+				payload["retrieval_decision_trace"] = trace
+			case "nested":
+				pack["memory_trust_assessment"] = assessment
+				pack["retrieval_decision_trace"] = trace
+			case "compiler":
+				compiler["memory_trust_assessment"] = assessment
+				compiler["retrieval_decision_trace"] = trace
+			}
+
+			ensureContextPackRetrievalProofReferences(payload)
+			rootAssessment := anyMap(payload["memory_trust_assessment"])
+			rootTrace := anyMap(payload["retrieval_decision_trace"])
+			if available, exists := rootAssessment["available"]; !exists || anyToBool(available) {
+				t.Fatalf("out-of-range trust receipt claimed canonical root custody: %#v", rootAssessment)
+			}
+			if available, exists := rootTrace["available"]; !exists || anyToBool(available) {
+				t.Fatalf("out-of-range trace receipt claimed canonical root custody: %#v", rootTrace)
+			}
+		})
 	}
 }
 

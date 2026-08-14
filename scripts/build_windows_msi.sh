@@ -7,7 +7,8 @@ PKG_DIR="${ROOT_DIR}/packaging/windows"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/contextlattice-msi.XXXXXX")"
 STAGE_DIR="${TMP_DIR}/stage"
 PAYLOAD_BUILD_DIR="${TMP_DIR}/payload-build"
-WIX_IMAGE="${WIX_IMAGE:-marco98/msitools:latest}"
+readonly REVIEWED_WIX_IMAGE="marco98/msitools@sha256:0ac5297e0691e6768e1de4d7bdecef376ecdbff41c4cd7d4f3b55c5e7d42c48e"
+WIX_IMAGE="${WIX_IMAGE:-${REVIEWED_WIX_IMAGE}}"
 WIX_PLATFORM="${WIX_PLATFORM:-linux/amd64}"
 MSI_ARCH="${MSI_ARCH:-x64}"
 MSI_NAME="${MSI_NAME:-ContextLattice-windows-${MSI_ARCH}.msi}"
@@ -33,6 +34,11 @@ case "${RELEASE_LANE}" in
     exit 1
     ;;
 esac
+
+if [[ "${WIX_IMAGE}" != "${REVIEWED_WIX_IMAGE}" ]]; then
+  echo "ERROR: WIX_IMAGE must remain pinned to the reviewed public digest." >&2
+  exit 1
+fi
 
 if ! command -v docker >/dev/null 2>&1; then
   echo "ERROR: docker is required to build MSI from macOS/Linux." >&2
@@ -74,7 +80,8 @@ if [[ -f "${MSI_PATH}" ]]; then
   rm -f "${MSI_PATH}"
 fi
 
-docker run --rm \
+"${ROOT_DIR}/scripts/docker_anonymous_public.sh" run \
+  --rm \
   --platform "${WIX_PLATFORM}" \
   -v "${STAGE_DIR}:/work" \
   -w /work \

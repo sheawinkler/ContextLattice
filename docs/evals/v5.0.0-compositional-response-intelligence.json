@@ -1,0 +1,3832 @@
+{
+  "comparisons": {
+    "baseline_qualification": {
+      "flat_category_router": {
+        "contract_schema": "recall_response.synthetic_control_projection.v1",
+        "contract_validity": 1.0,
+        "product_candidate_contract_schema": "recall_response.initial.v1",
+        "product_candidate_contract_validity": 1.0,
+        "qualified": true,
+        "trust_violation_count": 0
+      },
+      "raw_retrieval": {
+        "contract_schema": "recall_response.synthetic_control_projection.v1",
+        "contract_validity": 1.0,
+        "product_candidate_contract_schema": "recall_response.initial.v1",
+        "product_candidate_contract_validity": 1.0,
+        "qualified": true,
+        "trust_violation_count": 0
+      },
+      "universal_template": {
+        "contract_schema": "recall_response.synthetic_control_projection.v1",
+        "contract_validity": 1.0,
+        "product_candidate_contract_schema": "recall_response.initial.v1",
+        "product_candidate_contract_validity": 1.0,
+        "qualified": true,
+        "trust_violation_count": 0
+      }
+    },
+    "hard_gates_pass": true,
+    "hard_metric_gates": [
+      {
+        "denominator": 100,
+        "metric_id": "first_response_resolution.v1",
+        "numerator": 100,
+        "passed": true,
+        "score": 1.0,
+        "threshold": 1.0
+      },
+      {
+        "denominator": 100,
+        "metric_id": "downstream_task_completion.v1",
+        "numerator": 100,
+        "passed": true,
+        "score": 1.0,
+        "threshold": 1.0
+      },
+      {
+        "denominator": 10,
+        "metric_id": "tool_selection_correct.v1",
+        "numerator": 10,
+        "passed": true,
+        "score": 1.0,
+        "threshold": 0.9
+      },
+      {
+        "denominator": 10,
+        "metric_id": "parameter_binding_correct.v1",
+        "numerator": 10,
+        "passed": true,
+        "score": 1.0,
+        "threshold": 0.9
+      },
+      {
+        "denominator": 100,
+        "metric_id": "abstention_silence_correct.v1",
+        "numerator": 100,
+        "passed": true,
+        "score": 1.0,
+        "threshold": 1.0
+      },
+      {
+        "denominator": 6,
+        "metric_id": "selective_forgetting.v1",
+        "numerator": 6,
+        "passed": true,
+        "score": 1.0,
+        "threshold": 1.0
+      },
+      {
+        "denominator": 100,
+        "metric_id": "temporal_evidence_correct.v1",
+        "numerator": 100,
+        "passed": true,
+        "score": 1.0,
+        "threshold": 1.0
+      },
+      {
+        "denominator": 100,
+        "metric_id": "instruction_laundering_privacy_clean.v1",
+        "numerator": 100,
+        "passed": true,
+        "score": 1.0,
+        "threshold": 1.0
+      }
+    ],
+    "headline": [
+      {
+        "baseline_condition": "flat_category_router",
+        "baseline_numerator": 85,
+        "baseline_score": 0.85,
+        "baseline_score_tie": [
+          "flat_category_router"
+        ],
+        "candidate_condition": "compositional_router",
+        "candidate_numerator": 100,
+        "candidate_score": 1.0,
+        "denominator": 100,
+        "effect_pass": true,
+        "holm_adjusted_p": 0.000122070312,
+        "improvement_percentage_points": 15.0,
+        "metric_id": "first_response_resolution.v1",
+        "paired_exact": {
+          "discordant": 15,
+          "gains_count": 15,
+          "losses_count": 0,
+          "one_sided_p": 3.0517578e-05
+        },
+        "statistical_pass": true,
+        "tie_fails": false
+      },
+      {
+        "baseline_condition": "flat_category_router",
+        "baseline_numerator": 88,
+        "baseline_score": 0.88,
+        "baseline_score_tie": [
+          "flat_category_router"
+        ],
+        "candidate_condition": "compositional_router",
+        "candidate_numerator": 100,
+        "candidate_score": 1.0,
+        "denominator": 100,
+        "effect_pass": true,
+        "holm_adjusted_p": 0.000732421875,
+        "improvement_percentage_points": 12.0,
+        "metric_id": "downstream_task_completion.v1",
+        "paired_exact": {
+          "discordant": 12,
+          "gains_count": 12,
+          "losses_count": 0,
+          "one_sided_p": 0.000244140625
+        },
+        "statistical_pass": true,
+        "tie_fails": false
+      },
+      {
+        "baseline_condition": "flat_category_router",
+        "baseline_numerator": 0,
+        "baseline_score": 0.0,
+        "baseline_score_tie": [
+          "universal_template",
+          "flat_category_router"
+        ],
+        "candidate_condition": "compositional_router",
+        "candidate_numerator": 10,
+        "candidate_score": 1.0,
+        "denominator": 10,
+        "effect_pass": true,
+        "holm_adjusted_p": 0.001953125,
+        "improvement_percentage_points": 100.0,
+        "metric_id": "tool_selection_correct.v1",
+        "paired_exact": {
+          "discordant": 10,
+          "gains_count": 10,
+          "losses_count": 0,
+          "one_sided_p": 0.0009765625
+        },
+        "statistical_pass": true,
+        "tie_fails": false
+      },
+      {
+        "baseline_condition": "flat_category_router",
+        "baseline_numerator": 0,
+        "baseline_score": 0.0,
+        "baseline_score_tie": [
+          "universal_template",
+          "flat_category_router"
+        ],
+        "candidate_condition": "compositional_router",
+        "candidate_numerator": 10,
+        "candidate_score": 1.0,
+        "denominator": 10,
+        "effect_pass": true,
+        "holm_adjusted_p": 0.001953125,
+        "improvement_percentage_points": 100.0,
+        "metric_id": "parameter_binding_correct.v1",
+        "paired_exact": {
+          "discordant": 10,
+          "gains_count": 10,
+          "losses_count": 0,
+          "one_sided_p": 0.0009765625
+        },
+        "statistical_pass": true,
+        "tie_fails": false
+      }
+    ],
+    "holm_family_size": 4,
+    "next_correct_action": {
+      "best_qualified_baseline_median": 2.0,
+      "candidate_median": 1.0,
+      "condition_medians": {
+        "compositional_router": 1.0,
+        "flat_category_router": 2.0,
+        "raw_retrieval": 3.0,
+        "universal_template": 2.0
+      },
+      "fifteen_percent_reduction_pass": true,
+      "metric_id": "next_correct_action_steps.v1",
+      "reduction_fraction": 0.5
+    },
+    "no_unexplained_pass_to_fail": {
+      "loss_count": 0,
+      "metrics_checked": 4,
+      "passed": true,
+      "unexplained_count": 0
+    },
+    "omission_no_loss_counterfactual": {
+      "omission_rows": 2338,
+      "passed": true,
+      "product_rows": 1169,
+      "source_unbound_rows": 0,
+      "traversal_invalid_rows": 0,
+      "truncated_rows": 1169,
+      "unverified_omissions": 0
+    },
+    "one_sided_family_alpha": 0.05,
+    "resource_envelope": {
+      "candidate_condition": "compositional_router",
+      "limits": {
+        "bytes_p95": 16000,
+        "tokens_p95": 4000
+      },
+      "observed": {
+        "bytes_p95": 2035,
+        "tokens_p95": 509
+      },
+      "passed": true,
+      "promotion_blocking": true,
+      "schema_id": "recall_response.resource_envelope_gate.v1",
+      "violations": []
+    },
+    "resource_equivalence": {
+      "conditions": {
+        "compositional_router": {
+          "bytes_p95": 2035,
+          "latency_comparable": false,
+          "latency_measurement": "not_measured",
+          "tokens_p95": 509
+        },
+        "flat_category_router": {
+          "bytes_p95": 2290,
+          "latency_comparable": false,
+          "latency_measurement": "not_measured",
+          "tokens_p95": 573
+        },
+        "raw_retrieval": {
+          "bytes_p95": 2316,
+          "latency_comparable": false,
+          "latency_measurement": "not_measured",
+          "tokens_p95": 579
+        },
+        "universal_template": {
+          "bytes_p95": 2322,
+          "latency_comparable": false,
+          "latency_measurement": "not_measured",
+          "tokens_p95": 581
+        }
+      },
+      "measurement": "production_initial_transport_bytes_and_chars_div_four_tokens_with_latency_not_measured",
+      "promotional_gate_eligible": false,
+      "relative_gate": {
+        "baseline": {
+          "bytes_p95": 2290,
+          "tokens_p95": 573
+        },
+        "baseline_condition": "flat_category_router",
+        "baseline_selection": "last_qualified_headline_baseline_tie_preference",
+        "candidate_condition": "compositional_router",
+        "integer_rounding": "floor",
+        "latency_comparable": false,
+        "latency_reason": "offline harness wall-clock latency was not recorded; transport bytes and token estimates remain comparable",
+        "limits": {
+          "bytes_p95": 2519,
+          "tokens_p95": 630
+        },
+        "observed": {
+          "bytes_p95": 2035,
+          "tokens_p95": 509
+        },
+        "passed": true,
+        "promotion_blocking": true,
+        "ratio_denominator": 100,
+        "ratio_numerator": 110,
+        "schema_id": "recall_response.relative_resource_gate.v1",
+        "violations": []
+      }
+    },
+    "synthetic_regression_rules_pass": true
+  },
+  "component_ablation_metrics": [
+    {
+      "component": "exact_current_status",
+      "denominator": 60,
+      "expected_rejection_count": 0,
+      "failure_count": 60,
+      "metric_id": "component_ablation_downstream_change.v1",
+      "numerator": 42,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 113868
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 60,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 28485
+        },
+        "tool_calls": 0
+      },
+      "unexpected_failure_count": 60,
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "component": "decision_rationale",
+      "denominator": 108,
+      "expected_rejection_count": 0,
+      "failure_count": 108,
+      "metric_id": "component_ablation_downstream_change.v1",
+      "numerator": 75,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 204695
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 108,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 51207
+        },
+        "tool_calls": 0
+      },
+      "unexpected_failure_count": 108,
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "component": "project_continuation",
+      "denominator": 30,
+      "expected_rejection_count": 0,
+      "failure_count": 30,
+      "metric_id": "component_ablation_downstream_change.v1",
+      "numerator": 17,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 57161
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 30,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 14296
+        },
+        "tool_calls": 0
+      },
+      "unexpected_failure_count": 30,
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "component": "preference_constraint",
+      "denominator": 60,
+      "expected_rejection_count": 0,
+      "failure_count": 60,
+      "metric_id": "component_ablation_downstream_change.v1",
+      "numerator": 41,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 113802
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 60,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 28470
+        },
+        "tool_calls": 0
+      },
+      "unexpected_failure_count": 60,
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "component": "timeline",
+      "denominator": 48,
+      "expected_rejection_count": 0,
+      "failure_count": 48,
+      "metric_id": "component_ablation_downstream_change.v1",
+      "numerator": 28,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 90718
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 48,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 22694
+        },
+        "tool_calls": 0
+      },
+      "unexpected_failure_count": 48,
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "component": "procedure",
+      "denominator": 60,
+      "expected_rejection_count": 0,
+      "failure_count": 60,
+      "metric_id": "component_ablation_downstream_change.v1",
+      "numerator": 43,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 113626
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 60,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 28422
+        },
+        "tool_calls": 0
+      },
+      "unexpected_failure_count": 60,
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "component": "multi_memory_synthesis",
+      "denominator": 246,
+      "expected_rejection_count": 0,
+      "failure_count": 246,
+      "metric_id": "component_ablation_downstream_change.v1",
+      "numerator": 194,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 465368
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 246,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 116422
+        },
+        "tool_calls": 0
+      },
+      "unexpected_failure_count": 246,
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "component": "conflict_supersession",
+      "denominator": 30,
+      "expected_rejection_count": 0,
+      "failure_count": 30,
+      "metric_id": "component_ablation_downstream_change.v1",
+      "numerator": 28,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 56632
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 30,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 14168
+        },
+        "tool_calls": 0
+      },
+      "unexpected_failure_count": 30,
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "component": "negative_abstention",
+      "denominator": 150,
+      "expected_rejection_count": 0,
+      "failure_count": 150,
+      "metric_id": "component_ablation_downstream_change.v1",
+      "numerator": 85,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 286793
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 150,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 71732
+        },
+        "tool_calls": 0
+      },
+      "unexpected_failure_count": 150,
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "component": "memory_to_action",
+      "denominator": 77,
+      "expected_rejection_count": 0,
+      "failure_count": 77,
+      "metric_id": "component_ablation_downstream_change.v1",
+      "numerator": 57,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 145934
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 77,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 36504
+        },
+        "tool_calls": 0
+      },
+      "unexpected_failure_count": 77,
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    }
+  ],
+  "conditions": [
+    "raw_retrieval",
+    "universal_template",
+    "flat_category_router",
+    "compositional_router"
+  ],
+  "corpus": {
+    "development": 200,
+    "holdout": 100,
+    "total": 300
+  },
+  "custody": {
+    "promotional_claims_allowed": false,
+    "regression_use_allowed": true,
+    "state": "local_regression/contaminated"
+  },
+  "detailed_ledger_digest": "sha256:00ecf1e581e3e80a6face1fae44ddbccf79d0457a59eaacfac26ae27a8dcd8dc",
+  "failure_review": {
+    "denominator_exclusions_allowed": false,
+    "expected_ablation_rejection_count": 869,
+    "hidden_failures_allowed": false,
+    "promotion_blocking_failure_count": 0,
+    "reported_failure_count": 869,
+    "synthetic_control_failure_count": 0,
+    "unablated_product_failure_count": 0,
+    "unexpected_ablation_failure_count": 0
+  },
+  "feature": "compositional_response_intelligence",
+  "ledger_digest": "sha256:2ecfa05507b8d17216f25872e3f0701e216f6faa32da73790d9d2e7ad6799b33",
+  "metrics": [
+    {
+      "condition": "raw_retrieval",
+      "denominator": 200,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "retrieval_quality.v1",
+      "numerator": 176,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 430812
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 107802
+        },
+        "tool_calls": 0
+      },
+      "score": 0.88,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "raw_retrieval",
+      "denominator": 200,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "response_contract_correct.v1",
+      "numerator": 200,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 430812
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 107802
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "raw_retrieval",
+      "denominator": 200,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "first_response_resolution.v1",
+      "numerator": 163,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 430812
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 107802
+        },
+        "tool_calls": 0
+      },
+      "score": 0.815,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "raw_retrieval",
+      "denominator": 200,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "downstream_task_completion.v1",
+      "numerator": 172,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 430812
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 107802
+        },
+        "tool_calls": 0
+      },
+      "score": 0.86,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "raw_retrieval",
+      "denominator": 20,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "tool_selection_correct.v1",
+      "numerator": 0,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 44962
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 11251
+        },
+        "tool_calls": 0
+      },
+      "score": 0.0,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "raw_retrieval",
+      "denominator": 20,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "parameter_binding_correct.v1",
+      "numerator": 0,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 44962
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 11251
+        },
+        "tool_calls": 0
+      },
+      "score": 0.0,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "raw_retrieval",
+      "denominator": 200,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "temporal_evidence_correct.v1",
+      "numerator": 176,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 430812
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 107802
+        },
+        "tool_calls": 0
+      },
+      "score": 0.88,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "raw_retrieval",
+      "denominator": 200,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "abstention_silence_correct.v1",
+      "numerator": 200,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 430812
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 107802
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "raw_retrieval",
+      "denominator": 12,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "selective_forgetting.v1",
+      "numerator": 0,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 25431
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 6362
+        },
+        "tool_calls": 0
+      },
+      "score": 0.0,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "raw_retrieval",
+      "denominator": 20,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "test_time_learning.v1",
+      "numerator": 20,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 43902
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 10985
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "raw_retrieval",
+      "denominator": 12,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "long_range_understanding.v1",
+      "numerator": 12,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 27307
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 6832
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "raw_retrieval",
+      "denominator": 200,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "instruction_laundering_privacy_clean.v1",
+      "numerator": 200,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 430812
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 107802
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "raw_retrieval",
+      "denominator": 200,
+      "failure_count": 0,
+      "kind": "lower_is_better_integer",
+      "median": 3.0,
+      "metric_id": "next_correct_action_steps.v1",
+      "numerator": 628,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 430812
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 107802
+        },
+        "tool_calls": 0
+      },
+      "score": 3.14,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "universal_template",
+      "denominator": 200,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "retrieval_quality.v1",
+      "numerator": 177,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 435280
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 108889
+        },
+        "tool_calls": 0
+      },
+      "score": 0.885,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "universal_template",
+      "denominator": 200,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "response_contract_correct.v1",
+      "numerator": 200,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 435280
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 108889
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "universal_template",
+      "denominator": 200,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "first_response_resolution.v1",
+      "numerator": 164,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 435280
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 108889
+        },
+        "tool_calls": 0
+      },
+      "score": 0.82,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "universal_template",
+      "denominator": 200,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "downstream_task_completion.v1",
+      "numerator": 173,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 435280
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 108889
+        },
+        "tool_calls": 0
+      },
+      "score": 0.865,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "universal_template",
+      "denominator": 20,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "tool_selection_correct.v1",
+      "numerator": 0,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 45343
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 11342
+        },
+        "tool_calls": 0
+      },
+      "score": 0.0,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "universal_template",
+      "denominator": 20,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "parameter_binding_correct.v1",
+      "numerator": 0,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 45343
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 11342
+        },
+        "tool_calls": 0
+      },
+      "score": 0.0,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "universal_template",
+      "denominator": 200,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "temporal_evidence_correct.v1",
+      "numerator": 177,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 435280
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 108889
+        },
+        "tool_calls": 0
+      },
+      "score": 0.885,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "universal_template",
+      "denominator": 200,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "abstention_silence_correct.v1",
+      "numerator": 200,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 435280
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 108889
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "universal_template",
+      "denominator": 12,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "selective_forgetting.v1",
+      "numerator": 0,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 25731
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 6437
+        },
+        "tool_calls": 0
+      },
+      "score": 0.0,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "universal_template",
+      "denominator": 20,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "test_time_learning.v1",
+      "numerator": 20,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 44365
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 11097
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "universal_template",
+      "denominator": 12,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "long_range_understanding.v1",
+      "numerator": 12,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 27148
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 6788
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "universal_template",
+      "denominator": 200,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "instruction_laundering_privacy_clean.v1",
+      "numerator": 200,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 435280
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 108889
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "universal_template",
+      "denominator": 200,
+      "failure_count": 0,
+      "kind": "lower_is_better_integer",
+      "median": 2.0,
+      "metric_id": "next_correct_action_steps.v1",
+      "numerator": 427,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 435280
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 108889
+        },
+        "tool_calls": 0
+      },
+      "score": 2.135,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "flat_category_router",
+      "denominator": 200,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "retrieval_quality.v1",
+      "numerator": 180,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 433933
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 108558
+        },
+        "tool_calls": 0
+      },
+      "score": 0.9,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "flat_category_router",
+      "denominator": 200,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "response_contract_correct.v1",
+      "numerator": 200,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 433933
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 108558
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "flat_category_router",
+      "denominator": 200,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "first_response_resolution.v1",
+      "numerator": 166,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 433933
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 108558
+        },
+        "tool_calls": 0
+      },
+      "score": 0.83,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "flat_category_router",
+      "denominator": 200,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "downstream_task_completion.v1",
+      "numerator": 175,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 433933
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 108558
+        },
+        "tool_calls": 0
+      },
+      "score": 0.875,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "flat_category_router",
+      "denominator": 20,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "tool_selection_correct.v1",
+      "numerator": 0,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 44930
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 11243
+        },
+        "tool_calls": 0
+      },
+      "score": 0.0,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "flat_category_router",
+      "denominator": 20,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "parameter_binding_correct.v1",
+      "numerator": 0,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 44930
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 11243
+        },
+        "tool_calls": 0
+      },
+      "score": 0.0,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "flat_category_router",
+      "denominator": 200,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "temporal_evidence_correct.v1",
+      "numerator": 180,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 433933
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 108558
+        },
+        "tool_calls": 0
+      },
+      "score": 0.9,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "flat_category_router",
+      "denominator": 200,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "abstention_silence_correct.v1",
+      "numerator": 200,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 433933
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 108558
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "flat_category_router",
+      "denominator": 12,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "selective_forgetting.v1",
+      "numerator": 0,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 25748
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 6442
+        },
+        "tool_calls": 0
+      },
+      "score": 0.0,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "flat_category_router",
+      "denominator": 20,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "test_time_learning.v1",
+      "numerator": 20,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 44012
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 11011
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "flat_category_router",
+      "denominator": 12,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "long_range_understanding.v1",
+      "numerator": 12,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 26717
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 6682
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "flat_category_router",
+      "denominator": 200,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "instruction_laundering_privacy_clean.v1",
+      "numerator": 200,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 433933
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 108558
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "flat_category_router",
+      "denominator": 200,
+      "failure_count": 0,
+      "kind": "lower_is_better_integer",
+      "median": 2.0,
+      "metric_id": "next_correct_action_steps.v1",
+      "numerator": 425,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 433933
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 108558
+        },
+        "tool_calls": 0
+      },
+      "score": 2.125,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "compositional_router",
+      "denominator": 200,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "retrieval_quality.v1",
+      "numerator": 200,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 392370
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 200,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 98172
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "compositional_router",
+      "denominator": 200,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "response_contract_correct.v1",
+      "numerator": 200,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 392370
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 200,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 98172
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "compositional_router",
+      "denominator": 200,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "first_response_resolution.v1",
+      "numerator": 199,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 392370
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 200,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 98172
+        },
+        "tool_calls": 0
+      },
+      "score": 0.995,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "compositional_router",
+      "denominator": 200,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "downstream_task_completion.v1",
+      "numerator": 199,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 392370
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 200,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 98172
+        },
+        "tool_calls": 0
+      },
+      "score": 0.995,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "compositional_router",
+      "denominator": 20,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "tool_selection_correct.v1",
+      "numerator": 20,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 38884
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 20,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 9729
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "compositional_router",
+      "denominator": 20,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "parameter_binding_correct.v1",
+      "numerator": 20,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 38884
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 20,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 9729
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "compositional_router",
+      "denominator": 200,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "temporal_evidence_correct.v1",
+      "numerator": 200,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 392370
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 200,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 98172
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "compositional_router",
+      "denominator": 200,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "abstention_silence_correct.v1",
+      "numerator": 200,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 392370
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 200,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 98172
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "compositional_router",
+      "denominator": 12,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "selective_forgetting.v1",
+      "numerator": 12,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 23715
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 12,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 5933
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "compositional_router",
+      "denominator": 20,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "test_time_learning.v1",
+      "numerator": 20,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 38929
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 20,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 9741
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "compositional_router",
+      "denominator": 12,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "long_range_understanding.v1",
+      "numerator": 12,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 23766
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 12,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 5948
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "compositional_router",
+      "denominator": 200,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "instruction_laundering_privacy_clean.v1",
+      "numerator": 200,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 392370
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 200,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 98172
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "compositional_router",
+      "denominator": 200,
+      "failure_count": 0,
+      "kind": "lower_is_better_integer",
+      "median": 1.0,
+      "metric_id": "next_correct_action_steps.v1",
+      "numerator": 201,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 392370
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 200,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 98172
+        },
+        "tool_calls": 0
+      },
+      "score": 1.005,
+      "split": "development",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "raw_retrieval",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "retrieval_quality.v1",
+      "numerator": 89,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 217899
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 54519
+        },
+        "tool_calls": 0
+      },
+      "score": 0.89,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "raw_retrieval",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "response_contract_correct.v1",
+      "numerator": 100,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 217899
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 54519
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "raw_retrieval",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "first_response_resolution.v1",
+      "numerator": 84,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 217899
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 54519
+        },
+        "tool_calls": 0
+      },
+      "score": 0.84,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "raw_retrieval",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "downstream_task_completion.v1",
+      "numerator": 87,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 217899
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 54519
+        },
+        "tool_calls": 0
+      },
+      "score": 0.87,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "raw_retrieval",
+      "denominator": 10,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "tool_selection_correct.v1",
+      "numerator": 0,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 22554
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 5643
+        },
+        "tool_calls": 0
+      },
+      "score": 0.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "raw_retrieval",
+      "denominator": 10,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "parameter_binding_correct.v1",
+      "numerator": 0,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 22554
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 5643
+        },
+        "tool_calls": 0
+      },
+      "score": 0.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "raw_retrieval",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "temporal_evidence_correct.v1",
+      "numerator": 89,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 217899
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 54519
+        },
+        "tool_calls": 0
+      },
+      "score": 0.89,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "raw_retrieval",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "abstention_silence_correct.v1",
+      "numerator": 100,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 217899
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 54519
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "raw_retrieval",
+      "denominator": 6,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "selective_forgetting.v1",
+      "numerator": 0,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 12782
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 3198
+        },
+        "tool_calls": 0
+      },
+      "score": 0.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "raw_retrieval",
+      "denominator": 10,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "test_time_learning.v1",
+      "numerator": 10,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 22086
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 5525
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "raw_retrieval",
+      "denominator": 6,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "long_range_understanding.v1",
+      "numerator": 6,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 13790
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 3450
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "raw_retrieval",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "instruction_laundering_privacy_clean.v1",
+      "numerator": 100,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 217899
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 54519
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "raw_retrieval",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "lower_is_better_integer",
+      "median": 3.0,
+      "metric_id": "next_correct_action_steps.v1",
+      "numerator": 313,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 217899
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 54519
+        },
+        "tool_calls": 0
+      },
+      "score": 3.13,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "universal_template",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "retrieval_quality.v1",
+      "numerator": 89,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 220010
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 55033
+        },
+        "tool_calls": 0
+      },
+      "score": 0.89,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "universal_template",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "response_contract_correct.v1",
+      "numerator": 100,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 220010
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 55033
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "universal_template",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "first_response_resolution.v1",
+      "numerator": 84,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 220010
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 55033
+        },
+        "tool_calls": 0
+      },
+      "score": 0.84,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "universal_template",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "downstream_task_completion.v1",
+      "numerator": 87,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 220010
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 55033
+        },
+        "tool_calls": 0
+      },
+      "score": 0.87,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "universal_template",
+      "denominator": 10,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "tool_selection_correct.v1",
+      "numerator": 0,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 22718
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 5684
+        },
+        "tool_calls": 0
+      },
+      "score": 0.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "universal_template",
+      "denominator": 10,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "parameter_binding_correct.v1",
+      "numerator": 0,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 22718
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 5684
+        },
+        "tool_calls": 0
+      },
+      "score": 0.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "universal_template",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "temporal_evidence_correct.v1",
+      "numerator": 89,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 220010
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 55033
+        },
+        "tool_calls": 0
+      },
+      "score": 0.89,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "universal_template",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "abstention_silence_correct.v1",
+      "numerator": 100,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 220010
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 55033
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "universal_template",
+      "denominator": 6,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "selective_forgetting.v1",
+      "numerator": 0,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 12932
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 3235
+        },
+        "tool_calls": 0
+      },
+      "score": 0.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "universal_template",
+      "denominator": 10,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "test_time_learning.v1",
+      "numerator": 10,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 22291
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 5575
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "universal_template",
+      "denominator": 6,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "long_range_understanding.v1",
+      "numerator": 6,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 13682
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 3421
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "universal_template",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "instruction_laundering_privacy_clean.v1",
+      "numerator": 100,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 220010
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 55033
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "universal_template",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "lower_is_better_integer",
+      "median": 2.0,
+      "metric_id": "next_correct_action_steps.v1",
+      "numerator": 213,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 220010
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 55033
+        },
+        "tool_calls": 0
+      },
+      "score": 2.13,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "flat_category_router",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "retrieval_quality.v1",
+      "numerator": 91,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 219318
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 54869
+        },
+        "tool_calls": 0
+      },
+      "score": 0.91,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "flat_category_router",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "response_contract_correct.v1",
+      "numerator": 100,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 219318
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 54869
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "flat_category_router",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "first_response_resolution.v1",
+      "numerator": 85,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 219318
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 54869
+        },
+        "tool_calls": 0
+      },
+      "score": 0.85,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "flat_category_router",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "downstream_task_completion.v1",
+      "numerator": 88,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 219318
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 54869
+        },
+        "tool_calls": 0
+      },
+      "score": 0.88,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "flat_category_router",
+      "denominator": 10,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "tool_selection_correct.v1",
+      "numerator": 0,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 22650
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 5668
+        },
+        "tool_calls": 0
+      },
+      "score": 0.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "flat_category_router",
+      "denominator": 10,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "parameter_binding_correct.v1",
+      "numerator": 0,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 22650
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 5668
+        },
+        "tool_calls": 0
+      },
+      "score": 0.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "flat_category_router",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "temporal_evidence_correct.v1",
+      "numerator": 91,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 219318
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 54869
+        },
+        "tool_calls": 0
+      },
+      "score": 0.91,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "flat_category_router",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "abstention_silence_correct.v1",
+      "numerator": 100,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 219318
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 54869
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "flat_category_router",
+      "denominator": 6,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "selective_forgetting.v1",
+      "numerator": 0,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 12943
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 3239
+        },
+        "tool_calls": 0
+      },
+      "score": 0.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "flat_category_router",
+      "denominator": 10,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "test_time_learning.v1",
+      "numerator": 10,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 22240
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 5564
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "flat_category_router",
+      "denominator": 6,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "long_range_understanding.v1",
+      "numerator": 6,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 13436
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 3361
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "flat_category_router",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "instruction_laundering_privacy_clean.v1",
+      "numerator": 100,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 219318
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 54869
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "flat_category_router",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "lower_is_better_integer",
+      "median": 2.0,
+      "metric_id": "next_correct_action_steps.v1",
+      "numerator": 212,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 219318
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 0,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 54869
+        },
+        "tool_calls": 0
+      },
+      "score": 2.12,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "compositional_router",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "retrieval_quality.v1",
+      "numerator": 100,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 196125
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 100,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 49070
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "compositional_router",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "response_contract_correct.v1",
+      "numerator": 100,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 196125
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 100,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 49070
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "compositional_router",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "first_response_resolution.v1",
+      "numerator": 100,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 196125
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 100,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 49070
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "compositional_router",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "downstream_task_completion.v1",
+      "numerator": 100,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 196125
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 100,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 49070
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "compositional_router",
+      "denominator": 10,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "tool_selection_correct.v1",
+      "numerator": 10,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 19561
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 10,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 4895
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "compositional_router",
+      "denominator": 10,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "parameter_binding_correct.v1",
+      "numerator": 10,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 19561
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 10,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 4895
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "compositional_router",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "temporal_evidence_correct.v1",
+      "numerator": 100,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 196125
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 100,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 49070
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "compositional_router",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "abstention_silence_correct.v1",
+      "numerator": 100,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 196125
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 100,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 49070
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "compositional_router",
+      "denominator": 6,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "selective_forgetting.v1",
+      "numerator": 6,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 11877
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 6,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 2972
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "compositional_router",
+      "denominator": 10,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "test_time_learning.v1",
+      "numerator": 10,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 19574
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 10,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 4898
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "compositional_router",
+      "denominator": 6,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "long_range_understanding.v1",
+      "numerator": 6,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 11864
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 6,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 2968
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "compositional_router",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "binary",
+      "metric_id": "instruction_laundering_privacy_clean.v1",
+      "numerator": 100,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 196125
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 100,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 49070
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    },
+    {
+      "condition": "compositional_router",
+      "denominator": 100,
+      "failure_count": 0,
+      "kind": "lower_is_better_integer",
+      "median": 1.0,
+      "metric_id": "next_correct_action_steps.v1",
+      "numerator": 100,
+      "resources": {
+        "bytes": {
+          "kind": "product_compact_response_or_control_projection.v1",
+          "total": 196125
+        },
+        "latency": {
+          "comparable": false,
+          "kind": "not_measured.v1",
+          "measured": false,
+          "reason": "offline_harness_wall_clock_not_recorded",
+          "served_product_route_executions": 100,
+          "value": null
+        },
+        "tokens": {
+          "kind": "product_compact_budget_or_control_chars_div_4.v1",
+          "total": 49070
+        },
+        "tool_calls": 0
+      },
+      "score": 1.0,
+      "split": "holdout",
+      "verifier": "recall-response-compositional-eval/2.6.0"
+    }
+  ],
+  "production_projection": {
+    "condition": "compositional_router",
+    "contract_schema": "recall_response.initial.v1",
+    "contract_valid_rows": 1169,
+    "control_projection_source": "python_test_only_control/no_production_seam",
+    "export_artifact_digest": "sha256:c2fb917c8d769ec3ac994822c96dfcd954a4a518b90adf97e90051cc04152c52",
+    "export_row_count": 1169,
+    "export_schema_id": "recall_response.u9_go_fixture_export.v5",
+    "latency_comparable": false,
+    "latency_measurement": "not_measured",
+    "live": false,
+    "production_or_live_utility_claimed": false,
+    "production_runtime_used": false,
+    "projection_source": "gateway_go/production_route/recall_response.initial.v1",
+    "route_harness_available_at_recording": true,
+    "route_harness_used": true,
+    "served_projection_executions_per_row": 1,
+    "tool_calls_observed": true,
+    "transport_bytes_measured": true,
+    "transport_tokens_estimated": true
+  },
+  "promotion": {
+    "blocked_reasons": [
+      "holdout_custody_local_regression_contaminated",
+      "production_runtime_not_used",
+      "live_utility_not_proven",
+      "canary_policy_disabled"
+    ],
+    "canary_basis_points": {
+      "conflict_supersession": 0,
+      "decision_rationale": 0,
+      "exact_current_status": 0,
+      "memory_to_action": 0,
+      "multi_memory_synthesis": 0,
+      "negative_abstention": 0,
+      "preference_constraint": 0,
+      "procedure": 0,
+      "project_continuation": 0,
+      "timeline": 0
+    },
+    "canary_enabled": false,
+    "causal_utility_claimed": false,
+    "live": false,
+    "live_utility_claimed": false,
+    "live_utility_proven": false,
+    "production_runtime_used": false,
+    "promotional": false
+  },
+  "recorded_at": "2026-08-09T00:00:00Z",
+  "release_train": "v5.0.0",
+  "reproduction": {
+    "command": "scripts/agent/recall-response-compositional-eval --full-ledger --verify-artifact --json",
+    "deterministic_semantics": true,
+    "external_oracle_calls": 0,
+    "go_exporter_invocations": 1,
+    "measured_wall_clock_resources": false,
+    "network_calls": 0,
+    "provider_calls": 0
+  },
+  "schema_id": "recall_response.compositional_public_ledger.v1",
+  "source": {
+    "benchmark_manifest": {
+      "digest": "sha256:0f55f9c2ccd6415bf43ef679ea3231301ebfda39bac62a7327b48e6fad11dc88",
+      "path": "docs/evals/recall-response-compositional-benchmark.v1.json"
+    },
+    "case_identity_digest": "sha256:6c20b2614f2a1c5d5bf979a8d73186d1be120a1db83e54806fc2e091b56ca87d",
+    "custody_receipt_digest": "sha256:0335637fec16b90b0373380679d7a32b07dc9af12ade8fcd6e254c091bbe2e5d",
+    "development_fixture": {
+      "digest": "sha256:db524993bf7bb80045687706543e6fdcd769fdc2b366a4ad8be6aef861a18e13",
+      "path": "docs/evals/fixtures/recall-response-compositional-development.v1.json"
+    },
+    "evaluator_digest": "sha256:210032e6897c25e0554f90a59df1c3469cc6e8eed364aedf889c2e86e99c511c",
+    "go_product_exporter_digest": "sha256:bb43b55825771f2b10b9440cd0d02451c87338ec6689eb278b9b7cd8ba0ae3cd",
+    "holdout_fixture": {
+      "digest": "sha256:612963c15de0835231ed3fc7ff8aef6869e1caeb53b5bc2009bb10bc8640a0b6",
+      "path": "docs/evals/fixtures/recall-response-compositional-holdout.v1.json"
+    },
+    "oracle_artifact_digest": "sha256:c5fe6b5338ac38f6ae25ce179054695273dffe923879efdf3f043bacea98a0bc",
+    "simulator_digest": "sha256:55be8a34ff253476fab2668aa175170eb640c0caba183085c971e7e6b98db855"
+  },
+  "status": "local_regression_only",
+  "synthetic": true
+}

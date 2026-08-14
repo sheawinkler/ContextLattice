@@ -31,14 +31,15 @@ func normalizeTopicPathLoose(value string) string {
 }
 
 const (
-	savedRecallEvalV3SchemaID         = "saved_recall_eval_case_set.v3"
-	savedRecallEvalV3Version          = 3
-	savedRecallEvalV3SnapshotSchemaID = "saved_recall_eval_snapshot.v1"
-	savedRecallEvalV3CustodySchemaID  = "saved_recall_eval_custody.v1"
-	savedRecallEvalV3MaxCases         = 300
-	savedRecallEvalV3MaxSourceDocs    = 20000
-	savedRecallEvalV3MaxGraphCases    = 25
-	savedRecallEvalV3HoldoutPercent   = 20
+	savedRecallEvalV3SchemaID           = "saved_recall_eval_case_set.v3"
+	savedRecallEvalV3Version            = 3
+	savedRecallEvalV3SnapshotSchemaID   = "saved_recall_eval_snapshot.v1"
+	savedRecallEvalV3CustodySchemaID    = "saved_recall_eval_custody.v1"
+	savedRecallEvalV3MaxCases           = 300
+	savedRecallEvalV3MaxSourceDocs      = 20000
+	savedRecallEvalV3MaxGraphCases      = 100
+	savedRecallEvalV3MinGraphReferences = 90
+	savedRecallEvalV3HoldoutPercent     = 20
 )
 
 type recallEvalSourceCandidate struct {
@@ -213,7 +214,11 @@ func (s *server) recallEvalIndexedCandidates(ctx context.Context, project string
 		m.mu.RUnlock()
 		keys := recallEvalSortedRankedKeys(sample)
 		entries := recallEvalCurrentStateEntriesForKeys(ctx, m, keys)
-		identity, exactStatePaths := recallEvalMetadataForKeys(m, keys)
+		identity, exactStatePaths, exactStateErr := recallEvalMetadataForKeys(ctx, m, keys)
+		if exactStateErr != nil {
+			stats.IndexMode = "exact_state_fence_error"
+			return []recallEvalSourceCandidate{}, "exact_state_fence_error", stats.mapValue()
+		}
 		stats.Sample = len(entries)
 		if stats.ContextCanceled || ctx.Err() != nil {
 			stats.ContextCanceled = true
@@ -288,7 +293,11 @@ func (s *server) recallEvalIndexedCandidates(ctx context.Context, project string
 		}
 		keys := recallEvalSortedRankedKeys(sample)
 		entries := recallEvalCurrentStateEntriesForKeys(ctx, m, keys)
-		identity, exactStatePaths := recallEvalMetadataForKeys(m, keys)
+		identity, exactStatePaths, exactStateErr := recallEvalMetadataForKeys(ctx, m, keys)
+		if exactStateErr != nil {
+			stats.IndexMode = "exact_state_fence_error"
+			return []recallEvalSourceCandidate{}, "exact_state_fence_error", stats.mapValue()
+		}
 		stats.Sample = len(entries)
 		if len(entries) > 0 {
 			candidates, source := recallEvalCandidatesFromCurrentStates(ctx, m, entries, identity, exactStatePaths, project, topicPrefix, maxDocs, "project_current_state_bottom_k")
@@ -316,7 +325,11 @@ func (s *server) recallEvalIndexedCandidates(ctx context.Context, project string
 		key := memoryStoreKey(doc.Project, doc.FileName)
 		fallbackKeys = append(fallbackKeys, recallEvalRankedKey{key: key, rank: recallEvalRankedKeyRank(key)})
 	}
-	identity, _ := recallEvalMetadataForKeys(m, fallbackKeys)
+	identity, _, exactStateErr := recallEvalMetadataForKeys(ctx, m, fallbackKeys)
+	if exactStateErr != nil {
+		stats.IndexMode = "exact_state_fence_error"
+		return []recallEvalSourceCandidate{}, "exact_state_fence_error", stats.mapValue()
+	}
 	candidates := make([]recallEvalSourceCandidate, 0, len(docs))
 	for _, doc := range docs {
 		createdAt := doc.UpdatedAt
@@ -404,7 +417,11 @@ func recallEvalCandidatesFromRecentHistory(ctx context.Context, m *memoryStore, 
 	m.mu.RUnlock()
 	ranked := recallEvalSortedRankedKeys(sample)
 	identity := map[string]recallEvalIdentity{}
-	exactStatePaths := recallEvalExactStatePathsForKeys(m, ranked)
+	exactStatePaths, exactStateErr := recallEvalExactStatePathsForKeys(ctx, m, ranked)
+	if exactStateErr != nil {
+		stats.IndexMode = "exact_state_fence_error"
+		return []recallEvalSourceCandidate{}, "exact_state_fence_error", stats.mapValue()
+	}
 	entries := make([]memoryCurrentState, 0, len(ranked))
 	for _, item := range ranked {
 		if entry, ok := selectedEntries[item.key]; ok {
@@ -423,11 +440,14 @@ type recallEvalIdentity struct {
 	createdAt time.Time
 }
 
-func recallEvalMetadataForKeys(m *memoryStore, keys []recallEvalRankedKey) (map[string]recallEvalIdentity, map[string]struct{}) {
+func recallEvalMetadataForKeys(ctx context.Context, m *memoryStore, keys []recallEvalRankedKey) (map[string]recallEvalIdentity, map[string]struct{}, error) {
 	identity := make(map[string]recallEvalIdentity, len(keys))
 	exactStatePaths := make(map[string]struct{}, len(keys))
 	if m == nil || len(keys) == 0 {
-		return identity, exactStatePaths
+		return identity, exactStatePaths, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	keySet := make(map[string]struct{}, len(keys))
 	for _, ranked := range keys {
@@ -436,6 +456,10 @@ func recallEvalMetadataForKeys(m *memoryStore, keys []recallEvalRankedKey) (map[
 	// Scan the bounded recent ring while retaining metadata only for the
 	// already-selected bottom-K keys. This keeps the refresh auxiliary memory
 	// proportional to maxDocs rather than maxRecent or the exact-state corpus.
+	exactStateIndex, err := m.exactStatePathsSnapshotContext(ctx)
+	if err != nil {
+		return identity, exactStatePaths, err
+	}
 	m.mu.RLock()
 	for _, entry := range m.recent {
 		key := memoryStoreKey(entry.Project, entry.FileName)
@@ -454,27 +478,34 @@ func recallEvalMetadataForKeys(m *memoryStore, keys []recallEvalRankedKey) (map[
 		}
 	}
 	for _, ranked := range keys {
-		if _, exact := m.exactStatePaths[ranked.key]; exact {
+		if _, exact := exactStateIndex[ranked.key]; exact {
 			exactStatePaths[ranked.key] = struct{}{}
 		}
 	}
 	m.mu.RUnlock()
-	return identity, exactStatePaths
+	return identity, exactStatePaths, nil
 }
 
-func recallEvalExactStatePathsForKeys(m *memoryStore, keys []recallEvalRankedKey) map[string]struct{} {
+func recallEvalExactStatePathsForKeys(ctx context.Context, m *memoryStore, keys []recallEvalRankedKey) (map[string]struct{}, error) {
 	paths := make(map[string]struct{}, len(keys))
 	if m == nil || len(keys) == 0 {
-		return paths
+		return paths, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	exactStateIndex, err := m.exactStatePathsSnapshotContext(ctx)
+	if err != nil {
+		return paths, err
 	}
 	m.mu.RLock()
 	for _, ranked := range keys {
-		if _, exact := m.exactStatePaths[ranked.key]; exact {
+		if _, exact := exactStateIndex[ranked.key]; exact {
 			paths[ranked.key] = struct{}{}
 		}
 	}
 	m.mu.RUnlock()
-	return paths
+	return paths, nil
 }
 
 func recallEvalCandidatesFromCurrentStates(

@@ -1,0 +1,419 @@
+{
+  "schema_id": "contextlattice_eval_ledger.v1",
+  "feature": "context_pack_proof_and_local_budget_boundary",
+  "lane": "shared_public_safe",
+  "release_train": "v5.0.0",
+  "recorded_at": "2026-08-13",
+  "baseline": {
+    "source": "cac4df3d pre-amendment adversarial review",
+    "requested_budget_chars": 1024,
+    "long_identity_output_bytes": 12613,
+    "long_reference_output_bytes": 30677,
+    "large_token_budget_output_bytes": 156775,
+    "large_token_budget_contract_valid": false,
+    "distinct_receipts_after_item_64_shared_digest": true,
+    "nested_reference_promoted_to_root_custody": true,
+    "emitted_canonical_digest_preserved": false,
+    "malformed_receipt_list_claimed_root_custody": true,
+    "pretty_failure_output_bytes": 8198,
+    "proof_authority_integral_float_runtime_mismatch": true,
+    "proof_tail_truncated_before_digest_item": 129,
+    "raw_quality_sample_could_persist_unvalidated_fields": true,
+    "go_native_explicit_budget_pre_repair_wire_bytes": 71445,
+    "go_native_explicit_budget_pre_repair_canonical_bytes": 54598,
+    "go_native_explicit_budget_pre_repair_exceeded_bound": true,
+    "go_native_implicit_agent_packet_pre_repair_rejected_above_10000_bytes": true,
+    "go_native_invalid_explicit_budget_silently_fell_back_to_10000": true,
+    "go_native_exact_registered_ceiling_rejected_by_framing_newline": true
+  },
+  "target": {
+    "minimum_effective_budget_chars": 8192,
+    "explicit_caller_wire_output_never_exceeds_effective_budget": true,
+    "implicit_registered_canonical_body_never_exceeds_effective_budget": true,
+    "implicit_registered_framing_newline_bytes": 1,
+    "overlong_opaque_identity_emits_partial_prefix": false,
+    "root_non_debug_summary_remains_authoritative": true,
+    "nested_summary_reference_can_claim_root_custody": false,
+    "canonical_digest_binds_unclipped_sorted_compact_json": true,
+    "canonical_digest_survives_public_emission": true,
+    "adjacent_secrets_and_private_paths_remain_redacted": true,
+    "go_native_explicit_budget_matches_local_boundary": true,
+    "go_native_implicit_agent_packet_mode_preserved": true,
+    "go_native_invalid_budget_rejected_before_session_or_http": true,
+    "go_native_implicit_registered_ceiling_preserves_exact_canonical_payload": true,
+    "minimal_global_install_includes_canonical_public_boundary": true,
+    "host_lifecycle_upgrade_preserves_runtime_identity": true
+  },
+  "holdout": {
+    "kind": "offline_adversarial_contract_matrix",
+    "network_dependency": false,
+    "cases": [
+      "6000-character session and agent identities",
+      "5000-key token-budget object",
+      "6000-character omitted-reference summaries",
+      "6000-character retrieval-trace identity",
+      "6000-character Unicode query and source-coverage entries",
+      "combined allowed-maximum ASCII identities and proof summaries",
+      "valid 65-item proof receipt below the byte projection threshold",
+      "valid proof with a nested 65-item rationale list",
+      "malformed list-valued proof candidates at root, nested, and compiler origins",
+      "receipt mutation after the contract list limit",
+      "receipt key-order permutation",
+      "pre-bounded projection with oversized private summary",
+      "proof summary changed by public redaction",
+      "proof summary changed by provider-overflow sanitization",
+      "nested and compiler summary references without a root receipt",
+      "ordinary non-debug Gateway root proof summaries",
+      "public emission with a canonical digest adjacent to a secret",
+      "bounded list-valued why_selected rationale",
+      "canonical token-budget report field projection",
+      "exact raw HTTP proof tail beyond the public redactor list limit",
+      "fractional, integral-float, and signed-int64-overflow proof fields at every origin",
+      "low-budget malformed run-advisor numeric values",
+      "production-shaped quality sample plus malformed durable-state sample",
+      "pretty failure payload at the minimum effective budget",
+      "same-origin trust and trace selection at root, nested, and compiler owners",
+      "one-based production candidate ordinals and duplicate receipt identities",
+      "forged proof format-contract byte and registry attestations",
+      "fixed-point UTF-8 contract byte accounting",
+      "request-authority identity rebinding across every nested public object",
+      "exact continuation, context-pack outcome, and adapter product routes",
+      "filesystem, traversal, and alternate-route rejection",
+      "signed-int64 JSON integer boundaries and finite decimal underflow",
+      "raw transport overflow, invalid UTF-8, escaped surrogate, and trailing JSON",
+      "lifecycle rejection before state, completion-event, and terminal mutation",
+      "Go-native explicit 1024-character budget with a 1500-byte query",
+      "Go-native pretty-to-compact emission downgrade before rejection",
+      "Go-native soft transport failure with an oversized query at the minimum budget",
+      "Go-native full response without an explicit budget remains full under the registered response ceiling",
+      "Go-native implicit Agent Packet remains valid across its registered 10-16 KiB compatibility window",
+      "Go-native malformed, missing, signed-overflow, and separated-negative explicit budgets before session or HTTP mutation",
+      "Go-native invalid-budget hard and soft exit truth with one bounded registered JSON failure",
+      "Go-native exact 16000-byte Agent Packet and 120000-byte full response with one framing newline",
+      "Go-native literal --budget-chars query token after the option terminator in piped and interactive-default modes",
+      "runtime audit raw preflight root and nested foreign-session, project, and agent authority",
+      "runtime audit strict-native requested-agent and default resolved-profile runtime modes with mixed-mode rejection",
+      "runtime audit forged passed metadata on the root runtime, policy package, nested policy runtime, and private runtime receipt",
+      "runtime audit request-owned mission, objective, goal, and project/topic/session/current hierarchy drift",
+      "runtime audit soft CLI ok:false plus missing or malformed private objective-runtime attestation",
+      "runtime audit completion rejection, foreign acknowledgement, and typed transport failure exit truth",
+      "runtime audit public generated-session omission with exact private authority binding",
+      "runtime audit recursive stdout identity leakage and any stderr output",
+      "minimal global install without development Python tools exercises both saved-recall quality CLIs",
+      "Unix and Windows base-runtime manifests include the canonical public-boundary dependency",
+      "isolated origin/main-to-candidate host upgrade with two additional real scheduled intervals",
+      "base-to-candidate-to-base managed payload manifest is byte-identical and the candidate-only public-boundary module is absent after rollback",
+      "host scheduler preserves Gateway and Qdrant identities and zero restart counts through upgrade and rollback",
+      "operator scheduler path, type, and program identity remain unchanged through isolated rollback and stop"
+    ]
+  },
+  "metrics": {
+    "python_boundary_tests_passed": 68,
+    "python_boundary_tests_failed": 0,
+    "python_worker_and_u3_guard_tests_passed": 129,
+    "python_boundary_and_public_guard_tests_passed": 197,
+    "new_python_boundary_regression_tests_added": 77,
+    "runtime_contract_audit_regression_tests_passed": 17,
+    "runtime_contract_audit_regression_tests_failed": 0,
+    "new_go_boundary_regression_tests_added": 65,
+    "named_go_proof_and_route_tests_passed": 54,
+    "named_go_proof_and_route_tests_failed": 0,
+    "native_go_budget_regression_tests_passed": 11,
+    "native_go_budget_regression_tests_failed": 0,
+    "native_go_budget_pre_freeze_integration_test_failures": 4,
+    "native_go_budget_verification_environment_failures": 3,
+    "pre_freeze_full_go_integration_failures": 2,
+    "verification_environment_failures": 1,
+    "wider_go_context_pack_family": "passed",
+    "full_go_all_packages": "passed",
+    "focused_go_race": "passed",
+    "go_vet": "passed",
+    "native_go_build": "passed",
+    "windows_amd64_go_test_compile": "passed",
+    "windows_arm64_go_build": "passed",
+    "linux_amd64_go_build": "passed",
+    "rust_context_codec_tests_passed": 2,
+    "rust_context_codec_tests_failed": 0,
+    "contract_generator_stale_count": 0,
+    "contract_audit_finding_count": 0,
+    "runtime_contract_live_audit": "passed",
+    "runtime_contract_live_audit_finding_count": 0,
+    "commercial_product_truth_checks_passed": 68,
+    "commercial_product_truth_checks_failed": 0,
+    "runtime_installer_parity_tests_passed": 16,
+    "runtime_installer_parity_tests_failed": 0,
+    "global_install_smoke_checks_passed": 83,
+    "global_install_smoke_checks_failed": 0,
+    "global_install_pre_repair_failed_checks": 2,
+    "host_supervisor_safety_checks_passed": 18,
+    "host_supervisor_failure_injection_tests_passed": 13,
+    "host_supervisor_audit_regression_tests_passed": 12,
+    "host_lifecycle_verification_environment_failures": 7,
+    "host_lifecycle_pre_freeze_integration_failures": 1,
+    "host_lifecycle_pre_freeze_proof_failures": 1,
+    "host_lifecycle_base_generation_runs": 3,
+    "host_lifecycle_candidate_generation_runs": 4,
+    "host_lifecycle_rollback_generation_runs": 3,
+    "host_lifecycle_observed_intervals": 2,
+    "host_lifecycle_observed_json_runs_across_lifecycle": 18,
+    "host_lifecycle_gateway_restart_count": 0,
+    "host_lifecycle_qdrant_restart_count": 0,
+    "host_lifecycle_rollback_restored_base_payload": true,
+    "host_lifecycle_isolated_scheduler_unloaded": true,
+    "minimum_budget_adversarial_output_within_bound": true,
+    "native_go_final_binary_sha256": "70a30d23f71150a105d111639772e358d010b6512184b769f79e7c9c38fcc081",
+    "native_go_final_binary_build_vcs": false,
+    "native_go_live_minimum_budget_wire_bytes": 7933,
+    "native_go_live_minimum_budget_canonical_bytes": 6247,
+    "native_go_live_implicit_agent_packet_wire_bytes": 11637,
+    "native_go_live_implicit_agent_packet_canonical_bytes": 11636,
+    "native_go_live_full_response_wire_bytes": 86013,
+    "native_go_live_full_response_canonical_bytes": 86012,
+    "native_go_live_roomy_ranked_evidence_count": 16,
+    "native_go_implicit_agent_packet_preserved": true,
+    "native_go_invalid_budget_http_requests": 0,
+    "native_go_invalid_budget_session_state_writes": 0,
+    "native_go_invalid_budget_hard_exit_code": 1,
+    "native_go_invalid_budget_soft_exit_code": 0,
+    "native_go_invalid_budget_hard_wire_bytes": 4931,
+    "native_go_invalid_budget_soft_wire_bytes": 4931,
+    "native_go_exact_agent_packet_canonical_bytes": 16000,
+    "native_go_exact_agent_packet_wire_bytes": 16001,
+    "native_go_exact_full_response_canonical_bytes": 120000,
+    "native_go_exact_full_response_wire_bytes": 120001,
+    "provider_calls": 0,
+    "model_calls": 0,
+    "external_network_calls": 0
+  },
+  "cost": {
+    "new_services": 0,
+    "new_routes": 0,
+    "new_dependencies": 0,
+    "provider_tokens": 0
+  },
+  "latency": {
+    "python_boundary_suite_seconds": 48.478,
+    "python_worker_and_u3_guard_seconds": 51.507,
+    "python_boundary_and_public_guard_bundle_seconds": 99.985,
+    "runtime_contract_audit_regression_seconds": 1.328,
+    "runtime_contract_live_audit_seconds": 38.645,
+    "named_go_regular_seconds": 1.255,
+    "pre_freeze_full_go_failure_seconds": 634.221,
+    "wider_go_context_pack_family_seconds": 648.892,
+    "agent_tools_package_seconds": 14.143,
+    "gatewaystate_package_seconds": 0.094,
+    "named_go_race_seconds": 4.891,
+    "native_go_budget_regular_seconds": 0.465,
+    "native_go_budget_race_seconds": 3.6,
+    "native_go_agent_tools_package_seconds": 13.253,
+    "full_go_wall_seconds": 650.97,
+    "runtime_installer_parity_seconds": 1.484,
+    "global_install_smoke_seconds": 2,
+    "host_supervisor_failure_injection_seconds": 3.981,
+    "installed_upgrade_and_two_interval_smoke_seconds": 199,
+    "latency_class": "offline_local_only"
+  },
+  "tool_calls": {
+    "mock_gateway_requests_in_cli_emission_holdout": 4,
+    "live_local_gateway_requests_in_final_cli_probe": 3,
+    "runtime_contract_live_audit_gateway_requests": 5,
+    "runtime_restarts": 4,
+    "image_builds": 4,
+    "host_lifecycle_isolated_launchd_runs": 18,
+    "host_lifecycle_container_restarts": 0
+  },
+  "failures": [
+    {
+      "failure": "the final fallback returned an oversized payload after deleting its budget metadata",
+      "resolution": "make 8192 characters the minimum effective contract envelope, project or omit optional payloads, retain requested and effective budget truth, and reject any final overshoot"
+    },
+    {
+      "failure": "independent field caps and pre-redaction sizing did not prove the aggregate public JSON envelope for Unicode or all allowed maxima",
+      "resolution": "measure the exact public emission, apply deterministic priority reduction to a contract-valid minimum envelope, preserve proof digests and budget truth, and omit lower-priority text, coverage, and identities"
+    },
+    {
+      "failure": "overlong opaque identities were truncated into plausible but incorrect identifiers",
+      "resolution": "emit no partial identity and report the omitted identity fields"
+    },
+    {
+      "failure": "an overlong retrieval trace identity could overflow the minimum envelope and make the CLI emit a traceback instead of JSON",
+      "resolution": "omit the opaque trace identity from the bounded projection, mark the omission, retain its untouched receipt digest, and assert the actual emitted byte count"
+    },
+    {
+      "failure": "proof digesting occurred after contract list clipping",
+      "resolution": "hash the untouched canonical sorted compact JSON and preserve the digest across subsequent bounded projections"
+    },
+    {
+      "failure": "the ordinary public transport redacted and truncated proof lists before the CLI could validate and hash them",
+      "resolution": "use the exact bounded internal validation transport for the proof-custody path, then compact and pass every emitted value through the canonical public boundary"
+    },
+    {
+      "failure": "a valid 65-item proof smaller than the byte threshold could be clipped by the enclosing 64-item context contract without a digest",
+      "resolution": "project and hash any proof whose top-level or nested list exceeds the enclosing context-pack list limit regardless of byte size"
+    },
+    {
+      "failure": "nested bounded references could be promoted to canonical root proof custody while ordinary root non-debug summaries also needed to remain valid",
+      "resolution": "apply origin-sensitive validation: exact root summaries are allowed, while nested and compiler fallbacks require a receipt, typed unavailable state, or digest-authenticated projection"
+    },
+    {
+      "failure": "schema-only objects with arbitrary list-valued assessments or decisions could claim full root receipt custody",
+      "resolution": "require every full receipt candidate to pass its own registered v1 contract before it can become a canonical root proof"
+    },
+    {
+      "failure": "the shared public redactor treated canonical_digest as an arbitrary token",
+      "resolution": "allow only exact SHA-256 values in that structured field and verify adjacent secrets are still redacted"
+    },
+    {
+      "failure": "a contract-valid proof could be changed by public redaction or provider-overflow sanitization without binding the untouched value",
+      "resolution": "project and hash any proof that the public or outer context boundary would mutate, while emitting only the bounded safe projection"
+    },
+    {
+      "failure": "Python and Go disagreed on integer authority for fractional, integral-float, and out-of-range proof fields",
+      "resolution": "keep generic finite integral-number compatibility, but require signed-int64 native integers for every proof version and count before root custody"
+    },
+    {
+      "failure": "trusted raw success transport allowed malformed run-advisor values to reach exception text",
+      "resolution": "use non-throwing bounded numeric coercion and verify malformed raw values reach neither stdout nor stderr"
+    },
+    {
+      "failure": "trusted raw context-pack quality data could reach durable session state without validation",
+      "resolution": "separate the full canonical public quality projection from a strict four-field state receipt and persist only the validated receipt"
+    },
+    {
+      "failure": "pretty-formatted failure output bypassed the success-path hard emission bound",
+      "resolution": "route failures through the same exact public-byte sizing and deterministic compact fallback"
+    },
+    {
+      "failure": "large-budget early returns omitted requested and floor-applied budget truth",
+      "resolution": "stamp requested, effective, and floor-applied metadata before every fit decision"
+    },
+    {
+      "failure": "contract byte attestations were stamped before their own metadata reached a fixed point and used incompatible escaped-Unicode accounting across Go and Python",
+      "resolution": "stabilize actual_json_bytes over the final compact UTF-8 object and use the same byte definition in every runtime"
+    },
+    {
+      "failure": "proof pairs could mix origins or retain duplicate, impossible, or zero-based receipt identities that the producer never emits",
+      "resolution": "select trust and trace as one same-origin pair, reconcile counts and row identities, and require the producer's unique one-based ordinal domain"
+    },
+    {
+      "failure": "generic public projection treated product API routes as local filesystem paths or allowed alternate route-shaped values",
+      "resolution": "preserve only exact field-bound continuation, outcome, and adapter product routes while rejecting traversal, filesystem, and alternate endpoints"
+    },
+    {
+      "failure": "Go public JSON accepted integer lexemes outside the signed-int64 domain used by Python and the Gateway contract boundary",
+      "resolution": "parse integer lexemes with signed-int64 semantics while retaining finite decimal and underflow behavior"
+    },
+    {
+      "failure": "lifecycle and context-pack outputs could be accepted or mutated before the exact final public envelope and upstream acknowledgement were proven",
+      "resolution": "preflight the exact bounded public receipt, require literal ok true and registered attestation, and suppress state, completion, and terminal mutations on rejection"
+    },
+    {
+      "failure": "the first package-wide final-tree run exposed two integration regressions: valid typed Go canary receipts were rejected before normalization and normalized preflight counters were omitted",
+      "resolution": "inspect exported typed-receipt fields in the strict pre-normalization JSON domain, retain malformed UTF-8 rejection, accept only strict nonnegative json.Number counters in preflight compaction, and rerun the exact failing tests under regular and race before repeating the full suite"
+    },
+    {
+      "failure": "one verification rerun set GOTMPDIR but omitted TMPDIR, causing the macOS symlinked system temp path to be correctly rejected by the server-owned artifact namespace test",
+      "resolution": "set both GOTMPDIR and TMPDIR to the same task-scoped external WD Black directory in every Go reproduction command"
+    },
+    {
+      "failure": "the Go-native explicit 1024-character budget only stamped budget metadata and emitted 71445 wire bytes, while a long query or soft transport failure could bypass deterministic reduction",
+      "resolution": "route explicit budgets through the proof-bearing response, measure exact compact and pretty wire bytes, apply one contract-valid 8192-character success or failure envelope without a second retrieval, preserve closed non-replay transport evidence, cap task summary by UTF-8 bytes, downgrade pretty output before rejection, preserve implicit Agent Packet mode, and keep full or debug mode under the registered 120000-byte response ceiling"
+    },
+    {
+      "failure": "two native-budget verification commands failed before testing because one used repository-root file paths from the Go module cwd and one selected an incomplete WD Black module cache while offline lookup was enforced",
+      "resolution": "use module-relative paths from services/gateway-go and the verified populated WD Black build-cache/go-mod tree; keep GOPROXY off and rerun the full settled tree without relaxing the offline boundary"
+    },
+    {
+      "failure": "the final separator static and cross-platform verification batch initially selected the incomplete WD Black go-mod cache instead of the populated build-cache/go-mod tree, so offline dependency lookup stopped before compilation",
+      "resolution": "repeat the batch once with the populated external module and build caches; vet, Windows amd64 test compilation, Windows arm64 build, and Linux amd64 build then pass without network access"
+    },
+    {
+      "failure": "an ordinary registered Agent Packet between 10000 and 16000 JSON bytes was rejected by the Go-native caller's implicit 10000-byte ceiling",
+      "resolution": "bind implicit Agent Packet emission to the registered 16000-byte contract ceiling, retain compact fallback for pretty output, and keep explicit budget requests on the separately bounded proof-bearing response path"
+    },
+    {
+      "failure": "malformed, missing, signed-overflow, and separated-negative explicit Go-native budget values silently selected the proof-bearing path with a fallback budget of 10000 after possible session creation",
+      "resolution": "parse one exact positive signed-integer budget before query, session, state, or HTTP work; consume separated numeric negatives without query drift; emit one registered invalid_context_budget failure with hard or soft exit truth"
+    },
+    {
+      "failure": "the emitter newline caused exact 16000-byte Agent Packets and exact 120000-byte full responses to be rejected or reduced even though their canonical registered envelopes were valid",
+      "resolution": "keep explicit caller budgets fully wire-inclusive, preserve implicit canonical budget metadata at the registered ceiling, and allow exactly one separate framing newline for registry-derived implicit limits"
+    },
+    {
+      "failure": "the first exact-ceiling full-response fixture used long opaque-looking padding that the public boundary correctly redacted before emission",
+      "resolution": "use bounded public prose padding in the adversarial fixture and assert that the exact canonical payload survives the real public projector before measuring its framing byte"
+    },
+    {
+      "failure": "option-presence detection scanned beyond the standard -- terminator and interactive pretty-default synthesis appended a flag inside the literal query",
+      "resolution": "stop option detection at the terminator and insert synthesized output flags immediately before it so literal post-terminator query tokens remain unchanged"
+    },
+    {
+      "failure": "the live runtime audit consumed public-redacted auto-session identities as internal lifecycle authority, then posted a redaction marker as the completion session ID and received HTTP 422",
+      "resolution": "require the full raw preflight attestation and exact root, nested-runtime, session, and reuse-key authority; bind a private canonical objective-runtime digest receipt to the CLI session while omitting generated identity publicly; require literal CLI ok true; and treat missing runtime proof or any non-exact completion acknowledgement as a bounded audit error with nonzero exit"
+    },
+    {
+      "failure": "forged passed nested metadata and request-semantic drift could authorize runtime evidence, while root-only public omission checks missed nested identity and stderr disclosure",
+      "resolution": "run the registered validator behind every envelope attestation; bind mission, objective, goal, hierarchy, and one consistent strict-or-default runtime agent mode; reject forged private receipts; and require the internal session identity to be absent recursively with an empty stderr channel"
+    },
+    {
+      "failure": "the minimal global installer copied the shared CLI helper but omitted its canonical task-agent public-boundary module, so two installed quality CLIs raised ModuleNotFoundError before help output",
+      "resolution": "move the canonical redactor definitions byte-identically into the already base-managed scripts/agent/_common.py module, re-export the identical function objects from task_agent_execution, and require both installed quality CLIs to exercise that common owner"
+    },
+    {
+      "failure": "the shared task-agent public-boundary module imported the Unix-only pwd module at process startup, so both installed Windows quality wrappers failed before argument parsing",
+      "resolution": "keep the installed public boundary in cross-platform scripts/agent/_common.py, retain an optional pwd import only for the non-installed task-agent module's Unix socket boundary, and require an isolated Windows-style common-module import and redaction proof"
+    },
+    {
+      "failure": "candidate-to-base rollback left the candidate-only root task_agent_execution.py module behind, so the first lifecycle receipt falsely claimed exact base payload restoration",
+      "resolution": "remove that candidate-only file from both Unix and Windows base-runtime manifests by moving canonical redactor ownership into the already base-managed _common.py module; verify all 64 managed entries byte-identically after base-to-candidate-to-base reinstall and require the root file to be absent"
+    },
+    {
+      "failure": "the first live scheduler harness used an unquoted wildcard in its offline Go environment and stopped before installation",
+      "resolution": "remove the redundant wildcard variable while retaining GOPROXY=off and GOSUMDB=off, then rerun from a clean isolated label"
+    },
+    {
+      "failure": "macOS System Policy denied launchd xpcproxy permission to create its log on the external evidence volume",
+      "resolution": "make no permission or TCC changes; retain source, caches, and evidence externally, but exercise the task-scoped installed launchd payload in the user-local filesystem used by the product"
+    },
+    {
+      "failure": "pre-freeze lifecycle verifier commands hit five additional harness defects: a zsh variable named path hid the tool PATH, a stale greater-than-100 entry threshold rejected the actual 64-entry base payload, two candidate-log summaries treated boolean health as an object, and the first deterministic-build probe named a nonexistent external GOTMPDIR",
+      "resolution": "restart from clean isolated labels, use non-reserved shell variable names, assert the exact 64-entry managed scope, validate the actual boolean log schema, create every external temp directory before use, and preserve all failed-attempt evidence separately from the final receipt"
+    },
+    {
+      "failure": "the first post-repair rollback manifest differed only in the macOS cgo-linked Go CLI binary because independent builds were not byte-reproducible",
+      "resolution": "prove two independent CGO_ENABLED=0 base builds byte-identical, then rerun base-to-candidate-to-base from a fresh isolated runtime with the same explicit offline external Go caches and CGO setting for all three installations"
+    }
+  ],
+  "reproduction": {
+    "artifact": "scripts/tests/test_contextlattice_pack_budget.py",
+    "runtime_audit_artifact": "scripts/tests/test_agent_runtime_contract_audit.py",
+    "host_lifecycle_runbook": "docs/host-supervisor-release-safety.md",
+    "host_lifecycle_receipt": "<release-proof>/installed-lifecycle-receipt.json",
+    "host_lifecycle_receipt_sha256": "1bc4b2f6c60b17afa49687c657e11028af47fdb189799adefacbcf5bb61f27d9",
+    "host_lifecycle_candidate_commit": "69c2b5c3fa087906345804f04447cb73eb20fb93",
+    "host_lifecycle_candidate_tree": "30155295a9b85fde65cc8d2972a1441827ecf5aa",
+    "host_lifecycle_base_commit": "dbd74ff7cdfb725e672b351d10beae8ef494da16",
+    "host_lifecycle_base_tree": "2700fef07383b3dfb3ba947a4574f348648e7214",
+    "working_directory": "repository_root",
+    "environment": "each command requires EXTERNAL_CACHE_ROOT to name a pre-existing external cache filesystem and creates only task-scoped subdirectories beneath it",
+    "host_lifecycle_build_mode": "CGO_ENABLED=0 with the same external offline Go caches for base, candidate, and rollback",
+    "host_lifecycle_installed_path": "the isolated installed launchd payload uses a task-scoped user-local path because macOS System Policy denies xpcproxy external-volume log creation; source, build caches, and evidence remain external and no permission or TCC setting changes",
+    "commands": [
+      "/bin/zsh -f -c ': ${EXTERNAL_CACHE_ROOT:?set EXTERNAL_CACHE_ROOT to an external cache root}; mkdir -p \"$EXTERNAL_CACHE_ROOT/tmp/final-native-budget-go\"; cd services/gateway-go; env -i PATH=/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin HOME=\"$HOME\" GOCACHE=\"$EXTERNAL_CACHE_ROOT/go-build\" GOMODCACHE=\"$EXTERNAL_CACHE_ROOT/go-mod\" GOTMPDIR=\"$EXTERNAL_CACHE_ROOT/tmp/final-native-budget-go\" TMPDIR=\"$EXTERNAL_CACHE_ROOT/tmp/final-native-budget-go\" GOPROXY=off GOSUMDB=off GONOSUMDB=\"*\" GOTOOLCHAIN=local GOENV=off GOFLAGS=-mod=readonly go test ./cmd/contextlattice-agent-tools -run \"^(TestPackCommandOutputHonorsMinimumEffectiveBudget|TestPackCommandBudgetDowngradesPrettyBeforeRejectingCompactPacket|TestPackCommandHonorsMinimumEffectiveBudgetEndToEnd|TestPackCommandRejectsInvalidExplicitBudgetBeforeSessionOrRequest|TestPackCommandInvalidExplicitBudgetSoftFailureIsStructuredAndSideEffectFree|TestPackCommandBudgetTokenAfterTerminatorRemainsLiteralQuery|TestPackCommandFullWithoutExplicitBudgetPreservesFullResponse|TestPackCommandFullAcceptsExactRegisteredCeilingWithFramingNewline|TestPackCommandImplicitAgentPacketUsesRegisteredCeiling|TestPackCommandImplicitAgentPacketAcceptsExactRegisteredCeilingWithFramingNewline|TestPackCommandSoftFailureHonorsMinimumEffectiveBudgetEndToEnd)$\" -count=1 -timeout=0'",
+      "/bin/zsh -f -c ': ${EXTERNAL_CACHE_ROOT:?set EXTERNAL_CACHE_ROOT to an external cache root}; mkdir -p \"$EXTERNAL_CACHE_ROOT/python/final-proof-boundary\" \"$EXTERNAL_CACHE_ROOT/tmp/final-proof-python\"; env -i PATH=/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin HOME=\"$HOME\" PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX=\"$EXTERNAL_CACHE_ROOT/python/final-proof-boundary\" TMPDIR=\"$EXTERNAL_CACHE_ROOT/tmp/final-proof-python\" /opt/homebrew/bin/python3 -m unittest -v scripts.tests.test_contextlattice_pack_budget'",
+      "/bin/zsh -f -c ': ${EXTERNAL_CACHE_ROOT:?set EXTERNAL_CACHE_ROOT to an external cache root}; mkdir -p \"$EXTERNAL_CACHE_ROOT/python/final-runtime-audit\" \"$EXTERNAL_CACHE_ROOT/tmp/final-runtime-audit\"; env -i PATH=/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin HOME=\"$HOME\" PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX=\"$EXTERNAL_CACHE_ROOT/python/final-runtime-audit\" TMPDIR=\"$EXTERNAL_CACHE_ROOT/tmp/final-runtime-audit\" /opt/homebrew/bin/python3 -m unittest -v scripts.tests.test_agent_runtime_contract_audit'",
+      "/bin/zsh -f -c ': ${EXTERNAL_CACHE_ROOT:?set EXTERNAL_CACHE_ROOT to an external cache root}; mkdir -p \"$EXTERNAL_CACHE_ROOT/python/final-runtime-live\" \"$EXTERNAL_CACHE_ROOT/tmp/final-runtime-live\"; env -i PATH=/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin HOME=\"$HOME\" CONTEXTLATTICE_ORCHESTRATOR_URL=http://127.0.0.1:8075 MEMMCP_ORCHESTRATOR_URL=http://127.0.0.1:8075 PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX=\"$EXTERNAL_CACHE_ROOT/python/final-runtime-live\" TMPDIR=\"$EXTERNAL_CACHE_ROOT/tmp/final-runtime-live\" scripts/agent/audit-agent-runtime-contract --timeout 90 --pretty'",
+      "/bin/zsh -f -c ': ${EXTERNAL_CACHE_ROOT:?set EXTERNAL_CACHE_ROOT to an external cache root}; mkdir -p \"$EXTERNAL_CACHE_ROOT/tmp/final-proof-go\"; cd services/gateway-go; env -i PATH=/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin HOME=\"$HOME\" GOCACHE=\"$EXTERNAL_CACHE_ROOT/go-build\" GOMODCACHE=\"$EXTERNAL_CACHE_ROOT/go-mod\" GOTMPDIR=\"$EXTERNAL_CACHE_ROOT/tmp/final-proof-go\" TMPDIR=\"$EXTERNAL_CACHE_ROOT/tmp/final-proof-go\" GOPROXY=off GOSUMDB=off GONOSUMDB=\"*\" GOTOOLCHAIN=local GOENV=off GOFLAGS=-mod=readonly go test . -run \"^(TestContextPack(RetrievalProof.*|MalformedProjected.*|FullProof.*|ImpossibleRetrieval.*|RetrievalReceipt.*|RetrievalPolicy.*|DuplicateRetrieval.*|FullRetrieval.*|ResponseRetrieval.*|Transport.*|ProductionReceipts.*))$\" -count=1 -timeout=0'",
+      "/bin/zsh -f -c ': ${EXTERNAL_CACHE_ROOT:?set EXTERNAL_CACHE_ROOT to an external cache root}; mkdir -p \"$EXTERNAL_CACHE_ROOT/tmp/final-proof-go-race\"; cd services/gateway-go; env -i PATH=/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin HOME=\"$HOME\" GOCACHE=\"$EXTERNAL_CACHE_ROOT/go-build\" GOMODCACHE=\"$EXTERNAL_CACHE_ROOT/go-mod\" GOTMPDIR=\"$EXTERNAL_CACHE_ROOT/tmp/final-proof-go-race\" TMPDIR=\"$EXTERNAL_CACHE_ROOT/tmp/final-proof-go-race\" GOPROXY=off GOSUMDB=off GONOSUMDB=\"*\" GOTOOLCHAIN=local GOENV=off GOFLAGS=-mod=readonly go test -race . -run \"^(TestContextPack(RetrievalProof.*|MalformedProjected.*|FullProof.*|ImpossibleRetrieval.*|RetrievalReceipt.*|RetrievalPolicy.*|DuplicateRetrieval.*|FullRetrieval.*|ResponseRetrieval.*|Transport.*|ProductionReceipts.*))$\" -count=1 -timeout=0'",
+      "/bin/zsh -f -c ': ${EXTERNAL_CACHE_ROOT:?set EXTERNAL_CACHE_ROOT to an external cache root}; mkdir -p \"$EXTERNAL_CACHE_ROOT/tmp/final-proof-full-go\"; cd services/gateway-go; env -i PATH=/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin HOME=\"$HOME\" GOCACHE=\"$EXTERNAL_CACHE_ROOT/go-build\" GOMODCACHE=\"$EXTERNAL_CACHE_ROOT/go-mod\" GOTMPDIR=\"$EXTERNAL_CACHE_ROOT/tmp/final-proof-full-go\" TMPDIR=\"$EXTERNAL_CACHE_ROOT/tmp/final-proof-full-go\" GOPROXY=off GOSUMDB=off GONOSUMDB=\"*\" GOTOOLCHAIN=local GOENV=off GOFLAGS=-mod=readonly go test -timeout=0 -count=1 ./...'",
+      "/bin/zsh -f -c ': ${EXTERNAL_CACHE_ROOT:?set EXTERNAL_CACHE_ROOT to an external cache root}; mkdir -p \"$EXTERNAL_CACHE_ROOT/python/final-proof-audits\"; env -i PATH=/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin HOME=\"$HOME\" PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX=\"$EXTERNAL_CACHE_ROOT/python/final-proof-audits\" scripts/agent/generate-agent-contract-types --check --pretty'",
+      "/bin/zsh -f -c ': ${EXTERNAL_CACHE_ROOT:?set EXTERNAL_CACHE_ROOT to an external cache root}; mkdir -p \"$EXTERNAL_CACHE_ROOT/python/final-proof-audits\"; env -i PATH=/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin HOME=\"$HOME\" PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX=\"$EXTERNAL_CACHE_ROOT/python/final-proof-audits\" scripts/agent/audit-agent-output-contracts --pretty'",
+      "/bin/zsh -f -c ': ${EXTERNAL_CACHE_ROOT:?set EXTERNAL_CACHE_ROOT to an external cache root}; mkdir -p \"$EXTERNAL_CACHE_ROOT/python/final-proof-audits\"; env -i PATH=/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin HOME=\"$HOME\" PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX=\"$EXTERNAL_CACHE_ROOT/python/final-proof-audits\" scripts/agent/audit-public-product-truth --lane commercial --pretty'",
+      "/bin/zsh -f -c ': ${EXTERNAL_CACHE_ROOT:?set EXTERNAL_CACHE_ROOT to an external cache root}; mkdir -p \"$EXTERNAL_CACHE_ROOT/python/v5-runtime-installer\" \"$EXTERNAL_CACHE_ROOT/tmp/v5-runtime-installer\"; env TMPDIR=\"$EXTERNAL_CACHE_ROOT/tmp/v5-runtime-installer\" PYTHONPYCACHEPREFIX=\"$EXTERNAL_CACHE_ROOT/python/v5-runtime-installer\" python3 -m unittest scripts.tests.test_runtime_license_installers'",
+      "/bin/zsh -f -c ': ${EXTERNAL_CACHE_ROOT:?set EXTERNAL_CACHE_ROOT to an external cache root}; mkdir -p \"$EXTERNAL_CACHE_ROOT/python/v5-host-lifecycle\" \"$EXTERNAL_CACHE_ROOT/tmp/v5-host-lifecycle\"; env TMPDIR=\"$EXTERNAL_CACHE_ROOT/tmp/v5-host-lifecycle\" PYTHONPYCACHEPREFIX=\"$EXTERNAL_CACHE_ROOT/python/v5-host-lifecycle\" scripts/agent/audit-host-supervisor-safety --pretty'",
+      "/bin/zsh -f -c ': ${EXTERNAL_CACHE_ROOT:?set EXTERNAL_CACHE_ROOT to an external cache root}; mkdir -p \"$EXTERNAL_CACHE_ROOT/python/v5-host-lifecycle\" \"$EXTERNAL_CACHE_ROOT/tmp/v5-host-lifecycle\"; env TMPDIR=\"$EXTERNAL_CACHE_ROOT/tmp/v5-host-lifecycle\" PYTHONPYCACHEPREFIX=\"$EXTERNAL_CACHE_ROOT/python/v5-host-lifecycle\" python3 scripts/tests/test_orbstack_self_heal_install.py'",
+      "/bin/zsh -f -c ': ${EXTERNAL_CACHE_ROOT:?set EXTERNAL_CACHE_ROOT to an external cache root}; mkdir -p \"$EXTERNAL_CACHE_ROOT/python/v5-host-lifecycle\" \"$EXTERNAL_CACHE_ROOT/tmp/v5-host-lifecycle\"; env TMPDIR=\"$EXTERNAL_CACHE_ROOT/tmp/v5-host-lifecycle\" PYTHONPYCACHEPREFIX=\"$EXTERNAL_CACHE_ROOT/python/v5-host-lifecycle\" python3 -m unittest scripts.tests.test_host_supervisor_safety_audit'",
+      "/bin/zsh -f -c ': ${EXTERNAL_CACHE_ROOT:?set EXTERNAL_CACHE_ROOT to an external cache root}; mkdir -p \"$EXTERNAL_CACHE_ROOT/python/v5-global-install\" \"$EXTERNAL_CACHE_ROOT/tmp/v5-global-install\" \"$EXTERNAL_CACHE_ROOT/go-tmp/v5-global-install\"; env TMPDIR=\"$EXTERNAL_CACHE_ROOT/tmp/v5-global-install\" PYTHONPYCACHEPREFIX=\"$EXTERNAL_CACHE_ROOT/python/v5-global-install\" GOCACHE=\"$EXTERNAL_CACHE_ROOT/go-build\" GOMODCACHE=\"$EXTERNAL_CACHE_ROOT/go-mod\" GOTMPDIR=\"$EXTERNAL_CACHE_ROOT/go-tmp/v5-global-install\" GOPROXY=off GOSUMDB=off GONOSUMDB=\"*\" GOTOOLCHAIN=local GOENV=off GOFLAGS=-mod=readonly scripts/agent/audit-agent-global-install-smoke --pretty'"
+    ]
+  }
+}

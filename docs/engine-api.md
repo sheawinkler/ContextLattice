@@ -214,7 +214,7 @@ The bounded maintenance wrapper consumes that telemetry:
 ```bash
 contextlattice_memory_graph_repair --project my-project --pretty
 contextlattice_memory_graph_repair --project my-project --write --confirm-project my-project --max-writes 500 --pretty
-contextlattice_memory_graph_efficacy --refresh-cases --project my-project --graph-max-cases 3 --pretty
+contextlattice_memory_graph_efficacy --refresh-cases --project my-project --topic-prefix runbooks/cache --pretty
 ./scripts/agent/memory-graph-quality --all-projects --pretty
 ```
 
@@ -226,7 +226,10 @@ project-scoped, dry-run first, capped by `--max-write-edges`, and use
 `max_writes` gate limits new edges rather than candidate scanning, so repeated
 batches make forward progress instead of stopping at already-existing edges.
 
-Graph-aware refresh stores `graph_expected_files` separately from the direct
+The efficacy command sends `mode=graph` and `graph_corpus=true` to the closed
+graph evaluator; it never falls back to legacy direct evaluation. Omitted CLI
+timeouts impose no client deadline, while an explicit positive `--timeout`
+opts into one. Graph-aware refresh stores `graph_expected_files` separately from the direct
 seed's `expected_files`. Saved evaluation reports `graphEfficacyStatus=passed`
 only when direct recall passes and at least one explicit graph target is added
 and hydrated into bounded target-memory evidence; dangling edges fail the gate.

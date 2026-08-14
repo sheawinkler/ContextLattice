@@ -1,0 +1,62 @@
+{
+  "schema_id": "contextlattice_graph_evaluation_repair_eval.v1",
+  "version": 1,
+  "status": "passed",
+  "recorded_at": "2026-08-11",
+  "baseline": {
+    "source_commit": "f4d70b2fd68314d3076ccc65259d0dfb0f43b3df",
+    "latency_evidence": "aggregate-only evidence could discard signed improvements and did not enforce a promotion regression budget",
+    "continuation_evidence": "legacy durable evaluation jobs could survive into the normal drain lifecycle",
+    "hard_negative_evidence": "forbidden identities were not proven against the current canonical project::file row",
+    "leakage_evidence": "raw substring checks treated lexical containment such as data in metadata as oracle leakage"
+  },
+  "metrics": {
+    "paired_latency": "every positive case retains exact treatment, control, signed delta, classification, and a sample-bound digest; maximum positive per-case delta budget is 20ms",
+    "continuation": "restart and drain remove evaluation-owned durable jobs before scheduling, rescheduling, completion, steering, or event emission and persist a bounded owner-only cleanup receipt",
+    "hard_negative": "every hard-negative case binds one exact canonical project::file memory ID to a surfaced current-state entry",
+    "leakage": "token, contiguous phrase, meaningful-token, and semantic-topic overlap replace raw substring matching"
+  },
+  "holdout": {
+    "kind": "saved graph recall synthetic holdout and fail-closed unit receipts",
+    "live_provider_used": false,
+    "external_network_used": false
+  },
+  "economics": {
+    "provider_calls": 0,
+    "evaluation_tool_calls": 0,
+    "external_network_calls": 0,
+    "provider_cost_microusd": 0
+  },
+  "verification": {
+    "focused_blocker_suite": "passed",
+    "graph_continuation_suite": "passed; gateway-go 34.729s",
+    "full_suite": "passed; gateway-go 100.056s",
+    "full_race_suite": "passed; gateway-go 689.946s",
+    "full_race_exact_offline_local_toolchain_environment": "passed from Go test cache",
+    "build_all": "passed",
+    "vet_all": "passed",
+    "public_leak_guard": "passed; 18 files scanned; zero findings"
+  },
+  "failure_ledger": [
+    {
+      "phase": "focused_pre_fix",
+      "failure": "legacy latency statistics discarded negative deltas and legacy rounding did not preserve signed improvements",
+      "resolution": "added finite signed statistics and signed rounding, then bound promotion aggregates to exact samples",
+      "reconciled": true
+    }
+  ],
+  "reproduction": {
+    "working_directory": "services/gateway-go",
+    "commands": [
+      "go test -timeout=0 -run <focused blocker expression> ./...",
+      "go test -timeout=0 -run <graph and continuation expression> ./...",
+      "go test -timeout=0 ./...",
+      "go test -race -timeout=0 ./...",
+      "go build ./...",
+      "go vet ./...",
+      "scripts/agent_hooks/public_leak_guard.sh --mode changed --base origin/main"
+    ],
+    "network_policy": "offline",
+    "toolchain_policy": "local"
+  }
+}

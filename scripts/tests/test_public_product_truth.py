@@ -453,6 +453,44 @@ class PublicProductTruthTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("present_version_claims", failure_ids(payload))
 
+    def test_present_tense_predecessor_train_claims_fail(self) -> None:
+        for stale_train in ("v4.0", "v4.0.x"):
+            with self.subTest(stale_train=stale_train), tempfile.TemporaryDirectory(
+                prefix="public-product-stale-train-"
+            ) as tmp:
+                root = Path(tmp)
+                fixture(root, "public")
+                contract_path = root / "config/commercial_truth.v1.json"
+                contract = json.loads(contract_path.read_text(encoding="utf-8"))
+                contract["product"].update(version="5.0.0", stable_tag="v5.0.0", release_train="5.0")
+                contract_path.write_text(json.dumps(contract), encoding="utf-8")
+                for current_path in [
+                    root / "README.md",
+                    *sorted((root / "docs/public_overview").rglob("*.html")),
+                    root / "docs/public_overview/llms.txt",
+                ]:
+                    current_path.write_text(
+                        current_path.read_text(encoding="utf-8").replace("4.0.2", "5.0.0"),
+                        encoding="utf-8",
+                    )
+                generated = root / "services/gateway-go/commercial_contract_generated.go"
+                generated.write_text(
+                    generated.read_text(encoding="utf-8")
+                    .replace("4.0.2", "5.0.0")
+                    .replace('"4.0"', '"5.0"'),
+                    encoding="utf-8",
+                )
+                write(root, "docs/releases/v5.0.0.md", "# ContextLattice v5.0.0\n")
+                path = root / "docs/public_overview/integration.html"
+                path.write_text(
+                    path.read_text(encoding="utf-8")
+                    + f"<p>Use the current public {stale_train} lane.</p>\n",
+                    encoding="utf-8",
+                )
+                result, payload = run_audit(root)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("present_version_claims", failure_ids(payload))
+
     def test_predecessor_is_derived_instead_of_hard_coded(self) -> None:
         with tempfile.TemporaryDirectory(prefix="public-product-version-history-") as tmp:
             root = Path(tmp)
@@ -472,6 +510,34 @@ class PublicProductTruthTests(unittest.TestCase):
             result, payload = run_audit(root)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertEqual(payload["predecessor_version"], "4.0.2")
+
+    def test_exact_predecessor_does_not_prefix_match_current_patch(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="public-product-sparse-version-history-") as tmp:
+            root = Path(tmp)
+            fixture(root, "public")
+            contract_path = root / "config/commercial_truth.v1.json"
+            contract = json.loads(contract_path.read_text(encoding="utf-8"))
+            contract["product"].update(version="4.0.10", stable_tag="v4.0.10", release_train="4.0")
+            contract_path.write_text(json.dumps(contract), encoding="utf-8")
+            for current_path in [
+                root / "README.md",
+                *sorted((root / "docs/public_overview").rglob("*.html")),
+                root / "docs/public_overview/llms.txt",
+            ]:
+                current_path.write_text(
+                    current_path.read_text(encoding="utf-8").replace("4.0.2", "4.0.10"),
+                    encoding="utf-8",
+                )
+            generated = root / "services/gateway-go/commercial_contract_generated.go"
+            generated.write_text(
+                generated.read_text(encoding="utf-8").replace("4.0.2", "4.0.10"),
+                encoding="utf-8",
+            )
+            (root / "docs/releases/v4.0.2.md").unlink()
+            write(root, "docs/releases/v4.0.10.md", "# ContextLattice v4.0.10\n")
+            result, payload = run_audit(root)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(payload["predecessor_version"], "4.0.1")
 
     def test_generated_go_source_and_test_must_follow_canonical_contract(self) -> None:
         mutations = {

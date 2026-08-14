@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+import math
+import sys
 import urllib.parse
 from typing import Any
 
@@ -24,6 +26,250 @@ def as_int(value: Any, default: int = 0) -> int:
         return default
 
 
+def positive_or_unlimited_timeout(value: str) -> float | None:
+    try:
+        parsed = float(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("timeout must be a finite non-negative number") from exc
+    if not math.isfinite(parsed) or parsed < 0:
+        raise argparse.ArgumentTypeError("timeout must be a finite non-negative number")
+    return None if parsed == 0 else parsed
+
+
+def strict_topic_prefix(value: str) -> str:
+    raw = value
+    value = value.strip()
+    if not value:
+        raise argparse.ArgumentTypeError("topic-prefix must be non-empty when supplied")
+    if raw != value:
+        raise argparse.ArgumentTypeError("topic-prefix must not have surrounding whitespace")
+    if value.startswith("/") or value.endswith("/") or "//" in value or "\\" in value:
+        raise argparse.ArgumentTypeError("topic-prefix must be a slash-separated relative prefix")
+    for part in value.split("/"):
+        if not part or part in {".", ".."} or part != part.strip() or any(ord(char) < 0x20 or ord(char) == 0x7F for char in part):
+            raise argparse.ArgumentTypeError("topic-prefix contains an invalid path component")
+    return value
+
+
+def reject_duplicate_option(argv: list[str], name: str) -> None:
+    prefix = f"--{name}"
+    occurrences = sum(1 for token in argv if token == prefix or token.startswith(prefix + "="))
+    if occurrences > 1:
+        raise SystemExit(f"--{name} may be supplied only once")
+
+
+GRAPH_CORPUS_SCHEMA_ID = "saved_recall_graph_corpus.v1"
+GRAPH_VALIDATION_SCHEMA_ID = "saved_recall_graph_validation.v1"
+GRAPH_CUSTODY_SCHEMA_ID = "saved_recall_graph_custody.v1"
+GRAPH_CORPUS_VERSION = 1
+GRAPH_DEVELOPMENT_CASES = 200
+GRAPH_HOLDOUT_CASES = 100
+GRAPH_TOTAL_CASES = GRAPH_DEVELOPMENT_CASES + GRAPH_HOLDOUT_CASES
+GRAPH_MIN_INCREMENTAL = 30
+GRAPH_TOPOLOGY = {"references": 90, "same_session": 90, "same_topic": 90, "hard_negative": 30}
+GRAPH_HOLDOUT_TOPOLOGY = {"references": 30, "same_session": 30, "same_topic": 30, "hard_negative": 10}
+
+
+def _receipt_map(value: Any, field: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError(f"{field} must be an object")
+    return value
+
+
+def _receipt_int(row: dict[str, Any], key: str, *, exact: int | None = None, minimum: int | None = None) -> int:
+    value = row.get(key)
+    if isinstance(value, bool):
+        raise ValueError(f"{key} must be a non-negative integer")
+    if isinstance(value, int):
+        parsed = value
+    elif isinstance(value, float) and math.isfinite(value) and value.is_integer() and value <= 9007199254740991:
+        parsed = int(value)
+    else:
+        raise ValueError(f"{key} must be a non-negative integer")
+    if parsed < 0 or (exact is not None and parsed != exact) or (minimum is not None and parsed < minimum):
+        if exact is not None:
+            raise ValueError(f"{key} must be exactly {exact}")
+        raise ValueError(f"{key} must be at least {minimum}")
+    return parsed
+
+
+def _receipt_bool(row: dict[str, Any], key: str, expected: bool = True) -> bool:
+    value = row.get(key)
+    if not isinstance(value, bool) or value is not expected:
+        raise ValueError(f"{key} must be {str(expected).lower()}")
+    return value
+
+
+def _receipt_string(row: dict[str, Any], key: str, expected: str | None = None) -> str:
+    value = row.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{key} must be a non-empty string")
+    value = value.strip()
+    if expected is not None and value != expected:
+        raise ValueError(f"{key} must be {expected!r}")
+    return value
+
+
+def _receipt_digest(row: dict[str, Any], key: str, expected: str) -> str:
+    value = _receipt_string(row, key)
+    if value.casefold() != expected.strip().casefold():
+        raise ValueError(f"{key} must bind digest {expected!r}")
+    return value
+
+
+def _receipt_topology(row: dict[str, Any], key: str, expected: dict[str, int]) -> dict[str, Any]:
+    topology = _receipt_map(row.get(key), key)
+    if set(topology) != set(expected):
+        raise ValueError(f"{key} must contain exactly the frozen relation counts")
+    for relation, count in expected.items():
+        _receipt_int(topology, relation, exact=count)
+    return topology
+
+
+def _receipt_custody(custody: dict[str, Any], case_digest: str, manifest_digest: str) -> dict[str, Any]:
+    _receipt_string(custody, "schema_id", GRAPH_CUSTODY_SCHEMA_ID)
+    _receipt_string(custody, "owner", "gateway-go")
+    _receipt_string(custody, "mode", "frozen_live_index")
+    _receipt_bool(custody, "synthetic", False)
+    _receipt_bool(custody, "sealed_holdout", True)
+    _receipt_bool(custody, "promotional_claims_allowed", False)
+    _receipt_bool(custody, "oracle_separated", True)
+    _receipt_digest(custody, "case_set_digest", case_digest)
+    _receipt_digest(custody, "manifest_digest", manifest_digest)
+    return custody
+
+
+def graph_corpus_refresh_binding(refresh: dict[str, Any]) -> dict[str, Any]:
+    refresh = _receipt_map(refresh, "refresh")
+    _receipt_bool(refresh, "ok", True)
+    _receipt_bool(refresh, "graph_corpus", True)
+    _receipt_string(refresh, "schema_id", GRAPH_CORPUS_SCHEMA_ID)
+    health = _receipt_map(refresh.get("case_set_health"), "case_set_health")
+    _receipt_string(health, "schema_id", GRAPH_CORPUS_SCHEMA_ID)
+    _receipt_int(health, "version", exact=GRAPH_CORPUS_VERSION)
+    _receipt_bool(health, "valid", True)
+    _receipt_bool(health, "benchmark_eligible", True)
+    _receipt_string(health, "status", "healthy")
+    if health.get("issues") != []:
+        raise ValueError("issues must be an empty array")
+    _receipt_int(health, "case_count", exact=GRAPH_TOTAL_CASES)
+    _receipt_int(health, "development_count", exact=GRAPH_DEVELOPMENT_CASES)
+    _receipt_int(health, "holdout_count", exact=GRAPH_HOLDOUT_CASES)
+    _receipt_topology(health, "topology_cases", GRAPH_TOPOLOGY)
+    _receipt_topology(health, "holdout_topology", GRAPH_HOLDOUT_TOPOLOGY)
+    _receipt_int(health, "incremental_needed", minimum=GRAPH_MIN_INCREMENTAL)
+    _receipt_int(health, "holdout_incremental_needed", minimum=GRAPH_MIN_INCREMENTAL)
+    population = _receipt_map(health.get("population"), "population")
+    _receipt_int(population, "projects", minimum=5)
+    _receipt_int(population, "agent_families", minimum=5)
+    _receipt_int(population, "sessions", minimum=20)
+    case_digest = _receipt_string(health, "case_set_digest")
+    manifest_digest = _receipt_string(health, "manifest_digest")
+    _receipt_custody(_receipt_map(health.get("custody"), "custody"), case_digest, manifest_digest)
+
+    saved = _receipt_map(refresh.get("savedCaseSet"), "savedCaseSet")
+    case_set_id = _receipt_string(saved, "case_set_id")
+    _receipt_string(saved, "schema_id", GRAPH_CORPUS_SCHEMA_ID)
+    _receipt_int(saved, "version", exact=GRAPH_CORPUS_VERSION)
+    _receipt_int(saved, "count", exact=GRAPH_TOTAL_CASES)
+    _receipt_int(saved, "development_count", exact=GRAPH_DEVELOPMENT_CASES)
+    _receipt_int(saved, "holdout_count", exact=GRAPH_HOLDOUT_CASES)
+    _receipt_digest(saved, "case_set_digest", case_digest)
+    _receipt_digest(saved, "manifest_digest", manifest_digest)
+    _receipt_topology(saved, "topology_counts", GRAPH_TOPOLOGY)
+    _receipt_int(saved, "incremental_needed", minimum=GRAPH_MIN_INCREMENTAL)
+    saved_custody = _receipt_custody(_receipt_map(saved.get("custody"), "savedCaseSet.custody"), case_digest, manifest_digest)
+
+    validation = _receipt_map(refresh.get("validation_receipt"), "validation_receipt")
+    _receipt_string(validation, "schema_id", GRAPH_VALIDATION_SCHEMA_ID)
+    _receipt_int(validation, "version", exact=GRAPH_CORPUS_VERSION)
+    _receipt_string(validation, "authority", "gateway-go")
+    _receipt_bool(validation, "server_owned", True)
+    _receipt_bool(validation, "valid", True)
+    _receipt_bool(validation, "benchmark_eligible", True)
+    _receipt_int(validation, "case_count", exact=GRAPH_TOTAL_CASES)
+    _receipt_digest(validation, "case_set_digest", case_digest)
+    _receipt_digest(validation, "manifest_digest", manifest_digest)
+    _receipt_digest(validation, "custody_case_set_digest", case_digest)
+    _receipt_string(validation, "captured_at")
+    validation_digest = _receipt_string(validation, "digest")
+
+    return {
+        "case_set_id": case_set_id,
+        "schema_id": GRAPH_CORPUS_SCHEMA_ID,
+        "version": GRAPH_CORPUS_VERSION,
+        "count": GRAPH_TOTAL_CASES,
+        "development_count": GRAPH_DEVELOPMENT_CASES,
+        "holdout_count": GRAPH_HOLDOUT_CASES,
+        "case_set_digest": case_digest,
+        "manifest_digest": manifest_digest,
+        "validation_receipt_digest": validation_digest,
+        "custody": saved_custody,
+        "validation_receipt": validation,
+    }
+
+
+def graph_corpus_evaluation_binding(evaluation: dict[str, Any]) -> dict[str, Any]:
+    evaluation = _receipt_map(evaluation, "evaluation")
+    _receipt_string(evaluation, "mode", "graph")
+    saved = _receipt_map(evaluation.get("savedCaseSet"), "savedCaseSet")
+    case_set_id = _receipt_string(saved, "case_set_id")
+    _receipt_string(saved, "schema_id", GRAPH_CORPUS_SCHEMA_ID)
+    _receipt_int(saved, "version", exact=GRAPH_CORPUS_VERSION)
+    _receipt_int(saved, "count", exact=GRAPH_TOTAL_CASES)
+    _receipt_int(saved, "evaluation_count", exact=GRAPH_HOLDOUT_CASES)
+    _receipt_string(saved, "evaluation_split", "holdout")
+    case_digest = _receipt_string(saved, "case_set_digest")
+    manifest = _receipt_map(saved.get("manifest"), "savedCaseSet.manifest")
+    manifest_digest = _receipt_string(manifest, "digest")
+    custody = _receipt_custody(_receipt_map(saved.get("custody"), "savedCaseSet.custody"), case_digest, manifest_digest)
+    return {
+        "case_set_id": case_set_id,
+        "schema_id": GRAPH_CORPUS_SCHEMA_ID,
+        "version": GRAPH_CORPUS_VERSION,
+        "count": GRAPH_TOTAL_CASES,
+        "evaluation_count": GRAPH_HOLDOUT_CASES,
+        "evaluation_split": "holdout",
+        "case_set_digest": case_digest,
+        "manifest_digest": manifest_digest,
+        "custody": custody,
+    }
+
+
+def compare_graph_corpus_bindings(refresh: dict[str, Any], evaluation: dict[str, Any]) -> None:
+    for key in ("case_set_id", "schema_id", "version", "count", "case_set_digest", "manifest_digest"):
+        if key in ("version", "count"):
+            differs = refresh[key] != evaluation[key]
+        else:
+            differs = str(refresh[key]).casefold() != str(evaluation[key]).casefold()
+        if differs:
+            raise ValueError(f"{key} differs between refreshed and evaluated graph corpus")
+    refresh_custody = refresh["custody"]
+    evaluation_custody = evaluation["custody"]
+    for key in ("synthetic", "sealed_holdout", "promotional_claims_allowed", "oracle_separated", "case_set_digest", "manifest_digest"):
+        left = refresh_custody[key]
+        right = evaluation_custody[key]
+        if isinstance(left, bool):
+            differs = left != right
+        else:
+            differs = str(left).casefold() != str(right).casefold()
+        if differs:
+            raise ValueError(f"custody.{key} differs between refreshed and evaluated graph corpus")
+
+
+def validate_graph_evaluation_gates(evaluation: dict[str, Any]) -> None:
+    evaluation = _receipt_map(evaluation, "evaluation")
+    _receipt_bool(evaluation, "ok", True)
+    _receipt_bool(evaluation, "passed", True)
+    promotion = _receipt_map(evaluation.get("promotion"), "promotion")
+    _receipt_bool(promotion, "promotion_eligible", True)
+    metrics = _receipt_map(evaluation.get("metrics"), "metrics")
+    _receipt_bool(metrics, "directPassed", True)
+    _receipt_string(metrics, "graphEfficacyStatus", "passed")
+    graph = _receipt_map(metrics.get("graphContribution"), "metrics.graphContribution")
+    _receipt_string(graph, "status", "passed")
+
+
 def pct(value: Any) -> str:
     return f"{round(as_float(value) * 100):3d}%"
 
@@ -37,6 +283,12 @@ def bar(value: Any, width: int = 24) -> str:
 def compact_eval(payload: dict[str, Any], tuning: dict[str, Any] | None) -> dict[str, Any]:
     metrics = payload.get("metrics") if isinstance(payload.get("metrics"), dict) else {}
     graph = metrics.get("graphContribution") if isinstance(metrics.get("graphContribution"), dict) else {}
+    promotion = payload.get("promotion") if isinstance(payload.get("promotion"), dict) else {}
+    graph_recall = as_float(metrics.get("graphRecallAt5", graph.get("graph_recall_at_5")))
+    incremental_help = as_float(metrics.get("incrementalHelp", graph.get("incremental_help")))
+    incremental_denominator = as_int(metrics.get("incrementalDenominator", graph.get("incremental_denominator")))
+    hard_negative_cases = as_int(metrics.get("hardNegativeCases", graph.get("hard_negative_cases")))
+    hard_negative_passed = as_int(metrics.get("hardNegativePassed", graph.get("hard_negative_passed")))
     quality = None
     if tuning:
         recommended = tuning.get("recommended") if isinstance(tuning.get("recommended"), dict) else {}
@@ -58,11 +310,20 @@ def compact_eval(payload: dict[str, Any], tuning: dict[str, Any] | None) -> dict
             "sourceDiversity": as_float(metrics.get("sourceDiversity")),
         },
         "graph": {
-            "lift": as_float(metrics.get("graphLift")),
-            "helpedCases": as_int(graph.get("helpedCases")),
-            "candidateCount": as_int(graph.get("candidateCount")),
-            "expectedHits": as_int(graph.get("expectedHitCount")),
-            "active": bool(graph.get("memoryGraphStoreActive", False)),
+            "lift": as_float(metrics.get("graphLift", graph.get("incrementalHelp", graph.get("incremental_help")))),
+            "helpedCases": as_int(graph.get("helpedCases", metrics.get("incrementalHelpedCases"))),
+            "candidateCount": as_int(graph.get("candidateCount", metrics.get("graphHits"))),
+            "expectedHits": as_int(graph.get("expectedHitCount", metrics.get("graphHits"))),
+            "active": bool(graph.get("memoryGraphStoreActive", metrics.get("memoryGraphStoreActive", False))),
+            "recallAt5": graph_recall,
+            "incrementalHelp": incremental_help,
+            "incrementalDenominator": incremental_denominator,
+            "hardNegativeCases": hard_negative_cases,
+            "hardNegativePassed": hard_negative_passed,
+        },
+        "promotion": {
+            "eligible": bool(promotion.get("promotion_eligible", payload.get("passed", False))),
+            "blockedReasons": promotion.get("blocked_reasons") or [],
         },
         "latency": {
             "avgMs": as_float(metrics.get("avgLatencyMs")),
@@ -86,7 +347,18 @@ def print_terminal(summary: dict[str, Any]) -> None:
         f"{bar(min(1.0, as_float(graph['lift']) * 4.0))} {pct(graph['lift'])}   "
         f"helped={graph['helpedCases']} candidates={graph['candidateCount']} expected={graph['expectedHits']}"
     )
+    if graph["recallAt5"] or graph["incrementalDenominator"] or graph["hardNegativeCases"]:
+        print(
+            "  graph-gates "
+            f"recall@5={pct(graph['recallAt5'])} "
+            f"incremental={pct(graph['incrementalHelp'])} n={graph['incrementalDenominator']} "
+            f"hard-negatives={graph['hardNegativePassed']}/{graph['hardNegativeCases']}"
+        )
+        for reason in summary["promotion"]["blockedReasons"]:
+            print(f"  - promotion blocked: {reason}")
     print(f"  latency   avg={as_float(latency['avgMs']):.1f}ms p95={as_float(latency['p95Ms']):.1f}ms")
+    if summary.get("graph_validation_error"):
+        print(f"  graph-validation error={summary['graph_validation_error']}")
     tuning = summary.get("tuning") if isinstance(summary.get("tuning"), dict) else {}
     graph_expansion = tuning.get("graphExpansion") if isinstance(tuning.get("graphExpansion"), dict) else {}
     source_order = tuning.get("sourceOrder") if isinstance(tuning.get("sourceOrder"), list) else []
@@ -138,16 +410,23 @@ def print_reputation(payload: dict[str, Any]) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument("--derive", action="store_true", help="Build review-only regression-suite proposals from verified outcome rows.")
     modes.add_argument("--ablation", action="store_true", help="Run paired leave-one-source and leave-one-memory snapshot ablation.")
     modes.add_argument("--reputation", action="store_true", help="Inspect advisory reputation calibrated from independently verified outcomes.")
+    modes.add_argument("--graph", action="store_true", help="Evaluate the closed graph corpus; the server binds its frozen direct baseline.")
     parser.add_argument("--k", type=int, default=None, help="Override saved eval K.")
-    parser.add_argument("--timeout", type=float, default=240.0)
+    parser.add_argument(
+        "--timeout",
+        type=positive_or_unlimited_timeout,
+        default=None,
+        help="Optional positive client timeout in seconds; omitted or 0 means no client deadline.",
+    )
     parser.add_argument("--include-debug", action="store_true")
     parser.add_argument("--include-preferences", action="store_true")
     parser.add_argument("--refresh-cases", action="store_true")
+    parser.add_argument("--capture-direct-baseline", action="store_true", help="Persist the native-control baseline from the frozen authoritative v3 holdout evaluation.")
     parser.add_argument("--max-cases", type=int, default=300, help="Bounded v3 refresh case count (server cap: 300).")
     parser.add_argument("--derive-max-rows", type=int, default=128)
     parser.add_argument("--max-proposals", type=int, default=128)
@@ -157,13 +436,21 @@ def main() -> int:
     parser.add_argument("--min-hits", type=int, default=1)
     parser.add_argument("--include-graph-cases", action="store_true", help="Include separately labeled graph-neighbor cases during refresh.")
     parser.add_argument("--graph-max-cases", type=int, default=3)
-    parser.add_argument("--split", choices=("all", "train", "holdout"), default="all", help="Evaluate all cases or one frozen v3 split.")
+    parser.add_argument("--split", choices=("all", "train", "development", "holdout"), default="all", help="Evaluate all cases or one frozen split.")
     parser.add_argument("--project", default="")
-    parser.add_argument("--topic-prefix", default="")
+    parser.add_argument("--topic-prefix", type=strict_topic_prefix, default=None, help="Optional strict relative topic prefix; omitted means all topics.")
     parser.add_argument("--tuning", action="store_true", help="Fetch recall tuning recommendations after eval.")
     parser.add_argument("--pretty", action="store_true")
     parser.add_argument("--json", action="store_true", help="Emit compact JSON instead of terminal view.")
+    reject_duplicate_option(sys.argv[1:], "topic-prefix")
     args = parser.parse_args()
+
+    if args.graph and args.capture_direct_baseline:
+        parser.error("--graph cannot be combined with --capture-direct-baseline")
+    if args.graph and args.split == "train":
+        parser.error("--graph supports only development, holdout, or all splits")
+    if args.graph and args.k not in (None, 5):
+        parser.error("--graph fixes k at 5")
 
     if args.derive:
         derived = request_json(
@@ -197,17 +484,52 @@ def main() -> int:
             print_reputation(reputation)
         return 0
 
+    topic_prefix = args.topic_prefix or ""
     refresh_payload = {
         "max_cases": args.max_cases,
         "min_hits": args.min_hits,
         "project": args.project,
-        "topic_prefix": args.topic_prefix,
+        "topic_prefix": topic_prefix,
     }
     if args.include_graph_cases:
         refresh_payload["include_graph_cases"] = True
         refresh_payload["graph_max_cases"] = args.graph_max_cases
+    if args.graph:
+        refresh_payload = {
+            "project": args.project,
+            "topic_prefix": topic_prefix,
+            "seed": "graph-v1",
+            "development_cases": 200,
+            "holdout_cases": 100,
+            "graph_corpus": True,
+        }
+    refresh_binding: dict[str, Any] | None = None
     if args.refresh_cases:
-        request_json("POST", "/memory/recall/eval-cases/refresh", refresh_payload, args.timeout)
+        refresh = request_json("POST", "/memory/recall/eval-cases/refresh", refresh_payload, args.timeout)
+        if args.graph:
+            try:
+                refresh_binding = graph_corpus_refresh_binding(refresh)
+            except ValueError as exc:
+                emit(
+                    {
+                        "ok": False,
+                        "evaluation_skipped": "refresh_not_eligible; canonical corpus was preserved",
+                        "error": str(exc),
+                        "refresh": refresh,
+                    },
+                    pretty=args.pretty,
+                )
+                return 2
+        elif not bool(refresh.get("ok", False)):
+            emit(
+                {
+                    "ok": False,
+                    "evaluation_skipped": "refresh_not_eligible; canonical corpus was preserved",
+                    "refresh": refresh,
+                },
+                pretty=args.pretty,
+            )
+            return 2
 
     payload: dict[str, Any] = {
         "include_retrieval_debug": args.include_debug,
@@ -216,11 +538,40 @@ def main() -> int:
     if args.ablation:
         payload["mode"] = "ablation"
         payload["max_ablation_rows"] = args.max_ablation_rows
+    if args.graph:
+        payload["mode"] = "graph"
+        payload["graph_corpus"] = True
+        payload["split"] = "holdout" if args.split == "all" else args.split
+        payload["project"] = args.project
+        payload["topic_prefix"] = topic_prefix
+        if refresh_binding is not None:
+            payload["graph_corpus_binding"] = refresh_binding
+    if args.capture_direct_baseline:
+        payload["capture_direct_baseline"] = True
+        if args.split == "all":
+            payload["split"] = "holdout"
     if args.k is not None:
         payload["k"] = args.k
     if args.split != "all":
         payload["split"] = args.split
     evaluation = request_json("POST", "/memory/recall/evaluate/saved", payload, args.timeout)
+    if args.graph:
+        try:
+            evaluation_binding = graph_corpus_evaluation_binding(evaluation)
+            if refresh_binding is not None:
+                compare_graph_corpus_bindings(refresh_binding, evaluation_binding)
+            validate_graph_evaluation_gates(evaluation)
+        except ValueError as exc:
+            summary = compact_eval(evaluation, None)
+            summary["ok"] = False
+            summary["passed"] = False
+            summary["promotion"]["eligible"] = False
+            summary["graph_validation_error"] = str(exc)
+            if args.json or args.pretty:
+                emit(summary, pretty=args.pretty)
+            else:
+                print_terminal(summary)
+            return 1
     tuning = None
     if args.tuning:
         query = urllib.parse.urlencode({"max_samples": "96", "min_samples": "1"})

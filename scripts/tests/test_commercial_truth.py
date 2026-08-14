@@ -53,9 +53,11 @@ def copy_fixture(destination: Path) -> None:
 class CommercialTruthTests(unittest.TestCase):
     def test_contract_decisions(self) -> None:
         contract = json.loads((ROOT / "config/commercial_truth.v1.json").read_text(encoding="utf-8"))
-        self.assertEqual(contract["product"]["version"], "4.0.11")
-        self.assertEqual(contract["product"]["stable_tag"], "v4.0.11")
-        self.assertEqual(contract["product"]["release_train"], "4.0")
+        self.assertEqual(contract["product"]["version"], "5.0.0")
+        self.assertEqual(contract["product"]["stable_tag"], "v5.0.0")
+        self.assertEqual(contract["product"]["release_train"], "5.0")
+        public_index = (ROOT / "docs/public_overview/index.html").read_text(encoding="utf-8")
+        self.assertIn("<strong>5</strong> Current: v5.0.0", public_index)
         self.assertEqual(contract["product"]["category"], "local_first_agent_intelligence_layer")
         self.assertIn("local-first intelligence layer", contract["product"]["canonical_description"])
         self.assertEqual(contract["product"]["primary_interface"], "cli")
@@ -228,6 +230,13 @@ class CommercialTruthTests(unittest.TestCase):
         version = contract["product"]["stable_tag"]
         serialized = json.dumps(launch, ensure_ascii=True)
         self.assertEqual(launch["category"], "Local-first Agent Intelligence Layer")
+        self.assertEqual(launch["product_version"], contract["product"]["version"])
+        self.assertEqual(launch["stable_tag"], contract["product"]["stable_tag"])
+        self.assertEqual(launch["release_train"], contract["product"]["release_train"])
+        self.assertEqual(
+            launch["launch_window"],
+            f"ContextLattice {version} release wave (v{contract['product']['release_train']} release train)",
+        )
         self.assertEqual(launch["one_liner"], contract["product"]["canonical_description"])
         self.assertIn("CLI", launch["primary_cta"])
         self.assertIn(version, launch["copy_blocks"]["github_release"]["title"])
@@ -241,7 +250,7 @@ class CommercialTruthTests(unittest.TestCase):
         self.assertNotIn("file://", payload)
         self.assertNotIn("BEGIN PRIVATE KEY", payload)
         public_truth = json.loads(payload)
-        self.assertEqual(public_truth["product"]["version"], "4.0.11")
+        self.assertEqual(public_truth["product"]["version"], "5.0.0")
         self.assertEqual(
             public_truth["release_availability"]["frontier_semantic_continuity_automation"]["availability"],
             "generally_available",
@@ -443,6 +452,37 @@ class CommercialTruthTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             payload = json.loads(result.stdout)
             self.assertIn("release_publish_version_drift", {row["code"] for row in payload["findings"]})
+
+    def test_audit_rejects_stale_release_publish_train(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="commercial-truth-launch-train-") as tmp:
+            fixture = Path(tmp)
+            copy_fixture(fixture)
+            launch = fixture / "launch_service/config/contextlattice.launch.json"
+            payload = json.loads(launch.read_text(encoding="utf-8"))
+            payload["release_train"] = "4.0"
+            payload["launch_window"] = "ContextLattice v5.0.0 release wave (v4.0 release train)"
+            launch.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+            result = run(str(fixture / "scripts/agent/audit-commercial-truth"), "--root", str(fixture), root=fixture)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(
+                "release_publish_version_drift",
+                {row["code"] for row in json.loads(result.stdout)["findings"]},
+            )
+
+    def test_audit_rejects_semver_prefix_in_release_publish_input(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="commercial-truth-launch-prefix-input-") as tmp:
+            fixture = Path(tmp)
+            copy_fixture(fixture)
+            launch = fixture / "launch_service/config/contextlattice.launch.json"
+            payload = json.loads(launch.read_text(encoding="utf-8"))
+            payload["copy_blocks"]["github_release"]["title"] += "rc1"
+            launch.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+            result = run(str(fixture / "scripts/agent/audit-commercial-truth"), "--root", str(fixture), root=fixture)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(
+                "release_publish_version_drift",
+                {row["code"] for row in json.loads(result.stdout)["findings"]},
+            )
 
     def test_audit_rejects_distribution_specific_release_publish_input(self) -> None:
         with tempfile.TemporaryDirectory(prefix="commercial-truth-launch-lane-") as tmp:

@@ -11,7 +11,7 @@ const (
 	recallResponseMaxConflicts = 8
 	recallResponseMaxGaps      = 12
 	recallResponseMaxReceipts  = 8
-	recallResponseMaxGapRefs   = recallResponseMaxProofRefs
+	recallResponseMaxGapRefs   = 2
 )
 
 func composeRecallResponse(input map[string]any) map[string]any {
@@ -22,7 +22,23 @@ func composeRecallResponse(input map[string]any) map[string]any {
 // with U2 router and proof metadata. The exact control projection is retained
 // and returned if any nested U2 invariant fails.
 func composeRecallResponseWithPolicy(input map[string]any, policy validatedRecallResponsePolicyInput) map[string]any {
+	// Source-bound status is captured before bindArtifactIdentity can derive
+	// local digests. A locally derived digest is useful for compatibility
+	// identity, but it is never an authoritative same-snapshot receipt.
+	// Source custody is an authority bit supplied by the validated policy
+	// harness. Digest formatting alone cannot promote a local projection to a
+	// server-bound same-snapshot artifact.
+	policy.sourceBound = policy.sourceBound && recallResponseValidDigest(policy.snapshotDigest) && recallResponseValidDigest(policy.receiptDigest)
 	prepared, asOf := recallResponsePrepareTemporalInput(input)
+	if sourceSnapshot := recallResponseSourceSnapshotForInput(prepared); len(sourceSnapshot) > 0 {
+		policy.sourceBound = policy.sourceBound && anyToBool(sourceSnapshot["complete"]) &&
+			recallResponseSourceSnapshotValidForInput(prepared, sourceSnapshot)
+	} else if !policy.synthetic {
+		// Production custody is never inferred from formatted policy digests.
+		// Without the private source snapshot and its temporal partition receipt,
+		// the response remains an explicitly unbound projection.
+		policy.sourceBound = false
+	}
 	silence, silenceObserved := recallResponseServerSilence(prepared)
 	control := composeRecallResponseV1Control(prepared, policy, asOf)
 	// Apply the server-owned U6 disposition to both the candidate and its
@@ -30,14 +46,15 @@ func composeRecallResponseWithPolicy(input map[string]any, policy validatedRecal
 	// back, the same no-dispatch/no-writeback decision remains attached to the
 	// exact v1 artifact instead of being silently discarded.
 	recallResponseApplyServerSilence(control, silence, silenceObserved)
+	// Materialize and bind the v1 control first. It is the independent
+	// same-snapshot comparison artifact; the candidate is only a clone of this
+	// already-bound control and may not overwrite its receipt fields.
+	policy, facets := recallResponseBindArtifactIdentity(prepared, control, policy, asOf)
+	recallResponseEnsureControlReceipt(control, policy, asOf)
 	candidate := cloneJSONMap(control)
 	evidence := contextPackAnyList(candidate["evidence"])
 	conflicts := contextPackAnyList(candidate["conflicts"])
 	gaps := contextPackAnyList(candidate["gaps"])
-	policy, facets := recallResponseBindArtifactIdentity(prepared, candidate, policy, asOf)
-	// The fallback must describe the exact same retrieval and receipt artifact,
-	// even though it deliberately removes candidate evidence and components.
-	_, _ = recallResponseBindArtifactIdentity(prepared, control, policy, asOf)
 	posture := recallResponseDerivedPosture(facets, len(evidence), len(conflicts), len(gaps))
 	candidate["classification"] = recallResponseLegacyClassification(facets, posture)
 	scope := anyMap(candidate["request_scope"])
@@ -46,6 +63,11 @@ func composeRecallResponseWithPolicy(input map[string]any, policy validatedRecal
 	receiptDigest := policy.receiptDigest
 	proof := recallResponseProofSpine(candidate, asOf, temporalPremiseDigest, snapshotDigest, receiptDigest, prepared)
 	answer := anyMap(candidate["answer"])
+	expectedAblationStage := anyToString(policy.ablationWitness["expected_failure_stage"])
+	if policy.synthetic && policy.ablation != "" && policy.ablation != "none" &&
+		recallResponseAblationExpectedStageValid(expectedAblationStage) {
+		return recallResponseSyntheticAblationControl(control, policy, asOf, expectedAblationStage)
+	}
 	compressedProof, compression, compressionOK := recallResponseCompressProof(candidate, proof, policy, prepared)
 	if !compressionOK || !compression.Sufficient {
 		return recallResponseCandidateOrControl(control, nil, policy, asOf, false, recallResponseFallbackStageReceipt(compression.FailureStage, compression, candidate))
@@ -57,10 +79,25 @@ func composeRecallResponseWithPolicy(input map[string]any, policy validatedRecal
 		return recallResponseCandidateOrControl(control, nil, policy, asOf, false, recallResponseFallbackStageReceipt(recallResponseFallbackStageModuleValidation, recallResponseProofCompression{}, candidate))
 	}
 	answer["components"] = modules
+	if !recallResponseMergeComponentUnion(candidate, modules, policy.ablation) {
+		return recallResponseCandidateOrControl(control, nil, policy, asOf, false, recallResponseFallbackStageReceipt(recallResponseFallbackStageModuleValidation, recallResponseProofCompression{}, candidate))
+	}
+	if policy.synthetic && policy.ablation != "" && policy.ablation != "none" {
+		for _, raw := range contextPackAnyList(recallResponseDisclosure(candidate)["component_union"]) {
+			row := anyMap(raw)
+			if anyToString(row["kind"]) == policy.ablation {
+				recallResponseRecordOmission(candidate, anyToString(row["component_ref"]), "component", "synthetic_ablation", anyToBool(row["protected"]), "fail_closed_control")
+				break
+			}
+		}
+	}
 	composition := recallResponseComposition(policy, proof)
 	composition["primary_module"] = primaryModule
 	composition["ordered_modules"] = recallResponseAnyStrings(orderedModules)
 	answer["composition"] = composition
+	if policy.synthetic && policy.ablation != "" && policy.ablation != "none" && !recallResponseSealAblationWitness(candidate, policy, "accepted_candidate", "none") {
+		return recallResponseCandidateOrControl(control, nil, policy, asOf, false, recallResponseFallbackStageReceipt(recallResponseFallbackStageModuleValidation, recallResponseProofCompression{}, candidate))
+	}
 
 	candidate["response_id"] = recallResponseIDForResponse(candidate)
 	candidate["response_digest"] = recallResponseSemanticDigest(candidate)
@@ -87,13 +124,7 @@ func recallResponseBindArtifactIdentity(
 	if len(sourceCoverage) == 0 {
 		sourceCoverage = anyMap(prepared["sourceCoverage"])
 	}
-	rankedEvidence := contextPackAnyList(contextPack["ranked_evidence"])
-	if len(rankedEvidence) == 0 {
-		rankedEvidence = contextPackAnyList(contextPack["rankedEvidence"])
-	}
-	if len(rankedEvidence) == 0 {
-		rankedEvidence = contextPackAnyList(prepared["evidence"])
-	}
+	rankedEvidence := recallResponseRelevantEvidenceRows(prepared)
 	evidence := contextPackAnyList(response["evidence"])
 	conflicts := contextPackAnyList(response["conflicts"])
 	gaps := contextPackAnyList(response["gaps"])
@@ -114,6 +145,7 @@ func recallResponseBindArtifactIdentity(
 	scope["temporal_premise_digest"] = temporalPremiseDigest
 	scope["snapshot_digest"] = policy.snapshotDigest
 	scope["receipt_digest"] = policy.receiptDigest
+	scope["source_bound"] = policy.sourceBound
 	scope["condition"] = policy.condition
 	scope["ablation"] = policy.ablation
 	return policy, facets
@@ -123,6 +155,30 @@ func recallResponsePrepareTemporalInput(input map[string]any) (map[string]any, s
 	prepared := cloneJSONMap(input)
 	rawAsOf := firstNonEmptyStrings(anyToString(input["as_of"]), anyToString(input["asOf"]))
 	asOf, asOfValid := recallResponseNormalizeAsOfWithValidity(rawAsOf)
+	canonicalPack := recallResponseCanonicalContextPack(input)
+	originalSourceRows, sourceCarrierPresent := canonicalPack["_recall_response_source_rows"]
+	originalGraphRows, graphCarrierPresent := canonicalPack[recallResponseGraphRowsKey]
+	partitionSourceRows := []any{}
+	partitionGraphRows := []any{}
+	partitionReady := false
+	partitionUnverifiable := 0
+	if sourceSnapshot := recallResponseSourceSnapshotForInput(input); len(sourceSnapshot) > 0 && sourceCarrierPresent {
+		graphRows := contextPackAnyList(originalGraphRows)
+		if !graphCarrierPresent && anyToInt(sourceSnapshot["graph_captured_count"], 0) == 0 {
+			graphRows = []any{}
+		}
+		var receipt map[string]any
+		partitionSourceRows, partitionGraphRows, receipt, partitionUnverifiable = recallResponseBuildTemporalPartitionReceipt(
+			contextPackAnyList(originalSourceRows), graphRows, asOf, asOfValid,
+		)
+		prepared[recallResponseTemporalPartitionKey] = receipt
+		partitionReady = true
+	}
+	// Only opaque identities for rows rejected by the temporal premise are
+	// retained before the source pack is filtered; no raw row crosses this
+	// boundary.  The authoritative union itself is captured below, after all
+	// temporal enforcement has completed.
+	prepared["_recall_response_temporal_exclusion_refs"] = recallResponseTemporalExclusionRefs(input, asOf, asOfValid)
 	var revisionStart, revisionEnd string
 	unverifiableHistoricalEvidence := 0
 	for _, key := range []string{"context_pack", "contextPack"} {
@@ -141,9 +197,32 @@ func recallResponsePrepareTemporalInput(input map[string]any) (map[string]any, s
 				unverifiableHistoricalEvidence += unverifiable
 			}
 		}
+		if rows, present := pack["_recall_response_source_rows"]; present {
+			if partitionReady {
+				pack["_recall_response_source_rows"] = cloneJSONValue(partitionSourceRows)
+			} else if !asOfValid {
+				pack["_recall_response_source_rows"] = []any{}
+			} else {
+				filtered, unverifiable := recallResponseTemporalEvidenceAtOrBefore(contextPackAnyList(rows), asOf)
+				pack["_recall_response_source_rows"] = filtered
+				unverifiableHistoricalEvidence += unverifiable
+			}
+		}
+		if rows, present := pack[recallResponseGraphRowsKey]; present {
+			if partitionReady {
+				pack[recallResponseGraphRowsKey] = cloneJSONValue(partitionGraphRows)
+			} else if !asOfValid {
+				pack[recallResponseGraphRowsKey] = []any{}
+			} else {
+				filtered, unverifiable := recallResponseTemporalEvidenceAtOrBefore(contextPackAnyList(rows), asOf)
+				pack[recallResponseGraphRowsKey] = filtered
+				unverifiableHistoricalEvidence += unverifiable
+			}
+		}
 		revisionStart = firstNonEmptyStrings(revisionStart, anyToString(pack["snapshot_revision_start"]))
 		revisionEnd = firstNonEmptyStrings(revisionEnd, anyToString(pack["snapshot_revision_end"]))
 	}
+	unverifiableHistoricalEvidence += partitionUnverifiable
 	for _, evidenceKey := range []string{"evidence", "temporal_claims", "proof_claims"} {
 		if _, present := prepared[evidenceKey]; present {
 			if !asOfValid {
@@ -165,6 +244,7 @@ func recallResponsePrepareTemporalInput(input map[string]any) (map[string]any, s
 	if revisionStart != "" && revisionEnd != "" && revisionStart != revisionEnd {
 		prepared["_snapshot_revision_changed"] = true
 	}
+	prepared["_recall_response_source_union"] = recallResponseCaptureSourceUnion(prepared)
 	delete(prepared, "asOf")
 	return prepared, asOf
 }
@@ -226,14 +306,10 @@ func composeRecallResponseV1Control(input map[string]any, policy validatedRecall
 		"retrieval_intent":   retrievalIntent,
 	}
 
-	rankedEvidence := contextPackAnyList(contextPack["ranked_evidence"])
-	if len(rankedEvidence) == 0 {
-		rankedEvidence = contextPackAnyList(contextPack["rankedEvidence"])
-	}
-	if len(rankedEvidence) == 0 {
-		rankedEvidence = contextPackAnyList(input["evidence"])
-	}
-	evidence := recallResponseEvidenceRefs(rankedEvidence, scopeDigest, recallResponseMaxEvidence)
+	canonicalClasses := recallResponseCanonicalSourceRows(input)
+	rankedEvidence := canonicalClasses["evidence"]
+	relevantEvidence := recallResponseRelevantEvidenceRows(input)
+	evidence := recallResponseEvidenceRefs(relevantEvidence, scopeDigest, recallResponseMaxEvidence, policy)
 
 	conflicts := recallResponseConflicts(input, contextPack, scopeDigest, recallResponseMaxConflicts)
 	gaps := recallResponseGaps(input, contextPack, sourceCoverage, rankedEvidence, scopeDigest, len(evidence), len(conflicts), recallResponseMaxGaps)
@@ -344,8 +420,8 @@ func composeRecallResponseV1Control(input map[string]any, policy validatedRecall
 			"raw_prompt_included":    false,
 			"paths_included":         false,
 			"secrets_included":       false,
-			"inference_boundary":     "Only deterministic response metadata and opaque proof references are returned; no new fact is inferred from omitted or unverified memory.",
-			"omission_policy":        "Omitted, pending, quarantined, or conflicting evidence remains disclosed as a gap or conflict and never becomes implicit support.",
+			"inference_boundary":     "Metadata and opaque proof references only.",
+			"omission_policy":        "Classification affects presentation only; safe union membership remains count-, digest-, and continuation-bound.",
 		},
 		"receipt_refs": receiptRefs,
 		"outcome": map[string]any{
@@ -356,6 +432,7 @@ func composeRecallResponseV1Control(input map[string]any, policy validatedRecall
 		},
 		"writeback_required": true,
 	}
+	recallResponseAttachNonExclusion(response, input, relevantEvidence, scopeDigest, components, policy)
 
 	response["response_id"] = recallResponseIDForResponse(response)
 	response["response_digest"] = recallResponseSemanticDigest(response)
@@ -368,67 +445,94 @@ func composeRecallResponseV1Control(input map[string]any, policy validatedRecall
 	return response
 }
 
-func recallResponseEvidenceRefs(items []any, scopeDigest string, limit int) []any {
+func recallResponseEvidenceRefs(items []any, scopeDigest string, limit int, policy validatedRecallResponsePolicyInput) []any {
 	if limit <= 0 {
 		return []any{}
 	}
-	out := make([]any, 0, minInt(len(items), limit))
+	protectedRows := []any{}
+	ordinaryRows := []any{}
+	seen := map[string]bool{}
 	for index, raw := range items {
-		if len(out) >= limit {
-			break
-		}
 		item := anyMap(raw)
-		kind := recallResponseSafeKind(anyToString(item["kind"]))
-		identity := firstNonEmptyStrings(
-			anyToString(item["candidate_id"]), anyToString(item["ref_id"]),
-			anyToString(item["memory_id"]), anyToString(item["content_digest"]),
-			anyToString(item["citation"]), anyToString(item["source"]),
-			anyToString(item["file"]), anyToString(item["text"]),
-			"evidence-"+anyToString(index),
-		)
-		refID := recallResponseScopedOpaqueRef(scopeDigest, "evidence", identity+"\x00"+anyToString(index))
-		if candidateID := strings.TrimSpace(anyToString(item["candidate_id"])); recallResponseSafeOpaqueID(candidateID) != "" {
-			refID = recallResponseSafeOpaqueID(candidateID)
-		}
-		status, eligible := recallResponseEvidenceStatus(item)
-		confidence, confidenceValid := recallResponseEvidenceConfidence(item["confidence"])
+		status, _ := recallResponseEvidenceStatus(item)
+		refID, kind, eligible, confidenceValid, confidence, digest, role, protected, _, _ := recallResponseEvidenceProjection(item, index, scopeDigest, policy)
 		if !eligible || !confidenceValid {
 			// Unsafe or policy-omitted rows are represented only through gap
 			// disclosures; they can never become supporting evidence.
 			continue
 		}
-		digest := strings.TrimSpace(anyToString(item["content_digest"]))
-		if !recallResponseValidDigest(digest) {
-			digest = "sha256:" + sha256Hex(firstNonEmptyStrings(anyToString(item["text"]), identity))
+		if seen[refID] {
+			continue
 		}
-		role := "support"
-		if strings.EqualFold(strings.TrimSpace(anyToString(item["support"])), "context") {
-			role = "context"
-		}
-		out = append(out, map[string]any{
+		seen[refID] = true
+		row := map[string]any{
 			"ref_id":         refID,
 			"kind":           kind,
 			"role":           role,
 			"status":         status,
 			"confidence":     roundFloat(confidence, 4),
-			"source_ref":     recallResponseScopedOpaqueRef(scopeDigest, "source", anyToString(item["source"])),
+			"source_ref":     recallResponseScopedOpaqueRef(scopeDigest, "source", firstNonEmptyStrings(anyToString(item["source_ref"]), anyToString(item["source"]))),
 			"content_digest": digest,
-		})
+		}
+		if protected {
+			protectedRows = append(protectedRows, row)
+		} else {
+			ordinaryRows = append(ordinaryRows, row)
+		}
+	}
+	out := append(protectedRows, ordinaryRows...)
+	if len(out) > limit {
+		out = out[:limit]
 	}
 	return out
 }
 
-func recallResponseConflicts(input, contextPack map[string]any, scopeDigest string, limit int) []any {
-	rows := []any{}
-	rows = append(rows, contextPackAnyList(input["conflicts"])...)
-	rows = append(rows, contextPackAnyList(contextPack["conflicts"])...)
-	rows = append(rows, contextPackAnyList(contextPack["contradictions"])...)
-	for _, raw := range contextPackAnyList(contextPack["proof_claims"]) {
+func recallResponseConflictSourceRows(input map[string]any) []any {
+	classes := recallResponseCanonicalSourceRows(input)
+	rows := append([]any{}, classes["conflicts"]...)
+	for _, raw := range classes["proof"] {
 		claim := anyMap(raw)
 		if strings.EqualFold(anyToString(claim["proof_status"]), "contested") || len(contextPackAnyList(claim["opposition"])) > 0 {
-			rows = append(rows, claim)
+			rows = append(rows, raw)
 		}
 	}
+	seen := map[string]bool{}
+	out := make([]any, 0, len(rows))
+	for index, raw := range rows {
+		identity := recallResponseRawUnionIdentity(raw, "conflicts", index)
+		if seen[identity] {
+			continue
+		}
+		seen[identity] = true
+		out = append(out, raw)
+	}
+	return out
+}
+
+func recallResponseConflictRef(raw any, index int, scopeDigest string) string {
+	item := anyMap(raw)
+	identity := firstNonEmptyStrings(
+		anyToString(item["conflict_id"]), anyToString(item["claim_id"]), anyToString(item["ref_id"]),
+		anyToString(item["candidate_id"]), anyToString(item["memory_id"]), anyToString(item["content_digest"]),
+		anyToString(item["statement"]), recallResponseRawUnionIdentity(raw, "conflicts", index),
+	)
+	return recallResponseScopedOpaqueRef(scopeDigest, "conflict", identity)
+}
+
+func recallResponseAllConflictRefs(input map[string]any, scopeDigest string) []string {
+	refs := []string{}
+	for index, raw := range recallResponseConflictSourceRows(input) {
+		ref := recallResponseConflictRef(raw, index, scopeDigest)
+		if !containsString(refs, ref) {
+			refs = append(refs, ref)
+		}
+	}
+	return refs
+}
+
+func recallResponseConflicts(input, contextPack map[string]any, scopeDigest string, limit int) []any {
+	_ = contextPack
+	rows := recallResponseConflictSourceRows(input)
 	out := []any{}
 	seen := map[string]struct{}{}
 	for index, raw := range rows {
@@ -436,8 +540,7 @@ func recallResponseConflicts(input, contextPack map[string]any, scopeDigest stri
 			break
 		}
 		item := anyMap(raw)
-		identity := firstNonEmptyStrings(anyToString(item["conflict_id"]), anyToString(item["claim_id"]), anyToString(item["ref_id"]), anyToString(item["statement"]), "conflict-"+anyToString(index))
-		conflictID := recallResponseScopedOpaqueRef(scopeDigest, "conflict", identity)
+		conflictID := recallResponseConflictRef(raw, index, scopeDigest)
 		if _, ok := seen[conflictID]; ok {
 			continue
 		}
@@ -862,13 +965,30 @@ func recallResponseComponents(classification map[string]any, rankedEvidence []an
 	if evidenceCount == 0 || gapCount > 0 {
 		add("negative_abstention")
 	}
+	if recallResponseTemporalHasRetirement(source) {
+		add("conflict_supersession")
+	}
+	if recallResponseExplicitNegativeTerminal(source) != "" {
+		add("negative_abstention")
+	}
 	if evidenceCount > 0 && len(selected) == 0 {
 		add("multi_memory_synthesis")
 	}
 	actionAllowed := recallResponseActionProjectionAllowed(source)
 	hasStructuredAction := recallResponseHasStructuredActionEvidence(rankedEvidence)
 	if actionAllowed && hasStructuredAction {
-		add("memory_to_action")
+		if recallResponseHasSensitiveUnavailableActionEvidence(rankedEvidence) {
+			if _, statusOK := recallResponseSensitiveUnavailableActionStatus(rankedEvidence); statusOK {
+				// Preserve capability/status without executable tool, parameter,
+				// or step material. Conflicting or excluded evidence below remains
+				// fail closed and cannot acquire protected module membership.
+				add("memory_to_action")
+			} else {
+				delete(selected, "memory_to_action")
+			}
+		} else {
+			add("memory_to_action")
+		}
 		if !recallResponseHasReadyActionEvidence(rankedEvidence) {
 			add("negative_abstention")
 		}
@@ -1045,11 +1165,132 @@ func recallResponseSafeKind(value string) string {
 
 func recallResponseSafeStatus(value string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
-	allowed := map[string]bool{"selected": true, "selected_truncated": true, "supported": true, "supported_with_limits": true, "active": true, "current": true, "contested": true, "quarantined": true, "omitted": true, "stale": true, "superseded": true, "retracted": true, "revoked": true, "expired": true, "unknown": true}
+	allowed := map[string]bool{"selected": true, "selected_truncated": true, "supported": true, "supported_with_limits": true, "active": true, "current": true, "contested": true, "quarantined": true, "omitted": true, "stale": true, "superseded": true, "retracted": true, "revoked": true, "retired": true, "expired": true, "unknown": true}
 	if allowed[value] {
 		return value
 	}
 	return "unknown"
+}
+
+type recallResponseLifecycleState struct {
+	canonical  string
+	freshness  string
+	hard       bool
+	retirement bool
+	test       bool
+	unknown    bool
+}
+
+// recallResponseLifecycleCarrierMaps enumerates every lifecycle carrier that
+// the production retrieval-to-response bridge consumes. Keeping one shared
+// enumeration prevents raw retrieval rows and already-projected rows from
+// disagreeing about whether nested retirement or forgetting is authoritative.
+func recallResponseLifecycleCarrierMaps(item map[string]any) []map[string]any {
+	metadata := anyMap(item["recall_metadata"])
+	return []map[string]any{
+		item,
+		metadata,
+		anyMap(item["temporal_evidence"]),
+		anyMap(metadata["temporal"]),
+	}
+}
+
+// recallResponseCanonicalLifecycle resolves lifecycle before any present-day
+// status. Retrieval backends may copy an active/current status onto a row that
+// is also retired, forgotten, or test data. Treat every authoritative-looking
+// lifecycle marker as a veto so mixed-state rows cannot become support or an
+// action witness merely because the optimistic field was encountered first.
+func recallResponseCanonicalLifecycle(item map[string]any) recallResponseLifecycleState {
+	state := recallResponseLifecycleState{canonical: "active"}
+	if item == nil {
+		return state
+	}
+	normalize := func(value string) string {
+		value = strings.ToLower(strings.TrimSpace(value))
+		value = strings.ReplaceAll(value, "-", "_")
+		value = strings.ReplaceAll(value, " ", "_")
+		return value
+	}
+	mark := func(value string, field string) {
+		value = normalize(value)
+		if value == "" {
+			return
+		}
+		switch value {
+		case "test", "test_memory", "fixture", "synthetic", "synthetic_test", "adversarial_test":
+			state.canonical, state.hard, state.test = "test", true, true
+		case "forgotten", "forgotten_selective", "forgotten_memory", "deleted", "purged":
+			if !state.test {
+				state.canonical = "forgotten"
+			}
+			state.hard, state.retirement = true, true
+		case "retired", "revoked", "retracted", "superseded", "expired", "obsolete", "deprecated", "stale":
+			if !state.test && state.canonical != "forgotten" {
+				state.canonical = "retired"
+			}
+			state.hard = true
+			if value != "stale" {
+				state.retirement = true
+			}
+		case "unknown":
+			// An explicit lifecycle state is authoritative absence of current
+			// support. It remains visible to exclusion/temporal accounting but
+			// cannot be overwritten by a copied optimistic status field.
+			if !state.test && state.canonical == "active" {
+				state.canonical = "unknown"
+			}
+			state.hard, state.unknown = true, true
+		case "current", "active", "selected", "supported", "durable", "recent", "dated", "undated", "aging":
+			if field == "freshness" {
+				state.freshness = value
+			}
+		}
+	}
+	lifecycleKeys := []string{
+		"lifecycle", "lifecycle_status", "revocation_status", "forgetting_status", "quarantine_status",
+		"state", "trust_class", "safety_class", "sensitivity", "memory_type",
+		"record_type", "memory_class", "classification", "data_class",
+	}
+	flagKeys := []string{"is_test", "test", "test_memory", "synthetic", "fixture", "forgotten", "retired"}
+	scan := func(values map[string]any) {
+		for _, key := range lifecycleKeys {
+			mark(anyToString(values[key]), key)
+		}
+		for _, key := range []string{"freshness", "temporal_state"} {
+			mark(anyToString(values[key]), "freshness")
+		}
+		for _, key := range flagKeys {
+			if anyToBool(values[key]) {
+				if key == "forgotten" {
+					if !state.test {
+						state.canonical = "forgotten"
+					}
+					state.retirement = true
+				} else if key == "is_test" || key == "test" || key == "test_memory" || key == "synthetic" || key == "fixture" {
+					state.canonical, state.test = "test", true
+				} else if state.canonical != "forgotten" && state.canonical != "test" {
+					state.canonical, state.retirement = "retired", true
+				}
+				state.hard = true
+			}
+		}
+	}
+	// Inspect all raw and server-projected carriers before support/action
+	// eligibility. The scan is monotonic for hard exclusions: an optimistic
+	// current marker cannot undo a test, forgotten, retired, stale, or unknown
+	// marker found in another carrier.
+	for _, carrier := range recallResponseLifecycleCarrierMaps(item) {
+		scan(carrier)
+	}
+	if state.freshness == "" {
+		state.freshness = normalize(anyToString(item["freshness"]))
+	}
+	if state.test {
+		// Test/fixture provenance dominates copied retirement or forgetting labels:
+		// it remains hard-excluded, but cannot establish production history.
+		state.canonical, state.retirement, state.unknown = "test", false, false
+	}
+	return state
 }
 
 func recallResponseSafeOpaqueID(value string) string {
@@ -1075,9 +1316,34 @@ func recallResponseExactOpaqueID(value, prefix string) bool {
 }
 
 func recallResponseEvidenceStatus(item map[string]any) (string, bool) {
+	lifecycle := recallResponseCanonicalLifecycle(item)
+	if lifecycle.hard {
+		return lifecycle.canonical, false
+	}
+	for _, key := range []string{"authorized", "owner_authorized", "source_authorized", "eligible", "policy_eligible", "retrieval_eligible", "forgetting_eligible"} {
+		if raw, present := item[key]; present {
+			if allowed, ok := raw.(bool); ok && !allowed {
+				return "quarantined", false
+			}
+		}
+	}
+	for _, key := range []string{"state", "lifecycle_status", "revocation_status", "forgetting_status", "quarantine_status", "trust_class", "safety_class", "sensitivity"} {
+		value := strings.ToLower(strings.TrimSpace(anyToString(item[key])))
+		switch value {
+		case "quarantined", "quarantine", "revoked", "retracted", "retired", "expired", "forgotten", "forgotten_selective", "superseded", "unsafe", "secret", "restricted":
+			return recallResponseSafeStatus(value), false
+		}
+	}
 	switch strings.ToLower(strings.TrimSpace(anyToString(item["support"]))) {
 	case "distractor", "non_support", "unsupported":
 		return "quarantined", false
+	}
+	// Freshness is an independent server-side hard exclusion. A stale or
+	// superseded row must not become relevant merely because a backend copied a
+	// present-day status such as current onto the same record.
+	switch freshness := lifecycle.freshness; freshness {
+	case "stale", "superseded":
+		return freshness, false
 	}
 	if rawStatus := strings.TrimSpace(firstNonEmptyStrings(anyToString(item["status"]), anyToString(item["proof_status"]))); rawStatus != "" {
 		status := recallResponseSafeStatus(rawStatus)
@@ -1092,10 +1358,10 @@ func recallResponseEvidenceStatus(item map[string]any) (string, bool) {
 	// Context-pack evidence carries recency in freshness, not proof status.
 	// Ordinary current, dated, and undated rows remain eligible; stale and
 	// superseded rows are disclosed as excluded gaps and never become support.
-	switch freshness := strings.ToLower(strings.TrimSpace(anyToString(item["freshness"]))); freshness {
+	switch freshness := lifecycle.freshness; freshness {
 	case "", "current", "recent", "aging", "dated", "undated":
 		return "selected", true
-	case "stale", "superseded":
+	case "stale", "superseded", "retired":
 		return freshness, false
 	default:
 		return "unknown", false
@@ -1166,11 +1432,7 @@ func recallResponseExcludedEvidenceRefs(items []any, scopeDigest string) []any {
 		if !confidenceValid {
 			status = "invalid_confidence"
 		}
-		identity := firstNonEmptyStrings(anyToString(item["candidate_id"]), anyToString(item["ref_id"]), anyToString(item["memory_id"]), anyToString(item["content_digest"]), "excluded-"+anyToString(index))
-		refID := recallResponseSafeOpaqueID(identity)
-		if refID == "" {
-			refID = recallResponseScopedOpaqueRef(scopeDigest, "excluded", identity)
-		}
+		refID, _, _, _, _, _, _, _, _, _ := recallResponseEvidenceProjection(item, index, scopeDigest, recallResponseProductionPolicyInput())
 		if _, ok := seen[refID]; ok {
 			continue
 		}

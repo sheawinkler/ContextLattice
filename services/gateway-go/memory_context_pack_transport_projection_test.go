@@ -1,22 +1,18 @@
 package main
 
-import "testing"
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+)
 
-func TestContextPackResponseRetrievalProofsRequireExplicitDebugForFullReceipts(t *testing.T) {
-	assessment := map[string]any{
-		"schema_id":        memoryTrustAssessmentContractID,
-		"assessed_count":   2,
-		"assessments":      []any{map[string]any{"candidate_id": "rtc_one"}},
-		"quarantine_count": 1,
-	}
-	trace := map[string]any{
-		"schema_id":         retrievalDecisionTraceContractID,
-		"trace_id":          "rdt_one",
-		"candidate_count":   2,
-		"decision_count":    2,
-		"decisions":         []any{map[string]any{"candidate_id": "rtc_one"}},
-		"coverage_complete": true,
-	}
+func TestContextPackResponseRetrievalProofsKeepOrdinaryReferencesAndProjectDebugReceipts(t *testing.T) {
+	assessment := attachPayloadFormatContract(
+		memoryTrustAssessmentContractID, testValidMemoryTrustAssessmentReceipt(2), "test", "test", "/memory/context-pack",
+	)
+	trace := attachPayloadFormatContract(
+		retrievalDecisionTraceContractID, testValidRetrievalDecisionTraceReceipt(2), "test", "test", "/memory/context-pack",
+	)
 
 	boundedAssessment, boundedTrace := contextPackResponseRetrievalProofs(assessment, trace, false)
 	if _, exposed := boundedAssessment["assessments"]; exposed {
@@ -25,19 +21,159 @@ func TestContextPackResponseRetrievalProofsRequireExplicitDebugForFullReceipts(t
 	if _, exposed := boundedTrace["decisions"]; exposed {
 		t.Fatalf("ordinary response exposed full decision trace: %#v", boundedTrace)
 	}
-	if anyToInt(boundedAssessment["assessed_count"], 0) != 2 || anyToInt(boundedAssessment["quarantine_count"], 0) != 1 {
+	if anyToInt(boundedAssessment["assessed_count"], 0) != 2 {
 		t.Fatalf("bounded trust proof lost summary counts: %#v", boundedAssessment)
 	}
-	if anyToString(boundedTrace["trace_id"]) != "rdt_one" || !anyToBool(boundedTrace["coverage_complete"]) {
+	if anyToString(boundedTrace["trace_id"]) == "" || !anyToBool(boundedTrace["coverage_complete"]) {
 		t.Fatalf("bounded decision proof lost trace identity or coverage: %#v", boundedTrace)
 	}
 
 	debugAssessment, debugTrace := contextPackResponseRetrievalProofs(assessment, trace, true)
-	if _, exposed := debugAssessment["assessments"]; !exposed {
-		t.Fatalf("explicit debug response omitted full trust receipt: %#v", debugAssessment)
+	if _, exposed := debugAssessment["assessments"]; exposed || !anyToBool(debugAssessment["bounded_projection"]) {
+		t.Fatalf("explicit debug response exposed unbounded trust receipt: %#v", debugAssessment)
 	}
-	if _, exposed := debugTrace["decisions"]; !exposed {
-		t.Fatalf("explicit debug response omitted full decision trace: %#v", debugTrace)
+	if _, exposed := debugTrace["decisions"]; exposed || !anyToBool(debugTrace["bounded_projection"]) {
+		t.Fatalf("explicit debug response exposed unbounded decision trace: %#v", debugTrace)
+	}
+	for label, proof := range map[string]map[string]any{"assessment": debugAssessment, "trace": debugTrace} {
+		if !strings.HasPrefix(anyToString(proof["canonical_digest"]), "sha256:") {
+			t.Fatalf("debug %s projection lost receipt digest: %#v", label, proof)
+		}
+	}
+}
+
+func TestContextPackResponseRetrievalProofsFailClosedBeforeOrdinarySummaryProjection(t *testing.T) {
+	validEmptyAssessment := attachPayloadFormatContract(
+		memoryTrustAssessmentContractID, testValidMemoryTrustAssessmentReceipt(0), "test", "test", "/memory/context-pack",
+	)
+	validEmptyTrace := attachPayloadFormatContract(
+		retrievalDecisionTraceContractID, testValidRetrievalDecisionTraceReceipt(0), "test", "test", "/memory/context-pack",
+	)
+	assessment, trace := contextPackResponseRetrievalProofs(validEmptyAssessment, validEmptyTrace, false)
+	if _, unavailable := assessment["available"]; unavailable || anyToInt(assessment["assessed_count"], -1) != 0 {
+		t.Fatalf("valid zero-candidate trust receipt did not retain authoritative summary: %#v", assessment)
+	}
+	if _, unavailable := trace["available"]; unavailable || anyToInt(trace["decision_count"], -1) != 0 {
+		t.Fatalf("valid zero-candidate decision receipt did not retain authoritative summary: %#v", trace)
+	}
+
+	for _, debug := range []bool{false, true} {
+		for label, pair := range map[string][2]map[string]any{
+			"missing trust":   {{}, validEmptyTrace},
+			"malformed trust": {{"schema_id": memoryTrustAssessmentContractID, "assessments": []any{}}, validEmptyTrace},
+			"missing trace":   {validEmptyAssessment, {}},
+			"malformed trace": {validEmptyAssessment, {"schema_id": retrievalDecisionTraceContractID, "decisions": []any{}}},
+		} {
+			assessment, trace := contextPackResponseRetrievalProofs(pair[0], pair[1], debug)
+			if assessment["available"] != false || trace["available"] != false {
+				t.Fatalf("%s debug=%v retained an asymmetric proof claim: assessment=%#v trace=%#v", label, debug, assessment, trace)
+			}
+		}
+	}
+}
+
+func TestContextPackTransportHashesFullProofBeforeOuterListBoundary(t *testing.T) {
+	digests := make([]string, 0, 2)
+	for _, tail := range []string{"tail-alpha", "tail-beta"} {
+		assessment := testValidMemoryTrustAssessmentReceipt(65)
+		rows := contextPackAnyList(assessment["assessments"])
+		anyMap(rows[64])["tail_marker"] = tail
+		assessment = attachPayloadFormatContract(
+			memoryTrustAssessmentContractID, assessment, "test", "test", "/memory/context-pack",
+		)
+		trace := testValidRetrievalDecisionTraceReceipt(65)
+		canonical, err := contextPackRetrievalProofCanonicalJSON(assessment)
+		if err != nil {
+			t.Fatalf("canonical full proof: %v", err)
+		}
+		expectedDigest := "sha256:" + sha256Hex(canonical)
+
+		rootAssessment, rootTrace := contextPackResponseRetrievalProofs(assessment, trace, true)
+		pack := testContextPackFixture(nil)
+		payload := map[string]any{
+			"ok": true, "context_pack": pack,
+			"context_compiler":        cloneContractMap(anyMap(pack["context_compiler"])),
+			"source_coverage":         map[string]any{"configured": []any{}, "returned": []any{}, "complete": true},
+			"reference_prompt":        "pre-boundary retrieval proof custody",
+			"writeback_required":      true,
+			"memory_trust_assessment": rootAssessment, "retrieval_decision_trace": rootTrace,
+		}
+		finalized := finalizeFullTransport(
+			payload, attachContextPackFormatContract, "test_context_pack_transport", "serialized_test_context_pack_json",
+		)
+		proof := anyMap(finalized["memory_trust_assessment"])
+		if !anyToBool(proof["bounded_projection"]) || anyToString(proof["canonical_digest"]) != expectedDigest {
+			t.Fatalf("pre-boundary proof digest mismatch: proof=%#v expected=%s", proof, expectedDigest)
+		}
+		if _, exposed := proof["assessments"]; exposed {
+			t.Fatalf("full proof tail crossed outer transport boundary: %#v", proof)
+		}
+		if encoded := recallResponseCanonicalJSON(finalized); strings.Contains(encoded, tail) {
+			t.Fatalf("full proof tail marker crossed transport: %s", encoded)
+		}
+		if !anyToBool(anyMap(finalized["format_contract"])["contract_valid"]) {
+			t.Fatalf("projected transport lost context-pack contract validity: %#v", finalized["format_contract"])
+		}
+		digests = append(digests, expectedDigest)
+	}
+	if digests[0] == digests[1] {
+		t.Fatalf("distinct full proof tails collapsed to one digest: %v", digests)
+	}
+}
+
+func TestContextPackTransportRejectsMismatchedFullProofBeforeOuterProjection(t *testing.T) {
+	assessment := testValidMemoryTrustAssessmentReceipt(65)
+	trace := testValidRetrievalDecisionTraceReceipt(65)
+	rows := contextPackAnyList(trace["decisions"])
+	anyMap(rows[len(rows)-1])["candidate_id"] = "rtc_ffffffffffffffffffffffff"
+	trace = attachPayloadFormatContract(
+		retrievalDecisionTraceContractID, trace, "test", "test", "/memory/context-pack",
+	)
+	if findings := validateAgentContractPayload(memoryTrustAssessmentContractID, assessment); len(findings) != 0 {
+		t.Fatalf("independently valid trust proof failed validation: %#v", findings)
+	}
+	if findings := validateAgentContractPayload(retrievalDecisionTraceContractID, trace); len(findings) != 0 {
+		t.Fatalf("independently valid trace proof failed validation: %#v", findings)
+	}
+	rootAssessment, rootTrace := contextPackResponseRetrievalProofs(assessment, trace, true)
+	if rootAssessment["available"] != false || rootTrace["available"] != false {
+		t.Fatalf("mismatched full proof pair crossed the outer projection: assessment=%#v trace=%#v", rootAssessment, rootTrace)
+	}
+}
+
+func TestContextPackProductionReceiptsRetainProofCustodyAfterNormalization(t *testing.T) {
+	items := make([]contextPackEvidenceItem, 65)
+	for index := range items {
+		items[index] = contextPackEvidenceItem{
+			Occurrence: index + 1, Kind: "memory", Text: "production receipt item " + anyToString(index),
+			Score: 1, ImpactScore: 1, QueryRelevance: 1, Confidence: 0.9, EstimatedTokens: 1,
+			Project: "contextlattice", Source: "fixture", MemoryID: "memory-" + anyToString(index),
+		}
+	}
+	trust := applyMemoryTrustPolicy(items)
+	trust.TrustEnvelope = attachPayloadFormatContract(
+		memoryTrustAssessmentContractID, trust.TrustEnvelope, "", "memory_trust_assessment", "/memory/context-pack",
+	)
+	trace := attachPayloadFormatContract(
+		retrievalDecisionTraceContractID,
+		buildRetrievalDecisionTrace(trust, trust.Eligible, nil, contextPackTokenBudget{}),
+		"", "retrieval_decision_trace", "/memory/context-pack",
+	)
+	if _, ok := trust.TrustEnvelope["assessed_count"].(json.Number); !ok {
+		t.Fatalf("production trust receipt normalization did not preserve its integer lexeme: %T", trust.TrustEnvelope["assessed_count"])
+	}
+	if _, ok := trace["decision_count"].(json.Number); !ok {
+		t.Fatalf("production trace normalization did not preserve its integer lexeme: %T", trace["decision_count"])
+	}
+
+	assessmentProjection, traceProjection := contextPackResponseRetrievalProofs(trust.TrustEnvelope, trace, true)
+	for label, proof := range map[string]map[string]any{"assessment": assessmentProjection, "trace": traceProjection} {
+		if !anyToBool(proof["bounded_projection"]) || !strings.HasPrefix(anyToString(proof["canonical_digest"]), "sha256:") {
+			t.Fatalf("production %s receipt lost pre-boundary proof custody: %#v", label, proof)
+		}
+		if available, ok := proof["available"].(bool); !ok || !available {
+			t.Fatalf("production %s receipt was marked unavailable: %#v", label, proof)
+		}
 	}
 }
 

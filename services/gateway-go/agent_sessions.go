@@ -1733,6 +1733,8 @@ func agentSessionAllowsPostTerminalEvent(eventType string) bool {
 		strings.Contains(eventType, "claim") ||
 		strings.Contains(eventType, "verif") ||
 		strings.Contains(eventType, "retrieval.continuation") ||
+		strings.Contains(eventType, "agent.task.delivery") ||
+		strings.Contains(eventType, "agent.task.writeback") ||
 		strings.Contains(eventType, "audit")
 }
 

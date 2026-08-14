@@ -16,6 +16,7 @@ const (
 // evidence, or internal ledger fields.
 var recallResponseRequestFields = []string{
 	"query",
+	"response_shape",
 	"project",
 	"topic_path",
 	"limit",
@@ -172,12 +173,83 @@ func recallResponseCompositionInputFromCompilation(
 	return composition
 }
 
+// recallResponseServerPolicyInputFromCompilation turns one normalized,
+// server-owned selection receipt into a typed evidence-binding policy. The
+// public request allowlist cannot construct this value. A valid-looking
+// candidate ID, source, or digest that is absent from the receipt remains
+// derived and unbound.
+func recallResponseServerPolicyInputFromCompilation(
+	composition map[string]any,
+	artifacts contextPackCompilationArtifacts,
+	durable bool,
+) validatedRecallResponsePolicyInput {
+	policy := recallResponseProductionPolicyInput()
+	if !durable {
+		return policy
+	}
+	receipt := contextPackSelectionReceiptFromSample(artifacts.Quality["selection_receipt"])
+	receiptDigest := anyToString(receipt["receipt_digest"])
+	if !recallResponseValidDigest(receiptDigest) {
+		return policy
+	}
+	allowed := map[string]bool{}
+	for _, raw := range contextPackAnyList(receipt["candidates"]) {
+		row := anyMap(raw)
+		if anyToString(row["selection_state"]) != "selected" {
+			continue
+		}
+		if ref := contextPackOpaqueCandidateRef(row["candidate_ref"]); ref != "" {
+			allowed[ref] = true
+		}
+	}
+	snapshotMaterial := map[string]any{
+		"context_pack":             composition["context_pack"],
+		"source_coverage":          composition["source_coverage"],
+		"memory_trust_assessment":  composition["memory_trust_assessment"],
+		"retrieval_decision_trace": composition["retrieval_decision_trace"],
+		"workspace_ref":            composition["workspace_ref"],
+		"receipt_digest":           receiptDigest,
+	}
+	policy.sourceBound = true
+	policy.snapshotDigest = "sha256:" + sha256Hex(recallResponseCanonicalJSON(snapshotMaterial))
+	policy.receiptDigest = receiptDigest
+	policy.evidenceBindings = recallResponseValidatedEvidenceBindings(composition, "server_receipt", allowed)
+	return policy
+}
+
 func recallResponseSemanticDigest(payload map[string]any) string {
-	material := cloneJSONMap(payload)
+	material := recallResponseStableIdentityMaterial(payload)
 	delete(material, "format_contract")
 	delete(material, "response_digest")
 	delete(material, recallResponseFallbackStageReceiptKey)
 	return "sha256:" + sha256Hex(recallResponseCanonicalJSON(material))
+}
+
+func (s *server) recallResponseRoutePolicyFor(request map[string]any) (validatedRecallResponsePolicyInput, bool) {
+	if s == nil {
+		return validatedRecallResponsePolicyInput{}, false
+	}
+	requestDigest := recallResponseContinuationRequestDigest(request)
+	if !recallResponseValidDigest(requestDigest) {
+		return validatedRecallResponsePolicyInput{}, false
+	}
+	s.recallResponseRoutePolicyMu.RLock()
+	policy, ok := s.recallResponseRoutePolicyOverrides[requestDigest]
+	s.recallResponseRoutePolicyMu.RUnlock()
+	return policy, ok
+}
+
+// recallResponseStableIdentityMaterial removes transport-only cursor state from
+// product identities. Opaque tokens are server state and are bound by the
+// continuation receipt; they are never part of the semantic response,
+// snapshot/membership, control, or omission identities.
+func recallResponseStableIdentityMaterial(payload map[string]any) map[string]any {
+	material := cloneJSONMap(payload)
+	delete(material, "continuation_action")
+	if disclosure := anyMap(material["disclosure"]); len(disclosure) > 0 {
+		delete(disclosure, "continuation_action")
+	}
+	return material
 }
 
 func finalizeRecallResponseTransport(payload map[string]any, agentID, lane, endpoint string) map[string]any {
@@ -205,8 +277,16 @@ func finalizeRecallResponseTransport(payload map[string]any, agentID, lane, endp
 		}
 
 		// The compact contract applies to the complete agent-facing payload, not
-		// only the pre-format candidate. Remove optional material using the actual
-		// stamped size, then restamp and revalidate on the next iteration.
+		// only the pre-format candidate. First reduce deterministic explanatory
+		// prose while preserving every evidence, proof, union, and omission receipt;
+		// only then shed presentation rows or modules if the stamped envelope still
+		// cannot fit.
+		if recallResponseCompactCursorPresentation(payload) {
+			continue
+		}
+		if recallResponsePruneDerivedInferencePresentation(payload) {
+			continue
+		}
 		proof := anyMap(anyMap(payload["answer"])["proof_spine"])
 		if recallResponsePruneLowestUnprovedEvidence(payload, proof) {
 			continue
@@ -257,6 +337,20 @@ func (s *server) recallResponseRoute(w http.ResponseWriter, r *http.Request, too
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
 		return
 	}
+	if _, continuation := payload["continuation_token"]; continuation {
+		response, status := s.resolveRecallResponseContinuation(payload, endpoint)
+		w.Header().Set("X-ContextLattice-Native-Route", "recall_response")
+		if tool {
+			w.Header().Set("X-ContextLattice-Tool", "recall_response")
+		}
+		writeJSON(w, status, response)
+		return
+	}
+	responseShape := strings.TrimSpace(anyToString(payload["response_shape"]))
+	if responseShape != "" && responseShape != recallResponseInitialShape {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid response_shape"})
+		return
+	}
 	request := recallResponseRequestPayload(payload)
 	requestCtx := r.Context()
 	requestCtx = s.contextWithContextPackLearnedRequestAuthority(requestCtx, r, request, bodyBytes)
@@ -267,6 +361,9 @@ func (s *server) recallResponseRoute(w http.ResponseWriter, r *http.Request, too
 	var hookedDurable bool
 	var hookedSampleID string
 	var hookedReceiptDigest string
+	var hookedComposition map[string]any
+	var hookedPolicy validatedRecallResponsePolicyInput
+	var hookedCompactReady bool
 	compilationHook := func(input contextPackCompilationInput, artifacts contextPackCompilationArtifacts, durable bool) contextPackCompilationArtifacts {
 		if !durable {
 			// A failed durable attempt may have copied a provisional binding into
@@ -277,7 +374,16 @@ func (s *server) recallResponseRoute(w http.ResponseWriter, r *http.Request, too
 			delete(artifacts.Quality, "selection_receipt")
 		}
 		composition := recallResponseCompositionInputFromCompilation(request, input, artifacts, durable)
-		response := composeRecallResponse(composition)
+		policy := recallResponseServerPolicyInputFromCompilation(composition, artifacts, durable)
+		if routePolicy, ok := s.recallResponseRoutePolicyFor(request); ok {
+			policy = routePolicy
+		}
+		response := composeRecallResponseWithPolicy(composition, policy)
+		if durable {
+			s.installRecallResponseContinuationWithFit(
+				response, composition, request, policy, agentID, endpoint, responseShape != recallResponseInitialShape,
+			)
+		}
 		fallbackComposition := cloneJSONMap(composition)
 		delete(fallbackComposition, "_durable_context_pack_quality")
 		var fallbackResponse map[string]any
@@ -288,13 +394,25 @@ func (s *server) recallResponseRoute(w http.ResponseWriter, r *http.Request, too
 			}
 			return cloneJSONMap(fallbackResponse)
 		}
-		// Apply the recall boundary before deriving identity. The captured
-		// response is the exact public projection if this persistence attempt and
-		// its retained proof both succeed.
+		// Apply the same production transport boundary before deriving identity for
+		// either response shape. The initial projection is a compact view of this
+		// exact retained source artifact; skipping finalization here would bind
+		// quality/continuation proof to a pre-clipping candidate and can make the
+		// later retained-row check fail closed.
 		response = finalizeRecallResponseTransport(response, agentID, "recall_response", endpoint)
-		if !durable || !recallResponseTransportCandidateValid(response) {
+		for attempts := 0; attempts < recallResponseMaxEvidence+recallResponseMaxModules+1; attempts++ {
+			if !s.reconcileRecallResponseContinuation(response, composition, request, policy, agentID, endpoint) {
+				break
+			}
+			response = finalizeRecallResponseTransport(response, agentID, "recall_response", endpoint)
+		}
+		candidateValid := recallResponseTransportCandidateValid(response)
+		if !durable || !candidateValid {
+			s.discardRecallResponseContinuation(response)
 			response = fallback()
 		}
+		compactReady := durable && candidateValid &&
+			anyToBool(anyMap(response["request_scope"])["source_bound"])
 		artifacts.SideEffectsSuppressed = recallResponseServerSilenced(response)
 		if artifacts.SideEffectsSuppressed {
 			// A silent response is advisory output only. Remove any provisional
@@ -318,7 +436,9 @@ func (s *server) recallResponseRoute(w http.ResponseWriter, r *http.Request, too
 				}
 				delete(artifacts.Quality, "selection_receipt")
 				delete(composition, "_durable_context_pack_quality")
+				s.discardRecallResponseContinuation(response)
 				response = fallback()
+				compactReady = false
 			}
 		}
 		hookedResponse = response
@@ -326,6 +446,9 @@ func (s *server) recallResponseRoute(w http.ResponseWriter, r *http.Request, too
 		hookedBinding = binding
 		hookedDurable = durable && !artifacts.SideEffectsSuppressed && binding != nil
 		hookedSampleID = anyToString(artifacts.Quality["sample_id"])
+		hookedComposition = composition
+		hookedPolicy = policy
+		hookedCompactReady = compactReady
 		hookedReceiptDigest = ""
 		if durable {
 			hookedReceiptDigest = anyToString(contextPackSelectionReceiptFromSample(artifacts.Quality["selection_receipt"])["receipt_digest"])
@@ -369,6 +492,7 @@ func (s *server) recallResponseRoute(w http.ResponseWriter, r *http.Request, too
 
 	response := hookedResponse
 	if response == nil || status >= http.StatusBadRequest || !anyToBool(contextResponse["ok"]) {
+		s.discardRecallResponseContinuation(response)
 		if hookedFallbackResponse != nil {
 			// Compilation succeeded and the hook already projected the exact
 			// artifact set. A later status/error envelope may change the HTTP
@@ -381,6 +505,7 @@ func (s *server) recallResponseRoute(w http.ResponseWriter, r *http.Request, too
 		}
 		hookedDurable = false
 		hookedBinding = nil
+		hookedCompactReady = false
 	}
 	if hookedDurable && hookedBinding != nil && s != nil && s.contextPackQuality != nil {
 		if s.recallResponseRetainedProofHook != nil {
@@ -402,11 +527,37 @@ func (s *server) recallResponseRoute(w http.ResponseWriter, r *http.Request, too
 			for _, key := range []string{"recall_response_id", "recall_response_digest", "response_component_refs"} {
 				delete(anyMap(contextResponse["context_pack_quality"]), key)
 			}
+			s.discardRecallResponseContinuation(response)
 			if hookedFallbackResponse != nil {
 				response = hookedFallbackResponse()
 			} else {
 				response = recallResponseProjectFallbackWithServerSilence(recallResponseCompositionInput(request, contextResponse), recallResponseProductionPolicyInput())
 				response = finalizeRecallResponseTransport(response, agentID, "recall_response", endpoint)
+			}
+			hookedCompactReady = false
+		}
+	}
+	if s != nil && s.recallResponseRouteResponseHook != nil {
+		// The observer receives the exact server-produced source response before
+		// an initial_compact projection. It cannot alter route state or wire data.
+		s.recallResponseRouteResponseHook(cloneJSONMap(response))
+	}
+	if s != nil && s.recallResponseRouteCompositionHook != nil {
+		// The composition observer is paired with the source response observer so
+		// internal verification can recompute continuation membership from the
+		// exact server-owned compilation snapshot. It cannot alter route state or
+		// wire data.
+		s.recallResponseRouteCompositionHook(cloneJSONMap(hookedComposition))
+	}
+	if responseShape == recallResponseInitialShape && hookedCompactReady {
+		if initial, ok := s.projectRecallResponseInitial(
+			response, hookedComposition, request, hookedPolicy, agentID, endpoint,
+		); ok {
+			response = initial
+		} else if !recallResponseTransportCandidateValid(response) {
+			s.discardRecallResponseContinuation(response)
+			if hookedFallbackResponse != nil {
+				response = hookedFallbackResponse()
 			}
 		}
 	}

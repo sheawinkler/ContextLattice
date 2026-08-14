@@ -171,6 +171,12 @@ func recallResponseCompressProof(response, proof map[string]any, policy validate
 	coverage := []any{}
 	for _, raw := range contextPackAnyList(proof["coverage"]) {
 		row := cloneJSONMap(anyMap(raw))
+		if anyToString(row["obligation"]) == "temporal_premise" || anyToString(row["obligation"]) == "bounded_snapshot" {
+			// Their exact digests are mandatory proof-spine fields. Repeating
+			// digest-only coverage rows consumes the bounded response without
+			// adding a new witness.
+			continue
+		}
 		switch anyToString(row["obligation"]) {
 		case "primary_result":
 			row["proof_refs"] = recallResponseAnyStrings(intersectStrings([]string{primary}, selected))

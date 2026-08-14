@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"log"
 	"net/http"
@@ -300,15 +301,23 @@ func (m *memoryStore) initializeAfterOwnerOnlyMigration() error {
 				return
 			}
 		}
-		if err := m.loadExactStateIndex(); err != nil {
+		fence, fenceErr := m.acquireMemoryEdgeLogFenceOptional()
+		if fenceErr != nil {
+			m.initializeErr = fenceErr
+			return
+		}
+		if fence != nil {
+			defer fence.release()
+		}
+		if err := m.loadExactStateIndexWithFenceLocked(fence); err != nil {
 			m.initializeErr = err
 			return
 		}
-		if err := m.loadCurrentState(); err != nil {
+		if err := m.loadCurrentStateWithFenceLocked(fence); err != nil {
 			m.initializeErr = err
 			return
 		}
-		if err := m.loadHistory(); err != nil {
+		if err := m.loadHistoryWithFence(fence); err != nil {
 			m.initializeErr = err
 			return
 		}
@@ -316,7 +325,11 @@ func (m *memoryStore) initializeAfterOwnerOnlyMigration() error {
 			m.initializeErr = err
 			return
 		}
-		if err := m.loadEdges(); err != nil {
+		if err := m.reconcileMemoryReferenceTransactionsWithFence(context.Background(), fence); err != nil {
+			m.initializeErr = err
+			return
+		}
+		if err := m.loadEdgesWithFenceLocked(fence); err != nil {
 			m.initializeErr = err
 			return
 		}

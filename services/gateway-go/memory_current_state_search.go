@@ -119,6 +119,17 @@ func (m *memoryStore) searchCurrentStateRowsScoped(
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	fence, fenceErr := m.acquireMemoryEdgeLogFenceOptionalContext(ctx)
+	if fenceErr != nil {
+		return nil, stats, fenceErr
+	}
+	releaseFence := func() {
+		if fence != nil {
+			fence.release()
+			fence = nil
+		}
+	}
+	defer releaseFence()
 	query = strings.TrimSpace(query)
 	project = strings.TrimSpace(project)
 	topicPrefix = normalizeTopicPathLoose(topicPrefix)
@@ -147,6 +158,10 @@ func (m *memoryStore) searchCurrentStateRowsScoped(
 		250000,
 	)
 	writePolicy := loadWriteIngressPolicy()
+	exactStatePaths, exactStateErr := m.exactStatePathsSnapshotWithFenceChecked(fence)
+	if exactStateErr != nil {
+		return nil, stats, exactStateErr
+	}
 
 	// Validate the complete project denominator and capture only the requested
 	// topic's immutable state while holding one read lock. The topic projection
@@ -260,10 +275,15 @@ func (m *memoryStore) searchCurrentStateRowsScoped(
 			if state.Entry.HorizonDays != 0 {
 				effectiveHorizon = maxInt(state.Entry.HorizonDays, 0)
 			}
+			exactState, exactStateErr := exactStatePathSetContainsChecked(exactStatePaths, state.Entry.Project, state.Entry.FileName)
+			if exactStateErr != nil {
+				m.mu.RUnlock()
+				return nil, stats, exactStateErr
+			}
 			candidates = append(candidates, currentStateSearchCandidate{
 				state:            state,
 				topicPath:        topicPath,
-				exactState:       exactStatePathSetContains(m.exactStatePaths, state.Entry.Project, state.Entry.FileName),
+				exactState:       exactState,
 				effectiveHorizon: effectiveHorizon,
 				indexedLastTouch: m.lastAccess[key],
 				retrievalScope:   retrievalScope,
@@ -277,6 +297,10 @@ func (m *memoryStore) searchCurrentStateRowsScoped(
 		return nil, stats, errCurrentStateSearchIndexUnavailable
 	}
 	m.mu.RUnlock()
+	// Candidate capture is the only phase that needs the cross-process writer
+	// fence. Ranking and row construction can scan a large topic projection
+	// without starving writers; the short revalidation below rejects drift.
+	releaseFence()
 
 	exactRows := make([]map[string]any, 0, minInt(limit*4, len(candidates)))
 	ancestorRows := make([]map[string]any, 0, minInt(limit*4, len(candidates)))
@@ -428,6 +452,29 @@ func (m *memoryStore) searchCurrentStateRowsScoped(
 	}
 	if len(rows) > limit {
 		rows = rows[:limit]
+	}
+	verifyFence, verifyErr := m.acquireMemoryEdgeLogFenceOptionalContext(ctx)
+	if verifyErr != nil {
+		return nil, stats, verifyErr
+	}
+	verifiedExactStatePaths, verifyErr := m.exactStatePathsSnapshotWithFenceChecked(verifyFence)
+	if verifyFence != nil {
+		verifyFence.release()
+	}
+	if verifyErr != nil {
+		return nil, stats, verifyErr
+	}
+	if !exactStatePathSetsEqual(exactStatePaths, verifiedExactStatePaths) {
+		return nil, stats, errCurrentStateSearchIndexUnavailable
+	}
+	m.mu.RLock()
+	verifiedGeneration, generationOK := m.currentKeyIndexGeneration[projectKey]
+	verifiedTopicGeneration, topicGenerationOK := m.currentTopicIndexGeneration[projectKey]
+	verifiedCount, countOK := m.currentKeyCountsByProject[projectKey]
+	m.mu.RUnlock()
+	if !generationOK || !topicGenerationOK || !countOK || verifiedGeneration != stats.IndexGeneration ||
+		verifiedTopicGeneration != stats.IndexGeneration || verifiedCount != stats.ProjectDocuments {
+		return nil, stats, errCurrentStateSearchIndexUnavailable
 	}
 	stats.ScopeExhaustive = true
 	return rows, stats, nil

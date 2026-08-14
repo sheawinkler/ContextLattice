@@ -3,7 +3,6 @@
 package main
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -47,15 +46,7 @@ func TestCompletedOwnerOnlyReceiptDefersHydrationBeforeListen(t *testing.T) {
 	select {
 	case initialized = <-resultCh:
 	case <-time.After(500 * time.Millisecond):
-		releaseErr := make(chan error, 1)
-		go func() { releaseErr <- writeHydrationFIFO(shardPath) }()
-		select {
-		case initialized = <-resultCh:
-			<-releaseErr
-			t.Fatalf("completed-store hydration blocked constructor before listen: %v", initialized.err)
-		case <-time.After(5 * time.Second):
-			t.Fatal("completed-store hydration remained blocked after holdout release")
-		}
+		t.Fatal("completed-store hydration blocked on a non-regular shard")
 	}
 	if initialized.err != nil {
 		t.Fatalf("construct memory store: %v", initialized.err)
@@ -70,40 +61,12 @@ func TestCompletedOwnerOnlyReceiptDefersHydrationBeforeListen(t *testing.T) {
 		t.Fatalf("expected fail-closed background hydration, got %#v", initial)
 	}
 
-	releaseHydrationFIFO(t, shardPath)
 	deadline := time.Now().Add(5 * time.Second)
-	for !initialized.store.isEnabled() && time.Now().Before(deadline) {
+	for anyToString(initialized.store.migrationSnapshot()["phase"]) != "blocked" && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}
-	if !initialized.store.isEnabled() {
-		t.Fatalf("hydration did not complete: %#v", initialized.store.migrationSnapshot())
+	final := initialized.store.migrationSnapshot()
+	if anyToString(final["phase"]) != "blocked" || initialized.store.isEnabled() {
+		t.Fatalf("non-regular shard was not rejected fail-closed: %#v", final)
 	}
-}
-
-func releaseHydrationFIFO(t *testing.T, path string) {
-	t.Helper()
-	if err := writeHydrationFIFO(path); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func writeHydrationFIFO(path string) error {
-	file, err := os.OpenFile(path, os.O_WRONLY, 0)
-	if err != nil {
-		return err
-	}
-	payload := memoryCurrentStateShard{
-		SchemaID: memoryCurrentStateSchemaID,
-		Version:  1,
-		Shard:    0,
-		Entries:  []memoryCurrentState{},
-	}
-	if err := json.NewEncoder(file).Encode(payload); err != nil {
-		_ = file.Close()
-		return err
-	}
-	if err := file.Close(); err != nil {
-		return err
-	}
-	return nil
 }

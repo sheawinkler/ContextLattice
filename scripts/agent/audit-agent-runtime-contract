@@ -12,10 +12,23 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from _common import REPO_ROOT, emit, request_json
+from _common import (
+    REPO_ROOT,
+    agent_session_matches_authority,
+    agent_session_reuse_key,
+    emit,
+    request_json_for_validation,
+    session_identity_valid,
+)
 
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
-from agent_contracts import load_agent_contracts_registry, validate_agent_contract_payload  # noqa: E402
+from agent_contracts import (  # noqa: E402
+    agent_contract_envelope_attestation_valid,
+    agent_contract_go_json,
+    load_agent_contracts_registry,
+    objective_runtime_attestation_valid,
+    validate_agent_contract_payload,
+)
 
 
 PROVIDER_OVERFLOW_PATTERNS = (
@@ -23,6 +36,17 @@ PROVIDER_OVERFLOW_PATTERNS = (
     "context length exceeded",
     "maximum context length",
 )
+AUDIT_REQUEST_AGENT = "generic-agent"
+AUDIT_RESOLVED_AGENT = "codex"
+AUDIT_AGENT_ID = "generic_agent_audit"
+AUDIT_PROJECT = "context-lattice-private"
+AUDIT_TOPIC_PATH = "contextlattice/agent-runtime-coordination"
+AUDIT_QUERY = "audit generic objective runtime contract and auto session path"
+AUDIT_RETRIEVAL_MODE = "balanced"
+AUDIT_MISSION = "make ContextLattice coordinate any agent runtime"
+AUDIT_OBJECTIVE = "prove objective runtime state is present and contract-valid"
+AUDIT_GOAL = "generic agents can preflight, retrieve, checkpoint, and resume with session identity"
+AUDIT_CLI_QUERY = "audit contextlattice generic auto session objective runtime"
 
 
 def validation_status(payload: Any, key: str = "format_contract") -> str:
@@ -42,6 +66,217 @@ def contains_provider_overflow(payload: Any) -> bool:
     return any(pattern in rendered for pattern in PROVIDER_OVERFLOW_PATTERNS)
 
 
+def exact_contract_integer(value: Any, expected: Any) -> bool:
+    return (
+        isinstance(value, int)
+        and not isinstance(value, bool)
+        and isinstance(expected, int)
+        and not isinstance(expected, bool)
+        and value == expected
+    )
+
+
+def preflight_contract_attestation_valid(response: Any) -> bool:
+    if not isinstance(response, dict):
+        return False
+    registry = load_agent_contracts_registry()
+    contracts = registry.get("contracts") if isinstance(registry.get("contracts"), dict) else {}
+    contract = contracts.get("agent_preflight_response.v1")
+    metadata = response.get("format_contracts")
+    if not isinstance(contract, dict) or not isinstance(metadata, dict):
+        return False
+    validation = metadata.get("validation") if isinstance(metadata.get("validation"), dict) else {}
+    errors = validation.get("errors")
+    contract_ids = metadata.get("contracts")
+    try:
+        actual_json_bytes = len(agent_contract_go_json(response))
+    except (TypeError, ValueError, OverflowError, UnicodeEncodeError, RecursionError):
+        return False
+    required_contract_ids = {
+        "agent_preflight_response.v1",
+        "objective_runtime_state.v1",
+        "policy_context_package.v1",
+    }
+    return bool(
+        not validate_agent_contract_payload("agent_preflight_response.v1", response, registry)
+        and metadata.get("registry_id") == registry.get("registry_id")
+        and exact_contract_integer(metadata.get("registry_version"), registry.get("registry_version"))
+        and metadata.get("contract_valid") is True
+        and exact_contract_integer(metadata.get("max_total_json_bytes"), contract.get("max_total_json_bytes"))
+        and exact_contract_integer(metadata.get("max_string_bytes"), contract.get("max_string_bytes"))
+        and exact_contract_integer(metadata.get("max_list_items"), contract.get("max_list_items"))
+        and exact_contract_integer(metadata.get("actual_json_bytes"), actual_json_bytes)
+        and validation.get("status") == "passed"
+        and isinstance(errors, list)
+        and not errors
+        and isinstance(contract_ids, list)
+        and required_contract_ids.issubset({item for item in contract_ids if isinstance(item, str)})
+    )
+
+
+def audit_preflight_request() -> tuple[dict[str, Any], str]:
+    reuse_key = agent_session_reuse_key(
+        AUDIT_PROJECT,
+        AUDIT_RESOLVED_AGENT,
+        AUDIT_AGENT_ID,
+        AUDIT_OBJECTIVE,
+        {"audit": "agent-runtime-contract"},
+    )
+    return (
+        {
+            "agent": AUDIT_REQUEST_AGENT,
+            "agent_id": AUDIT_AGENT_ID,
+            "project": AUDIT_PROJECT,
+            "topic_path": AUDIT_TOPIC_PATH,
+            "query": AUDIT_QUERY,
+            "retrieval_mode": AUDIT_RETRIEVAL_MODE,
+            "mission": AUDIT_MISSION,
+            "objective": AUDIT_OBJECTIVE,
+            "goal": AUDIT_GOAL,
+            "reuse_key": reuse_key,
+        },
+        reuse_key,
+    )
+
+
+def preflight_authority_findings(
+    response: dict[str, Any],
+    payload: dict[str, Any],
+    session_id: str,
+    reuse_key: str,
+) -> list[dict[str, Any]]:
+    findings: list[dict[str, Any]] = []
+
+    def require_fields(source: Any, expected: dict[str, str], prefix: str) -> None:
+        source = source if isinstance(source, dict) else {}
+        for field, expected_value in expected.items():
+            if source.get(field) != expected_value:
+                findings.append(
+                    {"severity": "error", "reason": "preflight_authority_mismatch", "field": f"{prefix}{field}"}
+                )
+
+    def require_hierarchy(source: Any, prefix: str) -> None:
+        source = source if isinstance(source, dict) else {}
+        hierarchy = source.get("objective_hierarchy") if isinstance(source.get("objective_hierarchy"), dict) else {}
+        expected_paths = {
+            ("project", "name"): payload["project"],
+            ("topic", "topic_path"): payload["topic_path"],
+            ("topic", "objective"): payload["objective"],
+            ("session", "session_id"): session_id,
+            ("session", "objective"): payload["objective"],
+            ("session", "query"): payload["query"],
+            ("current", "objective"): payload["objective"],
+        }
+        for path, expected_value in expected_paths.items():
+            section = hierarchy.get(path[0]) if isinstance(hierarchy.get(path[0]), dict) else {}
+            if section.get(path[1]) != expected_value:
+                findings.append(
+                    {
+                        "severity": "error",
+                        "reason": "preflight_authority_mismatch",
+                        "field": f"{prefix}objective_hierarchy.{path[0]}.{path[1]}",
+                    }
+                )
+
+    root_expected = {
+        "agent": AUDIT_RESOLVED_AGENT,
+        "agent_id": payload["agent_id"],
+        "project": payload["project"],
+        "query": payload["query"],
+        "topic_path": payload["topic_path"],
+        "retrieval_mode": payload["retrieval_mode"],
+        "session_id": session_id,
+    }
+    runtime_expected = {
+        "agent_id": payload["agent_id"],
+        "project": payload["project"],
+        "session_id": session_id,
+        "mission": payload["mission"],
+        "objective": payload["objective"],
+        "goal": payload["goal"],
+    }
+    policy_expected = {
+        "agent_id": payload["agent_id"],
+        "project": payload["project"],
+        "query": payload["query"],
+        "topic_path": payload["topic_path"],
+        "retrieval_mode": payload["retrieval_mode"],
+        "mission": payload["mission"],
+        "objective": payload["objective"],
+        "goal": payload["goal"],
+    }
+    runtime = response.get("objective_runtime") if isinstance(response.get("objective_runtime"), dict) else {}
+    policy = response.get("policy_context_package") if isinstance(response.get("policy_context_package"), dict) else {}
+    policy_runtime = policy.get("objective_runtime") if isinstance(policy.get("objective_runtime"), dict) else {}
+    require_fields(response, root_expected, "")
+    require_fields(runtime, runtime_expected, "objective_runtime.")
+    require_fields(policy, policy_expected, "policy_context_package.")
+    require_fields(policy_runtime, runtime_expected, "policy_context_package.objective_runtime.")
+    runtime_agent = runtime.get("agent")
+    allowed_runtime_agents = (payload["agent"], response.get("agent"))
+    if (
+        not isinstance(runtime_agent, str)
+        or not runtime_agent
+        or runtime_agent not in allowed_runtime_agents
+        or policy.get("agent") != runtime_agent
+        or policy_runtime.get("agent") != runtime_agent
+    ):
+        findings.append(
+            {"severity": "error", "reason": "preflight_authority_mismatch", "field": "objective_runtime.agent_mode"}
+        )
+    for prefix, hierarchy_owner in (
+        ("", response),
+        ("objective_runtime.", runtime),
+        ("policy_context_package.", policy),
+        ("policy_context_package.objective_runtime.", policy_runtime),
+    ):
+        require_hierarchy(hierarchy_owner, prefix)
+    agent_runtime = response.get("agent_runtime") if isinstance(response.get("agent_runtime"), dict) else {}
+    session = agent_runtime.get("session") if isinstance(agent_runtime.get("session"), dict) else {}
+    if not agent_session_matches_authority(
+        session,
+        expected_id=session_id,
+        project=payload["project"],
+        agent=AUDIT_RESOLVED_AGENT,
+        agent_id=payload["agent_id"],
+        reuse_key=reuse_key,
+    ):
+        findings.append(
+            {"severity": "error", "reason": "preflight_authority_mismatch", "field": "agent_runtime.session"}
+        )
+    session_metadata = session.get("metadata") if isinstance(session.get("metadata"), dict) else {}
+    if session.get("objective") != payload["objective"]:
+        findings.append(
+            {"severity": "error", "reason": "preflight_authority_mismatch", "field": "agent_runtime.session.objective"}
+        )
+    if session.get("mission") != payload["mission"]:
+        findings.append(
+            {"severity": "error", "reason": "preflight_authority_mismatch", "field": "agent_runtime.session.mission"}
+        )
+    if session.get("goal") != payload["goal"]:
+        findings.append(
+            {"severity": "error", "reason": "preflight_authority_mismatch", "field": "agent_runtime.session.goal"}
+        )
+    require_hierarchy(session, "agent_runtime.session.")
+    if session_metadata.get("topic_path") != payload["topic_path"]:
+        findings.append(
+            {
+                "severity": "error",
+                "reason": "preflight_authority_mismatch",
+                "field": "agent_runtime.session.metadata.topic_path",
+            }
+        )
+    if session_metadata.get("retrieval_mode") != payload["retrieval_mode"]:
+        findings.append(
+            {
+                "severity": "error",
+                "reason": "preflight_authority_mismatch",
+                "field": "agent_runtime.session.metadata.retrieval_mode",
+            }
+        )
+    return findings
+
+
 def audit_registry(findings: list[dict[str, Any]]) -> None:
     registry = load_agent_contracts_registry()
     contracts = registry.get("contracts") if isinstance(registry.get("contracts"), dict) else {}
@@ -53,51 +288,59 @@ def audit_registry(findings: list[dict[str, Any]]) -> None:
         findings.append({"severity": "error", "reason": "policy_contract_missing_objective_runtime_requirement"})
 
 
-def audit_preflight(findings: list[dict[str, Any]], timeout: float) -> dict[str, Any]:
-    payload = {
-        "agent": "generic-agent",
-        "agent_id": "generic_agent_audit",
-        "project": "contextlattice",
-        "topic_path": "contextlattice/agent-runtime-coordination",
-        "query": "audit generic objective runtime contract and auto session path",
-        "retrieval_mode": "balanced",
-        "mission": "make ContextLattice coordinate any agent runtime",
-        "objective": "prove objective runtime state is present and contract-valid",
-        "goal": "generic agents can preflight, retrieve, checkpoint, and resume with session identity",
-    }
-    response = request_json("POST", "/v1/agents/preflight", payload, timeout)
+def audit_preflight(findings: list[dict[str, Any]], timeout: float) -> tuple[dict[str, Any], str]:
+    phase_start = len(findings)
+    payload, reuse_key = audit_preflight_request()
+    response = request_json_for_validation("POST", "/v1/agents/preflight", payload, timeout)
     runtime = response.get("objective_runtime") if isinstance(response.get("objective_runtime"), dict) else {}
     policy = response.get("policy_context_package") if isinstance(response.get("policy_context_package"), dict) else {}
     policy_runtime = policy.get("objective_runtime") if isinstance(policy.get("objective_runtime"), dict) else {}
-    if not response.get("session_id"):
+    session_id = str(response.get("session_id") or "").strip()
+    if response.get("ok") is not True:
+        findings.append({"severity": "error", "reason": "preflight_rejected"})
+    if not session_identity_valid(session_id):
         findings.append({"severity": "error", "reason": "preflight_missing_auto_session_id"})
-    if validation_status(runtime) != "passed":
-        findings.append({"severity": "error", "reason": "preflight_objective_runtime_validation_failed", "validation": runtime.get("format_contract")})
-    if validation_status(policy_runtime) != "passed":
-        findings.append({"severity": "error", "reason": "policy_objective_runtime_validation_failed", "validation": policy_runtime.get("format_contract")})
-    for item in validate_agent_contract_payload("objective_runtime_state.v1", runtime):
+    for item in validate_agent_contract_payload("agent_preflight_response.v1", response):
         findings.append({"severity": "error", **item})
+    if not preflight_contract_attestation_valid(response):
+        findings.append({"severity": "error", "reason": "preflight_contract_attestation_invalid"})
+    if validation_status(runtime) != "passed":
+        findings.append({"severity": "error", "reason": "preflight_objective_runtime_validation_failed"})
+    if validation_status(policy_runtime) != "passed":
+        findings.append({"severity": "error", "reason": "policy_objective_runtime_validation_failed"})
+    if not agent_contract_envelope_attestation_valid("objective_runtime_state.v1", runtime):
+        findings.append({"severity": "error", "reason": "preflight_objective_runtime_attestation_invalid"})
+    if not agent_contract_envelope_attestation_valid("policy_context_package.v1", policy):
+        findings.append({"severity": "error", "reason": "preflight_policy_attestation_invalid"})
+    if not agent_contract_envelope_attestation_valid("objective_runtime_state.v1", policy_runtime):
+        findings.append({"severity": "error", "reason": "policy_objective_runtime_attestation_invalid"})
+    if session_identity_valid(session_id):
+        findings.extend(preflight_authority_findings(response, payload, session_id, reuse_key))
     if contains_provider_overflow(response):
         findings.append({"severity": "error", "reason": "preflight_provider_overflow_phrase_leaked"})
-    return response
+    if any(item.get("severity") == "error" for item in findings[phase_start:]):
+        session_id = ""
+    return response, session_id
 
 
-def audit_cli_auto_session(findings: list[dict[str, Any]], timeout: float) -> dict[str, Any]:
+def audit_cli_auto_session(findings: list[dict[str, Any]], timeout: float) -> tuple[dict[str, Any], str]:
+    phase_start = len(findings)
     with tempfile.TemporaryDirectory() as tmp:
+        state_path = Path(tmp) / "session.json"
         env = os.environ.copy()
         env.pop("CONTEXTLATTICE_SESSION_ID", None)
-        env["CONTEXTLATTICE_SESSION_STATE_PATH"] = str(Path(tmp) / "session.json")
+        env["CONTEXTLATTICE_SESSION_STATE_PATH"] = str(state_path)
         env["CONTEXTLATTICE_AGENT_ID"] = "generic_agent_audit"
         proc = subprocess.run(
             [
                 str(REPO_ROOT / "scripts" / "agent" / "contextlattice-pack"),
-                "audit contextlattice generic auto session objective runtime",
+                AUDIT_CLI_QUERY,
                 "--project",
-                "contextlattice",
+                AUDIT_PROJECT,
                 "--topic-path",
-                "contextlattice/agent-runtime-coordination",
+                AUDIT_TOPIC_PATH,
                 "--budget-chars",
-                "9000",
+                "12000",
                 "--limit",
                 "3",
                 "--max-facts",
@@ -116,24 +359,80 @@ def audit_cli_auto_session(findings: list[dict[str, Any]], timeout: float) -> di
         try:
             payload = json.loads(proc.stdout or "{}")
         except json.JSONDecodeError:
-            payload = {"raw": proc.stdout[:1200], "stderr": proc.stderr[:1200]}
+            payload = {}
+            findings.append({"severity": "error", "reason": "contextlattice_pack_invalid_json"})
+        if not isinstance(payload, dict):
+            payload = {}
+            findings.append({"severity": "error", "reason": "contextlattice_pack_invalid_json"})
         if proc.returncode != 0:
-            findings.append({"severity": "error", "reason": "contextlattice_pack_auto_session_failed", "returncode": proc.returncode, "stderr": proc.stderr[:500]})
-        if not payload.get("session_id"):
-            findings.append({"severity": "error", "reason": "contextlattice_pack_missing_auto_session_id", "payload": payload})
-        runtime = payload.get("objective_runtime") if isinstance(payload.get("objective_runtime"), dict) else {}
-        if runtime and validation_status(runtime) != "passed":
-            findings.append({"severity": "error", "reason": "contextlattice_pack_objective_runtime_validation_failed", "validation": runtime.get("format_contract")})
+            findings.append(
+                {
+                    "severity": "error",
+                    "reason": "contextlattice_pack_auto_session_failed",
+                    "returncode": proc.returncode,
+                }
+            )
+        if payload.get("ok") is not True:
+            findings.append({"severity": "error", "reason": "contextlattice_pack_response_not_successful"})
+        if not agent_contract_envelope_attestation_valid("context_pack_response.v1", payload):
+            findings.append({"severity": "error", "reason": "contextlattice_pack_contract_attestation_invalid"})
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError, RecursionError):
+            state = {}
+        session_id = str(state.get("session_id") or "").strip() if isinstance(state, dict) else ""
+        expected_reuse_key = agent_session_reuse_key(
+            AUDIT_PROJECT,
+            "agent-cli",
+            AUDIT_AGENT_ID,
+            AUDIT_CLI_QUERY,
+            {"tool": "contextlattice-pack", "topic_path": AUDIT_TOPIC_PATH, "retrieval_mode": "balanced"},
+        )
+        if (
+            not session_identity_valid(session_id)
+            or state.get("project") != AUDIT_PROJECT
+            or state.get("agent") != "agent-cli"
+            or state.get("agent_id") != AUDIT_AGENT_ID
+            or state.get("objective") != AUDIT_CLI_QUERY
+            or state.get("reuse_key") != expected_reuse_key
+        ):
+            findings.append({"severity": "error", "reason": "contextlattice_pack_missing_internal_auto_session_binding"})
+        runtime_attestation = state.get("latest_objective_runtime_attestation") if isinstance(state, dict) else {}
+        runtime_attestation_valid = objective_runtime_attestation_valid(
+            runtime_attestation,
+            session_id=session_id,
+            project=AUDIT_PROJECT,
+            agent_id=AUDIT_AGENT_ID,
+            runtime_agent="context-pack",
+        )
+        if not runtime_attestation_valid:
+            findings.append({"severity": "error", "reason": "contextlattice_pack_objective_runtime_attestation_missing"})
+        payload["_objective_runtime_attestation_valid"] = runtime_attestation_valid
+        public_session_id = payload.get("session_id") if isinstance(payload, dict) else None
+        omitted = payload.get("identity_omitted") if isinstance(payload.get("identity_omitted"), list) else []
+        if public_session_id not in (None, "") or "session_id" not in omitted:
+            findings.append({"severity": "error", "reason": "contextlattice_pack_public_session_identity_not_omitted"})
+        try:
+            public_output = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        except (TypeError, ValueError, OverflowError, UnicodeEncodeError, RecursionError):
+            public_output = ""
+            findings.append({"severity": "error", "reason": "contextlattice_pack_invalid_public_json_domain"})
+        if session_id and (session_id in public_output or session_id in (proc.stderr or "")):
+            findings.append({"severity": "error", "reason": "contextlattice_pack_private_session_identity_leaked"})
+        if proc.stderr != "":
+            findings.append({"severity": "error", "reason": "contextlattice_pack_stderr_not_empty"})
         if contains_provider_overflow(payload):
             findings.append({"severity": "error", "reason": "contextlattice_pack_provider_overflow_phrase_leaked"})
-        return payload
+        if any(item.get("severity") == "error" for item in findings[phase_start:]):
+            session_id = ""
+        return payload, session_id
 
 
 def complete_session(session_id: str, summary: str, timeout: float, findings: list[dict[str, Any]]) -> None:
     if not session_id:
         return
     try:
-        request_json(
+        response = request_json_for_validation(
             "POST",
             "/v1/agents/sessions/event",
             {
@@ -144,8 +443,25 @@ def complete_session(session_id: str, summary: str, timeout: float, findings: li
             },
             timeout,
         )
-    except Exception as exc:
-        findings.append({"severity": "warn", "reason": "audit_session_complete_failed", "session_id": session_id, "detail": str(exc)[:500]})
+        event = response.get("event") if isinstance(response.get("event"), dict) else {}
+        if (
+            response.get("ok") is not True
+            or event.get("session_id") != session_id
+            or event.get("type") != "session.completed"
+        ):
+            findings.append({"severity": "error", "reason": "audit_session_complete_not_acknowledged"})
+    except (Exception, SystemExit):
+        findings.append({"severity": "error", "reason": "audit_session_complete_failed"})
+
+
+def audit_phase_summary(payload: dict[str, Any], internal_session_id: str) -> dict[str, Any]:
+    runtime_status = validation_status(payload.get("objective_runtime"))
+    if not runtime_status and payload.get("_objective_runtime_attestation_valid") is True:
+        runtime_status = "passed"
+    return {
+        "binding_established": bool(internal_session_id),
+        "objective_runtime_status": runtime_status,
+    }
 
 
 def main() -> int:
@@ -157,13 +473,15 @@ def main() -> int:
     findings: list[dict[str, Any]] = []
     preflight = {}
     cli = {}
+    preflight_session_id = ""
+    cli_session_id = ""
     try:
         audit_registry(findings)
-        preflight = audit_preflight(findings, args.timeout)
-        cli = audit_cli_auto_session(findings, args.timeout)
-        complete_session(str(preflight.get("session_id") or ""), "agent runtime contract preflight audit completed", args.timeout, findings)
-        complete_session(str(cli.get("session_id") or ""), "agent runtime contract CLI auto-session audit completed", args.timeout, findings)
-    except Exception as exc:
+        preflight, preflight_session_id = audit_preflight(findings, args.timeout)
+        cli, cli_session_id = audit_cli_auto_session(findings, args.timeout)
+        complete_session(preflight_session_id, "agent runtime contract preflight audit completed", args.timeout, findings)
+        complete_session(cli_session_id, "agent runtime contract CLI auto-session audit completed", args.timeout, findings)
+    except (Exception, SystemExit) as exc:
         findings.append({"severity": "error", "reason": "audit_exception", "detail": str(exc)[:1000]})
 
     errors = [item for item in findings if item.get("severity") == "error"]
@@ -171,14 +489,8 @@ def main() -> int:
         {
             "ok": not errors,
             "findings": findings,
-            "preflight": {
-                "session_id": preflight.get("session_id"),
-                "objective_runtime_status": validation_status(preflight.get("objective_runtime")),
-            },
-            "cli": {
-                "session_id": cli.get("session_id"),
-                "objective_runtime_status": validation_status(cli.get("objective_runtime")),
-            },
+            "preflight": audit_phase_summary(preflight, preflight_session_id),
+            "cli": audit_phase_summary(cli, cli_session_id),
         },
         args.pretty,
     )

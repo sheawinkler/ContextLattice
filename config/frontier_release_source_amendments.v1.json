@@ -1,0 +1,111 @@
+{
+  "schema_id": "contextlattice_frontier_release_source_amendments.v1",
+  "version": 1,
+  "required_release_tags": [
+    "v4.0.2-public-paid",
+    "v4.0.4-public-paid",
+    "v4.0.11-public-paid"
+  ],
+  "amendments": [
+    {
+      "release_tag": "v4.0.2-public-paid",
+      "source_commit": "4f5d2855a634573f7ecefdf4f1a93dfb494417cf",
+      "original_private_proof_commit": "157930378683e4eea0f6f476ae9654a18f46931d",
+      "approved_private_source_commit": "b25e68ee68acdc2ee35005ed47b4b79999f20288",
+      "approved_private_source_tree": "cc82cb3249bea6e7b0a93a622a28b9e6090deb86",
+      "reason": "Approve the post-proof release binding and public-boundary wording repair without changing reviewed runtime behavior.",
+      "changed_paths": [
+        {
+          "path": "config/frontier_t1_release_provenance.v1.json",
+          "status": "M",
+          "blob_oid": "0b4fcf22d661f03f23d3b52e8529719e00b1575b"
+        },
+        {
+          "path": "docs/releases/v4.0.2.md",
+          "status": "M",
+          "blob_oid": "c024aebb04922655a3a321e7d17f80f5337af0fe"
+        },
+        {
+          "path": "scripts/agent/audit-public-product-truth",
+          "status": "M",
+          "blob_oid": "15ae0fc83fe65f77d5269ae4dba71a3110ebfe43"
+        },
+        {
+          "path": "scripts/tests/test_public_product_truth.py",
+          "status": "M",
+          "blob_oid": "2dc3fdfbda0d189b1561fd0035bd98b26ac6b433"
+        }
+      ]
+    },
+    {
+      "release_tag": "v4.0.4-public-paid",
+      "source_commit": "a3ac5ef8eba1d36358aab516234ef1b518e15bc9",
+      "original_private_proof_commit": "e5f2e08f05385e1473e4fe8d2911b260943b2a77",
+      "approved_private_source_commit": "1d9d725f0b064902043767980491be2f23123f26",
+      "approved_private_source_tree": "fcdeefa4b5d9503426c4ac2a213c917ba0e8e37f",
+      "reason": "Approve the post-proof release authorization and launchd-smoke isolation audit without changing reviewed runtime behavior.",
+      "changed_paths": [
+        {
+          "path": "config/frontier_t1_release_provenance.v1.json",
+          "status": "M",
+          "blob_oid": "6c4a5bb6f36ba5c9833fba0e08ff56bf5db8ed9f"
+        },
+        {
+          "path": "scripts/agent/audit-agent-global-install-smoke",
+          "status": "M",
+          "blob_oid": "9489a00b002dae2ef184d12e47db9385876bb579"
+        }
+      ]
+    },
+    {
+      "release_tag": "v4.0.11-public-paid",
+      "source_commit": "eab172efa8c4728781fae7d0eaf26d1cf9da9634",
+      "original_private_proof_commit": "a22aa11c07b64f10f6d37b77399cf9b20fa1c941",
+      "approved_private_source_commit": "90088a9ebe24d1ca462a977a68dda89fd94898f2",
+      "approved_private_source_tree": "5b64b1d23b9b63b9973a34fb97bee7d3de7288f3",
+      "reason": "Approve the final proof-only benchmark sanitization, public-boundary test split, and release evidence corrections without changing reviewed runtime behavior.",
+      "changed_paths": [
+        {
+          "path": "config/frontier_t1_release_provenance.v1.json",
+          "status": "M",
+          "blob_oid": "9f40598ea9c07c02713e3ec6ff18e17af37847a1"
+        },
+        {
+          "path": "config/public_sync_blocklist.txt",
+          "status": "M",
+          "blob_oid": "ab28b664f1f3235ec38cc488b99c66798365cead"
+        },
+        {
+          "path": "docs/evals/v4.0.11-context-pack-quality-concurrency4.json",
+          "status": "M",
+          "blob_oid": "b68750f97481076e2af7465db1f7f3fb9357419c"
+        },
+        {
+          "path": "docs/evals/v4.0.11-context-pack-quality-serial.json",
+          "status": "M",
+          "blob_oid": "f459ae521018d398dfaf7c146c07ce87756864e2"
+        },
+        {
+          "path": "docs/releases/v4.0.11.md",
+          "status": "M",
+          "blob_oid": "cd2db8ada1e18af1ac1f7d8eb3b9c1b0d01d854c"
+        },
+        {
+          "path": "scripts/tests/test_context_pack_quality_benchmark.py",
+          "status": "M",
+          "blob_oid": "1b1cb9f6edeb9cf6b6ddf2f970af522756090b45"
+        },
+        {
+          "path": "services/gateway-go/memory_recall_response_fallback_receipt_private_test.go",
+          "status": "A",
+          "blob_oid": "35f240c545e7570b26b4b9df42738d423598534a"
+        },
+        {
+          "path": "services/gateway-go/memory_recall_response_fallback_receipt_test.go",
+          "status": "M",
+          "blob_oid": "64bcfa8b6bbd6bbd359a064e9ffad3d9ad03ab1d"
+        }
+      ]
+    }
+  ]
+}

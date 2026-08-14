@@ -218,18 +218,30 @@ def generated_go_constant(text: str, name: str) -> str | None:
     return match.group(1) if match else None
 
 
-def present_tense_stale_claims(path: Path, text: str, predecessor_tag: str) -> list[str]:
-    if not predecessor_tag or path in HISTORICAL_PUBLIC_PATHS or str(path).startswith(f"{RELEASE_ROOT}/"):
+def present_tense_stale_claims(path: Path, text: str, predecessor_markers: tuple[str, ...]) -> list[str]:
+    if not predecessor_markers or path in HISTORICAL_PUBLIC_PATHS or str(path).startswith(f"{RELEASE_ROOT}/"):
         return []
     findings = []
     lines = text.splitlines()
     for line_number, line in enumerate(lines, start=1):
-        if predecessor_tag.lower() not in line.lower():
+        lowered = line.lower()
+        if not any(
+            re.search(
+                rf"(?<![a-z0-9]){re.escape(marker.lower())}(?![a-z0-9]|\.[a-z0-9])",
+                lowered,
+            )
+            for marker in predecessor_markers
+        ):
             continue
         historical = HISTORICAL_VERSION_CONTEXT_PATTERN.search(line) is not None
         if not historical and "docs/releases/" in line.lower():
-            nearby_context = "\n".join(lines[max(0, line_number - 3) : line_number])
-            historical = HISTORICAL_VERSION_CONTEXT_PATTERN.search(nearby_context) is not None
+            section_start = max(0, line_number - 40)
+            for candidate_index in range(line_number - 2, section_start - 1, -1):
+                if lines[candidate_index].lstrip().startswith("#"):
+                    section_start = candidate_index
+                    break
+            section_context = "\n".join(lines[section_start:line_number])
+            historical = HISTORICAL_VERSION_CONTEXT_PATTERN.search(section_context) is not None
         if CURRENT_VERSION_CLAIM_PATTERN.search(line) and not historical:
             findings.append(f"{path}:{line_number}:{line.strip()[:160]}")
     return findings
@@ -530,22 +542,33 @@ def run_audit(root: Path, requested_lane: str) -> dict[str, Any]:
         ),
     )
 
-    predecessor_tag = f"v{predecessor_version}" if predecessor_version else ""
-    stale_claims = present_tense_stale_claims(README_PATH, readme, predecessor_tag)
+    predecessor_markers: tuple[str, ...] = ()
+    if predecessor_semver:
+        predecessor_major, predecessor_minor, _ = predecessor_semver
+        marker_list = [f"v{predecessor_version}"]
+        if current_semver and current_semver[:2] != predecessor_semver[:2]:
+            marker_list.extend(
+                (
+                    f"v{predecessor_major}.{predecessor_minor}.x",
+                    f"v{predecessor_major}.{predecessor_minor}",
+                )
+            )
+        predecessor_markers = tuple(marker_list)
+    stale_claims = present_tense_stale_claims(README_PATH, readme, predecessor_markers)
     for claim_path in html_paths:
         relative = claim_path.relative_to(root)
         try:
             claim_text = claim_path.read_text(encoding="utf-8")
         except OSError:
             continue
-        stale_claims.extend(present_tense_stale_claims(relative, claim_text, predecessor_tag))
+        stale_claims.extend(present_tense_stale_claims(relative, claim_text, predecessor_markers))
     llms_path = root / "docs/public_overview/llms.txt"
     if llms_path.is_file():
         stale_claims.extend(
             present_tense_stale_claims(
                 llms_path.relative_to(root),
                 llms_path.read_text(encoding="utf-8"),
-                predecessor_tag,
+                predecessor_markers,
             )
         )
     add(

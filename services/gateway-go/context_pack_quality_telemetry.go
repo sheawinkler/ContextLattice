@@ -19,16 +19,18 @@ import (
 )
 
 const (
-	contextPackQualitySchemaID            = "contextlattice_context_pack_quality.v1"
-	contextPackQualityOutcomeSchemaID     = "contextlattice_context_pack_outcome.v1"
-	contextPackQualityTelemetrySchemaID   = "contextlattice_context_pack_quality_telemetry.v1"
-	contextPackSelectionReceiptSchemaID   = "contextlattice_context_pack_selection_receipt.v1"
-	contextPackSelectionReceiptV2SchemaID = "contextlattice_context_pack_selection_receipt.v2"
-	contextPackOutcomeBindingSchemaID     = "contextlattice_context_pack_outcome_attribution_binding.v1"
-	contextPackRegressionFixtureSchemaID  = "contextlattice_context_pack_regression_fixture.v1"
-	contextPackOutcomeAdmissionSchemaID   = "contextlattice_context_pack_outcome_admission.v1"
-	contextPackSelectionReceiptLimit      = 24
-	contextPackCandidateAttemptLimit      = 64
+	contextPackQualitySchemaID                 = "contextlattice_context_pack_quality.v1"
+	contextPackQualityOutcomeSchemaID          = "contextlattice_context_pack_outcome.v1"
+	contextPackQualityTelemetrySchemaID        = "contextlattice_context_pack_quality_telemetry.v1"
+	contextPackSelectionReceiptSchemaID        = "contextlattice_context_pack_selection_receipt.v1"
+	contextPackSelectionReceiptV2SchemaID      = "contextlattice_context_pack_selection_receipt.v2"
+	contextPackOutcomeBindingSchemaID          = "contextlattice_context_pack_outcome_attribution_binding.v1"
+	contextPackRegressionFixtureSchemaID       = "contextlattice_context_pack_regression_fixture.v1"
+	contextPackOutcomeAdmissionSchemaID        = "contextlattice_context_pack_outcome_admission.v1"
+	contextPackQualityExecutionReceiptSchemaID = "contextlattice_context_pack_execution_receipt.v1"
+	contextPackQualityExecutionReceiptSource   = "gateway_server_observation"
+	contextPackSelectionReceiptLimit           = 24
+	contextPackCandidateAttemptLimit           = 64
 	// Outcome counters are observational calibration inputs, not a bulk
 	// accounting interface. Keep each claim bounded so one authenticated
 	// report cannot dominate a bounded aggregate or overflow its counters.
@@ -605,7 +607,7 @@ func (t *contextPackQualityTelemetry) loadPersistedRows() {
 		if contextPackQualityRowNeedsPrivacyMigration(row) {
 			switch anyToString(row["schema_id"]) {
 			case contextPackQualitySchemaID:
-				row = contextPackQualityEntryFromSample(row)
+				row = contextPackQualityEntryFromDurableSample(row)
 			case contextPackQualityOutcomeSchemaID:
 				// Defense in depth for a file modified between migration preflight
 				// and loading: never make an unsafe durable outcome visible through
@@ -777,6 +779,7 @@ func contextPackQualityLegacyOutcomeIdentifiersUnsafe(row map[string]any) bool {
 		"regression_case_ref": {}, "regression_partition": {}, "traffic_class": {}, "synthetic": {}, "stability": {},
 		"topic_path": {}, "topic_ref": {}, "quality_sample_admission": {}, "quality_sample_admission_ref": {}, "attribution_binding": {},
 		"recall_response_id": {}, "recall_response_digest": {}, "response_component_refs": {}, "recall_response_component_outcomes": {},
+		"execution_receipt": {},
 	}
 	for key := range row {
 		if _, allowed := allowedOutcomeKeys[key]; !allowed {
@@ -1049,6 +1052,9 @@ func contextPackQualityLegacyOutcomeIdentifiersUnsafe(row map[string]any) bool {
 		return true
 	}
 	if value, present := row["verification_evidence_digest"]; present && !fullRef(value) {
+		return true
+	}
+	if value, present := row["execution_receipt"]; present && len(contextPackQualityServerExecutionReceiptFromAny(value)) == 0 {
 		return true
 	}
 	utility, utilityOK := optionalMap("utility")
@@ -1670,6 +1676,23 @@ func (t *contextPackQualityTelemetry) outcomeForUtility(outcomeID string) (map[s
 }
 
 func contextPackQualityEntryFromSample(sample map[string]any) map[string]any {
+	return contextPackQualityCanonicalEntry(sample, false)
+}
+
+// contextPackQualityEntryFromDurableSample is the only normalization path that
+// accepts the persisted execution_receipt field. Public/sample ingress accepts
+// only the server_execution_resource_receipt produced in-process by the
+// Gateway; otherwise a reporter could mint its own zero-resource evidence.
+// Callers of this helper must have obtained the row from the owner-only quality
+// ledger.
+func contextPackQualityEntryFromDurableSample(sample map[string]any) map[string]any {
+	if anyToString(sample["schema_id"]) != contextPackQualitySchemaID {
+		return nil
+	}
+	return contextPackQualityCanonicalEntry(sample, true)
+}
+
+func contextPackQualityCanonicalEntry(sample map[string]any, durable bool) map[string]any {
 	binding, bindingOK := recallResponseBindingFromSample(sample)
 	if !bindingOK {
 		// Binding fields are all-or-nothing. Returning no durable entry makes
@@ -1744,6 +1767,23 @@ func contextPackQualityEntryFromSample(sample map[string]any) map[string]any {
 	copyContextPackQualityProofIdentity(entry, sample)
 	if binding != nil && !recallResponseCopyBinding(entry, binding) {
 		return nil
+	}
+	receipt := contextPackQualityServerExecutionReceiptFromAny(sample["server_execution_resource_receipt"])
+	if durable {
+		persistedReceipt := contextPackQualityServerExecutionReceiptFromAny(sample["execution_receipt"])
+		if _, present := sample["execution_receipt"]; present && len(persistedReceipt) == 0 {
+			return nil
+		}
+		if len(receipt) > 0 && len(persistedReceipt) > 0 &&
+			contextPackLearnedCanonicalDigest(receipt) != contextPackLearnedCanonicalDigest(persistedReceipt) {
+			return nil
+		}
+		if len(persistedReceipt) > 0 {
+			receipt = persistedReceipt
+		}
+	}
+	if len(receipt) > 0 {
+		entry["execution_receipt"] = receipt
 	}
 	workspaceRef := contextPackLearnedDigestRef(anyToString(sample["workspace_ref"]))
 	if receipt := contextPackSelectionReceiptFromSample(sample["selection_receipt"]); len(receipt) > 0 {
@@ -2133,12 +2173,19 @@ func contextPackSelectionReceiptFromCandidates(candidates []map[string]any) map[
 	return contextPackSelectionReceiptFromCandidatesWithActivation(candidates, nil)
 }
 
-func contextPackSelectionReceiptFromCandidatesWithActivation(candidates []map[string]any, activation map[string]any) map[string]any {
+func contextPackSelectionReceiptFromCandidatesWithActivation(candidates []map[string]any, activation map[string]any, rawPromotion ...map[string]any) map[string]any {
 	if len(candidates) > contextPackSelectionReceiptLimit {
 		candidates = candidates[:contextPackSelectionReceiptLimit]
 	}
 	if len(activation) > 0 && !contextPackLearnedReceiptCaptureMatchesActivation(candidates, activation) {
 		return nil
+	}
+	var promotion map[string]any
+	if len(rawPromotion) > 0 && len(rawPromotion[0]) > 0 {
+		promotion = retrievalPromotionNormalizeReceipt(rawPromotion[0])
+		if len(promotion) == 0 {
+			return nil
+		}
 	}
 	selected := 0
 	omitted := 0
@@ -2164,13 +2211,20 @@ func contextPackSelectionReceiptFromCandidatesWithActivation(candidates []map[st
 				anyToString(candidate["ordinal"]), anyToString(candidate["evidence_role"]), anyToString(candidate["evidence_kind"]),
 			}, "\x00"))
 		}
+		if len(promotion) > 0 {
+			receiptDigestParts = append(receiptDigestParts, contextPackLearnedCanonicalDigest(promotion))
+		}
 		digest := sha256Hex(strings.Join(receiptDigestParts, "\x00"))
-		return map[string]any{
+		receipt := map[string]any{
 			"schema_id": contextPackSelectionReceiptSchemaID, "version": 1,
 			"receipt_id": "cpr_" + digest[:24], "receipt_digest": "sha256:" + digest,
 			"candidate_limit": contextPackSelectionReceiptLimit, "candidate_count": len(rows),
 			"selected_count": selected, "omitted_count": omitted, "candidates": rows,
 		}
+		if len(promotion) > 0 {
+			receipt["retrieval_promotion"] = promotion
+		}
+		return receipt
 	}
 	receipt := map[string]any{
 		"schema_id":       schemaID,
@@ -2183,6 +2237,9 @@ func contextPackSelectionReceiptFromCandidatesWithActivation(candidates []map[st
 	}
 	if len(activation) > 0 {
 		receipt["learned_activation"] = activation
+	}
+	if len(promotion) > 0 {
+		receipt["retrieval_promotion"] = promotion
 	}
 	raw, err := json.Marshal(receipt)
 	if err != nil {
@@ -2200,7 +2257,7 @@ func contextPackSelectionReceipt(ranked, omitted any) map[string]any {
 	return contextPackSelectionReceiptWithActivation(ranked, omitted, nil)
 }
 
-func contextPackSelectionReceiptWithActivation(ranked, omitted any, rawActivation map[string]any) map[string]any {
+func contextPackSelectionReceiptWithActivation(ranked, omitted any, rawActivation map[string]any, rawPromotion ...map[string]any) map[string]any {
 	activation := contextPackLearnedActivationReceiptFromSample(rawActivation)
 	if len(rawActivation) > 0 && len(activation) == 0 && !contextPackLearnedNativeControlActivationFromSample(rawActivation) {
 		return nil
@@ -2227,6 +2284,9 @@ func contextPackSelectionReceiptWithActivation(ranked, omitted any, rawActivatio
 	}
 	appendRows(parseRows(ranked), "selected")
 	appendRows(parseRows(omitted), "omitted")
+	if len(rawPromotion) > 0 {
+		return contextPackSelectionReceiptFromCandidatesWithActivation(candidates, activation, rawPromotion[0])
+	}
 	return contextPackSelectionReceiptFromCandidatesWithActivation(candidates, activation)
 }
 
@@ -2264,6 +2324,16 @@ func contextPackSelectionReceiptFromSample(value any) map[string]any {
 		seen[identity] = struct{}{}
 		candidates = append(candidates, candidate)
 	}
+	promotion := map[string]any(nil)
+	if rawPromotion, present := raw["retrieval_promotion"]; present {
+		promotion = retrievalPromotionNormalizeReceipt(anyMap(rawPromotion))
+		if len(promotion) == 0 {
+			return nil
+		}
+	}
+	if len(promotion) > 0 {
+		return contextPackSelectionReceiptFromCandidatesWithActivation(candidates, activation, promotion)
+	}
 	return contextPackSelectionReceiptFromCandidatesWithActivation(candidates, activation)
 }
 
@@ -2277,6 +2347,7 @@ func contextPackLearnedActivationReceiptFromSample(raw map[string]any) map[strin
 		"canary_percent", "exposure_bucket_basis_points", "request_ref", "project_scope_ref", "task_class_scope_ref",
 		"retrieval_intent_scope_ref", "workspace_ref", "policy_ref", "impact_proof_ref", "reputation_snapshot_ref",
 		"actuator_comparator_ref", "ranking_vector_digest", "applied_candidate_count", "raw_query_or_content_stored",
+		"assignment_subject_ref", "snapshot_ref",
 	} {
 		allowed[key] = struct{}{}
 	}
@@ -2284,6 +2355,12 @@ func contextPackLearnedActivationReceiptFromSample(raw map[string]any) map[strin
 		if _, ok := allowed[key]; !ok {
 			return nil
 		}
+	}
+	if value, present := raw["assignment_subject_ref"]; present && strings.TrimSpace(anyToString(value)) != "" && contextPackLearnedDigestRef(anyToString(value)) == "" {
+		return nil
+	}
+	if value, present := raw["snapshot_ref"]; present && strings.TrimSpace(anyToString(value)) != "" && contextPackLearnedDigestRef(anyToString(value)) == "" {
+		return nil
 	}
 	exactBool := func(key string) (bool, bool) {
 		value, ok := raw[key].(bool)
@@ -2352,6 +2429,8 @@ func contextPackLearnedActivationReceiptFromSample(raw map[string]any) map[strin
 		"workspace_ref": refs["workspace_ref"], "policy_ref": refs["policy_ref"],
 		"impact_proof_ref": refs["impact_proof_ref"], "actuator_comparator_ref": refs["actuator_comparator_ref"],
 		"reputation_snapshot_ref": refs["reputation_snapshot_ref"],
+		"assignment_subject_ref":  contextPackLearnedDigestRef(anyToString(raw["assignment_subject_ref"])),
+		"snapshot_ref":            contextPackLearnedDigestRef(anyToString(raw["snapshot_ref"])),
 		"ranking_vector_digest":   rankingVector, "applied_candidate_count": int(appliedCount),
 		"raw_query_or_content_stored": false,
 	}
@@ -2377,6 +2456,7 @@ func contextPackLearnedNativeControlActivationFromSample(raw map[string]any) boo
 		"canary_percent", "exposure_bucket_basis_points", "request_ref", "project_scope_ref", "task_class_scope_ref",
 		"retrieval_intent_scope_ref", "workspace_ref", "policy_ref", "impact_proof_ref", "reputation_snapshot_ref",
 		"actuator_comparator_ref", "ranking_vector_digest", "applied_candidate_count", "raw_query_or_content_stored",
+		"assignment_subject_ref", "snapshot_ref",
 	} {
 		allowed[key] = struct{}{}
 	}
@@ -2422,6 +2502,16 @@ func contextPackLearnedNativeControlActivationFromSample(raw map[string]any) boo
 			return false
 		}
 		if value != "" && contextPackLearnedDigestRef(value) == "" {
+			return false
+		}
+	}
+	for _, key := range []string{"assignment_subject_ref", "snapshot_ref"} {
+		value, present := raw[key]
+		if !present {
+			continue
+		}
+		ref, ok := value.(string)
+		if !ok || (ref != "" && contextPackLearnedDigestRef(ref) == "") {
 			return false
 		}
 	}
@@ -3033,13 +3123,15 @@ func contextPackQualitySampleFromDurableRows(rows []map[string]any, sampleID str
 		if anyToString(row["schema_id"]) != contextPackQualitySchemaID || anyToString(row["sample_id"]) != sampleID {
 			continue
 		}
-		canonical := contextPackQualityEntryFromSample(row)
+		canonical := contextPackQualityEntryFromDurableSample(row)
 		if len(canonical) == 0 {
 			continue
 		}
 		if found != nil {
 			if contextPackQualitySampleAdmissionRef(found) != contextPackQualitySampleAdmissionRef(canonical) ||
-				!contextPackQualityResponseBindingsEqual(found, canonical) {
+				!contextPackQualityResponseBindingsEqual(found, canonical) ||
+				contextPackLearnedCanonicalDigest(anyMap(found["execution_receipt"])) !=
+					contextPackLearnedCanonicalDigest(anyMap(canonical["execution_receipt"])) {
 				return nil, false, errContextPackOutcomeSampleConflict
 			}
 		}
@@ -3150,6 +3242,16 @@ func bindContextPackQualityOutcomeSample(entry, sample map[string]any) (map[stri
 		// false until a matched control or same-snapshot ablation is verified.
 		bound["recall_response_component_outcomes"] = componentEligibility
 	}
+	// Resource evidence is copied from the canonical Gateway sample only. Any
+	// reporter-supplied execution or sample-gate maps were excluded during outcome
+	// normalization and are explicitly removed at this binding boundary.
+	if receipt := contextPackQualityServerExecutionReceiptFromAny(sample["execution_receipt"]); len(receipt) > 0 {
+		bound["execution_receipt"] = receipt
+	} else {
+		delete(bound, "execution_receipt")
+	}
+	delete(bound, "sample_power")
+	delete(bound, "sample_sufficiency")
 	return bound, nil
 }
 
@@ -4124,8 +4226,9 @@ func buildContextPackQualitySample(input contextPackQualitySampleInput) map[stri
 		"raw_retry_probability_estimate":     retryModel.RawRetryProbability,
 		"packed_retry_probability_estimate":  retryModel.PackedRetryProbability,
 		"measurement_limit":                  contextPackQualityMeasurementLimit(false),
-		"selection_receipt":                  contextPackSelectionReceiptWithActivation(selectionRankedRefs, omittedSelectionRefs, input.LearnedActivation),
+		"selection_receipt":                  contextPackSelectionReceiptWithActivation(selectionRankedRefs, omittedSelectionRefs, input.LearnedActivation, anyMap(input.Promotion)),
 	}
+	sample["server_execution_resource_receipt"] = contextPackQualityServerExecutionReceipt(input.SearchResponse)
 	if topicRef := contextPackQualityTopicRef(project, input.TopicPath); topicRef != "" {
 		sample["topic_ref"] = topicRef
 	}
@@ -4289,13 +4392,121 @@ type contextPackQualitySampleInput struct {
 	TokenImpact                map[string]any
 	Compiled                   map[string]any
 	SourceCoverage             map[string]any
+	SearchResponse             map[string]any
 	GraphQuality               map[string]any
 	RankedEvidence             any
 	SelectionReceiptRankedRefs any
 	OmittedHighValueRefs       any
 	OmittedSelectionRefs       any
+	Promotion                  any
 	LearnedActivation          map[string]any
 	Warnings                   []string
+}
+
+// contextPackQualityServerExecutionReceipt is emitted only by the Gateway
+// context-pack compiler. It records the server-observed retrieval ownership
+// boundary; outcome reporters never get to supply or replace this evidence.
+func contextPackQualityServerExecutionReceipt(searchResponse map[string]any) map[string]any {
+	debug := anyMap(searchResponse["retrieval_debug"])
+	summary := anyMap(searchResponse["source_summary"])
+	ownerClass := strings.TrimSpace(strings.ToLower(firstNonEmptyStrings(
+		anyToString(searchResponse["source_owner_class"]),
+		anyToString(debug["source_owner_class"]),
+	)))
+	ownerValues := contextPackQualitySourceOwners(summary["source_owners"])
+	if len(ownerValues) == 0 {
+		ownerValues = contextPackQualitySourceOwners(debug["source_owners"])
+	}
+	if ownerClass == "" && len(ownerValues) > 0 {
+		ownerSet := map[string]struct{}{}
+		for _, rawOwner := range ownerValues {
+			owner := strings.TrimSpace(strings.ToLower(rawOwner))
+			if owner == "" {
+				owner = "unknown"
+			}
+			ownerSet[owner] = struct{}{}
+		}
+		if len(ownerSet) == 1 {
+			for owner := range ownerSet {
+				ownerClass = owner
+			}
+		} else if len(ownerSet) > 1 {
+			ownerClass = "mixed"
+		}
+	}
+	observed := ownerClass == sourceOwnerGoNative || ownerClass == sourceOwnerRustNative || ownerClass == sourceOwnerPythonBackendFallback
+	externalCalls := 0
+	for _, rawOwner := range ownerValues {
+		normalizedOwner := strings.TrimSpace(strings.ToLower(rawOwner))
+		if normalizedOwner != sourceOwnerGoNative && normalizedOwner != sourceOwnerRustNative {
+			externalCalls++
+		}
+	}
+	if !observed {
+		externalCalls = 0
+	} else if len(ownerValues) == 0 && ownerClass == sourceOwnerPythonBackendFallback {
+		// A fallback owner is an observed non-native execution boundary even
+		// when the source map was omitted by a compatibility response shape.
+		externalCalls = 1
+	}
+	return map[string]any{
+		"schema_id":                   contextPackQualityExecutionReceiptSchemaID,
+		"version":                     1,
+		"complete":                    observed,
+		"exact_zero":                  observed && externalCalls == 0,
+		"provider_calls":              externalCalls,
+		"provider_tokens":             0,
+		"provider_cost":               0,
+		"external_network_calls":      externalCalls,
+		"source":                      contextPackQualityExecutionReceiptSource,
+		"observed_source_owner_class": ownerClass,
+		"observed_source_owner_count": len(ownerValues),
+	}
+}
+
+func contextPackQualitySourceOwners(value any) map[string]string {
+	owners := map[string]string{}
+	switch typed := value.(type) {
+	case map[string]string:
+		for source, owner := range typed {
+			owners[source] = owner
+		}
+	case map[string]any:
+		for source, rawOwner := range typed {
+			owners[source] = anyToString(rawOwner)
+		}
+	}
+	return owners
+}
+
+// contextPackQualityServerExecutionReceiptFromAny is the only admission path
+// for the persisted execution receipt. The source marker and all resource
+// dimensions are checked before a quality sample can carry the field onward.
+func contextPackQualityServerExecutionReceiptFromAny(value any) map[string]any {
+	raw := anyMap(value)
+	if len(raw) == 0 || anyToString(raw["schema_id"]) != contextPackQualityExecutionReceiptSchemaID ||
+		anyToInt(raw["version"], 0) != 1 || anyToString(raw["source"]) != contextPackQualityExecutionReceiptSource {
+		return nil
+	}
+	complete, completeOK := raw["complete"].(bool)
+	exactZero, exactZeroOK := raw["exact_zero"].(bool)
+	if !completeOK || !exactZeroOK {
+		return nil
+	}
+	for _, key := range []string{"provider_calls", "provider_tokens", "provider_cost", "external_network_calls"} {
+		if _, ok := searchImpactStrictFiniteNumber(raw, key); !ok {
+			return nil
+		}
+	}
+	ownerClass := strings.TrimSpace(strings.ToLower(anyToString(raw["observed_source_owner_class"])))
+	if complete && ownerClass != sourceOwnerGoNative && ownerClass != sourceOwnerRustNative && ownerClass != sourceOwnerPythonBackendFallback {
+		return nil
+	}
+	if exactZero != (anyToFloat(raw["provider_calls"]) == 0 && anyToFloat(raw["provider_tokens"]) == 0 &&
+		anyToFloat(raw["provider_cost"]) == 0 && anyToFloat(raw["external_network_calls"]) == 0) {
+		return nil
+	}
+	return cloneJSONMap(raw)
 }
 
 type contextPackQualitySignals struct {

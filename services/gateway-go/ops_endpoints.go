@@ -75,6 +75,16 @@ func (s *server) capabilityMapPayload() map[string]any {
 	return map[string]any{
 		"enabled":       true,
 		"defaultRunner": "go_scheduler",
+		"evaluationCleanupMarkerCapMigration": map[string]any{
+			"route":                 "/ops/evaluation-cleanup/marker-cap-migration",
+			"schema_id":             continuationEvaluationCleanupMarkerMigrationSchemaID,
+			"authority":             continuationEvaluationCleanupMarkerMigrationAuthority,
+			"native_owner":          continuationEvaluationCleanupMarkerMigrationNativeOwner,
+			"authentication":        "mandatory_constant_time_capability",
+			"capability_configured": strings.TrimSpace(os.Getenv(evaluationCleanupMarkerMigrationCapabilityEnv)) != "",
+			"record_model":          "content_addressed_immutable_records_with_active_generation_pointer",
+			"retention":             "never_delete_automatically",
+		},
 		"runtime": map[string]any{
 			"useGoOrchestrator": true,
 			"useRustCodec":      useRustCodec,

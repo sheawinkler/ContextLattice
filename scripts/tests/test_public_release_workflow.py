@@ -72,9 +72,7 @@ class PublicReleaseWorkflowTests(unittest.TestCase):
 
     def test_release_workflow_observes_latency_on_shared_runners(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
-        mode = "CONTEXTLATTICE_RELEASE_PERFORMANCE_MODE: shared_runner"
-
-        self.assertEqual(workflow.count(mode), 1)
+        self.assertNotIn("CONTEXTLATTICE_RELEASE_PERFORMANCE_MODE", workflow)
         self.assertIn("scripts/agent/audit-release-lane-tree", workflow)
 
     def test_publisher_downloads_only_the_three_installers(self) -> None:
@@ -88,10 +86,11 @@ class PublicReleaseWorkflowTests(unittest.TestCase):
             publish,
         )
 
-        self.assertNotIn("pattern: public-release-*", publish)
-        self.assertNotIn("merge-multiple:", publish)
+        self.assertNotRegex(publish, r"(?m)^\s+pattern: public-release-\*\s*$")
+        self.assertIn("pattern: public-release-*-package-audit*", publish)
+        self.assertIn("merge-multiple: true", publish)
         self.assertNotIn("public-release-tree-proof", publish)
-        self.assertEqual(publish.count("uses: actions/download-artifact@v8"), 3)
+        self.assertEqual(publish.count("uses: actions/download-artifact@v8"), 4)
         self.assertEqual(
             downloads,
             [

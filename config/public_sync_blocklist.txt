@@ -113,6 +113,7 @@ services/gateway-go/cmd/contextlattice-agent-tools/frontier_t5_policy_lab_entitl
 services/gateway-go/cmd/contextlattice-agent-tools/frontier_t5_policy_lab_entitled_test.go
 
 # Paid-only operator documentation and reproducible eval ledgers.
+docs/evals/v5-task-runner-u3-local-isolation.json # public-paid-private-only
 docs/entitled-cognition-activation.md
 docs/evals/v3.13-entitled-cognition-activation.json
 docs/entitled-context-mesh-orchestration.md
@@ -170,6 +171,7 @@ docs/evals/fixtures/recall-response-compositional-development.v2.json # public-p
 docs/evals/fixtures/recall-response-compositional-holdout.v2.json # public-paid-private-only
 docs/evals/recall-response-compositional-benchmark.v2.json # public-paid-private-only
 docs/evals/results/recall-response-transfer-v4.0.11.json # public-paid-private-only
+docs/plans/2026-08-07-001-fe-agent-task-delivery-review-plan.md # public-paid-private-only
 docs/plans/2026-08-09-001-feat-compositional-response-intelligence-plan.md # public-paid-private-only
 scripts/agent/generate-recall-response-compositional-fixtures # public-paid-private-only
 scripts/agent/generate-recall-response-compositional-fixtures-v2 # public-paid-private-only
@@ -182,6 +184,7 @@ scripts/agent/test_recall_response_compositional_eval.py # public-paid-private-o
 scripts/agent/test_recall_response_compositional_fixtures.py # public-paid-private-only
 scripts/agent/test_recall_response_transfer.py # public-paid-private-only
 services/gateway-go/memory_recall_response_u9_export_test.go # public-paid-private-only
+services/gateway-go/memory_recall_response_initial_test.go # public-paid-private-only
 services/gateway-go/memory_recall_response_fallback_receipt_private_test.go # public-paid-private-only
 
 # Private Frontier program planning and its audit must never enter public/main.

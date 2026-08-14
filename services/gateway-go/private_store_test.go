@@ -26,6 +26,21 @@ func assertMode(t *testing.T, path string, want os.FileMode) {
 	}
 }
 
+func TestOwnerOnlyMigrationStateReadRejectsOversizedArtifact(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "store")
+	path := ownerOnlyStatePath(root)
+	if err := os.MkdirAll(filepath.Dir(path), ownerOnlyDirectoryMode); err != nil {
+		t.Fatalf("create migration state directory: %v", err)
+	}
+	raw := bytes.Repeat([]byte("x"), int(ownerOnlyMigrationStateMaxBytes)+1)
+	if err := os.WriteFile(path, raw, ownerOnlyFileMode); err != nil {
+		t.Fatalf("write oversized migration state: %v", err)
+	}
+	if _, err := loadOwnerOnlyMigrationState(path); !errors.Is(err, errMemoryEdgeLogOversized) {
+		t.Fatalf("oversized migration state was not rejected by its cap: %v", err)
+	}
+}
+
 func TestOwnerOnlyMigrationIsBoundedResumableAndIdempotent(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "store")
 	outside := filepath.Join(t.TempDir(), "outside.txt")

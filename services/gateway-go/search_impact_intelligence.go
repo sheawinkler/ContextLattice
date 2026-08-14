@@ -365,7 +365,12 @@ func (s *server) searchImpactIntelligenceSnapshotCore(
 			ReceiptBinding:     receiptBinding,
 		})
 	}
-	reconciled := searchImpactReconciledCandidateOutcomesCore(rows, scope)
+	rows = searchImpactAttachDurableSelectionReceipts(s, rows)
+	var canaryAuthority *searchImpactCanaryAuthority
+	if scope.exact {
+		canaryAuthority, _ = s.searchImpactCanaryAuthority(time.Now().UTC())
+	}
+	reconciled := searchImpactReconciledCandidateOutcomesCoreWithAuthority(rows, scope, canaryAuthority, scope.exact)
 	utilitySummary := map[string]any{}
 	utilityRows := []map[string]any{}
 	if s != nil && s.utility != nil {
@@ -396,8 +401,43 @@ func (s *server) searchImpactIntelligenceSnapshotCore(
 	})
 	if scope.exact {
 		attachSearchImpactActivationEvidenceCore(s, impact, scope, shadow, reconciled)
+		attachSearchImpactProductionPromotionEvidenceWithAuthority(impact, scope, shadow, reconciled, utilitySummary, canaryAuthority)
 	}
 	return impact
+}
+
+// searchImpactAttachDurableSelectionReceipts enriches only the in-memory
+// projection with the receipt from the canonical quality ledger. Outcome rows
+// intentionally do not persist a copied receipt: bounded retention must be
+// able to remove it, and reporter-controlled row fields must never establish
+// promotion assignment. A missing durable sample removes any row-provided
+// receipt before reconciliation, while callers without the telemetry ledger
+// retain their already-reconciled internal fixtures.
+func searchImpactAttachDurableSelectionReceipts(s *server, rows []map[string]any) []map[string]any {
+	if s == nil || s.contextPackQuality == nil || len(rows) == 0 {
+		return rows
+	}
+	enriched := make([]map[string]any, 0, len(rows))
+	for _, row := range rows {
+		copyRow := cloneJSONMap(row)
+		sampleID := strings.TrimSpace(anyToString(row["sample_id"]))
+		if sampleID == "" {
+			delete(copyRow, "selection_receipt")
+		} else {
+			sample, found, err := s.contextPackQuality.durableQualitySampleForOutcome(sampleID)
+			if err == nil && found {
+				if receipt := contextPackSelectionReceiptFromSample(sample["selection_receipt"]); len(receipt) > 0 {
+					copyRow["selection_receipt"] = receipt
+				} else {
+					delete(copyRow, "selection_receipt")
+				}
+			} else {
+				delete(copyRow, "selection_receipt")
+			}
+		}
+		enriched = append(enriched, copyRow)
+	}
+	return enriched
 }
 
 func searchImpactReceiptLedgerStatus(s *server) map[string]any {
@@ -606,6 +646,256 @@ func attachSearchImpactActivationEvidenceCore(
 	impact["activation_evidence"] = evidence
 }
 
+// attachSearchImpactProductionPromotionEvidence derives the promotion gate's
+// complete receipt from the same server-owned snapshot that produced the
+// impact report. It deliberately leaves the evidence unavailable when any
+// component is absent; caller-provided or fabricated canary/resource claims
+// never become activation authority.
+func attachSearchImpactProductionPromotionEvidence(
+	impact map[string]any,
+	scope searchImpactScope,
+	shadow map[string]any,
+	outcomes []map[string]any,
+	utilitySummary map[string]any,
+) {
+	attachSearchImpactProductionPromotionEvidenceWithAuthority(impact, scope, shadow, outcomes, utilitySummary, nil)
+}
+
+func attachSearchImpactProductionPromotionEvidenceWithAuthority(
+	impact map[string]any,
+	scope searchImpactScope,
+	shadow map[string]any,
+	outcomes []map[string]any,
+	utilitySummary map[string]any,
+	authority *searchImpactCanaryAuthority,
+) {
+	evidence := anyMap(impact["activation_evidence"])
+	if len(evidence) == 0 {
+		return
+	}
+	unavailable := func(reason string) {
+		evidence["promotion_evidence"] = map[string]any{
+			"available": false, "reason": reason, "source": "server_reconciled_candidate_outcome_receipts",
+		}
+	}
+	if !scope.valid || !scope.exact || !searchImpactShadowEnvelopeValid(shadow) {
+		unavailable("same_snapshot_artifact_unavailable")
+		return
+	}
+	verificationTime := time.Now().UTC()
+	if authority != nil && !authority.verifiedAt.IsZero() {
+		verificationTime = authority.verifiedAt
+	}
+	if authority == nil || !authority.headVerified || authority.trusted == nil ||
+		!retrievalPromotionVerifyCanaryReceipt(authority.receipt, verificationTime, authority.trusted) {
+		unavailable("signed_canary_ledger_authority_unavailable")
+		return
+	}
+	actuator := anyMap(shadow["learned_actuator_comparator"])
+	if !anyToBool(actuator["same_returned_candidate_pool"]) || !anyToBool(actuator["same_token_budget"]) || !anyToBool(actuator["protected_selection_preserved"]) ||
+		contextPackLearnedDigestRef(anyToString(actuator["case_set_ref"])) != contextPackLearnedDigestRef(anyToString(shadow["case_set_ref"])) {
+		unavailable("same_snapshot_proof_unavailable")
+		return
+	}
+	comparatorAt := strings.TrimSpace(anyToString(shadow["evaluated_at"]))
+	if !retrievalPromotionCanonicalTimestamp(comparatorAt) {
+		unavailable("same_snapshot_timestamp_unavailable")
+		return
+	}
+	snapshotRef := contextPackLearnedCanonicalDigest(map[string]any{
+		"schema_id":                  "retrieval_promotion_same_snapshot.v1",
+		"project_scope_ref":          evidence["project_scope_ref"],
+		"task_class_scope_ref":       evidence["task_class_scope_ref"],
+		"retrieval_intent_scope_ref": evidence["retrieval_intent_scope_ref"],
+		"workspace_ref":              evidence["workspace_ref"],
+		"case_set_ref":               shadow["case_set_ref"],
+		"comparator_evaluated_at":    comparatorAt,
+		"actuator_comparator_ref":    evidence["actuator_comparator_ref"],
+		"shadow_digest":              contextPackLearnedCanonicalDigest(shadow),
+	})
+	if snapshotRef == "" {
+		unavailable("same_snapshot_ref_unavailable")
+		return
+	}
+	split := anyMap(anyMap(impact["outcome_intelligence"])["chronological_split"])
+	trainCount := anyToInt(anyMap(split["train"])["outcome_count"], 0)
+	holdoutCount := anyToInt(anyMap(split["holdout"])["outcome_count"], 0)
+	if trainCount == 0 && holdoutCount == 0 {
+		// The normal builder always emits map values, but avoid a type assertion
+		// panic if a compatibility caller supplies a malformed projection.
+		trainCount = anyToInt(anyMap(anyMap(impact["outcome_intelligence"])["chronological_split"])["train_count"], 0)
+		holdoutCount = anyToInt(anyMap(anyMap(impact["outcome_intelligence"])["chronological_split"])["holdout_count"], 0)
+	}
+	// Use the canonical projected server-receipt chronology. Never use a
+	// reporter captured_at value to establish canary dwell.
+	canaryCount := 0
+	canaryReceiptDigest := ""
+	canarySnapshotRef := ""
+	canaryCaseSetRef := ""
+	canaryAssignmentRef := ""
+	canaryBasisPoints := -1
+	minimumCanarySamples := -1
+	minimumCanaryDwellSeconds := -1
+	canaryStarted := time.Time{}
+	var executionReceipt map[string]any
+	for _, outcome := range outcomes {
+		if !anyToBool(outcome["promotion_authoritative"]) || anyToString(outcome["promotion_arm"]) != "canary" {
+			continue
+		}
+		if anyToString(outcome["promotion_authority"]) != "trusted_signed_canary_ledger" ||
+			!searchImpactCanarySnapshotMatchesAuthority(map[string]any{
+				"generation":             authority.receipt.Generation,
+				"workspace_ref":          authority.receipt.WorkspaceRef,
+				"project_ref":            authority.receipt.ProjectRef,
+				"task_class_ref":         authority.receipt.TaskClassRef,
+				"retrieval_intent_ref":   authority.receipt.RetrievalIntentRef,
+				"policy_ref":             authority.receipt.PolicyRef,
+				"snapshot_ref":           outcome["promotion_snapshot_ref"],
+				"case_set_ref":           outcome["promotion_case_set_ref"],
+				"assignment_subject_ref": outcome["promotion_assignment_subject_ref"],
+				"canary_basis_points":    outcome["promotion_canary_basis_points"],
+				"shadow_basis_points":    authority.receipt.ShadowBasisPoints,
+				"control_basis_points":   authority.receipt.ControlBasisPoints,
+				"minimum_canary_samples": outcome["promotion_minimum_canary_samples"],
+				"minimum_dwell_seconds":  outcome["promotion_minimum_dwell_seconds"],
+				"recorded_at":            outcome["promotion_recorded_at"],
+				"expires_at":             authority.receipt.ExpiresAt,
+				"receipt_digest":         outcome["promotion_receipt_digest"],
+			}, authority) {
+			unavailable("canary_owner_ledger_authority_mismatch")
+			return
+		}
+		issuer := anyMap(outcome["promotion_issuer"])
+		if anyToString(issuer["instance_id"]) != authority.receipt.Issuer.InstanceID ||
+			anyToString(issuer["signing_key_id"]) != authority.receipt.Issuer.SigningKeyID {
+			unavailable("canary_owner_ledger_issuer_mismatch")
+			return
+		}
+		canaryCount++
+		digest := contextPackLearnedDigestRef(anyToString(outcome["promotion_receipt_digest"]))
+		candidateSnapshot := contextPackLearnedDigestRef(anyToString(outcome["promotion_snapshot_ref"]))
+		candidateCaseSet := contextPackLearnedDigestRef(anyToString(outcome["promotion_case_set_ref"]))
+		candidateAssignment := contextPackLearnedDigestRef(anyToString(outcome["promotion_assignment_subject_ref"]))
+		candidateBasisPoints, basisOK := retrievalPromotionStrictInt(outcome["promotion_canary_basis_points"])
+		candidateMinimumSamples, samplesOK := retrievalPromotionStrictInt(outcome["promotion_minimum_canary_samples"])
+		candidateMinimumDwell, dwellOK := retrievalPromotionStrictInt(outcome["promotion_minimum_dwell_seconds"])
+		if digest == "" || candidateSnapshot == "" || candidateCaseSet == "" || candidateAssignment == "" ||
+			(candidateSnapshot != snapshotRef) || candidateCaseSet != contextPackLearnedDigestRef(anyToString(shadow["case_set_ref"])) ||
+			!basisOK || candidateBasisPoints <= 0 || candidateBasisPoints > retrievalPromotionCanaryMaxBasisPoints ||
+			!samplesOK || candidateMinimumSamples < retrievalPromotionCanaryMinimumSamples ||
+			!dwellOK || candidateMinimumDwell < int(retrievalPromotionCanaryMinimumDwell/time.Second) {
+			unavailable("canary_receipt_snapshot_mismatch")
+			return
+		}
+		if canaryReceiptDigest == "" {
+			canaryReceiptDigest, canarySnapshotRef, canaryCaseSetRef, canaryAssignmentRef = digest, candidateSnapshot, candidateCaseSet, candidateAssignment
+			canaryBasisPoints, minimumCanarySamples, minimumCanaryDwellSeconds = candidateBasisPoints, candidateMinimumSamples, candidateMinimumDwell
+		} else if canaryReceiptDigest != digest || canarySnapshotRef != candidateSnapshot || canaryCaseSetRef != candidateCaseSet || canaryAssignmentRef != candidateAssignment {
+			unavailable("canary_receipt_identity_conflict")
+			return
+		}
+		if candidateBasisPoints != canaryBasisPoints || candidateMinimumSamples != minimumCanarySamples || candidateMinimumDwell != minimumCanaryDwellSeconds {
+			unavailable("canary_receipt_configuration_conflict")
+			return
+		}
+		recordedAt, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(anyToString(outcome["promotion_recorded_at"])))
+		if err != nil || recordedAt.IsZero() {
+			unavailable("canary_receipt_timestamp_missing")
+			return
+		}
+		if canaryStarted.IsZero() || recordedAt.Before(canaryStarted) {
+			canaryStarted = recordedAt.UTC()
+		}
+		raw := contextPackQualityServerExecutionReceiptFromAny(outcome["execution_receipt"])
+		if len(raw) == 0 {
+			unavailable("execution_resource_receipt_missing")
+			return
+		}
+		if executionReceipt == nil {
+			executionReceipt = cloneJSONMap(raw)
+		} else if contextPackLearnedCanonicalDigest(executionReceipt) != contextPackLearnedCanonicalDigest(raw) {
+			unavailable("execution_resource_receipt_conflict")
+			return
+		}
+	}
+	if canaryCount == 0 || canaryStarted.IsZero() {
+		unavailable("canary_outcome_receipts_missing")
+		return
+	}
+	if executionReceipt == nil {
+		unavailable("execution_resource_receipt_missing")
+		return
+	}
+	// This is a count-only sufficiency receipt. It compares canonical,
+	// owner-ledger-bound canary outcomes with the exact minimum carried by the
+	// current signed authority. It deliberately makes no statistical power or
+	// effect-size claim.
+	sampleSufficiency := searchImpactServerOwnedSampleSufficiency(canaryCount, minimumCanarySamples, authority)
+	if len(sampleSufficiency) == 0 {
+		unavailable("sample_sufficiency_receipt_missing")
+		return
+	}
+	evidence["same_snapshot"] = true
+	evidence["time_split"] = "chronological_80_20"
+	evidence["snapshot_ref"] = snapshotRef
+	evidence["train_count"] = trainCount
+	evidence["holdout_count"] = holdoutCount
+	evidence["canary_sample_count"] = canaryCount
+	evidence["canary_started_at"] = canaryStarted.Format(time.RFC3339Nano)
+	evidence["execution_receipt"] = executionReceipt
+	evidence["sample_sufficiency"] = sampleSufficiency
+	evidence["promotion_evidence"] = map[string]any{
+		"available": true, "source": "server_reconciled_candidate_outcome_receipts",
+		"same_snapshot": true, "time_split": "chronological_80_20", "snapshot_ref": snapshotRef,
+		"case_set_ref": shadow["case_set_ref"], "train_count": trainCount, "holdout_count": holdoutCount,
+		"canary_sample_count": canaryCount, "canary_started_at": canaryStarted.Format(time.RFC3339Nano),
+		"canary_receipt_digest": canaryReceiptDigest, "assignment_subject_ref": canaryAssignmentRef,
+		"canary_basis_points": canaryBasisPoints, "minimum_canary_samples": minimumCanarySamples,
+		"minimum_dwell_seconds": minimumCanaryDwellSeconds,
+		"canary_generation":     authority.receipt.Generation, "canary_head_digest": authority.headDigest,
+		"canary_head_verified": authority.headVerified, "canary_current_active": true,
+		"promotion_authority": "trusted_signed_canary_ledger",
+		"promotion_issuer": map[string]any{
+			"instance_id": authority.receipt.Issuer.InstanceID, "signing_key_id": authority.receipt.Issuer.SigningKeyID,
+		},
+		"execution_receipt": cloneJSONMap(executionReceipt), "sample_sufficiency": cloneJSONMap(sampleSufficiency),
+	}
+	// Bind the newly derived exact fields into the proof digest. A signed
+	// canary must therefore reference this same snapshot rather than an
+	// independently constructed report.
+	proof := map[string]any{}
+	for key, value := range evidence {
+		if key == "proof_digest" || key == "promotion_evidence" {
+			continue
+		}
+		proof[key] = value
+	}
+	proof["promotion_evidence"] = evidence["promotion_evidence"]
+	evidence["proof_digest"] = contextPackLearnedCanonicalDigest(proof)
+}
+
+func searchImpactServerOwnedSampleSufficiency(canaryCount, minimumSamples int, authority *searchImpactCanaryAuthority) map[string]any {
+	if canaryCount < 0 || minimumSamples < retrievalPromotionCanaryMinimumSamples || authority == nil ||
+		minimumSamples != authority.receipt.MinimumCanarySamples ||
+		!searchImpactCanarySnapshotMatchesAuthority(retrievalPromotionCanaryReceiptSnapshot(authority.receipt), authority) {
+		return nil
+	}
+	return map[string]any{
+		"schema_id":                   "contextlattice_search_impact_sample_sufficiency.v1",
+		"version":                     1,
+		"source":                      "server_reconciled_canary_outcomes",
+		"method":                      "exact_count_against_signed_authority_minimum_v1",
+		"pass":                        canaryCount >= minimumSamples,
+		"required_sample_count":       minimumSamples,
+		"observed_sample_count":       canaryCount,
+		"promotion_authority":         "trusted_signed_canary_ledger",
+		"canary_receipt_digest":       authority.receipt.ReceiptDigest,
+		"canary_generation":           authority.receipt.Generation,
+		"statistical_power_available": false,
+		"limits":                      "count_threshold_only_no_power_or_effect_size_estimate",
+	}
+}
+
 func searchImpactReconciledCandidateOutcomes(rows []map[string]any, project, taskClass string) []map[string]any {
 	return searchImpactReconciledCandidateOutcomesCore(rows, normalizeSearchImpactScope(project, taskClass, "", "", false))
 }
@@ -621,7 +911,85 @@ func searchImpactReconciledCandidateOutcomesForWorkspace(rows []map[string]any, 
 // searchImpactReconciledCandidateOutcomesCore is the sole candidate-row
 // projection path. It performs scope filtering and canonical response binding
 // exactly once; compatibility wrappers above do not filter or re-identify.
+type searchImpactCanaryAuthority struct {
+	receipt      retrievalPromotionCanaryReceipt
+	trusted      *contextIdentityKeys
+	owner        *retrievalPromotionCanaryLedger
+	generation   uint64
+	headDigest   string
+	headVerified bool
+	verifiedAt   time.Time
+}
+
+// searchImpactCanaryAuthority reads the live owner ledger once and binds the
+// projection to its verified current head. A bounded receipt snapshot without
+// this authority is never sufficient for production promotion evidence.
+func (s *server) searchImpactCanaryAuthority(now time.Time) (*searchImpactCanaryAuthority, bool) {
+	if s == nil {
+		return nil, false
+	}
+	store, err := s.retrievalPromotionCanaryOwner()
+	if err != nil || store == nil {
+		return nil, false
+	}
+	generation, headDigest, headVerified := store.generationHead()
+	receipt, active, _ := store.activeReceipt(now)
+	if !headVerified || !active || generation != receipt.Generation || headDigest != receipt.ReceiptDigest ||
+		!retrievalPromotionVerifyCanaryReceipt(receipt, now, store.identity) {
+		return nil, false
+	}
+	return &searchImpactCanaryAuthority{
+		receipt: receipt, trusted: store.identity, owner: store, generation: generation,
+		headDigest: headDigest, headVerified: headVerified, verifiedAt: now.UTC(),
+	}, true
+}
+
+func searchImpactCanarySnapshotMatchesAuthority(snapshot map[string]any, authority *searchImpactCanaryAuthority) bool {
+	if authority == nil || !authority.headVerified || authority.trusted == nil {
+		return false
+	}
+	verificationTime := authority.verifiedAt
+	if verificationTime.IsZero() {
+		verificationTime = time.Now().UTC()
+	}
+	if !retrievalPromotionVerifyCanaryReceipt(authority.receipt, verificationTime, authority.trusted) {
+		return false
+	}
+	if authority.owner != nil && !authority.owner.currentHeadMatches(authority.receipt, time.Now().UTC()) {
+		return false
+	}
+	receipt := authority.receipt
+	generation, generationOK := retrievalPromotionStrictInt(snapshot["generation"])
+	canaryBasisPoints, basisOK := retrievalPromotionStrictInt(snapshot["canary_basis_points"])
+	minimumSamples, samplesOK := retrievalPromotionStrictInt(snapshot["minimum_canary_samples"])
+	minimumDwell, dwellOK := retrievalPromotionStrictInt(snapshot["minimum_dwell_seconds"])
+	return generationOK && basisOK && samplesOK && dwellOK && uint64(generation) == receipt.Generation &&
+		anyToString(snapshot["workspace_ref"]) == receipt.WorkspaceRef &&
+		anyToString(snapshot["project_ref"]) == receipt.ProjectRef &&
+		anyToString(snapshot["task_class_ref"]) == receipt.TaskClassRef &&
+		anyToString(snapshot["retrieval_intent_ref"]) == receipt.RetrievalIntentRef &&
+		anyToString(snapshot["policy_ref"]) == receipt.PolicyRef &&
+		anyToString(snapshot["snapshot_ref"]) == receipt.SnapshotRef &&
+		anyToString(snapshot["case_set_ref"]) == receipt.CaseSetRef &&
+		anyToString(snapshot["assignment_subject_ref"]) == receipt.AssignmentSubjectRef &&
+		canaryBasisPoints == receipt.CanaryBasisPoints &&
+		anyToInt(snapshot["shadow_basis_points"], -1) == receipt.ShadowBasisPoints &&
+		anyToInt(snapshot["control_basis_points"], -1) == receipt.ControlBasisPoints &&
+		minimumSamples == receipt.MinimumCanarySamples && minimumDwell == receipt.MinimumDwellSeconds &&
+		anyToString(snapshot["recorded_at"]) == receipt.RecordedAt &&
+		anyToString(snapshot["expires_at"]) == receipt.ExpiresAt &&
+		anyToString(snapshot["receipt_digest"]) == receipt.ReceiptDigest &&
+		authority.generation == receipt.Generation && authority.headDigest == receipt.ReceiptDigest
+}
+
 func searchImpactReconciledCandidateOutcomesCore(rows []map[string]any, scope searchImpactScope) []map[string]any {
+	return searchImpactReconciledCandidateOutcomesCoreWithAuthority(rows, scope, nil, false)
+}
+
+// searchImpactReconciledCandidateOutcomesCoreWithAuthority is used by the
+// live exact snapshot path. Its requireAuthority flag prevents compatibility
+// fixture projections from being mistaken for activation evidence.
+func searchImpactReconciledCandidateOutcomesCoreWithAuthority(rows []map[string]any, scope searchImpactScope, authority *searchImpactCanaryAuthority, requireAuthority bool) []map[string]any {
 	if !scope.valid {
 		return nil
 	}
@@ -685,6 +1053,43 @@ func searchImpactReconciledCandidateOutcomesCore(rows []map[string]any, scope se
 			"workspace_ref":                      contextPackLearnedDigestRef(anyToString(row["workspace_ref"])),
 			"component_outcome_eligible_count":   componentOutcomeCount,
 			"component_causal_credit_count":      0,
+		}
+		// Promotion assignment is accepted only from the durable selection
+		// receipt whose candidate attribution already passed the receipt-bound
+		// verifier. A reporter policy_arm field alone never makes a canary sample.
+		selectionReceipt := contextPackSelectionReceiptFromSample(row["selection_receipt"])
+		promotionReceipt := retrievalPromotionNormalizeReceipt(anyMap(selectionReceipt["retrieval_promotion"]))
+		activationReceipt := contextPackLearnedActivationReceiptFromSample(anyMap(selectionReceipt["learned_activation"]))
+		promotionCohort := anyMap(promotionReceipt["cohort"])
+		canarySnapshot := anyMap(promotionCohort["canary_receipt"])
+		promotionAuthorized := !requireAuthority
+		if requireAuthority {
+			promotionAuthorized = searchImpactCanarySnapshotMatchesAuthority(canarySnapshot, authority)
+		}
+		if len(promotionReceipt) > 0 && len(activationReceipt) > 0 && anyToString(activationReceipt["arm"]) == "canary" &&
+			anyToString(promotionCohort["arm"]) == "canary" && anyToString(canarySnapshot["receipt_digest"]) != "" && promotionAuthorized {
+			outcome["promotion_authoritative"] = true
+			outcome["promotion_arm"] = "canary"
+			outcome["promotion_receipt_digest"] = contextPackLearnedDigestRef(anyToString(canarySnapshot["receipt_digest"]))
+			outcome["promotion_recorded_at"] = anyToString(canarySnapshot["recorded_at"])
+			outcome["promotion_snapshot_ref"] = contextPackLearnedDigestRef(anyToString(canarySnapshot["snapshot_ref"]))
+			outcome["promotion_case_set_ref"] = contextPackLearnedDigestRef(anyToString(canarySnapshot["case_set_ref"]))
+			outcome["promotion_assignment_subject_ref"] = contextPackLearnedDigestRef(anyToString(canarySnapshot["assignment_subject_ref"]))
+			outcome["promotion_canary_basis_points"] = anyToInt(canarySnapshot["canary_basis_points"], 0)
+			outcome["promotion_minimum_canary_samples"] = anyToInt(canarySnapshot["minimum_canary_samples"], 0)
+			outcome["promotion_minimum_dwell_seconds"] = anyToInt(canarySnapshot["minimum_dwell_seconds"], 0)
+			if authority != nil {
+				outcome["promotion_authority"] = "trusted_signed_canary_ledger"
+				outcome["promotion_issuer"] = map[string]any{
+					"instance_id":    authority.receipt.Issuer.InstanceID,
+					"signing_key_id": authority.receipt.Issuer.SigningKeyID,
+				}
+			}
+		}
+		// This map is admitted only from the canonical Gateway quality sample;
+		// reporter outcome fields never become promotion evidence.
+		if resource := contextPackQualityServerExecutionReceiptFromAny(row["execution_receipt"]); len(resource) > 0 {
+			outcome["execution_receipt"] = resource
 		}
 		if responseBindingKey != "" {
 			// Carry only the opaque canonical digest/key. Raw response/query/path
@@ -848,7 +1253,7 @@ func buildSearchImpactIntelligence(input searchImpactIntelligenceInput) map[stri
 		recommendation = "canary_recommended"
 		reasons = []string{}
 	}
-	return map[string]any{
+	result := map[string]any{
 		"ok":              true,
 		"schema_id":       searchImpactIntelligenceContractID,
 		"version":         1,
@@ -883,6 +1288,8 @@ func buildSearchImpactIntelligence(input searchImpactIntelligenceInput) map[stri
 		"abstention_reasons": reasons,
 		"measurement_limit":  "Advisory-only evidence summary. Scoped Utility Ledger totals are contextual and non-gating; the causal canary gate is derived separately only from exact receipt-bound candidate outcome IDs reconciled to an independent Utility Ledger verifier. Token-impact telemetry is global contextual non-gating because it lacks project/task identity. Comparative shadow recall is never inferred from ordinary telemetry.",
 	}
+	result["promotion"] = retrievalPromotionImpactProjection(input.ComparativeShadow, result)
+	return result
 }
 
 // searchImpactCandidateCausalSummary derives causal evidence from only the
