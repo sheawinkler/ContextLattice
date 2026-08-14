@@ -3,6 +3,12 @@ package main
 import (
 	"errors"
 	"net/http"
+	"strings"
+)
+
+const (
+	publicLocalAgentTaskWorkspaceID       = "contextlattice-owner-local"
+	publicLocalAgentTaskWorkerPrincipalID = "contextlattice-local-task-worker"
 )
 
 // optionalFrontierT1Runtime keeps paid runtime ownership out of the public
@@ -55,12 +61,38 @@ var optionalFrontierT1ProjectBoundaryLock = func(*server) func() {
 	return func() {}
 }
 
-// Optional task-delivery authority hooks keep paid workspace governance and
-// signed runtime-license identity out of the public core. Public builds fail
-// closed unless an entitled extension installs these resolvers; service-key
-// operations remain independently authenticated by the Gateway.
-var optionalAgentTaskProjectWorkspace = func(_ *server, _ string) (string, error) {
-	return "", errors.New("workspace project binding governance is unavailable")
+// publicLocalAgentTaskProjectWorkspace is the single-workspace authority for
+// the public owner-local runtime. It deliberately does not model paid shared
+// workspace membership: every validated local project is bound to one fixed
+// owner-local workspace, while the Gateway service key remains the only public
+// task-route credential.
+func publicLocalAgentTaskProjectWorkspace(project string) (string, error) {
+	project = strings.TrimSpace(project)
+	if project == "" {
+		return "", errors.New("task project is required")
+	}
+	if err := agentTaskValidateText(project, "task project", 2048); err != nil {
+		return "", err
+	}
+	return publicLocalAgentTaskWorkspaceID, nil
+}
+
+func publicLocalAgentTaskServiceWorkerAuthority(principal, workspace string) (string, string, error) {
+	principal = strings.TrimSpace(principal)
+	workspace = strings.TrimSpace(workspace)
+	if (principal != "" && !strings.EqualFold(principal, publicLocalAgentTaskWorkerPrincipalID)) ||
+		(workspace != "" && !strings.EqualFold(workspace, publicLocalAgentTaskWorkspaceID)) {
+		return "", "", errors.New("service worker authority is outside the owner-local workspace")
+	}
+	return publicLocalAgentTaskWorkerPrincipalID, publicLocalAgentTaskWorkspaceID, nil
+}
+
+// Optional task-delivery hooks keep paid shared-workspace governance and
+// signed runtime-license identity out of the public core. A public server with
+// no entitled resolver uses the closed owner-local binding; signed routes stay
+// unavailable without an entitled extension.
+var optionalAgentTaskProjectWorkspace = func(_ *server, project string) (string, error) {
+	return publicLocalAgentTaskProjectWorkspace(project)
 }
 
 var optionalAgentTaskSignedRouteAuthorization = func(_ *server, _ *http.Request) (agentTaskRouteAuth, bool, error) {

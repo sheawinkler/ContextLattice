@@ -175,6 +175,18 @@ jobs:
           [[ "$(git rev-parse HEAD)" == "$EXPECTED_RELEASE_COMMIT" ]]
           echo "RELEASE_COMMIT=$EXPECTED_RELEASE_COMMIT" >> "$GITHUB_ENV"
 
+      - name: Bind approved public source authority
+        env:
+          EXPECTED_RELEASE_COMMIT: ${{ needs.verify-release.outputs.commit }}
+        run: |
+          set -euo pipefail
+          git remote remove public 2>/dev/null || true
+          git remote add public "https://github.com/${APPROVED_SOURCE_REPOSITORY}.git"
+          git fetch --force --no-tags public \
+            "+${APPROVED_SOURCE_REF}:${APPROVED_SOURCE_TRACKING_REF}"
+          source_ref_tip="$(git rev-parse --verify "${APPROVED_SOURCE_TRACKING_REF}^{commit}")"
+          git merge-base --is-ancestor "$EXPECTED_RELEASE_COMMIT" "$source_ref_tip"
+
       - name: Import macOS signing identity (optional)
         env:
           CONTEXTLATTICE_MACOS_CERT_P12_BASE64: ${{ secrets.CONTEXTLATTICE_MACOS_CERT_P12_BASE64 }}
@@ -249,6 +261,18 @@ jobs:
           set -euo pipefail
           [[ "$(git rev-parse HEAD)" == "$EXPECTED_RELEASE_COMMIT" ]]
           echo "RELEASE_COMMIT=$EXPECTED_RELEASE_COMMIT" >> "$GITHUB_ENV"
+
+      - name: Bind approved public source authority
+        env:
+          EXPECTED_RELEASE_COMMIT: ${{ needs.verify-release.outputs.commit }}
+        run: |
+          set -euo pipefail
+          git remote remove public 2>/dev/null || true
+          git remote add public "https://github.com/${APPROVED_SOURCE_REPOSITORY}.git"
+          git fetch --force --no-tags public \
+            "+${APPROVED_SOURCE_REF}:${APPROVED_SOURCE_TRACKING_REF}"
+          source_ref_tip="$(git rev-parse --verify "${APPROVED_SOURCE_TRACKING_REF}^{commit}")"
+          git merge-base --is-ancestor "$EXPECTED_RELEASE_COMMIT" "$source_ref_tip"
 
       - name: Build public Linux bundle
         run: bash scripts/build_linux_bundle.sh
@@ -409,9 +433,8 @@ jobs:
               --lane public \
               --tag "$RELEASE_TAG" \
               --temp-dir "$RUNNER_TEMP" \
-              --containment-tool bwrap \
               --receipt-in "$RUNNER_TEMP/build-package-audits/$name.package-audit.json" \
-              --verify-receipt-only
+              --verify-receipt-binding-only
           done
 
       - name: Generate final-byte checksums, manifest, and provenance
@@ -698,6 +721,7 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$(git rev-parse HEAD)" == "$EXPECTED_RELEASE_COMMIT" ]]
+          echo "RELEASE_COMMIT=$EXPECTED_RELEASE_COMMIT" >> "$GITHUB_ENV"
 
       - name: Download DMG from the draft release
         env:
@@ -753,6 +777,7 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$(git rev-parse HEAD)" == "$EXPECTED_RELEASE_COMMIT" ]]
+          echo "RELEASE_COMMIT=$EXPECTED_RELEASE_COMMIT" >> "$GITHUB_ENV"
 
       - name: Install and attest MSI audit tooling
         run: |
@@ -910,9 +935,8 @@ jobs:
               --lane public \
               --tag "$RELEASE_TAG" \
               --temp-dir "$RUNNER_TEMP" \
-              --containment-tool bwrap \
               --receipt-in "$RUNNER_TEMP/remote-package-audits/$name.package-audit.json" \
-              --verify-receipt-only
+              --verify-receipt-binding-only
           done
           scripts/agent/audit-public-release-assets \
             --dist-dir "$remote_dist" \
@@ -947,7 +971,14 @@ jobs:
               exit 1
             }
           done <<<"$audited_names"
-          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false
+          latest_flag=(--latest)
+          if [[ "$RELEASE_TAG" == *-public ]]; then
+            latest_flag=(--latest=false)
+          fi
+          gh release edit "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --draft=false \
+            "${latest_flag[@]}"
           release_json="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft)"
           [[ "$(jq -r '.isDraft' <<<"$release_json")" == false ]] || {
             echo "ERROR: audited release did not promote." >&2

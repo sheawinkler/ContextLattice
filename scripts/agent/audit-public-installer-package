@@ -344,9 +344,11 @@ def _source_identity(source_root: Path, *, tag: str) -> dict[str, object]:
     source_tree = _git_value(source_root, "rev-parse", "--verify", f"{head}^{{tree}}")
     if not re.fullmatch(r"[0-9a-f]{40}", head) or tag_commit != head:
         raise ValueError("reviewed source tag and commit do not match")
-    expected_sha = os.environ.get("GITHUB_SHA", "").strip()
-    if expected_sha and expected_sha != head:
-        raise ValueError("reviewed source commit does not match GITHUB_SHA")
+    expected_sha = os.environ.get("RELEASE_COMMIT", "").strip()
+    if expected_sha and (
+        not re.fullmatch(r"[0-9a-f]{40}", expected_sha) or expected_sha != head
+    ):
+        raise ValueError("reviewed source commit does not match RELEASE_COMMIT")
     if not re.fullmatch(r"[0-9a-f]{40}", source_tree):
         raise ValueError("reviewed source tree is malformed")
     return {
@@ -1725,19 +1727,23 @@ def write_receipt(path: Path, receipt: dict[str, object]) -> None:
         os.fsync(handle.fileno())
 
 
-def verify_receipt(
+def _receipt_native_tool_placeholders(kind: str) -> dict[str, str]:
+    if kind == "windows":
+        return {"msiinfo": "", "msiextract": "", "containment": ""}
+    if kind == "macos":
+        return {"hdiutil": ""}
+    return {}
+
+
+def verify_receipt_binding(
     path: Path,
     artifact: Path,
     *,
     kind: str,
     tag: str,
     source_root: Path | None = None,
-    temp_root: Path | None = None,
-    msiinfo: str = "msiinfo",
-    msiextract: str = "msiextract",
-    containment_tool: str = "",
-    hdiutil: str = "/usr/bin/hdiutil",
 ) -> dict[str, object]:
+    """Verify portable artifact/source/contract binding without native re-audit."""
     artifact_name = EXPECTED_INSTALLER_NAMES[kind]
     try:
         receipt = _read_receipt(path, artifact_name=artifact_name)
@@ -1772,6 +1778,16 @@ def verify_receipt(
         }
         or not isinstance(scan, dict)
         or set(scan) != PACKAGE_SCAN_FIELDS
+        or scan.get("schema_id") != "contextlattice_public_release_package_scan.v1"
+        or scan.get("ok") is not True
+        or scan.get("truncated") is not False
+        or scan.get("finding_count") != 0
+        or any(
+            not isinstance(scan.get(field), int)
+            or isinstance(scan.get(field), bool)
+            or scan[field] < 0
+            for field in PACKAGE_SCAN_FIELDS - {"schema_id", "ok", "truncated"}
+        )
         or receipt.get("normalized_scan_sha256") != _canonical_digest(scan)
         or not isinstance(receipt.get("source"), dict)
         or not isinstance(receipt.get("contracts"), dict)
@@ -1779,21 +1795,101 @@ def verify_receipt(
     ):
         raise _sanitized_error("package.receipt_invalid", artifact_name, b"binding")
     if source_root is None:
-        # A receipt without a reviewed, clean source checkout cannot establish
-        # the release identity or payload contract and is never evidence.
         raise _sanitized_error("package.receipt_source_unbound", artifact_name)
     try:
         identity = _source_identity(source_root, tag=tag)
-    except (OSError, ValueError) as exc:
-        raise _sanitized_error("package.receipt_invalid", artifact_name, b"source") from exc
-    source_row = receipt["source"]
-    if source_row != {
+        committed_tool_digests = {
+            "package_audit": _committed_file_sha256(
+                source_root, "scripts/agent/audit-public-installer-package"
+            ),
+            "package_scanner": _committed_file_sha256(
+                source_root, "scripts/public_release_package_scan.py"
+            ),
+            "outer_contract": _committed_file_sha256(
+                source_root, "scripts/release_installer_outer.py"
+            ),
+        }
+        receipt_tools = _validate_receipt_tools(
+            receipt.get("tools"),
+            kind=kind,
+            native_tools=_receipt_native_tool_placeholders(kind),
+        )
+    except (OSError, ValueError, TypeError) as exc:
+        raise _sanitized_error("package.receipt_invalid", artifact_name, b"source-tools") from exc
+    if receipt["source"] != {
         "commit": identity["commit"],
         "tree": identity["tree"],
         "clean_tree": True,
         "release_ref": f"refs/tags/{tag}",
     }:
         raise _sanitized_error("package.receipt_invalid", artifact_name, b"source-binding")
+    contracts = receipt["contracts"]
+    package_contract = contracts.get("package") if isinstance(contracts, dict) else None
+    if (
+        set(contracts) != {"package", "outer", "scanner"}
+        or not isinstance(package_contract, dict)
+        or set(package_contract) != {"version", "schema_id", "sha256"}
+        or package_contract.get("version") != PACKAGE_CONTRACT_VERSION
+        or package_contract.get("schema_id") != "contextlattice_release_payload.v2"
+        or not isinstance(package_contract.get("sha256"), str)
+        or not SHA256_RE.fullmatch(package_contract["sha256"])
+        or contracts.get("outer")
+        != {
+            "version": OUTER_CONTRACT_VERSION,
+            "schema_id": OUTER_CONTRACT_SCHEMA_ID,
+            "sha256": contract_sha256(source_root, "public", tag),
+        }
+        or contracts.get("scanner")
+        != {
+            "version": SCANNER_CONTRACT_VERSION,
+            "schema_id": "contextlattice_public_release_package_scan.v1",
+            "sha256": committed_tool_digests["package_scanner"],
+        }
+        or receipt_tools.get("package_audit")
+        != {
+            "id": "audit-public-installer-package",
+            "version": PACKAGE_AUDIT_RECEIPT_VERSION,
+            "sha256": committed_tool_digests["package_audit"],
+        }
+        or receipt_tools.get("package_scanner")
+        != {
+            "id": SCANNER_CONTRACT_VERSION,
+            "version": "1",
+            "sha256": committed_tool_digests["package_scanner"],
+        }
+        or receipt_tools.get("outer_contract")
+        != {
+            "id": OUTER_CONTRACT_SCHEMA_ID,
+            "version": OUTER_CONTRACT_VERSION,
+            "sha256": committed_tool_digests["outer_contract"],
+        }
+    ):
+        raise _sanitized_error("package.receipt_invalid", artifact_name, b"contract-binding")
+    return receipt
+
+
+def verify_receipt(
+    path: Path,
+    artifact: Path,
+    *,
+    kind: str,
+    tag: str,
+    source_root: Path | None = None,
+    temp_root: Path | None = None,
+    msiinfo: str = "msiinfo",
+    msiextract: str = "msiextract",
+    containment_tool: str = "",
+    hdiutil: str = "/usr/bin/hdiutil",
+) -> dict[str, object]:
+    artifact_name = EXPECTED_INSTALLER_NAMES[kind]
+    receipt = verify_receipt_binding(
+        path,
+        artifact,
+        kind=kind,
+        tag=tag,
+        source_root=source_root,
+    )
+    artifact_row = receipt["artifact"]
     if kind == "windows":
         native = {
             "msiinfo": msiinfo,
@@ -1894,6 +1990,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--receipt-out", default="")
     parser.add_argument("--receipt-in", default="")
     parser.add_argument("--verify-receipt-only", action="store_true")
+    parser.add_argument("--verify-receipt-binding-only", action="store_true")
     return parser
 
 
@@ -1901,23 +1998,34 @@ def audit(args: argparse.Namespace) -> dict[str, object]:
     artifact = Path(args.artifact).resolve()
     source_root = Path(args.root).resolve()
     _validate_identity(artifact, kind=args.kind)
+    if args.verify_receipt_only and args.verify_receipt_binding_only:
+        raise ValueError("receipt verification modes are mutually exclusive")
     if args.receipt_in:
-        receipt = verify_receipt(
-            Path(args.receipt_in),
-            artifact,
-            kind=args.kind,
-            tag=args.tag,
-            source_root=source_root,
-            temp_root=_temp_root(args.temp_dir or str(source_root.parent)),
-            msiinfo=args.msiinfo,
-            msiextract=args.msiextract,
-            containment_tool=args.containment_tool,
-            hdiutil=args.hdiutil,
-        )
-        if args.verify_receipt_only:
+        if args.verify_receipt_binding_only:
+            receipt = verify_receipt_binding(
+                Path(args.receipt_in),
+                artifact,
+                kind=args.kind,
+                tag=args.tag,
+                source_root=source_root,
+            )
+        else:
+            receipt = verify_receipt(
+                Path(args.receipt_in),
+                artifact,
+                kind=args.kind,
+                tag=args.tag,
+                source_root=source_root,
+                temp_root=_temp_root(args.temp_dir or str(source_root.parent)),
+                msiinfo=args.msiinfo,
+                msiextract=args.msiextract,
+                containment_tool=args.containment_tool,
+                hdiutil=args.hdiutil,
+            )
+        if args.verify_receipt_only or args.verify_receipt_binding_only:
             return {"ok": True, "receipt_verified": True, "receipt": receipt}
-    elif args.verify_receipt_only:
-        raise ValueError("--verify-receipt-only requires --receipt-in")
+    elif args.verify_receipt_only or args.verify_receipt_binding_only:
+        raise ValueError("receipt verification requires --receipt-in")
 
     metadata_context: dict[str, bytes] = {}
     if args.kind == "linux":

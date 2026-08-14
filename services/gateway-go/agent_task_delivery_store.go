@@ -2802,8 +2802,8 @@ func (l *agentTaskDeliveryLedger) preparePublication(ctx context.Context, fence 
 	}
 	resultInput["context_pack_hash"] = anyToString(attempt["context_pack_hash"])
 	resultInput["publication_id"] = prepared.publicationID
-	resultInput = agentTaskContractPayload(agentTaskResultManifestContractID, resultInput)
 	resultInput["artifacts"] = []any{}
+	resultInput = agentTaskContractPayload(agentTaskResultManifestContractID, resultInput)
 	if err := agentTaskRequireContract(agentTaskResultManifestContractID, resultInput); err != nil {
 		return nil, err
 	}
@@ -2956,6 +2956,7 @@ func (l *agentTaskDeliveryLedger) preparePublication(ctx context.Context, fence 
 		artifactRows = append(artifactRows, prepared.artifacts[index].payload)
 	}
 	resultInput["artifacts"] = artifactRows
+	resultInput = agentTaskContractPayload(agentTaskResultManifestContractID, resultInput)
 	if err := agentTaskRequireContract(agentTaskResultManifestContractID, resultInput); err != nil {
 		return nil, err
 	}

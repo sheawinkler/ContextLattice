@@ -884,6 +884,8 @@ WORKER_WORKSPACE_ENV_NAMES = (
 WORKER_INSTANCE_CREDENTIAL_HEADER = "X-Worker-Instance-Credential"
 WORKER_INSTANCE_CREDENTIAL_MAX_BYTES = 256
 WORKER_INSTANCE_CREDENTIAL_RE = re.compile(r"[0-9a-f]{64}\Z", re.ASCII)
+PUBLIC_LOCAL_TASK_WORKER_PRINCIPAL = "contextlattice-local-task-worker"
+PUBLIC_LOCAL_TASK_WORKSPACE_ID = "contextlattice-owner-local"
 
 _WORKER_STATE_LOCKS: dict[str, int] = {}
 _WORKER_STATE_PATHS: dict[str, Path] = {}
@@ -973,9 +975,13 @@ def _worker_dispatcher_state_path(root: Path, dispatcher_id: str) -> Path:
 def _worker_authority_config() -> tuple[str, str]:
     principal = next((str(os.getenv(name) or "").strip() for name in WORKER_PRINCIPAL_ENV_NAMES if str(os.getenv(name) or "").strip()), "")
     workspace = next((str(os.getenv(name) or "").strip() for name in WORKER_WORKSPACE_ENV_NAMES if str(os.getenv(name) or "").strip()), "")
+    if not principal and not workspace:
+        return PUBLIC_LOCAL_TASK_WORKER_PRINCIPAL, PUBLIC_LOCAL_TASK_WORKSPACE_ID
     if bool(principal) != bool(workspace):
         raise RuntimeError("worker principal and workspace must be configured together")
-    return principal, workspace
+    if principal != PUBLIC_LOCAL_TASK_WORKER_PRINCIPAL or workspace != PUBLIC_LOCAL_TASK_WORKSPACE_ID:
+        raise RuntimeError("public worker authority must use the owner-local workspace")
+    return PUBLIC_LOCAL_TASK_WORKER_PRINCIPAL, PUBLIC_LOCAL_TASK_WORKSPACE_ID
 
 
 @contextlib.contextmanager
@@ -2089,6 +2095,11 @@ def _register_worker_identity(orchestrator_url: str, state: dict[str, Any], *, _
     persisted_workspace = persisted_workspace.strip()
     if bool(persisted_principal) != bool(persisted_workspace):
         raise RuntimeError("worker identity state authority is invalid")
+    if persisted_principal and (
+        persisted_principal != configured_principal
+        or persisted_workspace.lower() != configured_workspace.lower()
+    ):
+        raise RuntimeError("worker identity state authority does not match the configured owner-local authority")
     if persisted_credential and not WORKER_INSTANCE_CREDENTIAL_RE.fullmatch(persisted_credential):
         raise RuntimeError("worker instance credential is malformed")
     # The client owns the bearer secret. Persist it before the first request so
@@ -3208,6 +3219,11 @@ def main() -> None:
     if not model:
         model = DEFAULT_MODEL
 
+    # Validate the fixed public authority before allocating durable identity
+    # state or issuing a network request. Public service-key workers cannot
+    # opt into a foreign workspace; paid shared-workspace identity is a
+    # separate signed runtime surface.
+    _worker_authority_config()
     worker_state = _load_or_create_worker_state(worker, args.dispatcher_id or None, args.worker_instance or None)
     if str(args.worker_instance or "").strip() and str(args.worker_instance).strip() != worker_state["worker_instance_id"]:
         raise RuntimeError("configured worker instance does not match durable dispatcher identity")

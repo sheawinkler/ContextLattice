@@ -415,7 +415,7 @@ func (s *server) authenticateAgentTaskRoute(r *http.Request, operation string) (
 	}
 	switch operation {
 	case "reviewer", "recipient":
-		if !auth.Signed {
+		if !auth.Signed && !(auth.Service && s.taskServiceOwnerLocalLifecycle) {
 			return agentTaskRouteAuth{}, errors.New("signed task principal is required")
 		}
 	case "operator":
@@ -432,6 +432,217 @@ func (s *server) authenticateAgentTaskRoute(r *http.Request, operation string) (
 		}
 	}
 	return auth, nil
+}
+
+func (s *server) agentTaskServiceSessionPrincipal(sessionID, project string) (string, error) {
+	sessionID = strings.TrimSpace(sessionID)
+	project = strings.TrimSpace(project)
+	if s == nil || s.agentSessions == nil || sessionID == "" || project == "" {
+		return "", errors.New("owner-local task session authority is unavailable")
+	}
+	session, _, exists := s.agentSessions.get(sessionID)
+	if !exists || !strings.EqualFold(agentSessionProject(session), project) || agentSessionTerminal(anyToString(session["status"])) {
+		return "", errors.New("owner-local task session is unavailable or outside the task project")
+	}
+	principal := strings.TrimSpace(firstNonEmptyStrings(anyToString(session["agent_id"]), anyToString(session["agent"])))
+	if principal == "" {
+		return "", errors.New("owner-local task session principal is unavailable")
+	}
+	if err := agentTaskValidateText(principal, "owner-local task session principal", 2048); err != nil {
+		return "", err
+	}
+	return principal, nil
+}
+
+func (s *server) bindAgentTaskServiceLifecycleManifest(manifest map[string]any, boundWorkspace string) (map[string]any, error) {
+	manifest = cloneAnyMap(manifest)
+	boundWorkspace = strings.TrimSpace(boundWorkspace)
+	project := strings.TrimSpace(firstNonEmptyStrings(anyToString(manifest["project"]), anyToString(manifest["project_name"]), anyToString(manifest["projectName"])))
+	for _, field := range []string{"project", "project_name", "projectName"} {
+		value := strings.TrimSpace(anyToString(manifest[field]))
+		if value != "" && !strings.EqualFold(value, project) {
+			return nil, errors.New("service task project aliases conflict")
+		}
+	}
+	manifest["project"] = project
+	delete(manifest, "project_name")
+	delete(manifest, "projectName")
+	for _, field := range []string{"workspace_id", "workspaceId", "workspace"} {
+		value := strings.TrimSpace(anyToString(manifest[field]))
+		if value != "" && !strings.EqualFold(value, boundWorkspace) {
+			return nil, errors.New("service task workspace aliases conflict with the project binding")
+		}
+	}
+	manifest["workspace_id"] = boundWorkspace
+	delete(manifest, "workspaceId")
+	delete(manifest, "workspace")
+	contextRequest := cloneAnyMap(anyMap(manifest["context_request"]))
+	contextSessionID := strings.TrimSpace(firstNonEmptyStrings(
+		anyToString(contextRequest["session_id"]),
+		anyToString(contextRequest["sessionId"]),
+	))
+	for _, field := range []string{"session_id", "sessionId"} {
+		value := strings.TrimSpace(anyToString(contextRequest[field]))
+		if value != "" && value != contextSessionID {
+			return nil, errors.New("service task context session aliases conflict")
+		}
+	}
+	contextRequest["session_id"] = contextSessionID
+	delete(contextRequest, "sessionId")
+	manifest["context_request"] = contextRequest
+	principal, err := s.agentTaskServiceSessionPrincipal(contextSessionID, project)
+	if err != nil {
+		return nil, err
+	}
+	for _, field := range []string{"review_owner", "reviewOwner", "canonical_reviewer", "canonicalReviewer", "reviewer", "requesting_agent_id", "requestingAgentId"} {
+		value := strings.TrimSpace(anyToString(manifest[field]))
+		if value != "" && !strings.EqualFold(value, principal) {
+			return nil, errors.New("service task lifecycle identity is outside the owner-local workspace authority")
+		}
+	}
+	recipients := []any{}
+	hasReviewerSession := false
+	seenRecipientPrincipals := map[string]bool{}
+	if raw, present := manifest["recipients"]; present {
+		rows, ok := raw.([]any)
+		if !ok {
+			return nil, errors.New("service task recipients must be a list")
+		}
+		for _, rawRow := range rows {
+			row := cloneAnyMap(anyMap(rawRow))
+			if len(row) == 0 {
+				text, ok := rawRow.(string)
+				if !ok || strings.TrimSpace(text) == "" {
+					return nil, errors.New("service task recipient must be an object")
+				}
+				row = map[string]any{"principal_id": strings.TrimSpace(text)}
+			}
+			recipientSessionID := strings.TrimSpace(firstNonEmptyStrings(anyToString(row["session_id"]), anyToString(row["sessionId"])))
+			if recipientSessionID == "" {
+				recipientSessionID = contextSessionID
+			}
+			for _, field := range []string{"session_id", "sessionId"} {
+				value := strings.TrimSpace(anyToString(row[field]))
+				if value != "" && value != recipientSessionID {
+					return nil, errors.New("service task recipient session aliases conflict")
+				}
+			}
+			recipientPrincipal, recipientErr := s.agentTaskServiceSessionPrincipal(recipientSessionID, project)
+			if recipientErr != nil {
+				return nil, recipientErr
+			}
+			recipientKey := strings.ToLower(recipientPrincipal)
+			if seenRecipientPrincipals[recipientKey] {
+				return nil, errors.New("service task recipients contain a duplicate canonical principal")
+			}
+			seenRecipientPrincipals[recipientKey] = true
+			for _, field := range []string{"principal_id", "principalId", "principal", "id"} {
+				value := strings.TrimSpace(anyToString(row[field]))
+				if value != "" && !strings.EqualFold(value, recipientPrincipal) {
+					return nil, errors.New("service task recipient is outside the owner-local workspace authority")
+				}
+			}
+			for _, field := range []string{"project", "project_name", "projectName"} {
+				value := strings.TrimSpace(anyToString(row[field]))
+				if value != "" && !strings.EqualFold(value, project) {
+					return nil, errors.New("service task recipient project does not match the task project")
+				}
+			}
+			for _, field := range []string{"workspace_id", "workspaceId", "workspace"} {
+				value := strings.TrimSpace(anyToString(row[field]))
+				if value != "" && !strings.EqualFold(value, boundWorkspace) {
+					return nil, errors.New("service task recipient workspace does not match the task workspace")
+				}
+			}
+			row["principal_id"] = recipientPrincipal
+			row["project"] = project
+			row["session_id"] = recipientSessionID
+			delete(row, "principal")
+			delete(row, "principalId")
+			delete(row, "id")
+			delete(row, "sessionId")
+			delete(row, "project_name")
+			delete(row, "projectName")
+			delete(row, "workspace_id")
+			delete(row, "workspaceId")
+			delete(row, "workspace")
+			recipients = append(recipients, row)
+			if strings.EqualFold(recipientPrincipal, principal) && recipientSessionID == contextSessionID {
+				hasReviewerSession = true
+			}
+		}
+	}
+	if !hasReviewerSession {
+		if seenRecipientPrincipals[strings.ToLower(principal)] {
+			return nil, errors.New("service task recipients bind the reviewer principal to a different session")
+		}
+		recipients = append(recipients, map[string]any{
+			"principal_id": principal,
+			"role":         "reviewer",
+			"project":      project,
+			"observer":     false,
+			"session_id":   contextSessionID,
+		})
+	}
+	manifest["review_owner"] = principal
+	manifest["requesting_agent_id"] = principal
+	manifest["recipients"] = recipients
+	delete(manifest, "canonical_reviewer")
+	delete(manifest, "canonicalReviewer")
+	delete(manifest, "reviewer")
+	delete(manifest, "reviewOwner")
+	delete(manifest, "requestingAgentId")
+	return manifest, nil
+}
+
+func (s *server) agentTaskReviewerActor(ctx context.Context, taskID string, auth agentTaskRouteAuth) (string, error) {
+	if !auth.Service {
+		return auth.Principal, nil
+	}
+	if s == nil || s.taskLedger == nil || !s.taskServiceOwnerLocalLifecycle {
+		return "", errors.New("owner-local task reviewer authority is unavailable")
+	}
+	task, err := s.taskLedger.queryTask(ctx, strings.TrimSpace(taskID))
+	if err != nil {
+		return "", err
+	}
+	if err := s.authorizeTaskResource(ctx, taskID, auth); err != nil {
+		return "", err
+	}
+	reviewOwner := strings.TrimSpace(anyToString(task["review_owner"]))
+	requestingAgentID := strings.TrimSpace(anyToString(task["requesting_agent_id"]))
+	if reviewOwner == "" || !strings.EqualFold(reviewOwner, requestingAgentID) {
+		return "", errors.New("owner-local task reviewer binding is invalid")
+	}
+	return reviewOwner, nil
+}
+
+func (s *server) agentTaskRecipientActor(ctx context.Context, taskID, deliveryID string, auth agentTaskRouteAuth) (string, error) {
+	if !auth.Service {
+		return auth.Principal, nil
+	}
+	if s == nil || s.taskLedger == nil || !s.taskServiceOwnerLocalLifecycle {
+		return "", errors.New("owner-local task recipient authority is unavailable")
+	}
+	if err := s.authorizeTaskResource(ctx, taskID, auth); err != nil {
+		return "", err
+	}
+	deliveries, err := s.taskLedger.deliveries(ctx, taskID, "")
+	if err != nil {
+		return "", err
+	}
+	for _, delivery := range deliveries {
+		if anyToString(delivery["delivery_id"]) != strings.TrimSpace(deliveryID) {
+			continue
+		}
+		recipient := anyMap(delivery["recipient"])
+		recipientID := strings.TrimSpace(anyToString(delivery["recipient_id"]))
+		if recipientID == "" || !strings.EqualFold(recipientID, anyToString(recipient["principal_id"])) {
+			return "", errors.New("owner-local task recipient binding is invalid")
+		}
+		return recipientID, nil
+	}
+	return "", errors.New("task delivery record not found")
 }
 
 func agentTaskRouteOperation(path string, method string) string {
@@ -846,7 +1057,7 @@ func agentWorkerInstanceCredentialRoutePath(path string) bool {
 	return false
 }
 
-func agentWorkerIdentityAuthorityFromRoute(auth agentTaskRouteAuth, r *http.Request, payload map[string]any) (agentWorkerIdentityAuthority, error) {
+func (s *server) agentWorkerIdentityAuthorityFromRoute(auth agentTaskRouteAuth, r *http.Request, payload map[string]any) (agentWorkerIdentityAuthority, error) {
 	principalID, _, err := strictRouteStringField(payload, "principal_id")
 	if err != nil {
 		return agentWorkerIdentityAuthority{}, err
@@ -870,13 +1081,20 @@ func agentWorkerIdentityAuthorityFromRoute(auth agentTaskRouteAuth, r *http.Requ
 	principal := auth.Principal
 	workspace := auth.Workspace
 	if auth.Service {
-		principal, err = consistentAgentWorkerRouteValue("principal_id", true, principalID, principalAlias, r.URL.Query().Get("principal_id"), r.Header.Get("X-Worker-Principal"))
+		requireCallerAuthority := s == nil || s.taskServiceWorkerAuthority == nil
+		principal, err = consistentAgentWorkerRouteValue("principal_id", requireCallerAuthority, principalID, principalAlias, r.URL.Query().Get("principal_id"), r.Header.Get("X-Worker-Principal"))
 		if err != nil {
 			return agentWorkerIdentityAuthority{}, err
 		}
-		workspace, err = consistentAgentWorkerRouteValue("workspace_id", true, workspaceID, r.URL.Query().Get("workspace_id"), r.Header.Get("X-Worker-Workspace"))
+		workspace, err = consistentAgentWorkerRouteValue("workspace_id", requireCallerAuthority, workspaceID, r.URL.Query().Get("workspace_id"), r.Header.Get("X-Worker-Workspace"))
 		if err != nil {
 			return agentWorkerIdentityAuthority{}, err
+		}
+		if s != nil && s.taskServiceWorkerAuthority != nil {
+			principal, workspace, err = s.taskServiceWorkerAuthority(principal, workspace)
+			if err != nil {
+				return agentWorkerIdentityAuthority{}, err
+			}
 		}
 	} else {
 		supplied, suppliedErr := consistentAgentWorkerRouteValue("principal_id", true, principalID, principalAlias)
@@ -917,7 +1135,7 @@ func (s *server) handleAgentWorkerIdentityRoute(w http.ResponseWriter, r *http.R
 			return
 		}
 	}
-	authority, err := agentWorkerIdentityAuthorityFromRoute(auth, r, payload)
+	authority, err := s.agentWorkerIdentityAuthorityFromRoute(auth, r, payload)
 	if err != nil {
 		writeAgentTaskRouteError(w, err)
 		return
@@ -1154,6 +1372,12 @@ func (s *server) agentTaskDeliveryRoute(w http.ResponseWriter, r *http.Request) 
 			}
 			manifest["review_owner"] = auth.Principal
 			manifest["requesting_agent_id"] = auth.Principal
+		} else if s.taskServiceOwnerLocalLifecycle {
+			manifest, bindingErr = s.bindAgentTaskServiceLifecycleManifest(manifest, boundWorkspace)
+			if bindingErr != nil {
+				writeAgentTaskRouteError(w, bindingErr)
+				return
+			}
 		} else if strings.TrimSpace(anyToString(manifest["requesting_agent_id"])) == "" {
 			manifest["requesting_agent_id"] = "gateway-service"
 		}
@@ -1237,9 +1461,13 @@ func (s *server) agentTaskDeliveryRoute(w http.ResponseWriter, r *http.Request) 
 			requestedIdentityGeneration = parsed
 		}
 		if auth.Service {
-			principal, consistencyErr = consistentAgentWorkerRouteValue("principal_id", true, principalID, principalAlias, r.Header.Get("X-Worker-Principal"))
+			requireCallerAuthority := s == nil || s.taskServiceWorkerAuthority == nil
+			principal, consistencyErr = consistentAgentWorkerRouteValue("principal_id", requireCallerAuthority, principalID, principalAlias, r.Header.Get("X-Worker-Principal"))
 			if consistencyErr == nil {
-				workspace, consistencyErr = consistentAgentWorkerRouteValue("workspace_id", true, workspaceID, r.Header.Get("X-Worker-Workspace"))
+				workspace, consistencyErr = consistentAgentWorkerRouteValue("workspace_id", requireCallerAuthority, workspaceID, r.Header.Get("X-Worker-Workspace"))
+			}
+			if consistencyErr == nil && s != nil && s.taskServiceWorkerAuthority != nil {
+				principal, workspace, consistencyErr = s.taskServiceWorkerAuthority(principal, workspace)
 			}
 			if consistencyErr != nil {
 				writeAgentTaskRouteError(w, consistencyErr)
@@ -1673,7 +1901,12 @@ func (s *server) agentTaskDeliveryRoute(w http.ResponseWriter, r *http.Request) 
 						writeAgentTaskRouteError(w, resourceErr)
 						return
 					}
-					delivery, err = s.taskLedger.acknowledgeDelivery(ctx, deliveryID, auth.Principal)
+					actor, actorErr := s.agentTaskRecipientActor(ctx, taskID, deliveryID, auth)
+					if actorErr != nil {
+						writeAgentTaskRouteError(w, actorErr)
+						return
+					}
+					delivery, err = s.taskLedger.acknowledgeDelivery(ctx, deliveryID, actor)
 				} else {
 					writeJSON(w, http.StatusNotFound, map[string]any{"error": "delivery action not found"})
 					return
@@ -1710,7 +1943,12 @@ func (s *server) agentTaskDeliveryRoute(w http.ResponseWriter, r *http.Request) 
 					writeAgentTaskRouteError(w, resourceErr)
 					return
 				}
-				task, approveErr := s.taskLedger.approveLegacy(ctx, taskID, auth.Principal, anyToString(payload["note"]))
+				actor, actorErr := s.agentTaskReviewerActor(ctx, taskID, auth)
+				if actorErr != nil {
+					writeAgentTaskRouteError(w, actorErr)
+					return
+				}
+				task, approveErr := s.taskLedger.approveLegacy(ctx, taskID, actor, anyToString(payload["note"]))
 				if approveErr != nil {
 					writeAgentTaskRouteError(w, approveErr)
 					return
@@ -1722,7 +1960,12 @@ func (s *server) agentTaskDeliveryRoute(w http.ResponseWriter, r *http.Request) 
 					writeAgentTaskRouteError(w, resourceErr)
 					return
 				}
-				payload["actor"] = auth.Principal
+				actor, actorErr := s.agentTaskReviewerActor(ctx, taskID, auth)
+				if actorErr != nil {
+					writeAgentTaskRouteError(w, actorErr)
+					return
+				}
+				payload["actor"] = actor
 				payload["task_id"] = taskID
 				decision := strings.TrimSpace(strings.ToLower(anyToString(payload["decision"])))
 				sourceAttemptID := strings.TrimSpace(anyToString(payload["source_attempt_id"]))
@@ -1731,7 +1974,7 @@ func (s *server) agentTaskDeliveryRoute(w http.ResponseWriter, r *http.Request) 
 					writeAgentTaskRouteError(w, errors.New("request_changes requires source_attempt_id and positive source_generation"))
 					return
 				}
-				review, reviewErr := s.taskLedger.reviewWithFence(ctx, taskID, anyToString(payload["result_id"]), auth.Principal, decision, anyToString(payload["reason"]), anyToString(payload["replacement_result_id"]), sourceAttemptID, sourceGeneration)
+				review, reviewErr := s.taskLedger.reviewWithFence(ctx, taskID, anyToString(payload["result_id"]), actor, decision, anyToString(payload["reason"]), anyToString(payload["replacement_result_id"]), sourceAttemptID, sourceGeneration)
 				if reviewErr != nil {
 					writeAgentTaskRouteError(w, reviewErr)
 					return
@@ -1743,7 +1986,12 @@ func (s *server) agentTaskDeliveryRoute(w http.ResponseWriter, r *http.Request) 
 					writeAgentTaskRouteError(w, resourceErr)
 					return
 				}
-				claim, claimErr := s.taskLedger.claimReview(ctx, taskID, anyToString(payload["result_id"]), anyToString(payload["delivery_id"]), auth.Principal)
+				actor, actorErr := s.agentTaskReviewerActor(ctx, taskID, auth)
+				if actorErr != nil {
+					writeAgentTaskRouteError(w, actorErr)
+					return
+				}
+				claim, claimErr := s.taskLedger.claimReview(ctx, taskID, anyToString(payload["result_id"]), anyToString(payload["delivery_id"]), actor)
 				if claimErr != nil {
 					writeAgentTaskRouteError(w, claimErr)
 					return
@@ -1755,7 +2003,12 @@ func (s *server) agentTaskDeliveryRoute(w http.ResponseWriter, r *http.Request) 
 					writeAgentTaskRouteError(w, resourceErr)
 					return
 				}
-				answer, answerErr := s.taskLedger.answerBlockingQuestion(ctx, taskID, anyToString(payload["result_id"]), anyToString(payload["delivery_id"]), auth.Principal, anyToString(payload["answer"]), anyToString(payload["source_attempt_id"]))
+				actor, actorErr := s.agentTaskRecipientActor(ctx, taskID, anyToString(payload["delivery_id"]), auth)
+				if actorErr != nil {
+					writeAgentTaskRouteError(w, actorErr)
+					return
+				}
+				answer, answerErr := s.taskLedger.answerBlockingQuestion(ctx, taskID, anyToString(payload["result_id"]), anyToString(payload["delivery_id"]), actor, anyToString(payload["answer"]), anyToString(payload["source_attempt_id"]))
 				if answerErr != nil {
 					writeAgentTaskRouteError(w, answerErr)
 					return
@@ -1767,8 +2020,13 @@ func (s *server) agentTaskDeliveryRoute(w http.ResponseWriter, r *http.Request) 
 					writeAgentTaskRouteError(w, resourceErr)
 					return
 				}
+				actor, actorErr := s.agentTaskReviewerActor(ctx, taskID, auth)
+				if actorErr != nil {
+					writeAgentTaskRouteError(w, actorErr)
+					return
+				}
 				payload["task_id"] = taskID
-				payload["approver"] = auth.Principal
+				payload["approver"] = actor
 				approval, approvalErr := s.taskLedger.createApproval(ctx, payload)
 				if approvalErr != nil {
 					writeAgentTaskRouteError(w, approvalErr)
@@ -1781,8 +2039,13 @@ func (s *server) agentTaskDeliveryRoute(w http.ResponseWriter, r *http.Request) 
 					writeAgentTaskRouteError(w, resourceErr)
 					return
 				}
+				actor, actorErr := s.agentTaskReviewerActor(ctx, taskID, auth)
+				if actorErr != nil {
+					writeAgentTaskRouteError(w, actorErr)
+					return
+				}
 				payload["task_id"] = taskID
-				payload["actor"] = auth.Principal
+				payload["actor"] = actor
 				integration, integrationErr := s.taskLedger.integrate(ctx, payload)
 				if integrationErr != nil {
 					writeAgentTaskRouteError(w, integrationErr)

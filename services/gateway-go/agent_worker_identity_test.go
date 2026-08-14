@@ -19,12 +19,12 @@ import (
 
 func TestWorkerIdentityPythonProducerToGatewayHTTPAckRestartCAS(t *testing.T) {
 	first, second := identityTestLedgers(t)
-	authority := identityTestAuthority("python-principal", "python-workspace", "python-instance")
-	if _, err := first.registerWorkerIdentity(context.Background(), "python-occupier", authority.WorkspaceID, "python-http-worker", "occupier-instance"); err != nil {
+	authority := identityTestAuthority(publicLocalAgentTaskWorkerPrincipalID, publicLocalAgentTaskWorkspaceID, "python-instance")
+	if _, err := first.registerWorkerIdentity(context.Background(), authority.PrincipalID, authority.WorkspaceID, "python-http-worker", "occupier-instance"); err != nil {
 		t.Fatalf("seed canonical worker identity: %v", err)
 	}
 	key := "python-worker-http-test-key"
-	server := &server{taskLedger: first, orchestratorAPIKey: key}
+	server := &server{taskLedger: first, orchestratorAPIKey: key, taskServiceWorkerAuthority: publicLocalAgentTaskServiceWorkerAuthority}
 	var capturedAck []byte
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/agents/workers/identity/ack") {
@@ -150,7 +150,7 @@ print(json.dumps({"state": safe_state, "claim": claim}, sort_keys=True))
 func TestWorkerIdentityDefaultLauncherSharedRootAllocatesAndAcknowledgesDistinctInstances(t *testing.T) {
 	ledger, _ := identityTestLedgers(t)
 	key := "default-launcher-worker-key"
-	server := &server{taskLedger: ledger, orchestratorAPIKey: key}
+	server := &server{taskLedger: ledger, orchestratorAPIKey: key, taskServiceWorkerAuthority: publicLocalAgentTaskServiceWorkerAuthority}
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		buildMux(server).ServeHTTP(w, r)
 	}))
@@ -184,8 +184,8 @@ func TestWorkerIdentityDefaultLauncherSharedRootAllocatesAndAcknowledgesDistinct
 		"TASK_AGENT_WORKER_STATE_ROOT="+stateRoot,
 		"CONTEXTLATTICE_TASK_WORKTREE_ROOT="+worktreeRoot,
 		"TASK_WORKER=shared-default-worker",
-		"TASK_WORKER_PRINCIPAL=default-launcher-principal",
-		"TASK_WORKER_WORKSPACE=default-launcher-workspace",
+		"TASK_WORKER_PRINCIPAL="+publicLocalAgentTaskWorkerPrincipalID,
+		"TASK_WORKER_WORKSPACE="+publicLocalAgentTaskWorkspaceID,
 		"TASK_MODEL_PROVIDER=auto",
 		"TASK_MODEL=qwen3.5:9b",
 		"PYTHONDONTWRITEBYTECODE=1",
@@ -217,7 +217,7 @@ func TestWorkerIdentityDefaultLauncherSharedRootAllocatesAndAcknowledgesDistinct
 	// Keep one requested ID occupied so the concurrent launches exercise the
 	// real server-issued canonical update and Python ACK path. They must still
 	// receive distinct instance/canonical identities.
-	seedAuthority := identityTestAuthority("default-launcher-seed", "default-launcher-workspace", "default-launcher-seed-instance")
+	seedAuthority := identityTestAuthority("default-launcher-seed", publicLocalAgentTaskWorkspaceID, "default-launcher-seed-instance")
 	_, seedIdentity := registerIdentityForTest(t, ledger, seedAuthority, "shared-default-worker")
 	launches := make(chan struct {
 		output []byte
@@ -255,7 +255,7 @@ func TestWorkerIdentityDefaultLauncherSharedRootAllocatesAndAcknowledgesDistinct
 			t.Fatalf("sequential default launcher %d did not complete real retirement lifecycle: %v (%s)", index, runErr, strings.TrimSpace(string(output)))
 		}
 	}
-	rows, err := ledger.db.Query(`SELECT `+workerIdentitySelectColumns+` FROM task_ledger_worker_identities WHERE principal_id=? AND workspace_id=? AND requested_worker_id=? ORDER BY worker_instance_id`, "default-launcher-principal", "default-launcher-workspace", "shared-default-worker")
+	rows, err := ledger.db.Query(`SELECT `+workerIdentitySelectColumns+` FROM task_ledger_worker_identities WHERE principal_id=? AND workspace_id=? AND requested_worker_id=? ORDER BY worker_instance_id`, publicLocalAgentTaskWorkerPrincipalID, publicLocalAgentTaskWorkspaceID, "shared-default-worker")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -301,10 +301,10 @@ func TestWorkerIdentityDefaultLauncherSharedRootAllocatesAndAcknowledgesDistinct
 		t.Fatalf("expected two simultaneous collision updates to be durably acknowledged, got %d", acknowledgedUpdates)
 	}
 	var retirementCount, closedCount int
-	if err := ledger.db.QueryRow(`SELECT COUNT(*) FROM task_ledger_worker_identity_retirements WHERE workspace_id=? AND principal_id=?`, "default-launcher-workspace", "default-launcher-principal").Scan(&retirementCount); err != nil {
+	if err := ledger.db.QueryRow(`SELECT COUNT(*) FROM task_ledger_worker_identity_retirements WHERE workspace_id=? AND principal_id=?`, publicLocalAgentTaskWorkspaceID, publicLocalAgentTaskWorkerPrincipalID).Scan(&retirementCount); err != nil {
 		t.Fatal(err)
 	}
-	if err := ledger.db.QueryRow(`SELECT COUNT(*) FROM task_ledger_worker_identities WHERE workspace_id=? AND principal_id=? AND status='closed'`, "default-launcher-workspace", "default-launcher-principal").Scan(&closedCount); err != nil {
+	if err := ledger.db.QueryRow(`SELECT COUNT(*) FROM task_ledger_worker_identities WHERE workspace_id=? AND principal_id=? AND status='closed'`, publicLocalAgentTaskWorkspaceID, publicLocalAgentTaskWorkerPrincipalID).Scan(&closedCount); err != nil {
 		t.Fatal(err)
 	}
 	if retirementCount != sequentialLaunchCount+2 || closedCount != sequentialLaunchCount+2 {
@@ -332,7 +332,7 @@ func TestWorkerIdentityDefaultLauncherSharedRootAllocatesAndAcknowledgesDistinct
 	// The requested canonical is now free, but none of the old tombstoned
 	// instances may be resurrected. A new instance may reclaim the requested
 	// canonical only through a fresh active registration.
-	reclaimAuthority := identityTestAuthority("default-launcher-principal", "default-launcher-workspace", "post-retirement-instance")
+	reclaimAuthority := identityTestAuthority(publicLocalAgentTaskWorkerPrincipalID, publicLocalAgentTaskWorkspaceID, "post-retirement-instance")
 	response, err := ledger.registerWorkerIdentity(context.Background(), reclaimAuthority.PrincipalID, reclaimAuthority.WorkspaceID, "shared-default-worker", reclaimAuthority.WorkerInstanceID)
 	if err != nil || anyToString(anyMap(response["identity"])["canonical_worker_id"]) != "shared-default-worker" {
 		t.Fatalf("fresh identity did not reclaim the released requested canonical: response=%#v err=%v", response, err)

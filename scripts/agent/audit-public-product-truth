@@ -102,7 +102,10 @@ WORKFLOW_REQUIRED_PATHS = (
     "scripts/install_global_agent_tools.ps1",
     "scripts/public_sync_guard.sh",
     "scripts/agent_hooks/public_leak_guard.sh",
+    "scripts/agent/audit-public-installer-package",
     "scripts/tests/test_public_boundary_guards.py",
+    "scripts/tests/test_public_release_package_scan.py",
+    "scripts/tests/test_public_release_workflow.py",
     "scripts/tests/test_t*_public_projection.py",
     "scripts/sync_public_overview.sh",
     "scripts/install_public_overview_sync.sh",
@@ -115,7 +118,7 @@ WORKFLOW_REQUIRED_PATHS = (
     "scripts/tests/test_public_product_truth.py",
     "services/gateway-go/commercial_contract_generated.go",
     "services/gateway-go/commercial_contract_generated_test.go",
-    ".github/workflows/release-installers.yml",
+    ".github/workflows/public-release-installers.yml",
     ".github/workflows/public-product-truth.yml",
 )
 

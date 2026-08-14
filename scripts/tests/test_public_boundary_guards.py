@@ -617,6 +617,11 @@ class PublicBoundaryGuardTests(unittest.TestCase):
     def test_distribution_text_scan_normalizes_private_and_operator_paths(self) -> None:
         cases = (
             ("README.md", "/Users/contributor/Documents/Projects/operator-only/README.md\n", "/Users/contributor"),
+            (
+                "scripts/agent/audit-agent-runtime-contract",
+                "AUDIT_PROJECT = '/home/audit-operator/closed-project'\n",
+                "/home/audit-operator",
+            ),
             ("docs/public_overview/integration.md", "See ../private/operator.md\n", "../private"),
             ("CONTRIBUTING.md", "See ./private/operator.md\n", "./private"),
             ("docs/installation.md", "See docs/private/operator.md\n", "docs/private"),

@@ -1212,7 +1212,79 @@ class PublicReleasePackageScanTests(unittest.TestCase):
             "package.receipt_invalid",
         )
 
-    def test_dirty_source_and_wrong_github_sha_fail_closed(self) -> None:
+    def test_portable_receipt_binding_never_invokes_native_package_tools(self) -> None:
+        linux_artifact = self._linux_artifact()
+        source = self.source_repo()
+        scan = AUDIT.audit_linux(linux_artifact, source_root=source, tag=TAG)
+        base_receipt = AUDIT.build_receipt(
+            linux_artifact,
+            kind="linux",
+            tag=TAG,
+            scan=scan,
+            source_root=source,
+        )
+        native_tool_names = {
+            "macos": ("hdiutil",),
+            "windows": ("msiinfo", "msiextract", "containment"),
+        }
+        with mock.patch.object(
+            AUDIT,
+            "_native_tool_identities",
+            side_effect=AssertionError("portable receipt verification invoked a native tool"),
+        ):
+            for kind, tool_names in native_tool_names.items():
+                with self.subTest(kind=kind):
+                    artifact = self.root / AUDIT.EXPECTED_INSTALLER_NAMES[kind]
+                    artifact.write_bytes(linux_artifact.read_bytes())
+                    binding = AUDIT._artifact_binding(
+                        artifact,
+                        artifact_name=AUDIT.EXPECTED_INSTALLER_NAMES[kind],
+                    )
+                    receipt = json.loads(json.dumps(base_receipt))
+                    receipt["kind"] = kind
+                    receipt["artifact"] = {
+                        "name": AUDIT.EXPECTED_INSTALLER_NAMES[kind],
+                        "kind": kind,
+                        "size_bytes": binding["size_bytes"],
+                        "sha256": binding["sha256"],
+                    }
+                    for name in tool_names:
+                        receipt["tools"][name] = {
+                            "id": name,
+                            "version": "native-stage-attested",
+                            "sha256": "a" * 64,
+                        }
+                    receipt_path = self.root / f"{kind}-binding-receipt.json"
+                    receipt_path.write_text(
+                        json.dumps(receipt, sort_keys=True) + "\n",
+                        encoding="utf-8",
+                    )
+                    self.assertEqual(
+                        AUDIT.verify_receipt_binding(
+                            receipt_path,
+                            artifact,
+                            kind=kind,
+                            tag=TAG,
+                            source_root=source,
+                        ),
+                        receipt,
+                    )
+
+                    tampered = json.loads(json.dumps(receipt))
+                    tampered["tools"][tool_names[0]]["sha256"] = "A" * 64
+                    receipt_path.write_text(json.dumps(tampered) + "\n", encoding="utf-8")
+                    self.assert_sanitized_failure(
+                        lambda: AUDIT.verify_receipt_binding(
+                            receipt_path,
+                            artifact,
+                            kind=kind,
+                            tag=TAG,
+                            source_root=source,
+                        ),
+                        "package.receipt_invalid",
+                    )
+
+    def test_dirty_source_and_wrong_release_commit_fail_closed(self) -> None:
         artifact = self._linux_artifact()
         source = self.source_repo()
         injected = source / "untracked-release-injection.txt"
@@ -1230,7 +1302,24 @@ class PublicReleasePackageScanTests(unittest.TestCase):
         finally:
             injected.unlink(missing_ok=True)
 
-        with mock.patch.dict(os.environ, {"GITHUB_SHA": "0" * 40}):
+        head = subprocess.check_output(
+            ["git", "-C", str(source), "rev-parse", "HEAD"],
+            text=True,
+        ).strip()
+        with mock.patch.dict(
+            os.environ,
+            {"GITHUB_SHA": "0" * 40, "RELEASE_COMMIT": head},
+        ):
+            self.assertTrue(
+                AUDIT.audit_linux(
+                    artifact,
+                    source_root=source,
+                    tag=TAG,
+                    temp_root=self.root,
+                )["ok"]
+            )
+
+        with mock.patch.dict(os.environ, {"RELEASE_COMMIT": "0" * 40}):
             self.assert_sanitized_failure(
                 lambda: AUDIT.audit_linux(
                     artifact,
@@ -1280,11 +1369,17 @@ class PublicReleasePackageScanTests(unittest.TestCase):
             promotion.index("Promote audited draft release"),
         )
         final_audit = promotion[: promotion.index("Promote audited draft release")]
-        self.assertIn("--verify-receipt-only", final_audit)
+        self.assertIn("--verify-receipt-binding-only", publish)
+        self.assertIn("--verify-receipt-binding-only", final_audit)
+        self.assertNotIn("--verify-receipt-only", publish)
+        self.assertNotIn("--verify-receipt-only", final_audit)
+        self.assertNotIn("--containment-tool bwrap", publish)
+        self.assertNotIn("--containment-tool bwrap", final_audit)
         self.assertIn("scripts/agent/audit-public-release-assets", final_audit)
         promote_step = promotion[promotion.index("Promote audited draft release") :]
         self.assertIn("public-release-promotion-recheck", promote_step)
         self.assertLess(promote_step.index("cmp -s"), promote_step.index("gh release edit"))
+        self.assertIn("--latest=false", promote_step)
         self.assertNotIn("--clobber", workflow)
 
 

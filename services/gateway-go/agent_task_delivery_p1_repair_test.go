@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -865,5 +867,269 @@ func TestAgentTaskP1ProviderIntegrationRequiresExactNonemptyReceiptTarget(t *tes
 	}
 	if testAgentTaskCount(t, restarted, "task_ledger_integrations") != 1 || testAgentTaskCount(t, restarted, "task_ledger_events") != eventsBefore {
 		t.Fatal("different provider target replay mutated authoritative state")
+	}
+}
+
+func TestPublicProductionTaskAuthorityCompletesOwnerLocalLifecycle(t *testing.T) {
+	ledger := testAgentTaskLedger(t)
+	const apiKey = "public-owner-local-task-key"
+	const project = "public-owner-local-project"
+	const sessionID = "sess_public_owner_local"
+	const sessionAgentID = "codex_gpt5"
+	server, _, sessions := testAgentTaskServerWithMemory(
+		t,
+		ledger,
+		project,
+		sessionAgentID,
+		sessionID,
+	)
+	server.orchestratorAPIKey = apiKey
+	server.taskProjectWorkspace = publicLocalAgentTaskProjectWorkspace
+	server.taskServiceWorkerAuthority = publicLocalAgentTaskServiceWorkerAuthority
+	server.taskServiceOwnerLocalLifecycle = true
+	sessions.idleTTL = time.Hour
+
+	foreignManifest := testAgentTaskManifest(
+		"public-owner-local-foreign-task",
+		project,
+		"foreign-task-owner",
+		sessionID,
+	)
+	delete(foreignManifest, "workspace_id")
+	if status, _ := repairTaskRouteJSON(t, server, http.MethodPost, "/agents/tasks", foreignManifest, "", apiKey); status != http.StatusForbidden {
+		t.Fatalf("public service accepted caller-owned reviewer/recipient authority: status=%d", status)
+	}
+	for index, mutate := range []func(map[string]any){
+		func(recipient map[string]any) { recipient["sessionId"] = "sess_foreign_alias" },
+		func(recipient map[string]any) { recipient["principalId"] = "foreign-principal-alias" },
+		func(recipient map[string]any) { recipient["project_name"] = "foreign-project-alias" },
+		func(recipient map[string]any) { recipient["workspaceId"] = "foreign-workspace-alias" },
+	} {
+		aliasManifest := testAgentTaskManifest(
+			fmt.Sprintf("public-owner-local-recipient-alias-%d", index),
+			project,
+			sessionAgentID,
+			sessionID,
+		)
+		delete(aliasManifest, "workspace_id")
+		mutate(anyMap(anySlice(aliasManifest["recipients"])[0]))
+		if status, _ := repairTaskRouteJSON(t, server, http.MethodPost, "/agents/tasks", aliasManifest, "", apiKey); status == http.StatusOK {
+			t.Fatalf("public service accepted conflicting recipient identity aliases: case=%d", index)
+		}
+	}
+	for index, mutate := range []func(map[string]any){
+		func(candidate map[string]any) { candidate["project_name"] = "foreign-project-alias" },
+		func(candidate map[string]any) { candidate["workspaceId"] = "foreign-workspace-alias" },
+		func(candidate map[string]any) { candidate["reviewOwner"] = "foreign-reviewer-alias" },
+		func(candidate map[string]any) { candidate["requestingAgentId"] = "foreign-requester-alias" },
+		func(candidate map[string]any) {
+			anyMap(candidate["context_request"])["sessionId"] = "sess_foreign_alias"
+		},
+	} {
+		conflict := testAgentTaskManifest(
+			fmt.Sprintf("public-owner-local-root-alias-%d", index),
+			project,
+			sessionAgentID,
+			sessionID,
+		)
+		delete(conflict, "workspace_id")
+		mutate(conflict)
+		if status, _ := repairTaskRouteJSON(t, server, http.MethodPost, "/agents/tasks", conflict, "", apiKey); status == http.StatusOK {
+			t.Fatalf("public service accepted conflicting root identity aliases: case=%d", index)
+		}
+	}
+	if _, _, err := sessions.startOrReuse(map[string]any{
+		"session_id": "sess_public_owner_local_alt",
+		"agent":      "test",
+		"agent_id":   sessionAgentID,
+		"project":    project,
+		"objective":  "receive the same durable task result",
+	}); err != nil {
+		t.Fatalf("start alternate owner-local recipient session: %v", err)
+	}
+	duplicateManifest := testAgentTaskManifest(
+		"public-owner-local-duplicate-recipient",
+		project,
+		sessionAgentID,
+		sessionID,
+	)
+	delete(duplicateManifest, "workspace_id")
+	duplicateManifest["recipients"] = append(anySlice(duplicateManifest["recipients"]), map[string]any{
+		"principal_id": sessionAgentID,
+		"role":         "reviewer",
+		"project":      project,
+		"observer":     false,
+		"session_id":   "sess_public_owner_local_alt",
+	})
+	if status, _ := repairTaskRouteJSON(t, server, http.MethodPost, "/agents/tasks", duplicateManifest, "", apiKey); status == http.StatusOK {
+		t.Fatal("public service accepted duplicate canonical recipient principals")
+	}
+	alternateOnlyManifest := testAgentTaskManifest(
+		"public-owner-local-alternate-only-recipient",
+		project,
+		sessionAgentID,
+		sessionID,
+	)
+	delete(alternateOnlyManifest, "workspace_id")
+	alternateOnlyManifest["recipients"] = []any{map[string]any{
+		"principal_id": sessionAgentID,
+		"role":         "reviewer",
+		"project":      project,
+		"observer":     false,
+		"session_id":   "sess_public_owner_local_alt",
+	}}
+	if status, _ := repairTaskRouteJSON(t, server, http.MethodPost, "/agents/tasks", alternateOnlyManifest, "", apiKey); status == http.StatusOK {
+		t.Fatal("public service accepted reviewer principal under an alternate recipient session")
+	}
+
+	manifest := testAgentTaskManifest(
+		"public-owner-local-task",
+		project,
+		sessionAgentID,
+		sessionID,
+	)
+	manifest["approval_policy"] = map[string]any{"required": true, "policy_version": "owner-local.v1"}
+	manifest["approved"] = false
+	delete(manifest, "workspace_id")
+	status, submitted := repairTaskRouteJSON(t, server, http.MethodPost, "/agents/tasks", manifest, "", apiKey)
+	if status != http.StatusOK {
+		t.Fatalf("public production task submission failed: status=%d response=%#v", status, submitted)
+	}
+	task := anyMap(submitted["task"])
+	if anyToString(task["task_id"]) != "public-owner-local-task" ||
+		anyToString(task["workspace_id"]) != publicLocalAgentTaskWorkspaceID ||
+		anyToString(task["review_owner"]) != sessionAgentID ||
+		anyToString(task["requesting_agent_id"]) != sessionAgentID {
+		t.Fatalf("public task did not receive the closed owner-local authority: %#v", task)
+	}
+	for _, recipient := range agentTaskRecipientRows(task) {
+		if anyToString(recipient["principal_id"]) != sessionAgentID {
+			t.Fatalf("public task retained caller-owned recipient authority: %#v", recipient)
+		}
+	}
+
+	if status, response := repairTaskRouteJSON(t, server, http.MethodPost, "/agents/tasks/public-owner-local-task/approve", map[string]any{"note": "owner-local approval"}, "", apiKey); status != http.StatusOK || !anyToBool(anyMap(response["task"])["approved"]) {
+		t.Fatalf("public owner-local approval failed: status=%d response=%#v", status, response)
+	}
+
+	credential := strings.Repeat("a", workerInstanceCredentialBytes*2)
+	registration := map[string]any{
+		"requested_worker_id": "public-owner-local-worker",
+		"worker_instance_id":  "public-owner-local-instance",
+	}
+	foreignRegistration := cloneAnyMap(registration)
+	foreignRegistration["principal_id"] = "foreign-service-worker"
+	foreignRegistration["workspace_id"] = "foreign-service-workspace"
+	if foreignStatus, _ := repairTaskRouteJSON(t, server, http.MethodPost, "/agents/workers/register", foreignRegistration, "", apiKey, credential); foreignStatus != http.StatusForbidden {
+		t.Fatalf("public service worker rebound owner-local authority: status=%d", foreignStatus)
+	}
+	status, registered := repairTaskRouteJSON(t, server, http.MethodPost, "/agents/workers/register", registration, "", apiKey, credential)
+	if status != http.StatusOK {
+		t.Fatalf("public production worker registration failed: status=%d response=%#v", status, registered)
+	}
+	identity := anyMap(registered["identity"])
+	claimRequest := map[string]any{
+		"requested_worker_id":               identity["requested_worker_id"],
+		"canonical_worker_id":               identity["canonical_worker_id"],
+		"worker_instance_id":                identity["worker_instance_id"],
+		"worker_identity_update_generation": identity["worker_identity_update_generation"],
+	}
+	status, claimed := repairTaskRouteJSON(t, server, http.MethodPost, "/agents/tasks/next", claimRequest, "", apiKey, credential)
+	if status != http.StatusOK {
+		t.Fatalf("public production task claim failed: status=%d response=%#v", status, claimed)
+	}
+	claimedTask := anyMap(claimed["task"])
+	if anyToString(claimedTask["task_id"]) != anyToString(task["task_id"]) || anyToString(claimedTask["workspace_id"]) != publicLocalAgentTaskWorkspaceID {
+		t.Fatalf("public production task lifecycle did not return the submitted task: %#v", claimed)
+	}
+	fence := testAgentTaskFenceFromClaim(t, claimed)
+	if status, response := repairTaskRouteJSON(t, server, http.MethodPost, "/agents/tasks/"+fence.TaskID+"/heartbeat", fencePayload(fence), "", apiKey); status != http.StatusOK {
+		t.Fatalf("public owner-local heartbeat failed: status=%d response=%#v", status, response)
+	}
+	observation := fencePayload(fence)
+	observation["runner_status"] = "succeeded"
+	observation["exit_code"] = 0
+	observation["metadata"] = map[string]any{"source": "public-owner-local-lifecycle"}
+	if status, response := repairTaskRouteJSON(t, server, http.MethodPost, "/agents/tasks/"+fence.TaskID+"/observe", observation, "", apiKey); status != http.StatusOK {
+		t.Fatalf("public owner-local observation failed: status=%d response=%#v", status, response)
+	}
+	publicationRequest := hardeningPublicationRequest(fence, claimed, fence.TaskID, []any{
+		map[string]any{"name": "owner-local-proof.txt", "media_type": "text/plain", "content": "bounded owner-local proof"},
+	})
+	for field, value := range fencePayload(fence) {
+		publicationRequest[field] = value
+	}
+	status, staged := repairTaskRouteJSON(t, server, http.MethodPost, "/agents/tasks/"+fence.TaskID+"/publish", publicationRequest, "", apiKey)
+	if status != http.StatusOK || anyToString(staged["publication_id"]) == "" {
+		t.Fatalf("public owner-local publication staging failed: status=%d response=%#v", status, staged)
+	}
+	status, committed := repairTaskRouteJSON(t, server, http.MethodPost, "/agents/tasks/"+fence.TaskID+"/finalize", map[string]any{"publication_id": staged["publication_id"]}, "", apiKey)
+	if status != http.StatusOK || anyToString(committed["status"]) != "committed" {
+		t.Fatalf("public owner-local publication finalization failed: status=%d response=%#v", status, committed)
+	}
+	deliveries := anySlice(committed["deliveries"])
+	artifacts := anySlice(anyMap(committed["result"])["artifacts"])
+	if len(deliveries) != 1 || len(artifacts) != 1 {
+		t.Fatalf("public publication lost durable artifact/delivery rows: %#v", committed)
+	}
+	if !anyToBool(anyMap(anyMap(committed["result"])["format_contract"])["contract_valid"]) {
+		t.Fatalf("public publication retained an invalid result contract: %#v", committed["result"])
+	}
+	deliveryID := anyToString(anyMap(deliveries[0])["delivery_id"])
+	resultID := anyToString(committed["result_id"])
+	artifactID := anyToString(anyMap(artifacts[0])["artifact_id"])
+	if status, response := repairTaskRouteJSON(t, server, http.MethodPost, "/agents/tasks/"+fence.TaskID+"/deliveries/"+deliveryID+"/deliver", map[string]any{}, "", apiKey); status != http.StatusOK || anyToString(anyMap(response["delivery"])["status"]) != "delivered" {
+		t.Fatalf("public owner-local delivery projection failed: status=%d response=%#v", status, response)
+	}
+	// The immutable task/delivery authority remains usable after the live
+	// session becomes terminal and is eventually evicted. Submission and
+	// projection already proved the exact session/project/agent binding.
+	sessions.mu.Lock()
+	sessions.sessions[sessionID]["status"] = "completed"
+	sessions.mu.Unlock()
+	if status, response := repairTaskRouteJSON(t, server, http.MethodPost, "/agents/tasks/"+fence.TaskID+"/deliveries/"+deliveryID+"/ack", map[string]any{}, "", apiKey); status != http.StatusOK || anyToString(anyMap(response["delivery"])["status"]) != "acknowledged" {
+		t.Fatalf("public owner-local delivery acknowledgement failed: status=%d response=%#v", status, response)
+	}
+	sessions.mu.Lock()
+	delete(sessions.sessions, sessionID)
+	delete(sessions.events, sessionID)
+	sessions.mu.Unlock()
+	if status, response := repairTaskRouteJSON(t, server, http.MethodGet, "/agents/tasks/artifacts/"+artifactID, map[string]any{}, "", apiKey); status != http.StatusOK || anyToString(anyMap(response["artifact"])["artifact_id"]) != artifactID {
+		t.Fatalf("public owner-local artifact read failed: status=%d response=%#v", status, response)
+	}
+	if status, response := repairTaskRouteJSON(t, server, http.MethodPost, "/agents/tasks/"+fence.TaskID+"/review-claim", map[string]any{"result_id": resultID, "delivery_id": deliveryID}, "", apiKey); status != http.StatusOK || anyToString(anyMap(response["reviewer_claim"])["actor"]) != sessionAgentID {
+		t.Fatalf("public owner-local review claim failed: status=%d response=%#v", status, response)
+	}
+	if status, response := repairTaskRouteJSON(t, server, http.MethodPost, "/agents/tasks/"+fence.TaskID+"/review", map[string]any{"result_id": resultID, "decision": "accept", "reason": "owner-local evidence verified"}, "", apiKey); status != http.StatusOK || anyToString(anyMap(response["review"])["decision"]) != "accept" {
+		t.Fatalf("public owner-local review failed: status=%d response=%#v", status, response)
+	}
+	cleanupReceipt := testAgentTaskCleanupReceipt(committed, fence)
+	if status, response := repairTaskRouteJSON(t, server, http.MethodPost, "/agents/tasks/"+fence.TaskID+"/cleanup", testAgentTaskCleanupRequest(fence, cleanupReceipt), "", apiKey); status != http.StatusOK || !anyToBool(response["acknowledged"]) {
+		t.Fatalf("public owner-local cleanup acknowledgement failed: status=%d response=%#v", status, response)
+	}
+}
+
+func TestPublicProductionTaskAuthorityIsWiredIntoGatewayStartup(t *testing.T) {
+	source, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{
+		"taskServiceWorkerAuthority:      publicLocalAgentTaskServiceWorkerAuthority",
+		"taskServiceOwnerLocalLifecycle:  true",
+	} {
+		if !bytes.Contains(source, []byte(required)) {
+			t.Fatalf("production Gateway is missing task authority wiring %q", required)
+		}
+	}
+	workspace, err := (&server{}).resolveAgentTaskProjectWorkspace("public-project")
+	if err != nil {
+		t.Fatalf("public task project resolver is unavailable: %v", err)
+	}
+	if workspace != publicLocalAgentTaskWorkspaceID {
+		t.Fatalf("public task project resolver returned %q, want %q", workspace, publicLocalAgentTaskWorkspaceID)
+	}
+	if bytes.Contains(source, []byte("taskProjectWorkspace:            publicLocalAgentTaskProjectWorkspace")) {
+		t.Fatal("production Gateway must retain the optional paid project-workspace resolver seam")
 	}
 }

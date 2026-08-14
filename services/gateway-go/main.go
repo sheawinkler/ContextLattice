@@ -338,6 +338,8 @@ type server struct {
 	taskDeliveryProjectionFault     func() error
 	taskMemoryWriteFault            func(stage string) error
 	taskProjectWorkspace            func(project string) (string, error)
+	taskServiceWorkerAuthority      func(principal, workspace string) (string, string, error)
+	taskServiceOwnerLocalLifecycle  bool
 	taskSignedRouteAuth             func(*http.Request) (agentTaskRouteAuth, bool, error)
 	taskRecoveryCancel              context.CancelFunc
 	taskRecoveryDone                chan struct{}
@@ -1415,6 +1417,8 @@ func newServerWithContext(startupContext context.Context) *server {
 		aggregateSignal:                 aggregateSignalInstance,
 		feedbackStore:                   feedbackStoreInstance,
 		taskLedger:                      agentTaskLedgerInstance,
+		taskServiceWorkerAuthority:      publicLocalAgentTaskServiceWorkerAuthority,
+		taskServiceOwnerLocalLifecycle:  true,
 		telemetrySink:                   telemetrySinkInstance,
 		telemetrySpool:                  telemetrySpoolInstance,
 		telemetryRing:                   telemetryRingInstance,

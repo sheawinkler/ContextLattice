@@ -142,6 +142,77 @@ def _allocate_default_state_in_child(root: str, dispatcher_root: str, queue, rel
 
 
 class TaskAgentWorkerClaimIdentityTests(unittest.TestCase):
+    def test_public_worker_defaults_to_owner_local_authority(self) -> None:
+        worker = load_task_worker()
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(
+                worker._worker_authority_config(),
+                (
+                    worker.PUBLIC_LOCAL_TASK_WORKER_PRINCIPAL,
+                    worker.PUBLIC_LOCAL_TASK_WORKSPACE_ID,
+                ),
+            )
+        with mock.patch.dict(os.environ, {"TASK_WORKER_PRINCIPAL": "custom-principal"}, clear=True):
+            with self.assertRaisesRegex(RuntimeError, "configured together"):
+                worker._worker_authority_config()
+        with mock.patch.dict(
+            os.environ,
+            {
+                "TASK_WORKER_PRINCIPAL": "custom-principal",
+                "TASK_WORKER_WORKSPACE": "custom-workspace",
+            },
+            clear=True,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "owner-local workspace"):
+                worker._worker_authority_config()
+        with mock.patch.dict(
+            os.environ,
+            {
+                "TASK_WORKER_PRINCIPAL": worker.PUBLIC_LOCAL_TASK_WORKER_PRINCIPAL,
+                "TASK_WORKER_WORKSPACE": worker.PUBLIC_LOCAL_TASK_WORKSPACE_ID,
+            },
+            clear=True,
+        ):
+            self.assertEqual(
+                worker._worker_authority_config(),
+                (worker.PUBLIC_LOCAL_TASK_WORKER_PRINCIPAL, worker.PUBLIC_LOCAL_TASK_WORKSPACE_ID),
+            )
+
+    def test_public_worker_rejects_foreign_authority_before_state_or_network(self) -> None:
+        worker = load_task_worker()
+        with mock.patch.object(
+            worker,
+            "_worker_authority_config",
+            side_effect=RuntimeError("public worker authority must use the owner-local workspace"),
+        ), mock.patch.object(worker, "_load_or_create_worker_state") as load_state, mock.patch.object(
+            worker, "_post"
+        ) as post, mock.patch.object(sys, "argv", ["task_agent_worker.py", "--once"]):
+            with self.assertRaisesRegex(RuntimeError, "owner-local workspace"):
+                worker.main()
+        load_state.assert_not_called()
+        post.assert_not_called()
+
+    def test_public_worker_rejects_persisted_foreign_authority_before_network_or_credential(self) -> None:
+        worker = load_task_worker()
+        with tempfile.TemporaryDirectory() as root, mock.patch.dict(
+            os.environ, {"TASK_AGENT_WORKER_STATE_ROOT": root}, clear=False
+        ):
+            state = worker._load_or_create_worker_state("hermes-agent")
+            state["principal_id"] = "legacy-foreign-principal"
+            state["workspace_id"] = "legacy-foreign-workspace"
+            state = worker._save_worker_state(state)
+            state_path = Path(root) / "worker_identity.json"
+            before_state = dict(state)
+            before_json = state_path.read_text(encoding="utf-8")
+            with mock.patch.object(worker, "_post") as post:
+                with self.assertRaisesRegex(RuntimeError, "configured owner-local authority"):
+                    worker._register_worker_identity("http://127.0.0.1:8075", state)
+            post.assert_not_called()
+            self.assertEqual(state, before_state)
+            self.assertEqual(state_path.read_text(encoding="utf-8"), before_json)
+            self.assertNotIn("worker_instance_credential", state)
+            worker._release_worker_state_lock(state_path)
+
     def test_common_emit_and_gateway_errors_use_canonical_sanitizer(self) -> None:
         common = __import__("scripts.agent._common", fromlist=["_common"])
         output = io.StringIO()
@@ -613,7 +684,11 @@ class TaskAgentWorkerClaimIdentityTests(unittest.TestCase):
                 canonical="hermes-agent-restart",
                 acknowledged=1,
             )
-            with mock.patch.object(restarted_worker, "_post", side_effect=[identity_response, ack_response]):
+            with mock.patch.object(
+                restarted_worker,
+                "_worker_authority_config",
+                return_value=("principal-1", "workspace-1"),
+            ), mock.patch.object(restarted_worker, "_post", side_effect=[identity_response, ack_response]):
                 resumed = restarted_worker._register_worker_identity("http://127.0.0.1:8075", restarted)
             self.assertNotIn("pending_identity_update", resumed)
             self.assertEqual(resumed["worker_identity_update_generation"], 1)
@@ -622,7 +697,11 @@ class TaskAgentWorkerClaimIdentityTests(unittest.TestCase):
         worker = load_task_worker()
         with tempfile.TemporaryDirectory() as root, mock.patch.dict(
             os.environ, {"TASK_AGENT_WORKER_STATE_ROOT": root}, clear=False
-        ), mock.patch.object(worker, "_worker_authority_config", return_value=("", "")):
+        ), mock.patch.object(
+            worker,
+            "_worker_authority_config",
+            return_value=("principal-persisted", "workspace-persisted"),
+        ):
             for update in (None, update_fixture(worker, {"worker_instance_id": "placeholder"})):
                 state = worker._load_or_create_worker_state("hermes-agent")
                 state["principal_id"] = "principal-persisted"
@@ -738,7 +817,11 @@ class TaskAgentWorkerClaimIdentityTests(unittest.TestCase):
                 captured["payload"] = dict(payload)
                 return registration_fixture(worker, state)
 
-            with mock.patch.object(worker, "_post", side_effect=fake_post):
+            with mock.patch.object(
+                worker,
+                "_worker_authority_config",
+                return_value=("principal-1", "workspace-1"),
+            ), mock.patch.object(worker, "_post", side_effect=fake_post):
                 registered = worker._register_worker_identity("http://127.0.0.1:8075", state)
             self.assertEqual(captured["path"], "/agents/workers/register")
             self.assertEqual(captured["payload"]["requested_worker_id"], "hermes-agent")
