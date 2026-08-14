@@ -804,22 +804,35 @@ def _snapshot_writable_tree(root: Path) -> dict[str, tuple[int, int, int, int]]:
         for name in sorted(os.listdir(directory_fd)):
             entry_relative = f"{relative}/{name}" if relative else name
             try:
+                info = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+            except OSError as exc:
+                if exc.errno == errno.ENOENT:
+                    continue
+                raise
+            # Record regular files, symlinks, sockets, FIFOs, and devices from
+            # metadata only. Opening a live Unix socket can return ENXIO on a
+            # shared CI temp parent even though it is harmless containment
+            # state, and no non-directory entry needs traversal.
+            record(entry_relative, info)
+            if not stat.S_ISDIR(info.st_mode):
+                continue
+            try:
                 child_fd = os.open(
                     name,
-                    os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK,
+                    os.O_RDONLY
+                    | os.O_DIRECTORY
+                    | os.O_CLOEXEC
+                    | os.O_NOFOLLOW,
                     dir_fd=directory_fd,
                 )
             except OSError as exc:
-                if exc.errno != errno.ELOOP:
-                    raise
-                # Record a symlink without ever opening or descending through it.
-                record(entry_relative, os.stat(name, dir_fd=directory_fd, follow_symlinks=False))
-                continue
+                if exc.errno in {errno.ENOENT, errno.ENOTDIR, errno.ELOOP}:
+                    continue
+                raise
             try:
-                info = os.fstat(child_fd)
-                record(entry_relative, info)
-                if stat.S_ISDIR(info.st_mode):
-                    walk(child_fd, entry_relative)
+                opened = os.fstat(child_fd)
+                record(entry_relative, opened)
+                walk(child_fd, entry_relative)
             finally:
                 os.close(child_fd)
 

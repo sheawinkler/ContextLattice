@@ -8,6 +8,8 @@ import io
 import json
 import os
 import shutil
+import socket
+import stat
 import struct
 import subprocess
 import sys
@@ -704,32 +706,49 @@ class PublicReleasePackageScanTests(unittest.TestCase):
         stage = self._windows_stage()
         msiinfo, msiextract = self._fake_msitools(stage)
         artifact = self._deterministic_msi_fixture()
-        report = AUDIT.audit_windows(
-            artifact,
-            source_root=self.source_repo(),
-            tag=TAG,
-            temp_root=self.root,
-            msiinfo=str(msiinfo),
-            msiextract=str(msiextract),
-        )
-        self.assertTrue(report["ok"])
-
-        shutil.rmtree(stage)
-        material = b"sk_" + b"live_" + b"W" * 32
-        stage = self._windows_stage(secret=material)
-        _, msiextract = self._fake_msitools(stage)
-        self.assert_sanitized_failure(
-            lambda: AUDIT.audit_windows(
+        with mock.patch.object(AUDIT.sys, "platform", "darwin"):
+            report = AUDIT.audit_windows(
                 artifact,
                 source_root=self.source_repo(),
                 tag=TAG,
                 temp_root=self.root,
                 msiinfo=str(msiinfo),
                 msiextract=str(msiextract),
-            ),
-            "token.stripe_live",
-            material,
-        )
+            )
+            self.assertTrue(report["ok"])
+
+            shutil.rmtree(stage)
+            material = b"sk_" + b"live_" + b"W" * 32
+            stage = self._windows_stage(secret=material)
+            _, msiextract = self._fake_msitools(stage)
+            self.assert_sanitized_failure(
+                lambda: AUDIT.audit_windows(
+                    artifact,
+                    source_root=self.source_repo(),
+                    tag=TAG,
+                    temp_root=self.root,
+                    msiinfo=str(msiinfo),
+                    msiextract=str(msiextract),
+                ),
+                "token.stripe_live",
+                material,
+            )
+
+    def test_containment_snapshot_records_unix_socket_without_opening_it(self) -> None:
+        if not hasattr(socket, "AF_UNIX"):
+            self.skipTest("Unix sockets are unavailable")
+        with tempfile.TemporaryDirectory(prefix="s-") as temporary:
+            socket_root = Path(temporary)
+            socket_path = socket_root / "s"
+            listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            try:
+                listener.bind(str(socket_path))
+                snapshot = AUDIT._snapshot_writable_tree(socket_root)
+                self.assertIn(socket_path.name, snapshot)
+                self.assertTrue(stat.S_ISSOCK(snapshot[socket_path.name][0]))
+            finally:
+                listener.close()
+                socket_path.unlink(missing_ok=True)
 
     def test_msi_directory_component_file_closure_rejects_foreign_rows(self) -> None:
         stage = self._windows_stage()
