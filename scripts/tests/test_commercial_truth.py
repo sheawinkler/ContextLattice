@@ -53,11 +53,11 @@ def copy_fixture(destination: Path) -> None:
 class CommercialTruthTests(unittest.TestCase):
     def test_contract_decisions(self) -> None:
         contract = json.loads((ROOT / "config/commercial_truth.v1.json").read_text(encoding="utf-8"))
-        self.assertEqual(contract["product"]["version"], "5.0.1")
-        self.assertEqual(contract["product"]["stable_tag"], "v5.0.1")
+        self.assertEqual(contract["product"]["version"], "5.0.2")
+        self.assertEqual(contract["product"]["stable_tag"], "v5.0.2")
         self.assertEqual(contract["product"]["release_train"], "5.0")
         public_index = (ROOT / "docs/public_overview/index.html").read_text(encoding="utf-8")
-        self.assertIn("<strong>5</strong> Current: v5.0.1", public_index)
+        self.assertIn("<strong>5</strong> Current: v5.0.2", public_index)
         self.assertEqual(contract["product"]["category"], "local_first_agent_intelligence_layer")
         self.assertIn("local-first intelligence layer", contract["product"]["canonical_description"])
         self.assertEqual(contract["product"]["primary_interface"], "cli")
@@ -250,7 +250,7 @@ class CommercialTruthTests(unittest.TestCase):
         self.assertNotIn("file://", payload)
         self.assertNotIn("BEGIN PRIVATE KEY", payload)
         public_truth = json.loads(payload)
-        self.assertEqual(public_truth["product"]["version"], "5.0.1")
+        self.assertEqual(public_truth["product"]["version"], "5.0.2")
         self.assertEqual(
             public_truth["release_availability"]["frontier_semantic_continuity_automation"]["availability"],
             "generally_available",

@@ -7,7 +7,7 @@ slug: releases
 ---
 # Releases
 
-The current public release baseline is `v5.0.1`. Release identity comes from the canonical commercial truth contract, signed or attributable artifacts, exact source SHAs, and deterministic verification—not from a page label alone.
+The current public release baseline is `v5.0.2`. Release identity comes from the canonical commercial truth contract, signed or attributable artifacts, exact source SHAs, and deterministic verification—not from a page label alone.
 
 ## Before upgrading
 
@@ -23,7 +23,7 @@ Source operators should use the repository instructions and `gmake quickstart`. 
 
 ```zsh
 git fetch --tags origin
-git checkout v5.0.1
+git checkout v5.0.2
 gmake quickstart
 ```
 
