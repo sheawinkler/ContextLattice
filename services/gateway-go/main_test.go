@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -413,6 +414,9 @@ func TestMemoryWriteSyncsQdrantFanout(t *testing.T) {
 	t.Setenv("QDRANT_LOCAL_URL", "")
 	t.Setenv("QDRANT_API_KEY", "test-qdrant-key")
 	t.Setenv("ORCH_FASTEMBED_RS_BASE_URL", "")
+	t.Setenv("ORCH_QDRANT_AUTO_CREATE_ON_STARTUP", "true")
+	t.Setenv("ORCH_EMBED_PROVIDER", "cheap")
+	t.Setenv("ORCH_QDRANT_EMBED_DIM", "768")
 	t.Setenv("ORCH_PGVECTOR_ENABLED", "false")
 	if !envBool("GO_GATEWAY_TEST_KEEP_ORCH_KEY", false) {
 		t.Setenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "")
@@ -5873,6 +5877,23 @@ func TestStagedRetrievalQdrantGoAdapterOwnership(t *testing.T) {
 	}
 	if !strings.Contains(qdrantCapturedBody, `"vector":[`) {
 		t.Fatalf("expected qdrant payload to include query vector, got %s", qdrantCapturedBody)
+	}
+	qdrantSearchPayload, err := parseJSONMap([]byte(qdrantCapturedBody))
+	if err != nil {
+		t.Fatalf("decode captured qdrant search payload: %v", err)
+	}
+	gotPayloadFields := normalizeSourceList(anyToStringSlice(qdrantSearchPayload["with_payload"]))
+	wantPayloadFields := normalizeSourceList([]string{
+		"content_hash",
+		"created_at",
+		"event_id",
+		"file",
+		"project",
+		"summary",
+		"topic_path",
+	})
+	if !slices.Equal(gotPayloadFields, wantPayloadFields) {
+		t.Fatalf("qdrant payload projection=%v, want %v", gotPayloadFields, wantPayloadFields)
 	}
 }
 

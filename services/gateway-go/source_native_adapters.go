@@ -25,9 +25,10 @@ import (
 )
 
 var (
-	nativeQdrantDimCacheMu sync.Mutex
-	nativeQdrantDimCache   = map[string]int{}
-	nativeQdrantDimFlight  = &singleflight.Group{}
+	nativeQdrantDimCacheMu   sync.Mutex
+	nativeQdrantDimCache     = map[string]int{}
+	nativeQdrantDimFlight    = &singleflight.Group{}
+	nativeQdrantCreateFlight = &singleflight.Group{}
 
 	nativePgvectorDBMu      sync.Mutex
 	nativePgvectorDBByDSN   = map[string]*sql.DB{}
@@ -300,6 +301,9 @@ func nativeQdrantCollectionDimProbe(
 		return 0, err
 	}
 	if resp.StatusCode >= 400 {
+		if resp.StatusCode == http.StatusNotFound {
+			return 0, fmt.Errorf("%w: status=%d", errQdrantCollectionMissing, resp.StatusCode)
+		}
 		return 0, errors.New("qdrant collection status=" + strconv.Itoa(resp.StatusCode))
 	}
 	payload, err := parseJSONMap(body)
@@ -342,12 +346,66 @@ func nativeQdrantPrimaryEmbeddingQuery(query string, minTokens int) (string, boo
 	return strings.TrimSpace(query), false
 }
 
+func nativeQdrantRetrievalPayloadFields() []string {
+	return []string{
+		"content_hash",
+		"created_at",
+		"event_id",
+		"file",
+		"project",
+		"summary",
+		"topic_path",
+	}
+}
+
 func nativeQdrantCollectionMissing(err error) bool {
 	if err == nil {
 		return false
 	}
+	if errors.Is(err, errQdrantCollectionMissing) {
+		return true
+	}
 	lower := strings.ToLower(err.Error())
 	return strings.Contains(lower, "status=404") || (strings.Contains(lower, "not found") && strings.Contains(lower, "collection"))
+}
+
+func qdrantAutoCreateEnabled() bool {
+	return envBool("ORCH_QDRANT_AUTO_CREATE_ON_STARTUP", true)
+}
+
+func nativeQdrantCreateMissingCollection(
+	ctx context.Context,
+	client *http.Client,
+	baseURL string,
+	collection string,
+	vectorDim int,
+) error {
+	if !qdrantAutoCreateEnabled() {
+		return fmt.Errorf("%w: automatic creation disabled", errQdrantCollectionMissing)
+	}
+	key := nativeQdrantCollectionDimCacheKey(baseURL, collection)
+	resultCh := nativeQdrantCreateFlight.DoChan(key, func() (any, error) {
+		if err := nativeQdrantCreateCollection(ctx, client, baseURL, collection, vectorDim); err != nil {
+			return 0, err
+		}
+		return vectorDim, nil
+	})
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case result := <-resultCh:
+		if result.Err != nil {
+			return result.Err
+		}
+		createdDim, ok := result.Val.(int)
+		if !ok || createdDim <= 0 {
+			return errors.New("qdrant collection create returned an invalid shared result")
+		}
+		if createdDim != vectorDim {
+			return fmt.Errorf("%w: existing=%d required=%d", errQdrantCollectionDimensionMismatch, createdDim, vectorDim)
+		}
+		return nil
+	}
 }
 
 func nativeQdrantEnsureCollection(
@@ -362,11 +420,24 @@ func nativeQdrantEnsureCollection(
 	}
 	if dim, err := nativeQdrantCollectionDim(ctx, client, baseURL, collection); err == nil {
 		if dim > 0 && dim != vectorDim {
-			return fmt.Errorf("qdrant collection dimension mismatch: existing=%d required=%d", dim, vectorDim)
+			return fmt.Errorf("%w: existing=%d required=%d", errQdrantCollectionDimensionMismatch, dim, vectorDim)
 		}
 		return nil
 	} else if !nativeQdrantCollectionMissing(err) {
 		return err
+	}
+	return nativeQdrantCreateMissingCollection(ctx, client, baseURL, collection, vectorDim)
+}
+
+func nativeQdrantCreateCollection(
+	ctx context.Context,
+	client *http.Client,
+	baseURL string,
+	collection string,
+	vectorDim int,
+) error {
+	if vectorDim <= 0 {
+		return errors.New("qdrant vector dimension unavailable")
 	}
 	payload := map[string]any{
 		"vectors": map[string]any{
@@ -391,16 +462,50 @@ func nativeQdrantEnsureCollection(
 	defer resp.Body.Close()
 	responseBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		if resp.StatusCode != http.StatusConflict {
-			message := "qdrant collection create status=" + strconv.Itoa(resp.StatusCode)
-			if trimmed := strings.TrimSpace(string(responseBody)); trimmed != "" {
-				message += " body=" + trimmed
+		if resp.StatusCode == http.StatusConflict {
+			dim, err := nativeQdrantCollectionDimProbe(ctx, client, baseURL, collection)
+			if err != nil {
+				return fmt.Errorf("qdrant collection create conflict probe: %w", err)
 			}
-			return errors.New(message)
+			if dim != vectorDim {
+				return fmt.Errorf("%w: existing=%d required=%d", errQdrantCollectionDimensionMismatch, dim, vectorDim)
+			}
+			return nil
 		}
+		message := "qdrant collection create status=" + strconv.Itoa(resp.StatusCode)
+		if trimmed := strings.TrimSpace(string(responseBody)); trimmed != "" {
+			message += " body=" + trimmed
+		}
+		return errors.New(message)
 	}
 	nativeQdrantSetCachedDim(baseURL, collection, vectorDim)
 	return nil
+}
+
+func nativeQdrantWriteEmbeddingDimension(
+	ctx context.Context,
+	client *http.Client,
+	baseURL string,
+	collection string,
+) (int, error) {
+	dim, err := nativeQdrantCollectionDim(ctx, client, baseURL, collection)
+	if err == nil {
+		return dim, nil
+	}
+	if !nativeQdrantCollectionMissing(err) {
+		return 0, err
+	}
+	if !qdrantAutoCreateEnabled() {
+		return 0, fmt.Errorf("%w: automatic creation disabled", errQdrantCollectionMissing)
+	}
+	dim, err = qdrantStartupEmbeddingDimension(ctx, client)
+	if err != nil {
+		return 0, fmt.Errorf("qdrant write collection dimension: %w", err)
+	}
+	if err := nativeQdrantCreateMissingCollection(ctx, client, baseURL, collection, dim); err != nil {
+		return 0, fmt.Errorf("qdrant write collection create: %w", err)
+	}
+	return dim, nil
 }
 
 func nativeQdrantTopicTagsForPath(topicPath string) []string {
@@ -466,10 +571,8 @@ func (s *server) upsertQdrantFromWrite(
 		return "skipped_unconfigured", nil
 	}
 	collection := nativeQdrantCollection()
-	vectorDim := nativeDefaultEmbedDim()
-	if dim, err := nativeQdrantCollectionDim(ctx, s.client, baseURL, collection); err == nil && dim > 0 {
-		vectorDim = dim
-	} else if err != nil && !nativeQdrantCollectionMissing(err) {
+	vectorDim, err := nativeQdrantWriteEmbeddingDimension(ctx, s.client, baseURL, collection)
+	if err != nil {
 		return "failed_schema", err
 	}
 	vector, _, err := nativeEmbedQueryVector(ctx, s.client, item.content, vectorDim)
@@ -609,7 +712,7 @@ func (s *server) queryQdrantSource(
 	searchPayload := map[string]any{
 		"vector":       queryVector,
 		"limit":        scanLimit,
-		"with_payload": true,
+		"with_payload": nativeQdrantRetrievalPayloadFields(),
 	}
 	mustFilters := []map[string]any{}
 	if projectFilter != "" {

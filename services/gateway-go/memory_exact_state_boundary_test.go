@@ -370,6 +370,9 @@ func TestQdrantFanoutSerializesWithExactStateRegistration(t *testing.T) {
 	t.Setenv("QDRANT_LOCAL_URL", "")
 	t.Setenv("QDRANT_API_KEY", "")
 	t.Setenv("ORCH_FASTEMBED_RS_BASE_URL", "")
+	t.Setenv("ORCH_QDRANT_AUTO_CREATE_ON_STARTUP", "true")
+	t.Setenv("ORCH_EMBED_PROVIDER", "cheap")
+	t.Setenv("ORCH_QDRANT_EMBED_DIM", "768")
 
 	enteredUpsert := make(chan struct{})
 	releaseUpsert := make(chan struct{})

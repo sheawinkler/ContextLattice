@@ -384,6 +384,8 @@ services:
       QDRANT_LOCAL_URL: ${QDRANT_LOCAL_URL:-http://qdrant:6333}
       QDRANT_API_KEY: ${QDRANT_API_KEY:-}
       ORCH_QDRANT_COLLECTION: ${ORCH_QDRANT_COLLECTION:-contextlattice_notes}
+      ORCH_QDRANT_AUTO_CREATE_ON_STARTUP: ${ORCH_QDRANT_AUTO_CREATE_ON_STARTUP:-true}
+      ORCH_QDRANT_EMBED_DIM: ${ORCH_QDRANT_EMBED_DIM:-384}
       ORCH_EMBED_DIM: ${ORCH_EMBED_DIM:-768}
       ORCH_PGVECTOR_ENABLED: ${ORCH_LITE_PGVECTOR_ENABLED:-false}
       ORCH_PGVECTOR_FANOUT_ENABLED: ${ORCH_PGVECTOR_FANOUT_ENABLED:-false}
@@ -595,6 +597,8 @@ services:
       QDRANT_LOCAL_URL: ${QDRANT_LOCAL_URL:-http://qdrant:6333}
       QDRANT_API_KEY: ${QDRANT_API_KEY:-}
       ORCH_QDRANT_COLLECTION: ${ORCH_QDRANT_COLLECTION:-contextlattice_notes}
+      ORCH_QDRANT_AUTO_CREATE_ON_STARTUP: ${ORCH_QDRANT_AUTO_CREATE_ON_STARTUP:-true}
+      ORCH_QDRANT_EMBED_DIM: ${ORCH_QDRANT_EMBED_DIM:-384}
       ORCH_EMBED_DIM: ${ORCH_EMBED_DIM:-768}
       ORCH_PGVECTOR_ENABLED: ${ORCH_LITE_PGVECTOR_ENABLED:-false}
       ORCH_PGVECTOR_FANOUT_ENABLED: ${ORCH_PGVECTOR_FANOUT_ENABLED:-false}
@@ -714,7 +718,7 @@ services:
       - ${ORCH_SKILLS_QUARANTINE_HOST_BIN_DIR:-${HOME}/.local/bin}:/opt/contextlattice/skills/bin:ro
       - ${ORCH_SKILLS_QUARANTINE_HOST_ROOT_DIR:-${HOME}/.codex/skills_quarantine}:/opt/contextlattice/skills_quarantine
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:${GO_GATEWAY_PORT_INTERNAL:-8091}/healthz >/dev/null || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:${GO_GATEWAY_PORT_INTERNAL:-8091}/readyz >/dev/null || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 10
