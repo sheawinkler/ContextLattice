@@ -31,7 +31,7 @@
 
   <div class="docs-tape" aria-label="Documentation status">
     <span><strong>Manual</strong> Repository-backed</span>
-    <span><strong>Release</strong> v4.0.5</span>
+    <span><strong>Release</strong> v5.0.2</span>
     <span><strong>Interface</strong> CLI first</span>
     <span><strong>Source</strong> Public/main</span>
   </div>
@@ -107,15 +107,26 @@ contextlattice_adopt proof --agents codex --skip-provider-smoke --pretty</code><
 <p>Remove <code>--check</code> to write or update managed instruction blocks. Existing user-authored content outside those blocks is preserved.</p>
 <h2 id="capability-discovery">Capability discovery<a class="heading-anchor" href="#capability-discovery" aria-label="Link to Capability discovery">#</a></h2>
 <div class="code-frame"><div class="code-frame-label"><span>zsh</span></div><pre><code class="language-zsh">contextlattice_skills_index search &quot;browser automation&quot; --pretty
+contextlattice_skills_index discover &quot;browser automation&quot; --pretty
+contextlattice_skills_index stage owner/repo@skill --pretty
+contextlattice_skills_index refresh --due --pretty
+contextlattice_skills_index promote owner/repo@skill --yes --pretty
 contextlattice_agent_adapter profiles</code></pre></div>
-<p>Skills Index searches configured capability roots without loading every skill body into startup context.</p>
+<p><code>search</code> scans configured active roots without loading every skill body into startup context. <code>discover</code> normalizes results from Vercel&#x27;s <code>npx skills find</code> without installing them. <code>stage</code> clones a bounded GitHub-backed source into quarantine, records its commit and digest, and scans for secrets and hazardous instructions. <code>refresh --due</code> updates registered quarantine candidates only; it never changes active skills. <code>promote</code> is the only activation path and requires <code>--yes</code>. Review findings additionally require <code>--accept-review</code>; collisions require <code>--replace</code> and preserve the previous directory as a recoverable backup.</p>
+<p>The default refresh interval is 24 hours (<code>CONTEXTLATTICE_SKILLS_REFRESH_INTERVAL_HOURS</code>). Invoke <code>refresh --due</code> from an operator-owned scheduler when periodic checks are desired; ContextLattice does not create a background job implicitly.</p>
+<h2 id="skill-efficacy-review">Skill efficacy review<a class="heading-anchor" href="#skill-efficacy-review" aria-label="Link to Skill efficacy review">#</a></h2>
+<div class="code-frame"><div class="code-frame-label"><span>zsh</span></div><pre><code class="language-zsh">contextlattice_agent_tools skill-evolution usage-record --payload-file usage-stage.json
+contextlattice_agent_tools skill-evolution efficacy-review --payload-file review.json</code></pre></div>
+<p>A usage receipt advances through <code>searched</code>, <code>selected</code>, <code>invoked</code>, and <code>verified_outcome</code>. Search affects discoverability only. Efficacy requires the same project, agent, and session in both the Utility Ledger and a matching session outcome event. Reviews can retain, abstain, or create an inactive bounded-note, revision, or retirement candidate. They never edit or activate an installed skill, and third-party improvements remain local-overlay or upstream-PR candidates.</p>
+<p>Notes and revisions require three verified baseline uses, three disjoint exact-matched holdouts, positive utility lift, no material regression, an exact current skill digest, novelty, and fixed size limits. See the <a href="https://github.com/sheawinkler/ContextLattice/blob/main/docs/skill-efficacy-review.md" target="_blank" rel="noreferrer">full receipt and review contract</a>.</p>
 <h2 id="advanced-packets-and-traces">Advanced packets and traces<a class="heading-anchor" href="#advanced-packets-and-traces" aria-label="Link to Advanced packets and traces">#</a></h2>
 <div class="code-frame"><div class="code-frame-label"><span>zsh</span></div><pre><code class="language-zsh">contextlattice_synthesis_pack &quot;release risk&quot; --project contextlattice --pretty
-contextlattice_agent_trace --session-id &lt;session-id&gt; --tree
-contextlattice_agent_trace --session-id &lt;session-id&gt; --markdown --proof</code></pre></div>
+contextlattice_agent_trace --session-id &lt;session-id&gt;
+contextlattice_agent_trace --session-id &lt;session-id&gt; --preset proof
+contextlattice_agent_trace --session-id &lt;session-id&gt; --preset export</code></pre></div>
 <p>Use synthesis packs when a complex decision needs findings, topic gravity, graph bridges, constraints, next actions, and open questions over the same bounded evidence. Use traces to inspect the run-shaping trail; missing links remain visible rather than inferred.</p>
 <h2 id="exit-discipline">Exit discipline<a class="heading-anchor" href="#exit-discipline" aria-label="Link to Exit discipline">#</a></h2>
-<p>Commands that report JSON or <code>--pretty</code> output should still be judged by their exit status and concrete fields. Keep secrets out of pasted examples and logs.</p>
+<p>Interactive terminals default to readable output; pipes and redirected output stay compact for automation. Override with <code>CONTEXTLATTICE_CLI_OUTPUT=pretty|compact</code>, <code>--pretty</code>, or <code>--raw</code>. Commands should still be judged by their exit status and concrete fields. Keep secrets out of pasted examples and logs.</p>
       </div>
       <nav class="docs-pagination" aria-label="Previous and next documentation pages">
         <a class="docs-step" href="/docs/concepts/"><small>Previous</small><strong>Core concepts</strong></a><a class="docs-step" href="/docs/integrations/"><small>Next</small><strong>Integrations</strong></a>
@@ -133,6 +144,7 @@ contextlattice_agent_trace --session-id &lt;session-id&gt; --markdown --proof</c
 <a class="toc-level-2" href="#readiness-and-adoption">Readiness and adoption</a>
 <a class="toc-level-2" href="#agent-integration">Agent integration</a>
 <a class="toc-level-2" href="#capability-discovery">Capability discovery</a>
+<a class="toc-level-2" href="#skill-efficacy-review">Skill efficacy review</a>
 <a class="toc-level-2" href="#advanced-packets-and-traces">Advanced packets and traces</a>
 <a class="toc-level-2" href="#exit-discipline">Exit discipline</a>
       <a class="docs-top-link" href="#main-content">Back to top ↑</a>
@@ -140,7 +152,7 @@ contextlattice_agent_trace --session-id &lt;session-id&gt; --markdown --proof</c
   </main>
 
   <footer class="site-footer">
-    <span>ContextLattice / docs / v4.0.5</span>
+    <span>ContextLattice / docs / v5.0.2</span>
     <nav aria-label="Footer">
       <a href="/installation.html">Install</a>
       <a href="/troubleshooting.html">Troubleshoot</a>

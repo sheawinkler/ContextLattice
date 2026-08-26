@@ -31,7 +31,7 @@
 
   <div class="docs-tape" aria-label="Documentation status">
     <span><strong>Manual</strong> Repository-backed</span>
-    <span><strong>Release</strong> v4.0.5</span>
+    <span><strong>Release</strong> v5.0.2</span>
     <span><strong>Interface</strong> CLI first</span>
     <span><strong>Source</strong> Public/main</span>
   </div>
@@ -74,8 +74,11 @@
 <ol class="doc-list"><li>Confirm the exact host and runtime profile under test.</li><li>Check <code>/health</code> for orchestrator liveness.</li><li>Check authenticated <code>/status</code> and <code>contextlattice doctor --pretty</code>.</li><li>Run a bounded real search or write/readback in the affected scope.</li><li>Inspect dependency, queue, continuation, and storage evidence.</li><li>Change only the smallest reversible component implicated by that evidence.</li></ol>
 <h2 id="health-checks">Health checks<a class="heading-anchor" href="#health-checks" aria-label="Link to Health checks">#</a></h2>
 <div class="code-frame"><div class="code-frame-label"><span>zsh</span></div><pre><code class="language-zsh">curl -fsS http://127.0.0.1:8075/health | jq
+curl -fsS http://127.0.0.1:8075/healthz | jq
+curl -fsS http://127.0.0.1:8075/readyz | jq
 contextlattice doctor --pretty
 contextlattice_agent_runtime_proof --pretty</code></pre></div>
+<p><code>/healthz</code> is gateway liveness: it binds before full server construction and remains HTTP 200 while a large local store hydrates behind a fail-closed route gate. <code>/readyz</code> is dependency readiness: it returns HTTP 503 until server construction, required memory state, and Qdrant payload indexes are ready. In strict Go/Rust mode the legacy Python backend is explicitly <code>not_required</code>; it is not reported as a failed dependency.</p>
 <p>The one-command runtime proof exercises bootstrap, scoped recall, checkpoint, handoff, context package, completion, status, and telemetry. Use it when a release or incident needs more than a liveness check.</p>
 <h2 id="retrieval-verification">Retrieval verification<a class="heading-anchor" href="#retrieval-verification" aria-label="Link to Retrieval verification">#</a></h2>
 <p>Use the normal CLI against the affected project and query.</p>
@@ -124,7 +127,7 @@ contextlattice_agent_runtime_proof --pretty</code></pre></div>
   </main>
 
   <footer class="site-footer">
-    <span>ContextLattice / docs / v4.0.5</span>
+    <span>ContextLattice / docs / v5.0.2</span>
     <nav aria-label="Footer">
       <a href="/installation.html">Install</a>
       <a href="/troubleshooting.html">Troubleshoot</a>

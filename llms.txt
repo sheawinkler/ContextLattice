@@ -27,7 +27,7 @@ Product positioning (public-safe):
 - The CLI is the primary interface. The dashboard, HTTP, and MCP are companion visibility and integration surfaces.
 # END GENERATED COMMERCIAL TRUTH: llms-positioning
 # BEGIN GENERATED COMMERCIAL TRUTH: llms-release
-- Current public release baseline is v4.0.5. The CLI is the primary product interface; the dashboard is the visibility and account companion, with HTTP and MCP available for programmatic integration.
+- Current public release baseline is v5.0.2. The CLI is the primary product interface; the dashboard is the visibility and account companion, with HTTP and MCP available for programmatic integration.
 # END GENERATED COMMERCIAL TRUTH: llms-release
 - Public local lite starts with topic rollups, Qdrant, CLI workflows, agent templates, and Skills Index discovery; full/operator stacks can add pgvector, raw ledger, behavior provenance, deeper async recall lanes, and stronger reliability controls behind the same agent-facing contract.
 - Runtime emphasizes Go/Rust primary lanes, staged retrieval, durable fanout, behavior provenance, and retrieval quality over time.
@@ -49,8 +49,10 @@ Agent usage expectations:
 - Use `contextlattice_async_inbox_drain --session-id <id>` after ordinary tool boundaries to surface unseen async continuation progress/ready/terminal-degraded steering; Go-native adapter/context-pack/write/search/run-advisor commands auto-drain when a session id is present.
 - If an agent runtime supports post-tool hooks, configure `contextlattice_async_inbox_hook --session-id <id>` as a fail-open hook; it delegates to the same bounded inbox drain.
 - Use `contextlattice_agent_trace --session-id <id> --tree` to inspect the bounded run-shaping trail and `contextlattice_agent_trace --session-id <id> --markdown` to export a run card. Add `--proof` for the deterministic six-stage evidence timeline; it exposes gaps instead of inferring missing links.
+- Entitled Team, Operator, and Enterprise workspaces use that same CLI with `--proof --shared --operation configure|retain|analytics|export|deactivate|purge` for scoped retained receipts. Add `--adopt-current-core-anchor --adopt-existing-history` on the first configure of an unbound project. Workspace identity is credential-derived, project binding is exact, exports are bounded and hash-verifiable, deactivation preserves receipts, and purge requires `--confirm-project <project>`. Local proof reads survive every shared-retention rollback.
 - Use `contextlattice_run_advisor "<task>" --pretty` to check prompt readiness, continuation advice, objective coherence, graph quality, and next actions before a hard model call.
 - Use `contextlattice_policy_lab status --pretty` to inspect Policy Laboratory readiness; use its simulation, policy-card, promotion, retirement, contradiction, and temperature subcommands only with explicit project scope and approval for mutations.
+- Use `contextlattice agent-fit profile-resolve|runner-select|model-select|steering-watch|context-prep-schedule|context-prep-claim|context-prep-complete|context-prep-fail|context-prep-use` for profile-aware execution support. Context preparation is exact session/agent scoped and one-shot; claim credentials stay in an owner-only file and protected header. Selection remains advisor-only, and ContextLattice never executes the runner or model.
 - Use `contextlattice_skills_index search "<query>" --pretty` to discover relevant active skills/capabilities from configured roots such as `$HOME/.codex/skills` without loading the whole skills tree into prompt context.
 - For operator validation, prefer the one-command live proof: `contextlattice_agent_runtime_proof --pretty`.
 - Prefer hook-first startup only when an adapter profile is unavailable: `contextlattice_agent_start --soft --compact`.
