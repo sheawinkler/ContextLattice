@@ -148,22 +148,44 @@ func enforceOwnerOnlyEntryAt(root string, parent *os.File, name string, path str
 	if os.FileMode(before.Mode).Perm() == targetMode.Perm() {
 		return false, isDirectory, nil
 	}
-	if err := unix.Fchmodat(
-		int(parent.Fd()),
-		name,
-		uint32(targetMode.Perm()),
-		unix.AT_SYMLINK_NOFOLLOW,
-	); err != nil {
+	// Linux only gained flag-aware fchmodat2 in kernel 6.5. Calling
+	// Fchmodat with AT_SYMLINK_NOFOLLOW therefore fails with ENOSYS on still
+	// supported 6.1 hosts. Bind the entry to a no-follow descriptor first and
+	// apply the mode to that descriptor instead. The identity checks before and
+	// after chmod preserve the same rename/symlink race protection without a
+	// kernel-version dependency.
+	openFlags := unix.O_RDONLY | unix.O_CLOEXEC | unix.O_NOFOLLOW | unix.O_NONBLOCK
+	if isDirectory {
+		openFlags |= unix.O_DIRECTORY
+	}
+	fd, err := unix.Openat(int(parent.Fd()), name, openFlags, 0)
+	if err != nil {
+		return false, false, err
+	}
+	defer unix.Close(fd)
+
+	var bound unix.Stat_t
+	if err := unix.Fstat(fd, &bound); err != nil {
+		return false, false, err
+	}
+	if bound.Dev != before.Dev || bound.Ino != before.Ino || bound.Mode&unix.S_IFMT != typeBits {
+		return false, false, fmt.Errorf("owner-only migration entry changed during enforcement")
+	}
+	if err := unix.Fchmod(fd, uint32(targetMode.Perm())); err != nil {
+		return false, false, err
+	}
+	if err := unix.Fstat(fd, &bound); err != nil {
 		return false, false, err
 	}
 	var after unix.Stat_t
 	if err := unix.Fstatat(int(parent.Fd()), name, &after, unix.AT_SYMLINK_NOFOLLOW); err != nil {
 		return false, false, err
 	}
-	if after.Dev != before.Dev || after.Ino != before.Ino || after.Mode&unix.S_IFMT != typeBits {
+	if after.Dev != before.Dev || after.Ino != before.Ino || after.Mode&unix.S_IFMT != typeBits ||
+		bound.Dev != before.Dev || bound.Ino != before.Ino || bound.Mode&unix.S_IFMT != typeBits {
 		return false, false, fmt.Errorf("owner-only migration entry changed during enforcement")
 	}
-	if os.FileMode(after.Mode).Perm() != targetMode.Perm() {
+	if os.FileMode(bound.Mode).Perm() != targetMode.Perm() || os.FileMode(after.Mode).Perm() != targetMode.Perm() {
 		return false, false, fmt.Errorf("owner-only descriptor-relative permission verification failed")
 	}
 	return true, isDirectory, nil

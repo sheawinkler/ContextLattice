@@ -17,7 +17,11 @@ import (
 	"time"
 )
 
-var errQdrantPayloadIndexesWarming = errors.New("qdrant payload indexes are not ready")
+var (
+	errQdrantPayloadIndexesWarming       = errors.New("qdrant payload indexes are not ready")
+	errQdrantCollectionMissing           = errors.New("qdrant collection missing")
+	errQdrantCollectionDimensionMismatch = errors.New("qdrant collection dimension mismatch")
+)
 
 type qdrantPayloadIndexSpec struct {
 	field  string
@@ -213,21 +217,29 @@ func (s *server) runQdrantPayloadIndexHardening(ctx context.Context) error {
 	wait := envBool("ORCH_QDRANT_PAYLOAD_INDEX_HARDEN_WAIT", false)
 	retryInterval := envDurationSeconds("ORCH_QDRANT_PAYLOAD_INDEX_HARDEN_RETRY_SECS", 5)
 	requestTimeout := envDurationSeconds("ORCH_QDRANT_PAYLOAD_INDEX_HARDEN_REQUEST_TIMEOUT_SECS", 15)
+	startupEmbeddingDimension := 0
 	for {
 		attemptCtx, cancel := context.WithTimeout(ctx, requestTimeout)
-		pointsCount, missing, err := ensureQdrantPayloadIndexes(
+		pointsCount, missing, observedDimension, err := ensureQdrantPayloadIndexesWithStartupDimension(
 			attemptCtx,
 			s.client,
 			baseURL,
 			collection,
 			requiredQdrantPayloadIndexes,
 			wait,
+			startupEmbeddingDimension,
 		)
 		cancel()
+		if observedDimension > 0 {
+			startupEmbeddingDimension = observedDimension
+		}
 		attempt := s.qdrantPayloadIndexes.observe(pointsCount, missing, err)
 		if err == nil && len(missing) == 0 {
 			log.Printf("gateway-go qdrant payload indexes ready collection=%s points=%d attempts=%d", collection, pointsCount, attempt)
 			return nil
+		}
+		if errors.Is(err, errQdrantCollectionDimensionMismatch) {
+			return err
 		}
 		if err != nil && (attempt == 1 || attempt%12 == 0) {
 			log.Printf("gateway-go qdrant payload index hardening retry collection=%s attempt=%d err=%v", collection, attempt, err)
@@ -240,17 +252,41 @@ func (s *server) runQdrantPayloadIndexHardening(ctx context.Context) error {
 	}
 }
 
-func ensureQdrantPayloadIndexes(
+func ensureQdrantPayloadIndexesWithStartupDimension(
 	ctx context.Context,
 	client *http.Client,
 	baseURL string,
 	collection string,
 	specs []qdrantPayloadIndexSpec,
 	wait bool,
-) (int, []string, error) {
+	startupEmbeddingDimension int,
+) (int, []string, int, error) {
 	pointsCount, missing, err := inspectQdrantPayloadIndexes(ctx, client, baseURL, collection, specs)
+	if err != nil && nativeQdrantCollectionMissing(err) {
+		vectorDim := startupEmbeddingDimension
+		if !qdrantAutoCreateEnabled() {
+			return pointsCount, missing, vectorDim, err
+		}
+		if vectorDim <= 0 {
+			var dimensionErr error
+			vectorDim, dimensionErr = qdrantStartupEmbeddingDimension(ctx, client)
+			if dimensionErr != nil {
+				return pointsCount, missing, 0, fmt.Errorf("qdrant collection bootstrap dimension: %w", dimensionErr)
+			}
+		}
+		if createErr := nativeQdrantCreateMissingCollection(ctx, client, baseURL, collection, vectorDim); createErr != nil {
+			return pointsCount, missing, vectorDim, fmt.Errorf("qdrant collection bootstrap create: %w", createErr)
+		}
+		log.Printf(
+			"gateway-go qdrant collection auto-created collection=%s vector_dim=%d reason=missing_collection",
+			collection,
+			vectorDim,
+		)
+		pointsCount, missing, err = inspectQdrantPayloadIndexes(ctx, client, baseURL, collection, specs)
+		startupEmbeddingDimension = vectorDim
+	}
 	if err != nil || len(missing) == 0 {
-		return pointsCount, missing, err
+		return pointsCount, missing, startupEmbeddingDimension, err
 	}
 	for _, field := range missing {
 		var spec qdrantPayloadIndexSpec
@@ -264,10 +300,48 @@ func ensureQdrantPayloadIndexes(
 			continue
 		}
 		if err := createQdrantPayloadIndex(ctx, client, baseURL, collection, spec, wait); err != nil {
-			return pointsCount, missing, err
+			return pointsCount, missing, startupEmbeddingDimension, err
 		}
 	}
-	return inspectQdrantPayloadIndexes(ctx, client, baseURL, collection, specs)
+	pointsCount, missing, err = inspectQdrantPayloadIndexes(ctx, client, baseURL, collection, specs)
+	return pointsCount, missing, startupEmbeddingDimension, err
+}
+
+func qdrantStartupEmbeddingDimension(ctx context.Context, client *http.Client) (int, error) {
+	configured := envInt("ORCH_QDRANT_EMBED_DIM", 0)
+	provider := nativeEmbeddingProvider()
+	if nativeEmbeddingProviderUsesFastembed(provider) {
+		if !nativeSourceAdapterEnabled("fastembed", true) {
+			return 0, errors.New("fastembed adapter disabled")
+		}
+		baseURL := nativeFastembedBaseURL()
+		if baseURL == "" {
+			return 0, errors.New("fastembed URL not configured")
+		}
+		vector, err := nativeFastembedRequestVector(
+			ctx,
+			client,
+			"contextlattice qdrant startup dimension probe",
+			0,
+			baseURL,
+			nativeFastembedRoute(),
+		)
+		if err != nil {
+			return 0, fmt.Errorf("fastembed dimension probe failed: %w", err)
+		}
+		observed := len(vector)
+		if observed <= 0 {
+			return 0, errors.New("fastembed dimension probe returned an empty vector")
+		}
+		if configured > 0 && configured != observed {
+			return 0, fmt.Errorf("%w: configured=%d observed=%d", errQdrantCollectionDimensionMismatch, configured, observed)
+		}
+		return observed, nil
+	}
+	if configured > 0 {
+		return configured, nil
+	}
+	return 0, fmt.Errorf("ORCH_QDRANT_EMBED_DIM is required for embedding provider %q", provider)
 }
 
 func inspectQdrantPayloadIndexes(
@@ -293,6 +367,9 @@ func inspectQdrantPayloadIndexes(
 		return -1, requiredQdrantPayloadIndexFields(specs), readErr
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		if resp.StatusCode == http.StatusNotFound {
+			return -1, requiredQdrantPayloadIndexFields(specs), fmt.Errorf("%w: status=%d", errQdrantCollectionMissing, resp.StatusCode)
+		}
 		return -1, requiredQdrantPayloadIndexFields(specs), fmt.Errorf("qdrant collection status=%d", resp.StatusCode)
 	}
 	payload, err := parseJSONMap(body)
