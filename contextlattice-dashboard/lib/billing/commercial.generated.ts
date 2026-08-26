@@ -2,15 +2,15 @@
 
 export type CommercialPlanId = "free" | "starter" | "team" | "operator" | "enterprise";
 
-export const COMMERCIAL_CONTRACT_SHA256 = "b10403f9ac06f0286583fe2f00afc9d291128f9147559dacaf634a0089499a25";
+export const COMMERCIAL_CONTRACT_SHA256 = "17ee52043f7d5605ca781e2e1aa83f5fb53da5a40e92ddae259b305419e59295";
 export const COMMERCIAL_TRUTH = {
   "schema_id": "contextlattice_commercial_truth.v1",
   "schema_version": 1,
   "contract_version": 1,
   "product": {
     "name": "ContextLattice",
-    "version": "5.0.0",
-    "stable_tag": "v5.0.0",
+    "version": "5.0.1",
+    "stable_tag": "v5.0.1",
     "release_train": "5.0",
     "category": "local_first_agent_intelligence_layer",
     "canonical_description": "The local-first intelligence layer that gives AI agents durable continuity, explainable retrieval, portable context, and verified learning across harnesses.",
@@ -799,7 +799,7 @@ export const COMMERCIAL_TRUTH = {
       ]
     }
   ],
-  "contract_sha256": "b10403f9ac06f0286583fe2f00afc9d291128f9147559dacaf634a0089499a25"
+  "contract_sha256": "17ee52043f7d5605ca781e2e1aa83f5fb53da5a40e92ddae259b305419e59295"
 } as const;
 export const COMMERCIAL_PLANS = COMMERCIAL_TRUTH.plans;
 
