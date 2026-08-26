@@ -4,8 +4,8 @@
   "contract_version": 1,
   "product": {
     "name": "ContextLattice",
-    "version": "5.0.0",
-    "stable_tag": "v5.0.0",
+    "version": "5.0.1",
+    "stable_tag": "v5.0.1",
     "release_train": "5.0",
     "category": "local_first_agent_intelligence_layer",
     "canonical_description": "The local-first intelligence layer that gives AI agents durable continuity, explainable retrieval, portable context, and verified learning across harnesses.",

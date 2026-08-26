@@ -39,6 +39,16 @@
 
     <section class="section timeline">
       <article class="update-card">
+        <span class="update-meta">2026-08-26 · v5.0.1 · Retrieval That Is Actually Ready.</span>
+        <h2>Retrieval readiness now proves the collection, dimension, indexes, memory store, and native owner before health turns green.</h2>
+        <ul>
+          <li><strong>Fail-closed startup:</strong> one Qdrant authority creates only when allowed, preserves compatible collections, and blocks configured dimension mismatches.</li>
+          <li><strong>Real deployment health:</strong> Compose gates on <code>/readyz</code>, while structured smoke checks require non-degraded Go-native retrieval with no source error.</li>
+          <li><strong>Older-kernel safety:</strong> descriptor-bound owner-only migration retains no-follow identity checks on Linux 6.1 without requiring <code>fchmodat2</code>.</li>
+        </ul>
+      </article>
+
+      <article class="update-card">
         <span class="update-meta">2026-08-13 · v5.0.0 · Durable Work. Exact Evidence.</span>
         <h2>Agent tasks, graph state, isolated execution, and recall responses now share one fail-closed authority chain.</h2>
         <ul>
