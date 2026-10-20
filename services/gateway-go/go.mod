@@ -6,7 +6,7 @@ toolchain go1.26.4
 
 require (
 	filippo.io/age v1.3.1
-	github.com/klauspost/compress v1.17.6
+	github.com/klauspost/compress v1.18.7
 	github.com/lib/pq v1.10.9
 	github.com/pkoukk/tiktoken-go v0.1.8
 	github.com/pkoukk/tiktoken-go-loader v0.0.2
