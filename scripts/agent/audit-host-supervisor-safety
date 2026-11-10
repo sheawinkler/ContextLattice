@@ -38,6 +38,10 @@ REQUIRED_TESTS = (
     "test_transient_docker_failure_resets_streak_after_full_recovery",
     "test_parallel_triggers_are_single_flight",
     "test_signal_termination_releases_only_the_owned_lock",
+    "test_signals_during_lock_acquisition_release_owned_state",
+    "test_contender_cannot_reclaim_unpublished_lock_owner",
+    "test_dead_owner_recovery_respects_live_acquisition_claim",
+    "test_contended_lock_preserves_live_or_unknown_owner",
     "test_stop_reports_bootout_failure_and_retains_plist",
     "test_stop_waits_for_confirmed_unload_before_removing_plist",
     "test_global_upgrade_migrates_only_an_already_loaded_runner",
@@ -211,6 +215,32 @@ def run_audit(root: Path, changed_files: list[str] | None = None, pr_body: str =
         ),
     )
     add("bounded_recovery_policy", SUPERVISOR, bounded_ok, f"missing={bounded_missing}" if bounded_missing else "lock, thresholds, grace, cooldown, latch, and circuit breaker present")
+
+    run_once_match = re.search(r"^run_once\(\) \{.*?^\}", supervisor, re.MULTILINE | re.DOTALL)
+    run_once = run_once_match.group(0) if run_once_match else ""
+    acquisition = run_once.find("if acquire_lock;")
+    signal_handlers = ("trap release_lock EXIT", "trap 'handle_lock_signal 130' INT", "trap 'handle_lock_signal 143' TERM")
+    handlers_before_acquisition = acquisition >= 0 and all(
+        0 <= run_once.find(handler) < acquisition for handler in signal_handlers
+    )
+    lock_ok, lock_missing = contains_all(
+        supervisor,
+        (
+            'LOCK_CLAIM="$(mktemp "${LOCK_DIR}.acquire.$$.XXXXXX")"',
+            "other_lock_acquisition_active",
+            'LOCK_ACQUIRING=1',
+            'LOCK_ACQUIRING=0',
+            'LOCK_CREATED=1',
+            'LOCK_PENDING_SIGNAL="$1"',
+            'exit "$LOCK_PENDING_SIGNAL"',
+        ),
+    )
+    add(
+        "signal_safe_lock_acquisition",
+        SUPERVISOR,
+        handlers_before_acquisition and lock_ok,
+        f"handlers_before_acquisition={handlers_before_acquisition}; missing={lock_missing}",
+    )
 
     context_ok = (
         'DOCKER_CONTEXT_NAME="${DOCKER_CONTEXT:-orbstack}"' in supervisor

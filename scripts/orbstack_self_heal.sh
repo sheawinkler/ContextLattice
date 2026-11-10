@@ -188,31 +188,70 @@ write_state() {
   mv "$tmp" "$STATE_FILE"
 }
 
+LOCK_CLAIM=""
+LOCK_CREATED=0
+LOCK_ACQUIRING=0
+LOCK_PENDING_SIGNAL=0
+
+handle_lock_signal() {
+  if [[ "$LOCK_ACQUIRING" == "1" ]]; then
+    LOCK_PENDING_SIGNAL="$1"
+  else
+    exit "$1"
+  fi
+}
+
 release_lock() {
   local owner=""
+  trap '' INT TERM
   if [[ -f "$LOCK_DIR/pid" ]]; then
     owner="$(cat "$LOCK_DIR/pid" 2>/dev/null || true)"
   fi
-  [[ "$owner" == "$$" ]] || return 0
-  rm -f "$LOCK_DIR/pid" >/dev/null 2>&1 || true
-  rmdir "$LOCK_DIR" >/dev/null 2>&1 || true
+  if [[ "$LOCK_CREATED" == "1" && ( "$owner" == "$$" || -z "$owner" ) ]]; then
+    rm -f "$LOCK_DIR/pid" >/dev/null 2>&1 || true
+    rmdir "$LOCK_DIR" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "$LOCK_CLAIM" ]]; then
+    rm -f "$LOCK_CLAIM" >/dev/null 2>&1 || true
+  fi
+}
+
+other_lock_acquisition_active() {
+  local claim owner
+  for claim in "${LOCK_DIR}.acquire."*; do
+    [[ -f "$claim" && "$claim" != "$LOCK_CLAIM" ]] || continue
+    owner="${claim#"${LOCK_DIR}.acquire."}"
+    owner="${owner%%.*}"
+    # The PID is in the unique filename, visible before any file body exists.
+    [[ "$owner" =~ ^[0-9]+$ ]] || return 0
+    if kill -0 "$owner" 2>/dev/null; then
+      return 0
+    fi
+    rm -f "$claim" >/dev/null 2>&1 || true
+  done
+  return 1
 }
 
 acquire_lock() {
   local owner=""
-  if mkdir "$LOCK_DIR" 2>/dev/null; then
-    printf '%s\n' "$$" > "$LOCK_DIR/pid"
-    return 0
-  fi
-  if [[ -f "$LOCK_DIR/pid" ]]; then
+  LOCK_CLAIM="$(mktemp "${LOCK_DIR}.acquire.$$.XXXXXX")" || return 1
+  if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+    # A peer may have created the directory but not yet published its PID.
+    # Its claim also serializes recovery of a previously dead owner.
+    if other_lock_acquisition_active; then
+      return 1
+    fi
+    [[ -f "$LOCK_DIR/pid" ]] || return 1
     owner="$(cat "$LOCK_DIR/pid" 2>/dev/null || true)"
+    [[ "$owner" =~ ^[0-9]+$ ]] || return 1
+    if kill -0 "$owner" 2>/dev/null; then
+      return 1
+    fi
+    rm -f "$LOCK_DIR/pid" >/dev/null 2>&1 || return 1
+    rmdir "$LOCK_DIR" >/dev/null 2>&1 || return 1
+    mkdir "$LOCK_DIR" 2>/dev/null || return 1
   fi
-  if [[ "$owner" =~ ^[0-9]+$ ]] && kill -0 "$owner" 2>/dev/null; then
-    return 1
-  fi
-  rm -f "$LOCK_DIR/pid" >/dev/null 2>&1 || true
-  rmdir "$LOCK_DIR" >/dev/null 2>&1 || return 1
-  mkdir "$LOCK_DIR" 2>/dev/null || return 1
+  LOCK_CREATED=1
   printf '%s\n' "$$" > "$LOCK_DIR/pid"
 }
 
@@ -488,14 +527,24 @@ attempt_vm_restart() {
 }
 
 run_once() {
-  local now docker_ok="false" health="false" cpu action="none" failures health_failures
-  if ! acquire_lock; then
+  local now docker_ok="false" health="false" cpu action="none" failures health_failures locked=0
+  trap release_lock EXIT
+  trap 'handle_lock_signal 130' INT
+  trap 'handle_lock_signal 143' TERM
+  # Finish ownership publication before honoring a signal received in mkdir
+  # or the PID write. EXIT cleanup can then identify exactly what we own.
+  LOCK_ACQUIRING=1
+  if acquire_lock; then
+    locked=1
+  fi
+  LOCK_ACQUIRING=0
+  if [[ "$LOCK_PENDING_SIGNAL" != "0" ]]; then
+    exit "$LOCK_PENDING_SIGNAL"
+  fi
+  if [[ "$locked" != "1" ]]; then
     json_emit ok=true action=skipped_locked event="$EVENT" vm_restart_enabled="$([[ "$ALLOW_VM_RESTART" == "1" ]] && echo true || echo false)"
     return 0
   fi
-  trap release_lock EXIT
-  trap 'exit 130' INT
-  trap 'exit 143' TERM
 
   now="$(date +%s)"
   if [[ "$(state_uint supervisor_started_ts)" == "0" ]]; then

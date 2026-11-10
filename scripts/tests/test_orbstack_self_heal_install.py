@@ -2,7 +2,10 @@
 import json
 import os
 import plistlib
+import shutil
+import signal
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -76,6 +79,88 @@ esac
             check=False,
             timeout=10,
         )
+
+    def start_at_lock_phase(
+        self, root: Path, env: dict[str, str], phase: str
+    ) -> tuple[subprocess.Popen[str], Path]:
+        ready = root / "lock-phase-ready"
+        release = root / "lock-phase-release"
+        barrier = root / "lock-phase-barrier"
+        write_executable(
+            barrier,
+            f"#!{sys.executable}\n"
+            "import os, pathlib, time\n"
+            "pathlib.Path(os.environ['LOCK_TEST_READY']).touch()\n"
+            "deadline = time.monotonic() + 10\n"
+            "while not pathlib.Path(os.environ['LOCK_TEST_RELEASE']).exists():\n"
+            "    if time.monotonic() >= deadline: raise SystemExit(1)\n"
+            "    time.sleep(0.005)\n",
+        )
+        phase_env = env.copy()
+        phase_env.pop("BASH_ENV", None)
+        phase_env.pop("ENV", None)
+        phase_env.update(
+            {
+                "LOCK_TEST_PHASE": phase,
+                "LOCK_TEST_READY": str(ready),
+                "LOCK_TEST_RELEASE": str(release),
+                "LOCK_TEST_BARRIER": str(barrier),
+                "LOCK_TEST_DIR": str(Path(env["CONTEXTLATTICE_ORBSTACK_HEAL_RUNTIME_DIR"]) / "orbstack-self-heal.lock"),
+                "LOCK_TEST_MKDIR": shutil.which("mkdir") or "/bin/mkdir",
+            }
+        )
+        # Explicit test-only function interposition pauses the unmodified source
+        # at exact boundaries; no production sleeps or injection flags are added.
+        shell = r"""
+mkdir() {
+  if [[ "$#" == 1 && "$1" == "$LOCK_TEST_DIR" ]]; then
+    if [[ "$LOCK_TEST_PHASE" == before_mkdir ]]; then "$LOCK_TEST_BARRIER"; fi
+    "$LOCK_TEST_MKDIR" "$@" || return $?
+    if [[ "$LOCK_TEST_PHASE" == after_mkdir ]]; then "$LOCK_TEST_BARRIER"; fi
+  else
+    "$LOCK_TEST_MKDIR" "$@"
+  fi
+}
+printf() {
+  if [[ "$#" == 2 && "$1" == '%s\n' && "$2" == "$$" ]]; then
+    if [[ "$LOCK_TEST_PHASE" == before_pid ]]; then "$LOCK_TEST_BARRIER"; fi
+    builtin printf "$@" || return $?
+    if [[ "$LOCK_TEST_PHASE" == after_pid ]]; then "$LOCK_TEST_BARRIER"; fi
+  else
+    builtin printf "$@"
+  fi
+}
+source "$1" run-once --event acquisition-injection
+"""
+        proc = subprocess.Popen(
+            ["/bin/bash", "--noprofile", "--norc", "-c", shell, "lock-injection", str(SELF_HEAL)],
+            cwd=REPO_ROOT,
+            env=phase_env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+        self.addCleanup(self.finish_lock_phase, proc, release)
+        deadline = time.monotonic() + 5
+        while not ready.exists() and proc.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.005)
+        self.assertTrue(ready.exists(), f"Did not reach {phase}; returncode={proc.poll()}")
+        return proc, release
+
+    @staticmethod
+    def finish_lock_phase(proc: subprocess.Popen[str], release: Path) -> None:
+        if release.parent.exists():
+            release.touch()
+        try:
+            proc.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            # Only the test's explicitly created process group is eligible.
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            proc.communicate(timeout=3)
 
     def test_start_installs_shell_init_free_fail_closed_launch_payload(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -353,6 +438,87 @@ exit 0
             second = self.run_once(env)
             self.assertEqual(second.returncode, 1)
             self.assertEqual(json.loads(second.stdout)["action"], "docker_unavailable_no_restart")
+
+    def test_signals_during_lock_acquisition_release_owned_state(self) -> None:
+        for phase in ("before_mkdir", "after_mkdir", "before_pid", "after_pid"):
+            for sig in (signal.SIGINT, signal.SIGTERM):
+                with self.subTest(phase=phase, signal=sig), tempfile.TemporaryDirectory() as temp_dir:
+                    root = Path(temp_dir)
+                    fake_bin, runtime, _, env = self.runtime_fixture(root)
+                    write_executable(fake_bin / "docker", "#!/bin/sh\nexit 1\n")
+                    proc, release = self.start_at_lock_phase(root, env, phase)
+                    proc.send_signal(sig)
+                    release.touch()
+                    _, stderr = proc.communicate(timeout=3)
+                    self.assertEqual(proc.returncode, 128 + sig, stderr)
+                    self.assertFalse((runtime / "orbstack-self-heal.lock").exists())
+                    self.assertEqual(list(runtime.glob("orbstack-self-heal.lock.acquire.*")), [])
+                    self.assertFalse((runtime / "orbstack-self-heal.state").exists())
+                    second = self.run_once(env)
+                    self.assertEqual(second.returncode, 1, second.stderr)
+                    self.assertEqual(json.loads(second.stdout)["action"], "docker_unavailable_no_restart")
+
+    def test_contender_cannot_reclaim_unpublished_lock_owner(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            fake_bin, runtime, _, env = self.runtime_fixture(root)
+            write_executable(fake_bin / "docker", "#!/bin/sh\nexit 1\n")
+            proc, release = self.start_at_lock_phase(root, env, "after_mkdir")
+            lock_dir = runtime / "orbstack-self-heal.lock"
+            self.assertTrue(lock_dir.is_dir())
+            self.assertFalse((lock_dir / "pid").exists())
+            second = self.run_once(env)
+            self.assertEqual(second.returncode, 0, second.stderr)
+            self.assertEqual(json.loads(second.stdout)["action"], "skipped_locked")
+            self.assertTrue(lock_dir.is_dir())
+            proc.terminate()
+            release.touch()
+            _, stderr = proc.communicate(timeout=3)
+            self.assertEqual(proc.returncode, 143, stderr)
+            self.assertFalse(lock_dir.exists())
+
+    def test_dead_owner_recovery_respects_live_acquisition_claim(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            fake_bin, runtime, _, env = self.runtime_fixture(root)
+            write_executable(fake_bin / "docker", "#!/bin/sh\nexit 1\n")
+            runtime.mkdir()
+            lock_dir = runtime / "orbstack-self-heal.lock"
+            lock_dir.mkdir()
+            dead = subprocess.Popen([sys.executable, "-c", "pass"])
+            dead.wait(timeout=3)
+            (lock_dir / "pid").write_text(f"{dead.pid}\n", encoding="utf-8")
+            proc, release = self.start_at_lock_phase(root, env, "before_mkdir")
+            second = self.run_once(env)
+            self.assertEqual(second.returncode, 0, second.stderr)
+            self.assertEqual(json.loads(second.stdout)["action"], "skipped_locked")
+            self.assertEqual((lock_dir / "pid").read_text().strip(), str(dead.pid))
+            proc.terminate()
+            release.touch()
+            _, stderr = proc.communicate(timeout=3)
+            self.assertEqual(proc.returncode, 143, stderr)
+            self.assertFalse(lock_dir.exists())
+            recovered = self.run_once(env)
+            self.assertEqual(recovered.returncode, 1, recovered.stderr)
+            self.assertEqual(json.loads(recovered.stdout)["action"], "docker_unavailable_no_restart")
+
+    def test_contended_lock_preserves_live_or_unknown_owner(self) -> None:
+        for owner in (str(os.getpid()), ""):
+            with self.subTest(owner=owner), tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir)
+                fake_bin, runtime, _, env = self.runtime_fixture(root)
+                write_executable(fake_bin / "docker", "#!/bin/sh\nexit 1\n")
+                runtime.mkdir()
+                lock_dir = runtime / "orbstack-self-heal.lock"
+                lock_dir.mkdir()
+                if owner:
+                    (lock_dir / "pid").write_text(owner + "\n", encoding="utf-8")
+                result = self.run_once(env)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(json.loads(result.stdout)["action"], "skipped_locked")
+                self.assertTrue(lock_dir.is_dir())
+                self.assertEqual((lock_dir / "pid").read_text().strip() if owner else "", owner)
+                self.assertEqual(list(runtime.glob("orbstack-self-heal.lock.acquire.*")), [])
 
     def test_health_parser_requires_root_ok_boolean(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
