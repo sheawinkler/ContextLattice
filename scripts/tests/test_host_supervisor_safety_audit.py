@@ -90,6 +90,44 @@ class HostSupervisorSafetyAuditTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("fail_closed_defaults", failure_ids(payload))
 
+    def test_signal_handlers_cannot_move_after_lock_acquisition(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            make_fixture(root)
+            path = root / "scripts/orbstack_self_heal.sh"
+            text = path.read_text(encoding="utf-8")
+            handlers = "\n".join(
+                (
+                    "  trap release_lock EXIT",
+                    "  trap 'handle_lock_signal 130' INT",
+                    "  trap 'handle_lock_signal 143' TERM",
+                )
+            )
+            self.assertIn(handlers, text)
+            text = text.replace(handlers, "", 1)
+            text = text.replace("  LOCK_ACQUIRING=0", handlers + "\n  LOCK_ACQUIRING=0", 1)
+            path.write_text(text, encoding="utf-8")
+            result, payload = run_audit(root)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("signal_safe_lock_acquisition", failure_ids(payload))
+
+    def test_lock_claim_and_acquisition_injection_cannot_be_removed(self) -> None:
+        mutations = (
+            ("scripts/orbstack_self_heal.sh", 'LOCK_CLAIM="$(mktemp "${LOCK_DIR}.acquire.$$.XXXXXX")"', 'LOCK_CLAIM=""', "signal_safe_lock_acquisition"),
+            ("scripts/tests/test_orbstack_self_heal_install.py", "def test_signals_during_lock_acquisition_release_owned_state(", "def removed_acquisition_coverage(", "failure_injection_tests"),
+        )
+        for relative, before, after, check_id in mutations:
+            with self.subTest(path=relative), tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir)
+                make_fixture(root)
+                path = root / relative
+                text = path.read_text(encoding="utf-8")
+                self.assertIn(before, text)
+                path.write_text(text.replace(before, after, 1), encoding="utf-8")
+                result, payload = run_audit(root)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(check_id, failure_ids(payload))
+
     @unittest.skipUnless(
         (ROOT / ".github/workflows/release-installers.yml").is_file(),
         "paid release workflow is commercial-only",

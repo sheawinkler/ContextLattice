@@ -28,3 +28,22 @@ When a pull request changes a host-lifecycle critical path:
 Do not tag or publish a release containing a host-lifecycle critical change until deterministic checks and interactive evidence both pass. A machine-specific trigger does not excuse a generally unsafe recovery policy.
 
 The public product-truth workflow classifies the actual pull-request diff and fails if a critical change does not have every host-lifecycle evidence item checked in the pull-request body. Push and release gates rerun the deterministic contract independently of that human evidence.
+
+## Lock Acquisition And Termination
+
+The supervisor installs EXIT, INT and TERM handlers before acquiring its lock.
+Signals received during acquisition are deferred until the directory/PID
+publication attempt finishes; cleanup then removes only owned state. A unique
+PID-scoped acquisition claim prevents a contender from reclaiming a peer's
+not-yet-published ownership or racing a dead-owner recovery. The claim remains
+until EXIT cleanup. Unowned directories and malformed owner metadata are
+conservatively left alone, not guessed to be stale. Dead PID owners may be
+recovered when no competing acquisition claim is active.
+
+The failure-injection suite pauses the unmodified source before/after lock
+directory creation and before/after PID publication, then sends INT or TERM.
+It also exercises contention during unpublished ownership and stale-owner
+recovery. Keep the existing exit-code and lock-cleanup assertions: waiting for
+the PID file before sending a signal, accepting an unhandled signal exit, or
+retrying until green would hide the acquisition window rather than repair it.
+SIGKILL cannot run a cleanup handler and is not a clean-shutdown guarantee.
