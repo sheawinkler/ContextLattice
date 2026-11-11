@@ -6,6 +6,7 @@ import re
 import subprocess
 import tempfile
 import unittest
+from html.parser import HTMLParser
 from pathlib import Path
 
 
@@ -81,6 +82,46 @@ SYNC_REQUIRED_FILES = (
     "sitemap.xml",
     "styles.css",
 )
+
+
+class PlanCardParser(HTMLParser):
+    def __init__(self, source: str) -> None:
+        super().__init__()
+        self.source = source
+        self.line_offsets = [0]
+        for line in source.splitlines(keepends=True):
+            self.line_offsets.append(self.line_offsets[-1] + len(line))
+        self.cards = []
+        self.opening_tags = []
+        self.current = None
+        self.feed(source)
+        self.close()
+        if self.current is not None:
+            raise ValueError("unclosed plan card")
+
+    def source_offset(self) -> int:
+        line, column = self.getpos()
+        return self.line_offsets[line - 1] + column
+
+    def handle_starttag(self, tag, attrs) -> None:
+        if tag != "article":
+            return
+        if self.current is not None:
+            raise ValueError("nested plan card")
+        attributes = dict(attrs)
+        if "plan-card" not in (attributes.get("class") or "").split():
+            return
+        if len(attributes) != len(attrs):
+            raise ValueError("duplicate plan card attribute")
+        self.opening_tags.append(self.get_starttag_text())
+        self.current = (attributes, self.source_offset() + len(self.get_starttag_text()))
+
+    def handle_endtag(self, tag) -> None:
+        if tag == "article" and self.current is not None:
+            attributes, start = self.current
+            # Keep the original body for the existing content assertions.
+            self.cards.append((attributes, self.source[start:self.source_offset()]))
+            self.current = None
 
 
 def write(root: Path, relative: str, content: str | bytes) -> None:
@@ -783,28 +824,52 @@ class PublicProductTruthTests(unittest.TestCase):
     def test_pricing_uses_generated_hyperframe_cards(self) -> None:
         premium = (ROOT / "docs/public_overview/premium.html").read_text(encoding="utf-8")
         contract = json.loads((ROOT / "config/commercial_truth.v1.json").read_text(encoding="utf-8"))
-        cards = re.findall(
-            r'<article class="plan-card" data-plan="([^"]+)">(.*?)</article>',
-            premium,
-            re.DOTALL,
-        )
+        self.assert_pricing_cards(premium, contract)
 
-        self.assertEqual([plan_id for plan_id, _ in cards], [plan["id"] for plan in contract["plans"]])
+        opening = PlanCardParser(premium).opening_tags[0]
+        for replacement in (
+            '<article data-plan="free" class="plan-card" id="plan-free">',
+            '<article id="plan-free" data-plan="free" class="plan-card">',
+            "<article data-plan='free' id='plan-free' class='plan-card'>",
+            '<article data-note="a > b" class="plan-card" data-plan="free" id="plan-free">',
+        ):
+            with self.subTest(valid_opening=replacement):
+                self.assert_pricing_cards(premium.replace(opening, replacement, 1), contract)
+
+        control = premium.replace(opening, '<article class="plan-card" id="plan-free" data-plan="free">', 1)
+        for original, replacement in (
+            (' id="plan-free"', ''),
+            ('id="plan-free"', 'id="wrong-anchor"'),
+            ('id="plan-free"', 'id="plan-free" id="wrong-anchor"'),
+            ('data-plan="free"', 'data-plan="starter"'),
+            ('class="plan-card"', 'class="not-plan-card"'),
+            ('class="plan-cta"', 'class="missing-cta"'),
+            ('class="plan-entitlements"', 'class="missing-entitlements"'),
+        ):
+            with self.subTest(invalid_replacement=replacement):
+                self.assertIn(original, control)
+                with self.assertRaises((AssertionError, ValueError)):
+                    self.assert_pricing_cards(control.replace(original, replacement, 1), contract)
+
+    def assert_pricing_cards(self, premium: str, contract: dict) -> None:
+        cards = PlanCardParser(premium).cards
+
+        self.assertEqual([attrs.get("data-plan") for attrs, _ in cards], [plan["id"] for plan in contract["plans"]])
         self.assertNotIn('class="lane-table"', premium)
         self.assertIn('href="styles-editorial.css?v=20260724c"', premium)
         self.assertIn('href="styles-pricing.css?v=20260724a"', premium)
 
-        for plan, (plan_id, card) in zip(contract["plans"], cards, strict=True):
-            with self.subTest(plan=plan_id):
-                self.assertEqual(card.count('class="plan-cta"'), 1)
-                self.assertEqual(card.count('class="plan-entitlements"'), 1)
-                details = re.search(
-                    r'<details class="plan-entitlements">.*?<ul>(.*?)</ul>.*?</details>',
-                    card,
-                    re.DOTALL,
-                )
-                self.assertIsNotNone(details)
-                self.assertEqual(details.group(1).count("<li>"), len(plan["feature_ids"]))
+        for plan, (attrs, card) in zip(contract["plans"], cards, strict=True):
+            self.assertEqual(attrs.get("id"), f"plan-{plan['id']}")
+            self.assertEqual(card.count('class="plan-cta"'), 1)
+            self.assertEqual(card.count('class="plan-entitlements"'), 1)
+            details = re.search(
+                r'<details class="plan-entitlements">.*?<ul>(.*?)</ul>.*?</details>',
+                card,
+                re.DOTALL,
+            )
+            self.assertIsNotNone(details)
+            self.assertEqual(details.group(1).count("<li>"), len(plan["feature_ids"]))
 
         self.assertEqual(premium.count('class="capability-register"'), 1)
         self.assertEqual(premium.count('class="capability-row"'), len(contract["features"]))
