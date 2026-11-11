@@ -236,7 +236,7 @@ func main() {
 		if errors.Is(err, errCLIReportedFailure) {
 			os.Exit(1)
 		}
-		fmt.Fprintln(c.stderr, err.Error())
+		writeCLIError(c.stderr, err)
 		os.Exit(1)
 	}
 }
