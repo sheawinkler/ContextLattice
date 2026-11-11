@@ -63,7 +63,6 @@ TOPIC_ROLLUP_SQLITE_FTS_ENABLED=true
 TOPIC_ROLLUP_SQLITE_VEC_ENABLED=true
 TOPIC_ROLLUP_SQLITE_PATH=/data/topic_rollups.sqlite3
 TASK_DB_PATH=/data/agent_tasks.db
-GO_MEMORY_STORE_ROOT=/data/memory
 MEMORY_BANK_ROOT=/data/memory
 CONTEXTLATTICE_GATEWAY_STATE_ROOT=/data/state/gateway
 CONTEXTLATTICE_AGENT_CONTRACTS_PATH=/app/config/agent_contracts/agent_output_contracts.json
@@ -89,6 +88,8 @@ CONTEXTLATTICE_ORCHESTRATOR_API_KEY=<secret>
 ## Drift controls
 
 - Mount persistent storage at `/data` for memory, history, task, and gateway-state continuity. Persisting only the SQLite rollup index is insufficient.
+- Memory defaults to `/data/memory` through `MEMORY_BANK_ROOT`. Override that variable to move memory. An explicitly supplied `GO_MEMORY_STORE_ROOT` takes precedence; the image does not set it, so it cannot mask a `MEMORY_BANK_ROOT`-only override.
+- Gateway state independently defaults to `/data/state/gateway`. Changing either memory-root variable does not move state. Set `CONTEXTLATTICE_GATEWAY_STATE_ROOT` separately to move state; changing these variables does not migrate existing data.
 - Do not replace or remove an older container until its authoritative memory and state have been backed up and read back successfully.
 - If you want maximum determinism, disable learning adaptation:
   - `LEARNING_LOOP_ENABLED=false`

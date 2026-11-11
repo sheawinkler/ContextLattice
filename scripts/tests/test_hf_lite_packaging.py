@@ -17,11 +17,19 @@ MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
 
 
-def fixture_image() -> dict:
+def docker_environment() -> dict[str, str]:
+    env = {}
+    for line in (ROOT / "Dockerfile.hf-lite").read_text().splitlines():
+        if line.startswith("ENV "):
+            env.update(item.split("=", 1) for item in shlex.split(line[4:]))
+    return env
+
+
+def fixture_image(env: dict[str, str] | None = None) -> dict:
     return {
         "Id": "sha256:" + "a" * 64, "Os": "linux", "Architecture": "arm64",
         "Config": {
-            "Env": [f"{key}={value}" for key, value in MODULE.ROOTS.items()],
+            "Env": [f"{key}={value}" for key, value in (MODULE.ROOTS if env is None else env).items()],
             "Healthcheck": {"Test": ["CMD-SHELL", "curl --fail http://127.0.0.1:7860/readyz"]},
         },
     }
@@ -36,12 +44,12 @@ def fixture_search(rows) -> dict:
 class LitePackagingTests(unittest.TestCase):
     def test_image_persists_authoritative_roots_and_bundles_contracts(self):
         dockerfile = (ROOT / "Dockerfile.hf-lite").read_text()
-        env = {}
-        for line in dockerfile.splitlines():
-            if line.startswith("ENV "):
-                env.update(item.split("=", 1) for item in shlex.split(line[4:]))
+        env = docker_environment()
+        self.assertNotIn("GO_MEMORY_STORE_ROOT", env)
         for key, value in MODULE.ROOTS.items():
             self.assertEqual(env[key], value)
+        self.assertEqual(MODULE.effective_memory_root(env), "/data/memory")
+        self.assertEqual(MODULE.image_identity(fixture_image(env))["platform"], "linux/arm64")
         registry = "config/agent_contracts/agent_output_contracts.json"
         self.assertIn(f"COPY {registry} /app/{registry}", dockerfile)
         self.assertEqual(env["CONTEXTLATTICE_AGENT_CONTRACTS_PATH"], f"/app/{registry}")
@@ -49,6 +57,37 @@ class LitePackagingTests(unittest.TestCase):
         self.assertNotIn("GOARCH=amd64", dockerfile)
         self.assertIn("GOARCH=${TARGETARCH}", dockerfile)
         self.assertIn("FROM --platform=$BUILDPLATFORM", dockerfile)
+
+    def test_memory_root_override_precedence_keeps_state_root_separate(self):
+        defaults = docker_environment()
+        # Offline ENV contract only; native loadMemoryStorePolicy uses the same
+        # Go-first precedence. This is not installed custom-root proof.
+        for overrides, expected in (
+            ({}, "/data/memory"),
+            ({"MEMORY_BANK_ROOT": "/data/operator-memory"}, "/data/operator-memory"),
+            ({"GO_MEMORY_STORE_ROOT": "/data/go-memory"}, "/data/go-memory"),
+            ({"GO_MEMORY_STORE_ROOT": "/data/go-memory", "MEMORY_BANK_ROOT": "/data/operator-memory"}, "/data/go-memory"),
+            ({"GO_MEMORY_STORE_ROOT": "  ", "MEMORY_BANK_ROOT": " /data/operator-memory "}, "/data/operator-memory"),
+        ):
+            with self.subTest(overrides=overrides):
+                env = {**defaults, **overrides}
+                self.assertEqual(MODULE.effective_memory_root(env), expected)
+                self.assertEqual(env["CONTEXTLATTICE_GATEWAY_STATE_ROOT"], "/data/state/gateway")
+        moved = {**defaults, "MEMORY_BANK_ROOT": "/data/operator-memory",
+                 "CONTEXTLATTICE_GATEWAY_STATE_ROOT": "/data/operator-state"}
+        self.assertEqual(MODULE.effective_memory_root(moved), "/data/operator-memory")
+        self.assertEqual(moved["CONTEXTLATTICE_GATEWAY_STATE_ROOT"], "/data/operator-state")
+
+    def test_image_identity_accepts_legacy_and_memory_only_default_roots(self):
+        for env in (
+            dict(MODULE.ROOTS),
+            {**MODULE.ROOTS, "GO_MEMORY_STORE_ROOT": "/data/memory"},
+            {**MODULE.ROOTS, "GO_MEMORY_STORE_ROOT": "/data/memory", "MEMORY_BANK_ROOT": "/unused/lower-priority"},
+            {"GO_MEMORY_STORE_ROOT": "/data/memory", "CONTEXTLATTICE_GATEWAY_STATE_ROOT": "/data/state/gateway"},
+            {**MODULE.ROOTS, "GO_MEMORY_STORE_ROOT": "  "},
+        ):
+            with self.subTest(env=env):
+                self.assertEqual(MODULE.image_identity(fixture_image(env))["platform"], "linux/arm64")
 
     def test_contract_validation_is_required_not_just_write_ok(self):
         for payload in ({"ok": True}, {"format_contract": {"contract_valid": True}}):
@@ -65,13 +104,19 @@ class LitePackagingTests(unittest.TestCase):
     def test_image_identity_rejects_ephemeral_roots_and_liveness_only(self):
         image = fixture_image()
         self.assertEqual(MODULE.image_identity(image)["platform"], "linux/arm64")
-        bad_root = copy.deepcopy(image)
-        bad_root["Config"]["Env"][0] = "GO_MEMORY_STORE_ROOT=/tmp/memory"
+        bad_roots = [fixture_image(env) for env in (
+            {**MODULE.ROOTS, "GO_MEMORY_STORE_ROOT": "/tmp/memory"},
+            {**MODULE.ROOTS, "GO_MEMORY_STORE_ROOT": "/data/wrong-root"},
+            {**MODULE.ROOTS, "MEMORY_BANK_ROOT": "/tmp/memory"},
+            {**MODULE.ROOTS, "CONTEXTLATTICE_GATEWAY_STATE_ROOT": "/tmp/state"},
+            {"MEMORY_BANK_ROOT": "/data/memory"},
+            {"CONTEXTLATTICE_GATEWAY_STATE_ROOT": "/data/state/gateway"},
+        )]
         bad_health = copy.deepcopy(image)
         bad_health["Config"]["Healthcheck"]["Test"] = ["CMD-SHELL", "curl /health"]
         bad_id = copy.deepcopy(image)
         bad_id["Id"] = "mutable:tag"
-        for invalid in (bad_root, bad_health, bad_id):
+        for invalid in (*bad_roots, bad_health, bad_id):
             with self.subTest(invalid=invalid), self.assertRaises(RuntimeError):
                 MODULE.image_identity(invalid)
 

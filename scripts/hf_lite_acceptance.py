@@ -22,7 +22,6 @@ import uuid
 MAX_RESPONSE_BYTES = 262144
 OWNER_LABEL = "io.contextlattice.lite-acceptance"
 ROOTS = {
-    "GO_MEMORY_STORE_ROOT": "/data/memory",
     "MEMORY_BANK_ROOT": "/data/memory",
     "CONTEXTLATTICE_GATEWAY_STATE_ROOT": "/data/state/gateway",
 }
@@ -62,11 +61,18 @@ def require_local_context(context: dict) -> None:
     require(endpoint.startswith("unix://"), "acceptance requires a local Unix-socket Docker context")
 
 
+def effective_memory_root(env: dict[str, str]) -> str:
+    """Match native memory-store precedence, leaving absent roots invalid here."""
+    return env.get("GO_MEMORY_STORE_ROOT", "").strip() or env.get("MEMORY_BANK_ROOT", "").strip()
+
+
 def image_identity(payload: dict) -> dict:
     image_id = payload.get("Id", "")
     require(re.fullmatch(r"sha256:[0-9a-f]{64}", image_id) is not None, "image has no immutable identity")
     env = dict(item.split("=", 1) for item in payload["Config"].get("Env", []) if "=" in item)
-    require(all(env.get(key) == value for key, value in ROOTS.items()), "image does not declare durable memory/state roots")
+    require(effective_memory_root(env) == ROOTS["MEMORY_BANK_ROOT"]
+            and env.get("CONTEXTLATTICE_GATEWAY_STATE_ROOT", "").strip() == ROOTS["CONTEXTLATTICE_GATEWAY_STATE_ROOT"],
+            "image does not declare durable memory/state roots")
     healthcheck = payload["Config"].get("Healthcheck", {}).get("Test", [])
     require(any("/readyz" in part for part in healthcheck), "image healthcheck does not use readiness")
     labels = payload["Config"].get("Labels") or {}
