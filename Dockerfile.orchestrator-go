@@ -1,10 +1,10 @@
-FROM golang:1.26.4-alpine AS build
+FROM golang:1.26.11-alpine3.24 AS build
 WORKDIR /src
 COPY services/orchestrator-go/go.mod ./go.mod
 COPY services/orchestrator-go/main.go ./main.go
 RUN go mod download && go build -o /out/orchestrator-go ./main.go
 
-FROM alpine:3.20
+FROM alpine:3.24.4
 WORKDIR /app
 COPY --from=build /out/orchestrator-go /usr/local/bin/orchestrator-go
 EXPOSE 8090

@@ -504,13 +504,23 @@ func topicAncestorPrefixes(topicPath string, maxDepth int) []string {
 }
 
 func currentStateLexicalScore(query string, topicPath string, summary string) float64 {
-	if normalized, changed := deriveCoverageRescueQuery(query, 2); changed {
+	if normalized, changed := deriveCoverageRescueQueryKeeping(query, 2, func(token string) bool {
+		return currentStateTimestampLiteral(token) != ""
+	}); changed {
 		query = normalized
 	}
 	normalizedTopic := strings.ReplaceAll(normalizeTopicPathLoose(topicPath), "/", " ")
 	body := strings.TrimSpace(normalizedTopic + " " + strings.TrimSpace(summary))
-	queryTokens := lexicalTokenSet(query)
-	bodyTokens := lexicalTokenSet(body)
+	// Timestamp annotations must not perturb queries that do not ask for one.
+	tokenize := lexicalTokenSet
+	for _, field := range strings.Fields(query) {
+		if currentStateTimestampLiteral(field) != "" {
+			tokenize = currentStateLexicalTokens
+			break
+		}
+	}
+	queryTokens := tokenize(query)
+	bodyTokens := tokenize(body)
 	if len(queryTokens) == 0 || len(bodyTokens) == 0 {
 		return 0
 	}
@@ -530,7 +540,7 @@ func currentStateLexicalScore(query string, topicPath string, summary string) fl
 		jaccard = float64(matched) / float64(union)
 	}
 	topicCoverage := 0.0
-	topicTokens := lexicalTokenSet(normalizedTopic)
+	topicTokens := tokenize(normalizedTopic)
 	if len(topicTokens) > 0 {
 		topicHits := 0
 		for token := range topicTokens {
@@ -548,6 +558,37 @@ func currentStateLexicalScore(query string, topicPath string, summary string) fl
 		return 1
 	}
 	return score
+}
+
+func currentStateTimestampLiteral(token string) string {
+	token = strings.Trim(token, "\"'()[]{}<>,;.")
+	if len(token) < 20 || len(token) > 64 || token[4] != '-' || token[7] != '-' || (token[10] != 'T' && token[10] != 't') {
+		return ""
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, strings.ToUpper(token))
+	if err != nil {
+		return ""
+	}
+	return parsed.UTC().Format(time.RFC3339Nano)
+}
+
+func currentStateLexicalTokens(text string) map[string]struct{} {
+	tokens := make(map[string]struct{})
+	fields := strings.Fields(text)
+	ordinary := make([]string, 0, len(fields))
+	// Replace the complete literal: retaining raw day/hour fragments lets a
+	// different instant with the same wall clock cancel a canonical match.
+	for _, field := range fields {
+		if literal := currentStateTimestampLiteral(field); literal != "" {
+			tokens["timestamp:"+literal] = struct{}{}
+		} else {
+			ordinary = append(ordinary, field)
+		}
+	}
+	for token := range lexicalTokenSet(strings.Join(ordinary, " ")) {
+		tokens[token] = struct{}{}
+	}
+	return tokens
 }
 
 func currentStateSearchAsOfSupported(raw any) bool {

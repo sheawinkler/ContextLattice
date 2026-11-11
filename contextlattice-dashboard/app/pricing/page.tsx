@@ -1,7 +1,5 @@
-import { ALL_PLANS } from "@/lib/billing/plans";
+import { ALL_PLANS, planHighlights, planSelectionHref } from "@/lib/billing/plans";
 import { COMMERCIAL_TRUTH } from "@/lib/billing/commercial.generated";
-
-const PREMIUM_URL = "https://contextlattice.io/premium.html";
 
 function priceLabel(monthly: number | null, custom: boolean): string {
   if (custom) return "Custom";
@@ -37,7 +35,7 @@ export default function PricingPage() {
 
       <section className="cl-pricing-grid" aria-label="ContextLattice plans">
         {ALL_PLANS.map((plan) => {
-          const visibleFeatures = plan.features.slice(0, 6);
+          const visibleFeatures = planHighlights(plan);
           const remaining = Math.max(0, plan.features.length - visibleFeatures.length);
           const recommended = plan.id === "operator";
           return (
@@ -63,13 +61,13 @@ export default function PricingPage() {
               <p className="cl-pricing-seats">{plan.seats}</p>
               <ul className="cl-pricing-features">
                 {visibleFeatures.map((feature) => <li key={feature}>{feature}</li>)}
-                {remaining ? <li className="cl-pricing-more">+ {remaining} governed capabilities</li> : null}
+                {remaining ? <li className="cl-pricing-more">+ {remaining} other included capabilities</li> : null}
               </ul>
               <div className="cl-pricing-action">
                 {!plan.paid ? (
                   <a className="cl-button cl-button--secondary" href="/downloads">Install free local</a>
                 ) : plan.purchasable ? (
-                  <a className="cl-button" href={`${PREMIUM_URL}#plans`}>
+                  <a className="cl-button" href={planSelectionHref(plan.id, false)}>
                     Choose {plan.name}
                   </a>
                 ) : (

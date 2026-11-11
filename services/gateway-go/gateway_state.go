@@ -71,6 +71,13 @@ func gatewayContextPackRegressionFixtureEntry() gatewaystate.EntryInput {
 		PersistenceClass: "owner_only_bounded_durable_file",
 	}
 }
+func gatewayProviderCoverageEntry() gatewaystate.EntryInput {
+	entry := gatewayStateEntry("provider_usage_coverage", "file", "owner_only_bounded_durable_file", []string{"GO_CONTEXT_PACK_QUALITY_LEDGER_PATH"}, filepath.Join(".data", "orchestrator", "context_pack_quality_ledger.ndjson"))
+	entry.Path += providerCoverageSuffix
+	entry.Source = "derived_quality_ledger"
+	return entry
+}
+
 func gatewayStateInventoryEntries() []gatewaystate.EntryInput {
 	entries := []gatewaystate.EntryInput{
 		gatewayStateEntry("feedback_history", "file", "append_only_durable_file", []string{"FEEDBACK_HISTORY_PATH"}, defaultFeedbackHistoryRelPath),
@@ -91,6 +98,7 @@ func gatewayStateInventoryEntries() []gatewaystate.EntryInput {
 		gatewayStateEntry("runner_quality", "file", "append_only_durable_file", []string{"GO_RUNNER_QUALITY_LEDGER_PATH", "CONTEXTLATTICE_RUNNER_QUALITY_LEDGER_PATH", "CONTEXTLATTICE_RUNNER_QUALITY_LEDGER"}, filepath.Join(".data", "orchestrator", "runner_quality_ledger.ndjson")),
 		gatewayStateEntry("token_impact", "file", "append_only_durable_file", []string{"GO_TOKEN_IMPACT_LEDGER_PATH"}, filepath.Join(".data", "orchestrator", "token_impact_ledger.ndjson")),
 		gatewayStateEntry("context_pack_quality", "file", "append_only_durable_file", []string{"GO_CONTEXT_PACK_QUALITY_LEDGER_PATH"}, filepath.Join(".data", "orchestrator", "context_pack_quality_ledger.ndjson")),
+		gatewayProviderCoverageEntry(),
 		gatewayContextPackRegressionFixtureEntry(),
 		gatewayStateEntry("utility_ledger", "file", "append_only_durable_file", []string{"GO_UTILITY_LEDGER_PATH"}, filepath.Join(".data", "orchestrator", "utility_ledger.ndjson")),
 		gatewayStateEntry("storage_ledger", "file", "append_only_durable_file", []string{"ORCH_STORAGE_LEDGER_PATH"}, filepath.Join(".data", "orchestrator", "storage_ledger.ndjson")),

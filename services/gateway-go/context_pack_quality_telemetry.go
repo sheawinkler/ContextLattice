@@ -41,39 +41,49 @@ const (
 )
 
 type contextPackQualityTelemetry struct {
-	mu                            sync.Mutex
-	outcomeAdmissionMu            sync.Mutex
-	limit                         int
-	ledger                        *contextPackQualityLedger
-	regressionFixtures            *contextPackRegressionFixtureStore
-	samples                       []map[string]any
-	outcomes                      []map[string]any
-	proofSamples                  proofTimelineMapRing
-	proofOutcomes                 proofTimelineMapRing
-	proofRevision                 uint64
-	outcomeKeys                   map[string]struct{}
-	durableReceiptSamples         map[string]string
-	sampleCount                   int64
-	outcomeCount                  int64
-	calibrationOutcomeCount       int64
-	exactTokenSamples             int64
-	totalQualityScore             int64
-	totalExactPromptSaved         int64
-	totalModeledInferenceAvoided  int64
-	totalModeledExtraCallsMilli   int64
-	firstPassSuccessCount         int64
-	repairRequiredCount           int64
-	totalRetryCount               int64
-	totalObservedFollowupTokens   int64
-	providerUsageCount            int64
-	totalProviderPromptTokens     int64
-	totalProviderCompletionTokens int64
-	totalProviderTotalTokens      int64
-	lastSampleAt                  string
-	lastOutcomeAt                 string
+	mu                              sync.Mutex
+	outcomeAdmissionMu              sync.Mutex
+	limit                           int
+	ledger                          *contextPackQualityLedger
+	regressionFixtures              *contextPackRegressionFixtureStore
+	samples                         []map[string]any
+	outcomes                        []map[string]any
+	proofSamples                    proofTimelineMapRing
+	proofOutcomes                   proofTimelineMapRing
+	proofRevision                   uint64
+	outcomeKeys                     map[string]struct{}
+	durableReceiptSamples           map[string]string
+	sampleCount                     int64
+	outcomeCount                    int64
+	calibrationOutcomeCount         int64
+	exactTokenSamples               int64
+	totalQualityScore               int64
+	totalExactPromptSaved           int64
+	totalModeledInferenceAvoided    int64
+	totalModeledExtraCallsMilli     int64
+	firstPassSuccessCount           int64
+	repairRequiredCount             int64
+	totalRetryCount                 int64
+	totalObservedFollowupTokens     int64
+	providerUsageCount              int64
+	totalProviderPromptTokens       int64
+	totalProviderCompletionTokens   int64
+	totalProviderTotalTokens        int64
+	providerPromptCount             int64
+	providerCompletionCount         int64
+	providerCompleteTotalCount      int64
+	totalReportedProviderPrompt     int64
+	totalReportedProviderCompletion int64
+	totalCompleteProviderTokens     int64
+	lastSampleAt                    string
+	lastOutcomeAt                   string
 }
 
 type contextPackQualityLedger struct {
+	providerCoverageLoaded   bool
+	providerCoverageError    error
+	providerCoverageRows     []providerCoverageRow
+	providerCoverageIndex    map[string]int64
 	mu                       sync.Mutex
 	enabled                  bool
 	path                     string
@@ -555,32 +565,41 @@ func (t *contextPackQualityTelemetry) aggregateSignalSufficientStatistics() map[
 
 func defaultContextPackQualityTelemetrySnapshot(ledger *contextPackQualityLedger, regressionFixtures *contextPackRegressionFixtureStore) map[string]any {
 	return map[string]any{
-		"schema_id":                              contextPackQualityTelemetrySchemaID,
-		"version":                                1,
-		"updatedAt":                              nowUTCISO(),
-		"sample_count":                           0,
-		"outcome_sample_count":                   0,
-		"calibration_outcome_sample_count":       0,
-		"confidence":                             "low",
-		"calibration_grade":                      "modeled_counterfactual",
-		"average_quality_score":                  0,
-		"exact_prompt_tokens_saved":              0,
-		"modeled_inference_tokens_avoided":       0,
-		"modeled_extra_calls_avoided":            0,
-		"observed_first_pass_success_rate":       nil,
-		"observed_repair_rate":                   nil,
-		"observed_average_retry_count":           nil,
-		"observed_followup_tokens":               0,
-		"observed_provider_usage_count":          0,
-		"observed_provider_prompt_tokens":        0,
-		"observed_provider_completion_tokens":    0,
-		"observed_provider_total_tokens":         0,
-		"observed_average_provider_total_tokens": nil,
-		"measurement_limit":                      contextPackQualityMeasurementLimit(false),
-		"source":                                 "/telemetry/context-pack-quality",
-		"storage":                                contextPackQualityStoragePublicStatus(ledger, regressionFixtures),
-		"samples":                                []any{},
-		"outcomes":                               []any{},
+		"schema_id":                                       contextPackQualityTelemetrySchemaID,
+		"version":                                         1,
+		"updatedAt":                                       nowUTCISO(),
+		"sample_count":                                    0,
+		"outcome_sample_count":                            0,
+		"calibration_outcome_sample_count":                0,
+		"confidence":                                      "low",
+		"calibration_grade":                               "modeled_counterfactual",
+		"average_quality_score":                           0,
+		"exact_prompt_tokens_saved":                       0,
+		"modeled_inference_tokens_avoided":                0,
+		"modeled_extra_calls_avoided":                     0,
+		"observed_first_pass_success_rate":                nil,
+		"observed_repair_rate":                            nil,
+		"observed_average_retry_count":                    nil,
+		"observed_followup_tokens":                        0,
+		"observed_provider_usage_count":                   0,
+		"observed_provider_prompt_tokens":                 0,
+		"observed_provider_completion_tokens":             0,
+		"observed_provider_total_tokens":                  0,
+		"observed_average_provider_total_tokens":          nil,
+		"provider_usage_coverage_version":                 1,
+		"observed_provider_prompt_count":                  0,
+		"observed_provider_completion_count":              0,
+		"observed_provider_complete_total_count":          0,
+		"observed_provider_partial_usage_count":           0,
+		"observed_provider_reported_prompt_tokens":        0,
+		"observed_provider_reported_completion_tokens":    0,
+		"observed_provider_complete_total_tokens":         0,
+		"observed_average_provider_complete_total_tokens": nil,
+		"measurement_limit":                               contextPackQualityMeasurementLimit(false),
+		"source":                                          "/telemetry/context-pack-quality",
+		"storage":                                         contextPackQualityStoragePublicStatus(ledger, regressionFixtures),
+		"samples":                                         []any{},
+		"outcomes":                                        []any{},
 	}
 }
 
@@ -600,6 +619,7 @@ func (t *contextPackQualityTelemetry) loadPersistedRows() {
 		t.ledger.setError(err)
 		return
 	}
+	rows = t.ledger.withProviderCoverage(rows)
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	deferredDurableOutcomes := make([]map[string]any, 0)
@@ -774,7 +794,8 @@ func contextPackQualityLegacyOutcomeIdentifiersUnsafe(row map[string]any) bool {
 		"outcome_source": {}, "outcome_class": {}, "context_attribution": {}, "calibration_eligible": {},
 		"policy_id": {}, "policy_arm": {}, "policy_phase": {},
 		"provider_prompt_tokens": {}, "provider_completion_tokens": {}, "provider_total_tokens": {},
-		"utility": {}, "economics": {}, "pairing": {}, "evidence_attribution": {}, "candidate_attribution_attempts": {},
+		"provider_usage_field_mask": {},
+		"utility":                   {}, "economics": {}, "pairing": {}, "evidence_attribution": {}, "candidate_attribution_attempts": {},
 		"verification_evidence_digest": {}, "verifier_id": {}, "verification_passed": {},
 		"regression_case_ref": {}, "regression_partition": {}, "traffic_class": {}, "synthetic": {}, "stability": {},
 		"topic_path": {}, "topic_ref": {}, "quality_sample_admission": {}, "quality_sample_admission_ref": {}, "attribution_binding": {},
@@ -990,6 +1011,11 @@ func contextPackQualityLegacyOutcomeIdentifiersUnsafe(row map[string]any) bool {
 	}
 	providerCounts := map[string]int64{}
 	providerPresent := map[string]bool{}
+	maskRaw, hasMask := row["provider_usage_field_mask"]
+	mask, maskValid := contextPackOutcomeBoundedCount(maskRaw, 7)
+	if hasMask && (!maskValid || mask == 0) {
+		return true
+	}
 	for _, field := range []struct {
 		key string
 		max int64
@@ -1000,12 +1026,18 @@ func contextPackQualityLegacyOutcomeIdentifiersUnsafe(row map[string]any) bool {
 	} {
 		if value, present := row[field.key]; present {
 			count, valid := contextPackOutcomeBoundedCount(value, field.max)
-			if !valid || count == 0 {
+			if !valid || (count == 0 && !hasMask) {
 				return true
 			}
 			providerCounts[field.key] = count
 			providerPresent[field.key] = true
 		}
+	}
+	if hasMask && ((mask&1 != 0) != providerPresent["provider_prompt_tokens"] || (mask&2 != 0) != providerPresent["provider_completion_tokens"] || !providerPresent["provider_total_tokens"]) {
+		return true
+	}
+	if hasMask && mask&4 == 0 && providerCounts["provider_total_tokens"] != providerCounts["provider_prompt_tokens"]+providerCounts["provider_completion_tokens"] {
+		return true
 	}
 	if (providerPresent["provider_prompt_tokens"] || providerPresent["provider_completion_tokens"]) && !providerPresent["provider_total_tokens"] {
 		return true
@@ -1492,7 +1524,7 @@ func (t *contextPackQualityTelemetry) recordOutcomeEntryDurably(entry map[string
 		existing, found = t.outcomeEntryLocked(outcomeKey)
 	}
 	if found {
-		if contextPackOutcomeLogicalClaimDigest(existing) != contextPackOutcomeLogicalClaimDigest(entry) {
+		if !contextPackOutcomeClaimsEqual(existing, entry) {
 			return false, errUtilityOutcomeConflict
 		}
 		if requiresDurableAdmission {
@@ -1562,8 +1594,9 @@ func (t *contextPackQualityTelemetry) recordOutcomeEntryDurably(entry map[string
 	return true, nil
 }
 
-// contextPackOutcomeLogicalClaimDigest deliberately shares the Utility
-// Ledger's normalized claim identity. gateway_received_at is an authoritative
+// contextPackOutcomeLogicalClaimDigest uses Utility's normalization rules.
+// Utility persistence receives the legacy projection without coverage metadata.
+// gateway_received_at is an authoritative
 // HTTP receipt time, rather than reporter claim content, so it must not turn a
 // retry into a conflict. All logical outcome fields, including utility and
 // receipt binding, remain part of the identity.
@@ -1593,6 +1626,7 @@ func (t *contextPackQualityTelemetry) durableOutcomeEntryLocked(outcomeID string
 		return nil, false, err
 	}
 	var found map[string]any
+	rows = t.ledger.withProviderCoverage(rows)
 	for _, row := range rows {
 		if anyToString(row["schema_id"]) != contextPackQualityOutcomeSchemaID || anyToString(row["outcome_id"]) != outcomeID {
 			continue
@@ -2787,13 +2821,22 @@ func contextPackQualityOutcomeFromSampleChecked(sample map[string]any) (map[stri
 			entry["policy_phase"] = policyPhase
 		}
 	}
-	if providerPromptTokens > 0 {
+	// A compact presence mask distinguishes an explicit zero from an absent
+	// component and a reported total from the historical partial-component sum.
+	providerMask := 0
+	if promptPresent {
+		providerMask |= 1
 		entry["provider_prompt_tokens"] = providerPromptTokens
 	}
-	if providerCompletionTokens > 0 {
+	if completionPresent {
+		providerMask |= 2
 		entry["provider_completion_tokens"] = providerCompletionTokens
 	}
-	if providerTotalTokens > 0 {
+	if totalPresent {
+		providerMask |= 4
+	}
+	if providerMask != 0 {
+		entry["provider_usage_field_mask"] = providerMask
 		entry["provider_total_tokens"] = providerTotalTokens
 	}
 	if utility := contextPackQualityUtilityClaim(sample, anyToString(entry["project"])); len(utility) > 0 {
@@ -3114,7 +3157,7 @@ func (t *contextPackQualityTelemetry) durableQualityLedgerRows() ([]map[string]a
 		t.ledger.setError(err)
 		return nil, err
 	}
-	return rows, nil
+	return t.ledger.withProviderCoverage(rows), nil
 }
 
 func contextPackQualitySampleFromDurableRows(rows []map[string]any, sampleID string) (map[string]any, bool, error) {
@@ -3532,11 +3575,27 @@ func (t *contextPackQualityTelemetry) applyOutcomeEntryLocked(entry map[string]a
 	if !totalValid {
 		providerTotalTokens = 0
 	}
-	if authoritativeAdmission && (providerPromptTokens > 0 || providerCompletionTokens > 0 || providerTotalTokens > 0) {
+	providerMask, maskValid := contextPackOutcomeBoundedCount(entry["provider_usage_field_mask"], 7)
+	if !maskValid {
+		providerMask = 0
+	}
+	if authoritativeAdmission && (providerMask > 0 || providerPromptTokens > 0 || providerCompletionTokens > 0 || providerTotalTokens > 0) {
 		contextPackOutcomeSaturatingAdd(&t.providerUsageCount, 1)
 		contextPackOutcomeSaturatingAdd(&t.totalProviderPromptTokens, providerPromptTokens)
 		contextPackOutcomeSaturatingAdd(&t.totalProviderCompletionTokens, providerCompletionTokens)
 		contextPackOutcomeSaturatingAdd(&t.totalProviderTotalTokens, providerTotalTokens)
+		if providerMask&1 != 0 && promptValid {
+			contextPackOutcomeSaturatingAdd(&t.providerPromptCount, 1)
+			contextPackOutcomeSaturatingAdd(&t.totalReportedProviderPrompt, providerPromptTokens)
+		}
+		if providerMask&2 != 0 && completionValid {
+			contextPackOutcomeSaturatingAdd(&t.providerCompletionCount, 1)
+			contextPackOutcomeSaturatingAdd(&t.totalReportedProviderCompletion, providerCompletionTokens)
+		}
+		if (providerMask&4 != 0 || providerMask&3 == 3) && totalValid {
+			contextPackOutcomeSaturatingAdd(&t.providerCompleteTotalCount, 1)
+			contextPackOutcomeSaturatingAdd(&t.totalCompleteProviderTokens, providerTotalTokens)
+		}
 	}
 	t.lastOutcomeAt = firstNonEmptyStrings(anyToString(entry["capturedAt"]), nowUTCISO())
 	entry["capturedAt"] = t.lastOutcomeAt
@@ -3593,6 +3652,7 @@ func (t *contextPackQualityTelemetry) snapshot() map[string]any {
 	var repairRate any
 	var avgRetries any
 	var avgProviderTotal any
+	var avgCompleteProviderTotal any
 	if t.calibrationOutcomeCount > 0 {
 		firstPassRate = roundFloat(float64(t.firstPassSuccessCount)/float64(t.calibrationOutcomeCount), 3)
 		repairRate = roundFloat(float64(t.repairRequiredCount)/float64(t.calibrationOutcomeCount), 3)
@@ -3601,38 +3661,50 @@ func (t *contextPackQualityTelemetry) snapshot() map[string]any {
 	if t.providerUsageCount > 0 {
 		avgProviderTotal = roundFloat(float64(t.totalProviderTotalTokens)/float64(t.providerUsageCount), 3)
 	}
+	if t.providerCompleteTotalCount > 0 {
+		avgCompleteProviderTotal = roundFloat(float64(t.totalCompleteProviderTokens)/float64(t.providerCompleteTotalCount), 3)
+	}
 
 	return map[string]any{
-		"schema_id":                              contextPackQualityTelemetrySchemaID,
-		"version":                                1,
-		"updatedAt":                              nowUTCISO(),
-		"sample_count":                           t.sampleCount,
-		"outcome_sample_count":                   t.outcomeCount,
-		"calibration_outcome_sample_count":       t.calibrationOutcomeCount,
-		"exact_token_sample_count":               t.exactTokenSamples,
-		"confidence":                             confidence,
-		"calibration_grade":                      calibration,
-		"average_quality_score":                  avgQuality,
-		"exact_prompt_tokens_saved":              t.totalExactPromptSaved,
-		"modeled_inference_tokens_avoided":       t.totalModeledInferenceAvoided,
-		"modeled_extra_calls_avoided":            modeledCalls,
-		"observed_first_pass_success_rate":       firstPassRate,
-		"observed_repair_rate":                   repairRate,
-		"observed_average_retry_count":           avgRetries,
-		"observed_followup_tokens":               t.totalObservedFollowupTokens,
-		"observed_provider_usage_count":          t.providerUsageCount,
-		"observed_provider_prompt_tokens":        t.totalProviderPromptTokens,
-		"observed_provider_completion_tokens":    t.totalProviderCompletionTokens,
-		"observed_provider_total_tokens":         t.totalProviderTotalTokens,
-		"observed_average_provider_total_tokens": avgProviderTotal,
-		"last_sample_at":                         t.lastSampleAt,
-		"last_outcome_at":                        t.lastOutcomeAt,
-		"measurement_limit":                      contextPackQualityMeasurementLimit(t.calibrationOutcomeCount > 0),
-		"source":                                 "/telemetry/context-pack-quality",
-		"basis":                                  contextPackQualityBasis(),
-		"storage":                                contextPackQualityStoragePublicStatus(t.ledger, t.regressionFixtures),
-		"samples":                                samples,
-		"outcomes":                               outcomes,
+		"schema_id":                                       contextPackQualityTelemetrySchemaID,
+		"version":                                         1,
+		"updatedAt":                                       nowUTCISO(),
+		"sample_count":                                    t.sampleCount,
+		"outcome_sample_count":                            t.outcomeCount,
+		"calibration_outcome_sample_count":                t.calibrationOutcomeCount,
+		"exact_token_sample_count":                        t.exactTokenSamples,
+		"confidence":                                      confidence,
+		"calibration_grade":                               calibration,
+		"average_quality_score":                           avgQuality,
+		"exact_prompt_tokens_saved":                       t.totalExactPromptSaved,
+		"modeled_inference_tokens_avoided":                t.totalModeledInferenceAvoided,
+		"modeled_extra_calls_avoided":                     modeledCalls,
+		"observed_first_pass_success_rate":                firstPassRate,
+		"observed_repair_rate":                            repairRate,
+		"observed_average_retry_count":                    avgRetries,
+		"observed_followup_tokens":                        t.totalObservedFollowupTokens,
+		"observed_provider_usage_count":                   t.providerUsageCount,
+		"observed_provider_prompt_tokens":                 t.totalProviderPromptTokens,
+		"observed_provider_completion_tokens":             t.totalProviderCompletionTokens,
+		"observed_provider_total_tokens":                  t.totalProviderTotalTokens,
+		"observed_average_provider_total_tokens":          avgProviderTotal,
+		"provider_usage_coverage_version":                 1,
+		"observed_provider_prompt_count":                  t.providerPromptCount,
+		"observed_provider_completion_count":              t.providerCompletionCount,
+		"observed_provider_complete_total_count":          t.providerCompleteTotalCount,
+		"observed_provider_partial_usage_count":           t.providerUsageCount - t.providerCompleteTotalCount,
+		"observed_provider_reported_prompt_tokens":        t.totalReportedProviderPrompt,
+		"observed_provider_reported_completion_tokens":    t.totalReportedProviderCompletion,
+		"observed_provider_complete_total_tokens":         t.totalCompleteProviderTokens,
+		"observed_average_provider_complete_total_tokens": avgCompleteProviderTotal,
+		"last_sample_at":                                  t.lastSampleAt,
+		"last_outcome_at":                                 t.lastOutcomeAt,
+		"measurement_limit":                               contextPackQualityMeasurementLimit(t.calibrationOutcomeCount > 0),
+		"source":                                          "/telemetry/context-pack-quality",
+		"basis":                                           contextPackQualityBasis(),
+		"storage":                                         contextPackQualityStoragePublicStatus(t.ledger, t.regressionFixtures),
+		"samples":                                         samples,
+		"outcomes":                                        outcomes,
 	}
 }
 
@@ -3673,6 +3745,7 @@ func contextPackQualityLedgerPublicStatus(ledger *contextPackQualityLedger) map[
 func contextPackQualityStoragePublicStatus(ledger *contextPackQualityLedger, regressionFixtures *contextPackRegressionFixtureStore) map[string]any {
 	status := contextPackQualityLedgerPublicStatus(ledger)
 	status["regression_fixture_sidecar"] = contextPackRegressionFixtureOperationalStatus(regressionFixtures)
+	status["provider_coverage_sidecar"] = providerCoverageOperationalStatus(ledger)
 	return status
 }
 
@@ -3784,6 +3857,11 @@ func (l *contextPackQualityLedger) appendWithPrunePolicy(entry map[string]any, s
 	if err := l.acknowledgeDurabilityLocked(); err != nil {
 		return err
 	}
+	var coverageEntry map[string]any
+	if anyToString(entry["schema_id"]) == contextPackQualityOutcomeSchemaID {
+		coverageEntry = entry
+		entry = providerCoverageLegacyOutcome(entry)
+	}
 	file, err := openOwnerOnlyAppend(l.path, false)
 	if err != nil {
 		l.writeErrors++
@@ -3827,6 +3905,14 @@ func (l *contextPackQualityLedger) appendWithPrunePolicy(entry map[string]any, s
 	}
 	if !pruned && !l.durabilityUnacknowledged {
 		l.addReceiptPairLocked(entry)
+	}
+	// Optional presence metadata may only follow an acknowledged canonical
+	// append. Interruption before this write leaves unknown coverage, not an
+	// orphan capable of donating presence to a future claim.
+	if coverageEntry != nil {
+		if err := l.saveProviderCoverageLocked(coverageEntry); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -4765,7 +4851,7 @@ func (s *server) telemetryContextPackQualityOutcomeRoute(w http.ResponseWriter, 
 			return
 		}
 	}
-	utilityObservation, utilityRecorded, utilityErr := s.recordUtilityOutcome(canonical)
+	utilityObservation, utilityRecorded, utilityErr := s.recordUtilityOutcome(providerCoverageLegacyOutcome(canonical))
 	var utilityStore *utilityLedgerStore
 	if s != nil && s.utility != nil {
 		utilityStore = s.utility.store

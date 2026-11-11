@@ -9,8 +9,19 @@ import (
 
 func TestPublicGatewayStateInventoryExcludesCommercialOnlyOwners(t *testing.T) {
 	entries := gatewayStateInventoryEntries()
-	if len(entries) != 34 {
-		t.Fatalf("public gateway state inventory count=%d, want 34", len(entries))
+	expected := map[string]bool{
+		"feedback_history": true, "task_db": true, "agent_sessions": true,
+		"continuity_ledger": true, "continuation_outbox": true, "agent_memory_profiles": true,
+		"telemetry_spool": true, "recall_eval_cases": true, "recall_monitor": true,
+		"temporal_claims": true, "context_policy": true, "context_passports": true,
+		"context_identity_keys": true, "context_mesh": true, "skill_foundry": true,
+		"runner_quality": true, "token_impact": true, "context_pack_quality": true,
+		"provider_usage_coverage": true, "context_pack_regression_fixtures": true,
+		"utility_ledger": true, "storage_ledger": true, "policy_laboratory": true,
+		"agent_fit": true, "portable_continuation": true, "aggregate_signal": true,
+		"topic_index": true, "memory_write_history": true, "trading_history": true,
+		"strategy_history": true, "signal_history": true, "override_history": true,
+		"memory_bank_cleanup_state": true, "fanout_payload_blobs": true, "mongo_raw_content_blobs": true,
 	}
 	commercialOnly := map[string]bool{
 		"agent_tasks": true, "cognition_activation": true, "continuity_snapshots": true,
@@ -25,6 +36,13 @@ func TestPublicGatewayStateInventoryExcludesCommercialOnlyOwners(t *testing.T) {
 		if commercialOnly[entry.ID] {
 			t.Fatalf("public inventory leaked commercial-only state owner %q", entry.ID)
 		}
+		if !expected[entry.ID] {
+			t.Fatalf("public inventory contains unexpected or duplicate state owner %q", entry.ID)
+		}
+		delete(expected, entry.ID)
+	}
+	if len(expected) != 0 {
+		t.Fatalf("public inventory is missing state owners: %v", expected)
 	}
 }
 

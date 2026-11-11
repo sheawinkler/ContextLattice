@@ -4539,6 +4539,10 @@ func shouldDropCoverageToken(token string) bool {
 }
 
 func deriveCoverageRescueQuery(query string, minTokens int) (string, bool) {
+	return deriveCoverageRescueQueryKeeping(query, minTokens, nil)
+}
+
+func deriveCoverageRescueQueryKeeping(query string, minTokens int, keep func(string) bool) (string, bool) {
 	tokens := strings.Fields(strings.TrimSpace(query))
 	if len(tokens) < minTokens {
 		return "", false
@@ -4546,7 +4550,7 @@ func deriveCoverageRescueQuery(query string, minTokens int) (string, bool) {
 	kept := make([]string, 0, len(tokens))
 	removed := 0
 	for _, token := range tokens {
-		if shouldDropCoverageToken(token) {
+		if shouldDropCoverageToken(token) && (keep == nil || !keep(token)) {
 			removed += 1
 			continue
 		}

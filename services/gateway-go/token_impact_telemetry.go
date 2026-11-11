@@ -31,6 +31,7 @@ type tokenImpactTelemetry struct {
 	totalBaseline              int64
 	totalPacked                int64
 	totalCompiled              int64
+	compiledPromptSamples      int64
 	totalTransport             int64
 	totalModelVisible          int64
 	totalNetDelta              int64
@@ -130,6 +131,7 @@ func defaultTokenImpactTelemetrySnapshot(ledger *tokenImpactLedger) map[string]a
 		"baseline_tokens_estimate":           0,
 		"packed_tokens_estimate":             0,
 		"compiled_prompt_tokens_estimate":    0,
+		"compiled_prompt_sample_count":       0,
 		"transport_tokens_exact":             0,
 		"wire_tokens_exact":                  0,
 		"model_visible_context_tokens_exact": 0,
@@ -252,7 +254,11 @@ func tokenImpactEntryFromSample(sample map[string]any) map[string]any {
 			entry["transport_inclusive"] = true
 			entry["transport_tokens_exact"] = transport
 			entry["wire_tokens_exact"] = wire
-			entry["compiled_prompt_tokens_estimate"] = maxInt(0, anyToInt(sample["compiled_prompt_tokens_estimate"], 0))
+			entry["compiled_prompt_tokens_estimate"] = 0
+			if compiled, valid := contextPackOutcomeBoundedCount(sample["compiled_prompt_tokens_estimate"], contextPackOutcomeMaxProviderTotalTokens); valid {
+				entry["compiled_prompt_tokens_estimate"] = compiled
+				entry["compiled_prompt_observed"] = true
+			}
 			entry["net_token_delta"] = anyToInt(sample["net_token_delta"], baseline-transport)
 		}
 	}
@@ -304,6 +310,9 @@ func (t *tokenImpactTelemetry) applyEntryLocked(entry map[string]any) bool {
 	if anyToBool(entry["transport_inclusive"]) {
 		t.transportInclusiveSamples++
 		t.totalCompiled += int64(anyToInt(entry["compiled_prompt_tokens_estimate"], 0))
+		if anyToBool(entry["compiled_prompt_observed"]) || anyToInt(entry["compiled_prompt_tokens_estimate"], 0) > 0 {
+			t.compiledPromptSamples++
+		}
 		t.totalTransport += int64(anyToInt(entry["transport_tokens_exact"], 0))
 		t.totalNetDelta += int64(anyToInt(entry["net_token_delta"], 0))
 	}
@@ -537,6 +546,7 @@ func (t *tokenImpactTelemetry) snapshot() map[string]any {
 		"baseline_tokens_estimate":           t.totalBaseline,
 		"packed_tokens_estimate":             t.totalPacked,
 		"compiled_prompt_tokens_estimate":    t.totalCompiled,
+		"compiled_prompt_sample_count":       t.compiledPromptSamples,
 		"transport_tokens_exact":             t.totalTransport,
 		"wire_tokens_exact":                  t.totalTransport,
 		"model_visible_context_tokens_exact": t.totalModelVisible,

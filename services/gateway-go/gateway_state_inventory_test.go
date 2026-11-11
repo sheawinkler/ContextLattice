@@ -28,6 +28,26 @@ func TestGatewayStateInventoryEntryIDsAreUnique(t *testing.T) {
 	}
 }
 
+func TestProviderCoverageInventoryFollowsResolvedQualityLedger(t *testing.T) {
+	for _, override := range []bool{false, true} {
+		t.Run(map[bool]string{false: "state-root", true: "quality-override"}[override], func(t *testing.T) {
+			t.Setenv(gatewaystate.RootEnv, filepath.Join(t.TempDir(), "state"))
+			t.Setenv("GO_CONTEXT_PACK_QUALITY_LEDGER_PATH", "")
+			if override {
+				t.Setenv("GO_CONTEXT_PACK_QUALITY_LEDGER_PATH", filepath.Join(t.TempDir(), "quality.ndjson"))
+			}
+			quality := gatewayStateInventoryEntryByID(t, "context_pack_quality")
+			coverage := gatewayStateInventoryEntryByID(t, "provider_usage_coverage")
+			if coverage.Path != contextPackQualityLedgerPath()+providerCoverageSuffix || coverage.Path != quality.Path+providerCoverageSuffix {
+				t.Fatalf("coverage left the quality ledger storage tier: quality=%#v coverage=%#v", quality, coverage)
+			}
+			if coverage.SourceEnv != quality.SourceEnv || coverage.StorageTier != quality.StorageTier || coverage.PersistenceClass != "owner_only_bounded_durable_file" {
+				t.Fatalf("coverage inventory drift: %#v", coverage)
+			}
+		})
+	}
+}
+
 func TestContextPackRegressionFixtureInventoryUsesExplicitPath(t *testing.T) {
 	stateRoot := filepath.Join(t.TempDir(), "state")
 	fixturePath := filepath.Join(t.TempDir(), "fixture", "regressions.ndjson")

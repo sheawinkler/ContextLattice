@@ -11,10 +11,10 @@ from pathlib import Path
 from typing import Any
 
 
-TARGET_NODE = "24.18.0"
-TARGET_NPM = "11.16.0"
-NODE_ENGINE = ">=24.18.0 <25"
-NPM_ENGINE = ">=11.16.0 <12"
+TARGET_NODE = "24.22.2"
+TARGET_NPM = "11.19.1"
+NODE_ENGINE = ">=24.22.2 <25"
+NPM_ENGINE = ">=11.19.1 <12"
 
 ACTION_MINIMUM_MAJORS = {
     "actions/checkout": 5,
@@ -35,7 +35,10 @@ EXPECTED_DOCKER_BASES = {
 }
 
 USES_RE = re.compile(r"\buses:\s*([^@\s]+)@v(\d+)\b")
-NODE_FROM_RE = re.compile(r"^\s*FROM\s+node:([^\s]+)", re.MULTILINE)
+NODE_FROM_RE = re.compile(
+    r"^\s*FROM\s+(?:--\S+\s+)*(?:docker\.io/(?:library/)?)?node((?::|@)\S+)?(?=\s|$)",
+    re.MULTILINE | re.IGNORECASE,
+)
 NODE_VERSION_RE = re.compile(r"\bnode-version:\s*['\"]?([^\s'\"]+)")
 
 
@@ -134,16 +137,24 @@ def audit_dashboard_package(root: Path, findings: list[dict[str, str]]) -> None:
 def audit_dockerfiles(root: Path, findings: list[dict[str, str]]) -> None:
     for relative, expected in EXPECTED_DOCKER_BASES.items():
         text = read_text(root, relative, findings)
-        match = NODE_FROM_RE.search(text)
-        actual = f"node:{match.group(1)}" if match else "missing"
-        if actual != expected:
-            findings.append(finding("docker_node_mismatch", relative, f"expected {expected}, got {actual}"))
+        matches = list(NODE_FROM_RE.finditer(text))
+        if not matches:
+            findings.append(finding("docker_node_mismatch", relative, f"expected {expected}, got missing"))
+        for match in matches:
+            actual = "node" + (match.group(1) or "")
+            if actual != expected:
+                findings.append(finding("docker_node_mismatch", relative, f"expected {expected}, got {actual}"))
 
     for path in sorted(root.glob("Dockerfile*")):
         text = path.read_text(encoding="utf-8")
         for match in NODE_FROM_RE.finditer(text):
-            if not match.group(1).startswith("24."):
-                findings.append(finding("non_node24_base", path.name, f"found node:{match.group(1)}"))
+            tag = (match.group(1) or "").removeprefix(":")
+            if not tag.startswith("24."):
+                findings.append(finding("non_node24_base", path.name, f"found node:{tag}"))
+            if path.name not in EXPECTED_DOCKER_BASES and not re.fullmatch(
+                re.escape(TARGET_NODE) + r"(?:-[\w.-]+)?(?:@sha256:[a-f0-9]{64})?", tag
+            ):
+                findings.append(finding("unreviewed_node_base", path.name, f"expected Node {TARGET_NODE}, got node:{tag}"))
 
 
 def audit_dashboard_production_contract(root: Path, findings: list[dict[str, str]]) -> None:

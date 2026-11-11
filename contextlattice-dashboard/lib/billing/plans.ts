@@ -18,13 +18,15 @@ export type Plan = {
   customPricing: boolean;
 };
 
-const featureLabels = new Map(
+const featureLabels = new Map<string, string>(
   COMMERCIAL_TRUTH.features.map((feature) => [feature.id, feature.buyer_label]),
 );
 
 function seatLabel(plan: (typeof COMMERCIAL_PLANS)[number]): string {
   if (plan.limits.included_seats !== null) {
-    return `${plan.limits.included_seats} included seats; custom contract`;
+    const count = plan.limits.included_seats;
+    const label = `${count} included ${count === 1 ? "seat" : "seats"}`;
+    return plan.pricing.custom ? `${label}; custom contract` : label;
   }
   if (plan.id === "team") return "Team workspace";
   if (plan.id === "starter") return "Single operator";
@@ -47,3 +49,23 @@ export const ALL_PLANS: Plan[] = COMMERCIAL_PLANS.map((plan) => ({
 }));
 
 export const PLANS = ALL_PLANS.filter((plan) => plan.paid);
+
+export function planHighlights(plan: Plan): string[] {
+  const free = new Set<string>(ALL_PLANS.find((entry) => !entry.paid)?.featureIds || []);
+  const ids = plan.featureIds.filter((id) => !plan.paid || !free.has(id));
+  // Put the workflow capabilities ahead of the distribution/access prerequisites.
+  const ordered = plan.paid
+    ? [...ids.filter((id) => id.startsWith("frontier_")), ...ids.filter((id) => !id.startsWith("frontier_"))]
+    : ids;
+  return ordered.slice(0, 6).map((id) => featureLabels.get(id) || id);
+}
+
+export function planSelectionHref(planId: string, localBillingEnabled: boolean): string {
+  const plan = ALL_PLANS.find((entry) => entry.id === planId);
+  if (!plan) return "/pricing";
+  if (!plan.paid) return "/downloads";
+  if (!plan.purchasable) return "mailto:hello@contextlattice.io?subject=ContextLattice%20Enterprise";
+  return localBillingEnabled
+    ? `/billing?plan=${encodeURIComponent(plan.id)}`
+    : `https://contextlattice.io/premium.html#plan-${encodeURIComponent(plan.id)}`;
+}

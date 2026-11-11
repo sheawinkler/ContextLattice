@@ -1,0 +1,27 @@
+name: Runtime Base Pins
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "Dockerfile*"
+      - "services/gateway-go/go.mod"
+      - "services/orchestrator-go/go.mod"
+      - "scripts/go_runtime_audit.py"
+      - "scripts/tests/test_go_runtime_audit.py"
+      - ".github/workflows/runtime-base-gate.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  source-pins:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check packaging pins without builds or network probes
+        shell: python
+        run: |
+          import subprocess
+          subprocess.run(["python3", "-B", "scripts/tests/test_go_runtime_audit.py"], check=True)
+          subprocess.run(["python3", "-B", "scripts/go_runtime_audit.py", "--pretty"], check=True)

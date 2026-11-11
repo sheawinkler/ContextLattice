@@ -3,7 +3,7 @@ ARG CONTEXTLATTICE_BUILD_CHANNEL=local
 ARG CONTEXTLATTICE_SOURCE_COMMIT=unknown
 ARG CONTEXTLATTICE_SOURCE_TREE=unknown
 
-FROM golang:1.26.4-alpine AS build
+FROM golang:1.26.11-alpine3.24 AS build
 WORKDIR /src
 COPY services/gateway-go/go.mod services/gateway-go/go.sum ./
 RUN go mod download
@@ -21,7 +21,7 @@ RUN CGO_ENABLED=0 go build -trimpath \
       -X main.contextLatticeSourceTree=${CONTEXTLATTICE_SOURCE_TREE}" \
     -o /out/gateway-go .
 
-FROM alpine:3.20
+FROM alpine:3.24.4
 WORKDIR /app
 RUN apk add --no-cache ca-certificates ruby && update-ca-certificates
 COPY --from=build /out/gateway-go /usr/local/bin/gateway-go

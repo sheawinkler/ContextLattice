@@ -34,6 +34,11 @@ logs/* # public-paid-private-only
 contextlattice-dashboard/app/api/billing/*
 contextlattice-dashboard/app/billing/*
 contextlattice-dashboard/app/api/telemetry/pro-analytics/*
+contextlattice-dashboard/app/analytics/*
+contextlattice-dashboard/components/ProAnalyticsBoard.tsx
+contextlattice-dashboard/lib/proAnalyticsMetrics.ts
+contextlattice-dashboard/tests/pro-analytics-*.test.*
+docs/pro-analytics.md
 contextlattice-dashboard/app/api/support/diagnostics/*
 contextlattice-dashboard/lib/billing/downloads.ts
 contextlattice-dashboard/lib/billing/events.ts
