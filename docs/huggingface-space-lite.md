@@ -60,6 +60,7 @@ TOPIC_ROLLUP_SQLITE_FTS_ENABLED=true
 TOPIC_ROLLUP_SQLITE_VEC_ENABLED=true
 TOPIC_ROLLUP_SQLITE_PATH=/data/topic_rollups.sqlite3
 TASK_DB_PATH=/data/agent_tasks.db
+MEMORY_BANK_ROOT=/data/memory-bank
 FANOUT_OUTBOX_PAYLOAD_BLOB_DIR=/data/fanout_payload_blobs
 ORCH_STORAGE_GOVERNANCE_DISK_ROOT=/data
 ORCH_STORAGE_GOVERNANCE_ENABLED=true
@@ -81,7 +82,8 @@ CONTEXTLATTICE_ORCHESTRATOR_API_KEY=<secret>
 
 ## Drift controls
 
-- Use persistent storage (`/data`) if you want cache continuity.
+- Mount persistent storage at `/data` to retain memories and gateway state when the container is recreated. The gateway defaults to `/data/memory-bank/_contextlattice` for state.
+- A custom `MEMORY_BANK_ROOT` still works, and `GO_MEMORY_STORE_ROOT` still takes precedence if set. To keep gateway state elsewhere, set `CONTEXTLATTICE_GATEWAY_STATE_ROOT` explicitly (including if the previous state directory was derived from `CONTEXTLATTICE_GLOBAL_HOME`). These defaults do not migrate existing data.
 - If you want maximum determinism, disable learning adaptation:
   - `LEARNING_LOOP_ENABLED=false`
 - Trigger a manual compaction/governance run when needed:
@@ -96,4 +98,10 @@ docker build -f Dockerfile.hf-lite -t contextlattice-hf-lite .
 docker run --rm -p 7860:7860 contextlattice-hf-lite
 curl -s http://127.0.0.1:7860/
 curl -s http://127.0.0.1:7860/health
+```
+
+To verify persistence locally, run the smoke test against the built image. It writes a synthetic memory and checks that a new container can find it using the same temporary volume:
+
+```bash
+python3 scripts/tests/smoke_hf_lite_persistence.py contextlattice-hf-lite
 ```
