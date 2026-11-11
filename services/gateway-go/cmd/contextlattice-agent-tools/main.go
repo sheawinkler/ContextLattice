@@ -9142,7 +9142,7 @@ func (c *cli) cmdMemoryGraphEvaluation(args []string) error {
 
 func (c *cli) cmdSkillsIndex(args []string) error {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
-		return c.emitUsage("contextlattice_skills_index {search|reindex|discover|stage|refresh|promote} [options]")
+		return c.emitUsage("contextlattice_skills_index {search|reindex|discover|stage|refresh|promote|bundle-inspect} [options]")
 	}
 	sub := args[0]
 	args = args[1:]
@@ -9159,6 +9159,8 @@ func (c *cli) cmdSkillsIndex(args []string) error {
 		return c.skillsIndexRefresh(args)
 	case "promote":
 		return c.skillsIndexPromote(args)
+	case "bundle-inspect":
+		return c.skillsIndexBundleInspect(args)
 	default:
 		return fmt.Errorf("unknown contextlattice_skills_index command %q", sub)
 	}

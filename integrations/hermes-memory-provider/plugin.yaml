@@ -1,0 +1,9 @@
+name: contextlattice
+version: 0.3.0
+description: "ContextLattice memory provider: per-turn scoped recall, native compaction handoff, built-in memory mirroring."
+hooks:
+  - on_pre_compress
+  - on_session_switch
+  - on_memory_write
+  - pre_tool_call
+  - post_tool_call

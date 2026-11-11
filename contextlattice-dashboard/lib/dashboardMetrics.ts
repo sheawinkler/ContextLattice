@@ -38,6 +38,35 @@ export type TokenImpactEstimate = {
   warnings: string[];
 };
 
+export type TokenImpactCohortTruth = {
+  scope: string;
+  packedKind: string;
+  sampleCount: number | null;
+  netSampleCount: number | null;
+  netTokenDelta: number | null;
+  wireSampleCount: number | null;
+  wireTokens: number | null;
+  modelVisibleSampleCount: number | null;
+  modelVisibleTokens: number | null;
+};
+
+export type TokenImpactTruth = {
+  sampleCount: number | null;
+  positiveOnlySaved: number | null;
+  exactSampleCount: number | null;
+  transportSampleCount: number | null;
+  netTokenDelta: number | null;
+  transportTokens: number | null;
+  compiledPromptSampleCount: number | null;
+  compiledPromptTokens: number | null;
+  modelVisibleSampleCount: number | null;
+  modelVisibleTokens: number | null;
+  windowLabel: string;
+  cohortWindowSampleCount: number | null;
+  cohortOmittedCount: number | null;
+  cohorts: TokenImpactCohortTruth[];
+};
+
 export type ContextPackQualityEstimate = {
   modeledInferenceSaved: number;
   exactPromptSaved: number;
@@ -56,6 +85,18 @@ export type ContextPackQualityEstimate = {
   observedProviderCompletionTokens: number;
   observedProviderTotalTokens: number;
   observedAverageProviderTotalTokens: number | null;
+  // Nullable display truth coexists with the legacy numeric fields above.
+  providerUsage: {
+    sampleCount: number | null;
+    completeTotalCount: number | null;
+    promptCount: number | null;
+    completionCount: number | null;
+    promptTokens: number | null;
+    completionTokens: number | null;
+    totalTokens: number | null;
+    averageTotalTokens: number | null;
+  };
+  calibrationStatus: "unknown" | "uncalibrated" | "observed";
   measurementLimit: string;
   source: string;
   warnings: string[];
@@ -200,6 +241,60 @@ export function flattenMemoryTopics(payload: unknown): TopicFlatNode[] {
 
 export function topicCountFromTree(payload: unknown): number {
   return flattenMemoryTopics(payload).length;
+}
+
+function tokenImpactCandidates(overview: unknown): unknown[] {
+  const record = asRecord(overview);
+  return [
+    record.tokenImpact,
+    record.token_impact,
+    asRecord(record.status).tokenImpact,
+    asRecord(record.status).token_impact,
+    asRecord(record.telemetryMetrics).tokenImpact,
+    asRecord(record.telemetryMetrics).token_impact,
+  ];
+}
+
+export function getTokenImpactTruth(overview: unknown): TokenImpactTruth {
+  const record = tokenImpactCandidates(overview).map(asRecord).find((row) => Object.keys(row).length > 0) ?? {};
+  const sampleCount = firstExactCount(record, ["sampleCount", "sample_count", "samples"]);
+  const transportSampleCount = firstExactCount(record, ["transportInclusiveSampleCount", "transport_inclusive_sample_count"]);
+  const compiledCount = firstExactCount(record, ["compiledPromptSampleCount", "compiled_prompt_sample_count"]);
+  const compiledPromptSampleCount = compiledCount !== null && transportSampleCount !== null && compiledCount <= transportSampleCount && (sampleCount === null || compiledCount <= sampleCount) ? compiledCount : null;
+  const modelVisibleSampleCount = firstNullableCount(record, ["modelVisibleExactSampleCount", "model_visible_exact_sample_count"]);
+  return {
+    sampleCount,
+    positiveOnlySaved: firstNullableCount(record, ["savedTokens", "saved_tokens", "saved_tokens_estimate", "estimatedSaved"]),
+    exactSampleCount: firstNullableCount(record, ["exactSampleCount", "exact_sample_count"]),
+    transportSampleCount,
+    // Never reconstruct signed net from totals: their populations can differ.
+    netTokenDelta: hasObservations(transportSampleCount) ? firstNullableNumber(record, ["netTokenDelta", "net_token_delta"]) : null,
+    transportTokens: hasObservations(transportSampleCount) ? firstNullableCount(record, ["wireTokensExact", "wire_tokens_exact", "transportTokensExact", "transport_tokens_exact"]) : null,
+    compiledPromptSampleCount,
+    compiledPromptTokens: hasObservations(compiledPromptSampleCount) ? firstNullableCount(record, ["compiledPromptTokensEstimate", "compiled_prompt_tokens_estimate"]) : null,
+    modelVisibleSampleCount,
+    modelVisibleTokens: hasObservations(modelVisibleSampleCount) ? firstNullableCount(record, ["modelVisibleContextTokensExact", "model_visible_context_tokens_exact"]) : null,
+    windowLabel: toText(record.windowLabel) || toText(record.window_label) || "aggregate ledger (time range unspecified)",
+    cohortWindowSampleCount: firstNullableCount(record, ["cohortWindowSampleCount", "cohort_window_sample_count"]),
+    cohortOmittedCount: firstNullableCount(record, ["cohortOmittedCount", "cohort_omitted_count"]),
+    cohorts: asArray(record.cohorts).map((candidate) => {
+      const row = asRecord(candidate);
+      const netSampleCount = firstNullableCount(row, ["signedNetDeltaSampleCount", "signed_net_delta_sample_count"]);
+      const wireSampleCount = firstNullableCount(row, ["wireExactSampleCount", "wire_exact_sample_count"]);
+      const modelVisibleSampleCount = firstNullableCount(row, ["modelVisibleExactSampleCount", "model_visible_exact_sample_count"]);
+      return {
+        scope: toText(row.scope) || "unknown scope",
+        packedKind: toText(row.packedKind) || toText(row.packed_kind) || "unknown packed kind",
+        sampleCount: firstNullableCount(row, ["sampleCount", "sample_count"]),
+        netSampleCount,
+        netTokenDelta: hasObservations(netSampleCount) ? firstNullableNumber(row, ["signedNetTokenDelta", "signed_net_token_delta"]) : null,
+        wireSampleCount,
+        wireTokens: hasObservations(wireSampleCount) ? firstNullableCount(row, ["wireTokensExact", "wire_tokens_exact"]) : null,
+        modelVisibleSampleCount,
+        modelVisibleTokens: hasObservations(modelVisibleSampleCount) ? firstNullableCount(row, ["modelVisibleContextTokensExact", "model_visible_context_tokens_exact"]) : null,
+      };
+    }),
+  };
 }
 
 export function estimateTokenImpact(overview: unknown, mindmap: unknown, topics: unknown): TokenImpactEstimate {
@@ -383,6 +478,8 @@ export function estimateContextPackQuality(overview: unknown): ContextPackQualit
     observedProviderCompletionTokens: 0,
     observedProviderTotalTokens: 0,
     observedAverageProviderTotalTokens: null,
+    providerUsage: { sampleCount: null, completeTotalCount: null, promptCount: null, completionCount: null, promptTokens: null, completionTokens: null, totalTokens: null, averageTotalTokens: null },
+    calibrationStatus: "unknown",
     measurementLimit: "No context-pack quality samples are available yet.",
     source: "context_pack_quality_unavailable",
     warnings: ["Run a context pack to seed the quality ledger."],
@@ -487,6 +584,16 @@ function normalizeContextPackQuality(candidate: unknown): ContextPackQualityEsti
   ]);
   const sampleCount = firstInt(record, ["sampleCount", "sample_count"]);
   const outcomeSamples = firstInt(record, ["outcomeSampleCount", "outcome_sample_count"]);
+  const calibrationCount = firstNullableCount(record, ["calibrationOutcomeSampleCount", "calibration_outcome_sample_count"]);
+  const providerCount = firstExactCount(record, ["observedProviderUsageCount", "observed_provider_usage_count"]);
+  const coverageVersion = firstExactCount(record, ["providerUsageCoverageVersion", "provider_usage_coverage_version"]);
+  const fieldCount = (keys: string[]) => {
+    const count = firstNullableNumber(record, keys);
+    return coverageVersion === 1 && count !== null && Number.isSafeInteger(count) && count >= 0 && providerCount !== null && count <= providerCount ? count : null;
+  };
+  const providerTotalCount = fieldCount(["observedProviderCompleteTotalCount", "observed_provider_complete_total_count"]);
+  const providerPromptCount = fieldCount(["observedProviderPromptCount", "observed_provider_prompt_count"]);
+  const providerCompletionCount = fieldCount(["observedProviderCompletionCount", "observed_provider_completion_count"]);
   const hasCalibrationOutcomeSamples =
     Object.prototype.hasOwnProperty.call(record, "calibrationOutcomeSampleCount") ||
     Object.prototype.hasOwnProperty.call(record, "calibration_outcome_sample_count");
@@ -498,7 +605,7 @@ function normalizeContextPackQuality(candidate: unknown): ContextPackQualityEsti
     0,
     100,
   );
-  if (modeledInferenceSaved <= 0 && exactPromptSaved <= 0 && sampleCount <= 0 && outcomeSamples <= 0) {
+  if (modeledInferenceSaved <= 0 && exactPromptSaved <= 0 && sampleCount <= 0 && outcomeSamples <= 0 && providerCount === null && calibrationCount === null) {
     return null;
   }
   const calibrationGrade = normalizeContextPackQualityCalibration(
@@ -507,13 +614,14 @@ function normalizeContextPackQuality(candidate: unknown): ContextPackQualityEsti
   const measurementLimit =
     toText(record.measurementLimit) ||
     toText(record.measurement_limit) ||
-    "Exact prompt tokens are measured; inference avoidance is confidence-banded.";
+    "Prompt accounting and modeled inference avoidance are separate from observed provider usage and billing savings.";
   const firstPass = nullableRatio(record.observedFirstPassSuccessRate ?? record.observed_first_pass_success_rate);
   const repairRate = nullableRatio(record.observedRepairRate ?? record.observed_repair_rate);
   const observedProviderUsageCount = firstInt(record, ["observedProviderUsageCount", "observed_provider_usage_count"]);
   const observedAverageProviderTotalTokens = nullableNumber(
     record.observedAverageProviderTotalTokens ?? record.observed_average_provider_total_tokens,
   );
+  const providerAverage = firstNullableNumber(record, ["observedAverageProviderCompleteTotalTokens", "observed_average_provider_complete_total_tokens"]);
   return {
     modeledInferenceSaved: roundTokenCount(modeledInferenceSaved),
     exactPromptSaved: roundTokenCount(exactPromptSaved),
@@ -535,25 +643,30 @@ function normalizeContextPackQuality(candidate: unknown): ContextPackQualityEsti
     observedProviderCompletionTokens: firstInt(record, ["observedProviderCompletionTokens", "observed_provider_completion_tokens"]),
     observedProviderTotalTokens: firstInt(record, ["observedProviderTotalTokens", "observed_provider_total_tokens"]),
     observedAverageProviderTotalTokens,
+    providerUsage: {
+      sampleCount: providerCount,
+      completeTotalCount: providerTotalCount,
+      promptCount: providerPromptCount,
+      completionCount: providerCompletionCount,
+      promptTokens: hasObservations(providerPromptCount) ? firstNullableCount(record, ["observedProviderReportedPromptTokens", "observed_provider_reported_prompt_tokens"]) : null,
+      completionTokens: hasObservations(providerCompletionCount) ? firstNullableCount(record, ["observedProviderReportedCompletionTokens", "observed_provider_reported_completion_tokens"]) : null,
+      totalTokens: hasObservations(providerTotalCount) ? firstNullableCount(record, ["observedProviderCompleteTotalTokens", "observed_provider_complete_total_tokens"]) : null,
+      averageTotalTokens: hasObservations(providerTotalCount) && providerAverage !== null && providerAverage >= 0 ? providerAverage : null,
+    },
+    calibrationStatus: calibrationCount === null ? "unknown" : calibrationCount === 0 ? "uncalibrated" : "observed",
     measurementLimit,
     source: toText(record.source) || "/telemetry/context-pack-quality",
     warnings: [
       measurementLimit,
-      calibrationGrade === "modeled_counterfactual" ? "Inference avoidance is not exact until outcome rows calibrate the model." : "",
+      "Inference avoidance is modeled, not exact causal or billing savings, even with calibration outcomes.",
+      calibrationCount === 0 ? "Uncalibrated: no observed calibration outcomes." : "",
       observedProviderUsageCount > 0 ? "Provider usage is observed from posted outcome rows, separate from modeled inference avoidance." : "",
     ].filter(Boolean),
   };
 }
 
 function measuredTokenImpactEstimate(overviewRecord: Record<string, any>): TokenImpactEstimate | null {
-  const candidates = [
-    overviewRecord.tokenImpact,
-    overviewRecord.token_impact,
-    asRecord(overviewRecord.status).tokenImpact,
-    asRecord(overviewRecord.status).token_impact,
-    asRecord(overviewRecord.telemetryMetrics).tokenImpact,
-    asRecord(overviewRecord.telemetryMetrics).token_impact,
-  ];
+  const candidates = tokenImpactCandidates(overviewRecord);
   for (const candidate of candidates) {
     const normalized = normalizeMeasuredTokenImpact(candidate);
     if (normalized) {
@@ -568,13 +681,13 @@ function normalizeMeasuredTokenImpact(candidate: unknown): TokenImpactEstimate |
   if (Object.keys(record).length === 0) {
     return null;
   }
-  const baselineTokens = firstInt(record, ["baselineTokens", "baseline_tokens", "baseline_tokens_estimate"]);
-  const packedTokens = firstInt(record, ["packedTokens", "packed_tokens", "packed_tokens_estimate"]);
-  const explicitSaved = firstInt(record, ["savedTokens", "saved_tokens", "saved_tokens_estimate", "estimatedSaved"]);
-  if (baselineTokens <= 0 || packedTokens <= 0) {
+  const baselineTokens = firstNullableCount(record, ["baselineTokens", "baseline_tokens", "baseline_tokens_estimate"]);
+  const packedTokens = firstNullableCount(record, ["packedTokens", "packed_tokens", "packed_tokens_estimate"]);
+  const explicitSaved = firstNullableCount(record, ["savedTokens", "saved_tokens", "saved_tokens_estimate", "estimatedSaved"]);
+  if (baselineTokens === null || packedTokens === null) {
     return null;
   }
-  const estimatedSaved = explicitSaved > 0 ? explicitSaved : Math.max(0, baselineTokens - packedTokens);
+  const estimatedSaved = explicitSaved ?? Math.max(0, baselineTokens - packedTokens);
   const riskPenaltyTokens = firstInt(record, ["riskPenaltyTokens", "risk_penalty_tokens"]);
   const sampleCount = Math.max(1, firstInt(record, ["sampleCount", "sample_count", "samples"]));
   const sessionCount = Math.max(1, firstInt(record, ["sessionCount", "session_count", "activeSessions"]));
@@ -590,11 +703,11 @@ function normalizeMeasuredTokenImpact(candidate: unknown): TokenImpactEstimate |
     "Measured sample uses the upstream estimator method advertised by the token_impact payload.";
 
   return {
-    estimatedSaved: roundTokenCount(estimatedSaved),
-    baselineTokens: roundTokenCount(baselineTokens),
-    packedTokens: roundTokenCount(packedTokens),
+    estimatedSaved,
+    baselineTokens,
+    packedTokens,
     riskPenaltyTokens: roundTokenCount(riskPenaltyTokens),
-    compressionRatio: roundRatio(toNumber(record.compressionRatio) || toNumber(record.compression_ratio) || baselineTokens / Math.max(1, packedTokens)),
+    compressionRatio: roundRatio(toNumber(record.compressionRatio) || toNumber(record.compression_ratio) || (packedTokens > 0 ? baselineTokens / packedTokens : 0)),
     perSession: Math.max(0, Math.round(estimatedSaved / sessionCount)),
     confidence,
     calibrationGrade,
@@ -671,6 +784,30 @@ function firstInt(record: Record<string, any>, keys: string[]): number {
     }
   }
   return 0;
+}
+
+function firstNullableNumber(record: Record<string, any>, keys: string[]): number | null {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value !== "number" && (typeof value !== "string" || !value.trim())) continue;
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
+function firstNullableCount(record: Record<string, any>, keys: string[]): number | null {
+  const value = firstNullableNumber(record, keys);
+  return value !== null && value >= 0 ? Math.round(value) : null;
+}
+
+function firstExactCount(record: Record<string, any>, keys: string[]): number | null {
+  const value = firstNullableNumber(record, keys);
+  return value !== null && Number.isSafeInteger(value) && value >= 0 ? value : null;
+}
+
+function hasObservations(count: number | null): boolean {
+  return count !== null && count > 0;
 }
 
 function roundTokenCount(value: unknown): number {

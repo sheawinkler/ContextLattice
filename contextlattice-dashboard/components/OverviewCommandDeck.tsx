@@ -1,25 +1,25 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
+import { useDashboardSnapshot } from "@/lib/useDashboardSnapshot";
 import {
   asArray,
   asRecord,
   estimateTokenImpact,
   formatCompact,
   formatTimestamp,
+  getTokenImpactTruth,
   serviceHealthLabel,
   toInt,
   toText,
 } from "@/lib/dashboardMetrics";
 
-async function getJson(path: string): Promise<any | null> {
-  try {
-    const response = await fetch(path, { cache: "no-store" });
-    return await response.json();
-  } catch {
-    return null;
-  }
-}
+const INITIAL_SNAPSHOT = { overview: null as any, mindmap: null as any, topics: null as any };
+const SNAPSHOT_PATHS = {
+  overview: "/api/telemetry/overview?view=memory",
+  mindmap: "/api/telemetry/mindmap?project=__all__&depth=4&limit=700",
+  topics: "/api/memory/topics?depth=4",
+};
 
 function CapabilityCard({
   eyebrow,
@@ -45,28 +45,11 @@ function CapabilityCard({
 }
 
 export function OverviewCommandDeck() {
-  const [overview, setOverview] = useState<any | null>(null);
-  const [mindmap, setMindmap] = useState<any | null>(null);
-  const [topics, setTopics] = useState<any | null>(null);
-
-  useEffect(() => {
-    let mounted = true;
-    Promise.all([
-      getJson("/api/telemetry/overview?recallHistory=24&toolLimit=12"),
-      getJson("/api/telemetry/mindmap?project=__all__&depth=4&limit=700"),
-      getJson("/api/memory/topics?depth=4"),
-    ]).then(([overviewData, mindmapData, topicsData]) => {
-      if (!mounted) return;
-      setOverview(overviewData);
-      setMindmap(mindmapData);
-      setTopics(topicsData);
-    });
-    return () => {
-      mounted = false;
-    };
-  }, []);
+  const snapshot = useDashboardSnapshot(INITIAL_SNAPSHOT, SNAPSHOT_PATHS);
+  const { overview, mindmap, topics } = snapshot.data;
 
   const tokenImpact = useMemo(() => estimateTokenImpact(overview, mindmap, topics), [overview, mindmap, topics]);
+  const tokenTruth = getTokenImpactTruth(overview);
   const health = serviceHealthLabel(overview);
   const summary = asRecord(asRecord(mindmap).summary);
   const projects = asArray(asRecord(mindmap).projects);
@@ -81,7 +64,7 @@ export function OverviewCommandDeck() {
   return (
     <div
       className="cl-page cl-overview-page"
-      data-visual-state={overview && mindmap && topics ? "settled" : "loading"}
+      data-visual-state={snapshot.attemptedAt === null || (snapshot.refreshing && !snapshot.succeededAt) ? "loading" : "settled"}
     >
       <section className="cl-hero cl-hero--compact">
         <div className="cl-hero-copy">
@@ -93,10 +76,23 @@ export function OverviewCommandDeck() {
           </p>
         </div>
         <div className="cl-overview-stamp">
-          <span>snapshot</span>
+          <span>source generated</span>
           <strong>{formatTimestamp(generatedAt)}</strong>
+          <small>last successful {formatTimestamp(snapshot.succeededAt)}</small>
+          <small>last attempted {formatTimestamp(snapshot.attemptedAt)}</small>
+          <button className="cl-button" type="button" onClick={() => void snapshot.refresh()} disabled={snapshot.refreshing}>
+            {snapshot.refreshing ? "Refreshing" : "Refresh"}
+          </button>
+          <small>Five-minute refresh; separate sources, not an atomic snapshot.</small>
         </div>
       </section>
+
+      {snapshot.errors.length || (snapshot.stale && snapshot.succeededAt) ? (
+        <section className="cl-alert-strip" role="status">
+          <strong>{snapshot.succeededAt ? "Stale snapshot. Last-good data retained." : "Snapshot incomplete."}</strong>
+          <span>{snapshot.errors.join(" | ")}</span>
+        </section>
+      ) : null}
 
       <section className="cl-proof-strip">
         <div>
@@ -116,8 +112,9 @@ export function OverviewCommandDeck() {
           <strong>{formatCompact(toInt(summary.totalEvents))}</strong>
         </div>
         <div>
-          <span className="cl-label">estimated tokens saved</span>
-          <strong>{formatCompact(tokenImpact.estimatedSaved)}</strong>
+          <span className="cl-label">signed net context delta</span>
+          <strong>{tokenTruth.netTokenDelta === null ? "unknown" : `${tokenTruth.netTokenDelta > 0 ? "+" : ""}${formatCompact(tokenTruth.netTokenDelta)}`}</strong>
+          <small>{tokenTruth.transportSampleCount ?? "?"}/{tokenTruth.sampleCount ?? "?"} rows; not billing savings</small>
         </div>
       </section>
 
@@ -132,7 +129,7 @@ export function OverviewCommandDeck() {
           eyebrow="select"
           title="Explainable retrieval"
           body="Retrieval lanes, rollups, graph evidence, and agent packs compete for limited prompt space so every selected token can justify its place."
-          metric={`${tokenImpact.confidence} confidence`}
+          metric={`${tokenImpact.calibrationGrade.replace(/_/g, " ")} accounting`}
         />
         <CapabilityCard
           eyebrow="move"

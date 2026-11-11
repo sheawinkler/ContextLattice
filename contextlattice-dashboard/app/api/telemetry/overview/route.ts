@@ -4,7 +4,9 @@ import { fetchOrchestrator } from "@/lib/orchestrator";
 type SafeResponse = {
   data: any | null;
   error: string | null;
-  fetchedAt: string;
+  attemptedAt: string;
+  succeededAt: string | null;
+  sourceAt: string | null;
 };
 
 function clampInt(value: string | null, fallback: number, min: number, max: number): number {
@@ -17,34 +19,40 @@ function clampInt(value: string | null, fallback: number, min: number, max: numb
 
 async function safeGet(
   path: string,
+  signal: AbortSignal,
   options?: { optionalStatuses?: number[] },
 ): Promise<SafeResponse> {
-  const fetchedAt = new Date().toISOString();
+  const attemptedAt = new Date().toISOString();
+  const unknown = { attemptedAt, succeededAt: null, sourceAt: null };
   try {
-    const response = await fetchOrchestrator(path, { method: "GET" });
+    const response = await fetchOrchestrator(path, { method: "GET", signal });
     if (!response.ok) {
       if (options?.optionalStatuses?.includes(response.status)) {
         return {
           data: null,
           error: null,
-          fetchedAt,
+          ...unknown,
         };
       }
       const detail = (await response.text()).slice(0, 280);
       return {
         data: null,
         error: `${path} -> ${response.status}${detail ? ` ${detail}` : ""}`,
-        fetchedAt,
+        ...unknown,
       };
     }
+    const data = await response.json();
+    const source = data?.updatedAt ?? data?.updated_at ?? data?.generatedAt ?? data?.capturedAt;
     return {
-      data: await response.json(),
+      data,
       error: null,
-      fetchedAt,
+      attemptedAt,
+      succeededAt: new Date().toISOString(),
+      sourceAt: typeof source === "string" && Number.isFinite(Date.parse(source)) ? source : null,
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    return { data: null, error: `${path} -> ${message}`, fetchedAt };
+    return { data: null, error: `${path} -> ${message}`, ...unknown };
   }
 }
 
@@ -73,6 +81,11 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   const recallHistory = clampInt(url.searchParams.get("recallHistory"), 32, 8, 128);
   const toolLimit = clampInt(url.searchParams.get("toolLimit"), 20, 5, 100);
+  const memoryOnly = url.searchParams.get("view") === "memory";
+  const signal = AbortSignal.any([request.signal, AbortSignal.timeout(8000)]);
+  const get = (path: string) => safeGet(path, signal);
+  const omitted: SafeResponse = { data: null, error: null, attemptedAt: "", succeededAt: null, sourceAt: null };
+  const specialist = (path: string) => memoryOnly ? Promise.resolve(omitted) : get(path);
 
   const [
     status,
@@ -97,27 +110,27 @@ export async function GET(request: Request) {
     tools,
     sentrux,
   ] = await Promise.all([
-    safeGet("/status"),
-    safeGet("/telemetry/metrics"),
-    safeGet("/telemetry/token-impact"),
-    safeGet("/telemetry/context-pack-quality"),
-    safeGet("/telemetry/runner-quality"),
-    safeGet("/telemetry/memory"),
-    safeGet("/telemetry/retrieval?traffic_class=user"),
-    safeGet("/telemetry/fanout"),
-    safeGet("/telemetry/storage"),
-    safeGet("/telemetry/sidecar-health"),
-    safeGet("/telemetry/strategies"),
-    safeGet("/telemetry/strategies/history?limit=50"),
-    safeGet("/telemetry/trading"),
-    safeGet("/telemetry/trading/history?limit=50"),
-    safeGet("/telemetry/recall"),
-    safeGet("/telemetry/recall/monitor"),
-    safeGet("/ops/queue/status?include_deadletters=false"),
-    safeGet("/telemetry/agents/runtime?limit=16"),
-    safeGet("/ops/native-ownership"),
-    safeGet(`/telemetry/tools/invocations?limit=${toolLimit}&status_min=400`),
-    safeGet("/ops/quality/sentrux/status", { optionalStatuses: [404] }),
+    get("/status"),
+    specialist("/telemetry/metrics"),
+    get("/telemetry/token-impact"),
+    get("/telemetry/context-pack-quality"),
+    get("/telemetry/runner-quality"),
+    get("/telemetry/memory"),
+    get("/telemetry/retrieval?traffic_class=user"),
+    specialist("/telemetry/fanout"),
+    get("/telemetry/storage"),
+    specialist("/telemetry/sidecar-health"),
+    specialist("/telemetry/strategies"),
+    specialist("/telemetry/strategies/history?limit=50"),
+    specialist("/telemetry/trading"),
+    specialist("/telemetry/trading/history?limit=50"),
+    specialist("/telemetry/recall"),
+    specialist("/telemetry/recall/monitor"),
+    specialist("/ops/queue/status?include_deadletters=false"),
+    get("/telemetry/agents/runtime?limit=16"),
+    specialist("/ops/native-ownership"),
+    specialist(`/telemetry/tools/invocations?limit=${toolLimit}&status_min=400`),
+    memoryOnly ? omitted : safeGet("/ops/quality/sentrux/status", signal, { optionalStatuses: [404] }),
   ]);
 
   const errors: Record<string, string> = {};
@@ -151,7 +164,7 @@ export async function GET(request: Request) {
     }
   });
   const freshness = Object.fromEntries(
-    Object.entries(endpoints).map(([key, value]) => [key, value.fetchedAt]),
+    Object.entries(endpoints).map(([key, value]) => [key, value.succeededAt]),
   );
 
   const recallMonitorPayload =
@@ -165,6 +178,12 @@ export async function GET(request: Request) {
       : null;
 
   return NextResponse.json({
+    snapshotId: crypto.randomUUID(),
+    snapshotAtomic: false,
+    view: memoryOnly ? "memory" : "full",
+    sourceFreshness: Object.fromEntries(Object.entries(endpoints).filter(([, value]) => value !== omitted).map(([key, value]) => [key, {
+      attemptedAt: value.attemptedAt, succeededAt: value.succeededAt, sourceAt: value.sourceAt,
+    }])),
     capturedAt: new Date().toISOString(),
     status: status.data,
     telemetryMetrics: telemetryMetrics.data,

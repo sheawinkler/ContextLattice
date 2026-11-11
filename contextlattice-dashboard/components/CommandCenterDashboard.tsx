@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
+import { useDashboardSnapshot } from "@/lib/useDashboardSnapshot";
 import {
   ageLabel,
   asArray,
@@ -11,17 +12,13 @@ import {
   formatCompact,
   formatMs,
   formatTimestamp,
+  getTokenImpactTruth,
   serviceHealthLabel,
   toInt,
   toNumber,
   toText,
 } from "@/lib/dashboardMetrics";
 import { AgentPacketWorkbench } from "@/components/AgentPacketWorkbench";
-
-type JsonResult = {
-  data: any | null;
-  error: string | null;
-};
 
 type DashboardState = {
   overview: any | null;
@@ -37,18 +34,12 @@ const EMPTY_STATE: DashboardState = {
   health: null,
 };
 
-async function loadJson(path: string): Promise<JsonResult> {
-  try {
-    const response = await fetch(path, { cache: "no-store" });
-    const data = await response.json().catch(() => null);
-    if (!response.ok) {
-      return { data, error: `${path} -> ${response.status}` };
-    }
-    return { data, error: null };
-  } catch (error) {
-    return { data: null, error: `${path} -> ${error instanceof Error ? error.message : String(error)}` };
-  }
-}
+const SNAPSHOT_PATHS = {
+  overview: "/api/telemetry/overview?view=memory",
+  mindmap: "/api/telemetry/mindmap?project=__all__&depth=4&limit=700",
+  topics: "/api/memory/topics?depth=4",
+  health: "/api/health",
+};
 
 function MetricCard({
   label,
@@ -126,39 +117,24 @@ function formatSigned(value: number): string {
   return `${value > 0 ? "+" : "-"}${formatCompact(Math.abs(value))}`;
 }
 
-export function CommandCenterDashboard() {
-  const [state, setState] = useState<DashboardState>(EMPTY_STATE);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [errors, setErrors] = useState<string[]>([]);
-  const [updatedAt, setUpdatedAt] = useState<string>("");
+function formatObserved(value: number | null): string {
+  return value === null ? "unknown" : formatCompact(value);
+}
 
-  const load = useCallback(async (initial = false) => {
-    if (initial) setLoading(true);
-    else setRefreshing(true);
-    const [overview, mindmap, topics, health] = await Promise.all([
-      loadJson("/api/telemetry/overview?recallHistory=48&toolLimit=24"),
-      loadJson("/api/telemetry/mindmap?project=__all__&depth=4&limit=700"),
-      loadJson("/api/memory/topics?depth=4"),
-      loadJson("/api/health"),
-    ]);
-    setState({
-      overview: overview.data,
-      mindmap: mindmap.data,
-      topics: topics.data,
-      health: health.data,
-    });
-    setErrors([overview.error, mindmap.error, topics.error, health.error].filter(Boolean) as string[]);
-    setUpdatedAt(new Date().toLocaleTimeString());
-    setLoading(false);
-    setRefreshing(false);
-  }, []);
+function formatCoverage(count: number | null, total: number | null): string {
+  return `${count ?? "?"}/${total ?? "?"}`;
+}
 
-  useEffect(() => {
-    void load(true);
-    const handle = window.setInterval(() => void load(false), 15000);
-    return () => window.clearInterval(handle);
-  }, [load]);
+function optionalCount(value: unknown): number | null {
+  if (typeof value !== "number" && (typeof value !== "string" || !value.trim())) return null;
+  const count = Number(value);
+  return Number.isFinite(count) && count >= 0 ? count : null;
+}
+
+export function CommandCenterDashboard({ initialState = EMPTY_STATE }: { initialState?: DashboardState } = {}) {
+  const snapshot = useDashboardSnapshot(initialState, SNAPSHOT_PATHS);
+  const { data: state, errors, refreshing } = snapshot;
+  const loading = snapshot.attemptedAt === null || (refreshing && snapshot.succeededAt === null);
 
   const overview = state.overview;
   const mindmap = state.mindmap;
@@ -170,13 +146,15 @@ export function CommandCenterDashboard() {
   );
   const contextPackQuality = useMemo(() => estimateContextPackQuality(overview), [overview]);
   const runnerQuality = useMemo(() => estimateRunnerQuality(overview), [overview]);
-  const tokenTruth = asRecord(asRecord(overview).tokenImpact);
-  const tokenSampleCount = toInt(tokenTruth.sample_count);
-  const transportSampleCount = toInt(tokenTruth.transport_inclusive_sample_count);
-  const transportTokensExact = toNumber(tokenTruth.transport_tokens_exact);
-  const compiledPromptTokens = toNumber(tokenTruth.compiled_prompt_tokens_estimate);
-  const netTokenDelta = toNumber(tokenTruth.net_token_delta);
-  const transportComplete = tokenSampleCount > 0 && transportSampleCount === tokenSampleCount;
+  const tokenTruth = getTokenImpactTruth(overview);
+  const netTokenDelta = tokenTruth.netTokenDelta;
+  const impactScale = Math.max(1, tokenImpact.baselineTokens, tokenImpact.packedTokens);
+  const providerUsage = contextPackQuality.providerUsage;
+  const calibrationLabel = contextPackQuality.calibrationStatus === "unknown"
+    ? "calibration unknown"
+    : contextPackQuality.calibrationStatus === "uncalibrated"
+      ? "uncalibrated (0 observed calibration rows)"
+      : `${contextPackQuality.calibrationOutcomeSamples} observed calibration rows`;
   const agentRuntime = asRecord(asRecord(overview).agentRuntime);
   const liveSessionCount = toInt(agentRuntime.live ?? agentRuntime.active);
   const expiredSessionCount = toInt(agentRuntime.expired);
@@ -214,8 +192,8 @@ export function CommandCenterDashboard() {
           <p className="cl-kicker">Lattice // live operations</p>
           <h2>Memory that earns its tokens.</h2>
           <p>
-            A hard proof cockpit for the local memory stack: what is healthy, what is expensive,
-            what is being recalled, and how much context the lattice kept out of the prompt.
+            Evidence for the local memory stack: what is healthy, what is expensive,
+            what is being recalled, and where scoped context shrinks or expands.
           </p>
         </div>
         <div className="cl-hero-panel" aria-label="Live runtime summary">
@@ -223,34 +201,38 @@ export function CommandCenterDashboard() {
           <div>
             <div className="cl-label">orchestrator</div>
             <div className="cl-hero-stat">{healthStatus}</div>
-            <div className="cl-metric-detail">updated {updatedAt || "--"}</div>
+            <div className="cl-metric-detail">
+              last successful {formatTimestamp(snapshot.succeededAt)}; attempted {formatTimestamp(snapshot.attemptedAt)}
+              <br />runtime source {ageLabel(asRecord(asRecord(asRecord(overview).sourceFreshness).status).sourceAt)}
+              {" "}· refresh every five minutes
+            </div>
           </div>
-          <button className="cl-button" type="button" onClick={() => void load(false)} disabled={refreshing}>
+          <button className="cl-button" type="button" onClick={() => void snapshot.refresh()} disabled={refreshing}>
             {refreshing ? "Refreshing" : "Refresh"}
           </button>
         </div>
       </section>
 
-      {errors.length ? (
+      {errors.length || (snapshot.stale && snapshot.succeededAt) ? (
         <section className="cl-alert-strip">
-          <strong>Dashboard fetch degraded.</strong>
+          <strong>{snapshot.succeededAt ? "Stale snapshot. Last-good data retained." : "Dashboard fetch degraded."}</strong>
           <span>{errors.join(" | ")}</span>
         </section>
       ) : null}
 
       <section className="cl-metric-grid" aria-busy={loading}>
         <MetricCard
-          label="token truth"
-          value={transportSampleCount ? formatCompact(transportTokensExact) : "--"}
-          detail={`${transportSampleCount}/${tokenSampleCount} wire-measured · net ${formatSigned(netTokenDelta)} · compiled ${formatCompact(compiledPromptTokens)}`}
-          tone={transportSampleCount && netTokenDelta < 0 ? "warn" : transportComplete ? "good" : "neutral"}
-          compactValue={!transportSampleCount}
+          label="signed net context delta"
+          value={netTokenDelta === null ? "unknown" : formatSigned(netTokenDelta)}
+          detail={`${tokenTruth.windowLabel} · ${formatCoverage(tokenTruth.transportSampleCount, tokenTruth.sampleCount)} transport-inclusive rows · positive = reduction; negative = expansion`}
+          tone={netTokenDelta !== null && netTokenDelta < 0 ? "warn" : "neutral"}
+          compactValue={netTokenDelta === null}
         />
         <MetricCard
-          label={tokenImpact.calibrationGrade === "heuristic" ? "estimated context savings" : "measured context savings"}
-          value={formatCompact(tokenImpact.estimatedSaved)}
-          detail={`${tokenImpact.compressionRatio}x compression · ${tokenImpact.confidence} confidence`}
-          tone="hot"
+          label="positive-only savings subtotal"
+          value={formatObserved(tokenTruth.positiveOnlySaved)}
+          detail={`${tokenTruth.windowLabel} · excludes negative rows; not signed net, exact causal savings, or provider billing savings`}
+          compactValue={tokenTruth.positiveOnlySaved === null}
         />
         <MetricCard
           label="session truth"
@@ -267,14 +249,15 @@ export function CommandCenterDashboard() {
         <MetricCard
           label="modeled inference avoided"
           value={formatCompact(contextPackQuality.modeledInferenceSaved)}
-          detail={`${contextPackQuality.extraCallsAvoided} calls · ${formatCompact(contextPackQuality.calibrationOutcomeSamples)} calibrated · ${contextPackQuality.confidence}`}
-          tone={contextPackQuality.calibrationGrade === "outcome_adjusted" ? "good" : "neutral"}
+          detail={`${contextPackQuality.extraCallsAvoided} modeled calls · ${calibrationLabel} · ${contextPackQuality.confidence} model confidence, not measured savings`}
+          tone="neutral"
         />
         <MetricCard
           label="observed provider tokens"
-          value={formatCompact(contextPackQuality.observedProviderTotalTokens)}
-          detail={`${formatCompact(contextPackQuality.observedProviderUsageCount)} outcome rows · avg ${formatCompact(contextPackQuality.observedAverageProviderTotalTokens ?? 0)}/call`}
-          tone={contextPackQuality.observedProviderUsageCount > 0 ? "good" : "neutral"}
+          value={formatObserved(providerUsage.totalTokens)}
+          detail={`${providerUsage.sampleCount === null ? "not instrumented / coverage unknown" : providerUsage.sampleCount === 0 ? "no observations / not instrumented" : `${formatCoverage(providerUsage.completeTotalCount, providerUsage.sampleCount)} rows with complete totals; others partial or legacy`} · avg ${formatObserved(providerUsage.averageTotalTokens)}/complete row · separate outcome ledger; time range unspecified`}
+          tone="neutral"
+          compactValue={providerUsage.totalTokens === null}
         />
         <MetricCard
           label="runner advisor"
@@ -291,15 +274,17 @@ export function CommandCenterDashboard() {
         />
         <MetricCard
           label="memory write queue"
-          value={`${formatCompact(toInt(memoryBank.queueDepth))}/${formatCompact(toInt(memoryBank.queueMax))}`}
-          detail={`${formatCompact(toInt(memoryBank.processed))} processed · last ${formatMs(memoryTelemetry.lastWriteLatencyMs)}`}
-          tone={toInt(memoryBank.queueDepth) === 0 ? "good" : "warn"}
+          value={`${formatObserved(optionalCount(memoryBank.queueDepth))}/${formatObserved(optionalCount(memoryBank.queueMax))}`}
+          detail={`${formatObserved(optionalCount(memoryBank.processed))} processed · last ${optionalCount(memoryTelemetry.lastWriteLatencyMs) === null ? "unknown" : formatMs(memoryTelemetry.lastWriteLatencyMs)}`}
+          tone={optionalCount(memoryBank.queueDepth) === null ? "neutral" : optionalCount(memoryBank.queueDepth) === 0 ? "good" : "warn"}
+          compactValue={optionalCount(memoryBank.queueDepth) === null}
         />
         <MetricCard
           label="fanout queue"
-          value={`${formatCompact(toInt(fanout.queueDepth))}/${formatCompact(toInt(fanout.queueMax))}`}
-          detail={`${formatCompact(toInt(fanout.processed))} processed · qdrant + pgvector`}
-          tone={toInt(fanout.queueDepth) === 0 ? "good" : "warn"}
+          value={`${formatObserved(optionalCount(fanout.queueDepth))}/${formatObserved(optionalCount(fanout.queueMax))}`}
+          detail={`${formatObserved(optionalCount(fanout.processed))} processed · qdrant + pgvector`}
+          tone={optionalCount(fanout.queueDepth) === null ? "neutral" : optionalCount(fanout.queueDepth) === 0 ? "good" : "warn"}
+          compactValue={optionalCount(fanout.queueDepth) === null}
         />
         <MetricCard
           label="retrieval alerts"
@@ -379,37 +364,67 @@ export function CommandCenterDashboard() {
           <div className="cl-section-head">
             <div>
               <p className="cl-kicker">token impact engine</p>
-              <h3>Prompt economics ledger</h3>
+              <h3>Context accounting ledger</h3>
             </div>
             <span className="cl-badge">{tokenImpact.calibrationGrade.replace(/_/g, " ")}</span>
           </div>
           <div className="cl-impact-hero">
             <div>
-              <span className="cl-label">compression</span>
-              <strong>{tokenImpact.compressionRatio}x</strong>
+              <span className="cl-label">baseline / packed</span>
+              <strong>{tokenImpact.packedTokens > 0 ? `${tokenImpact.compressionRatio}x` : "unknown"}</strong>
             </div>
             <div>
-              <span className="cl-label">quality</span>
-              <strong>{tokenImpact.qualityScore}</strong>
+              <span className="cl-label">tokenizer-exact rows</span>
+              <strong>{formatCoverage(tokenTruth.exactSampleCount, tokenTruth.sampleCount)}</strong>
             </div>
             <div>
-              <span className="cl-label">16k windows</span>
-              <strong>{tokenImpact.requestEquivalent}</strong>
+              <span className="cl-label">transport rows</span>
+              <strong>{formatCoverage(tokenTruth.transportSampleCount, tokenTruth.sampleCount)}</strong>
             </div>
           </div>
           <div className="cl-impact-meter" aria-label="Token impact baseline and packed comparison">
             <div className="cl-impact-meter-row">
               <span>baseline</span>
-              <div><i style={{ width: "100%" }} /></div>
+              <div><i style={{ width: `${(tokenImpact.baselineTokens / impactScale) * 100}%` }} /></div>
               <strong>{formatCompact(tokenImpact.baselineTokens)}</strong>
             </div>
             <div className="cl-impact-meter-row cl-impact-meter-row--packed">
               <span>packed</span>
               <div>
-                <i style={{ width: `${Math.max(4, Math.min(100, tokenImpact.baselineTokens > 0 ? (tokenImpact.packedTokens / tokenImpact.baselineTokens) * 100 : 0))}%` }} />
+                <i style={{ width: `${(tokenImpact.packedTokens / impactScale) * 100}%` }} />
               </div>
               <strong>{formatCompact(tokenImpact.packedTokens)}</strong>
             </div>
+          </div>
+          <p className="cl-panel-note">
+            Shared maximum scale; {tokenImpact.packedTokens > tokenImpact.baselineTokens ? "packed exceeds baseline" : "baseline and packed totals"}.
+            {" "}{tokenImpact.calibrationGrade === "heuristic" ? "Heuristic working-set proxy, not observed totals." : `${tokenTruth.windowLabel}; all sampled rows. Rows without tokenizer-exact coverage are estimated or unknown.`}
+            {" "}These totals do not reconstruct signed net or provider savings.
+          </p>
+          <p className="cl-panel-note">
+            Aggregate wire tokens: {formatObserved(tokenTruth.transportTokens)}
+            {" "}({formatCoverage(tokenTruth.transportSampleCount, tokenTruth.sampleCount)} transport-inclusive rows);
+            {" "}compiled estimate: {formatObserved(tokenTruth.compiledPromptTokens)}
+            {" "}({formatCoverage(tokenTruth.compiledPromptSampleCount, tokenTruth.sampleCount)} observed estimates).
+            {" "}Exact model-visible context: {formatObserved(tokenTruth.modelVisibleTokens)}
+            {" "}({formatCoverage(tokenTruth.modelVisibleSampleCount, tokenTruth.sampleCount)} rows). These populations can differ.
+          </p>
+          <div className="cl-impact-stack" aria-label="Bounded context cohorts">
+            <p className="cl-panel-note">
+              Bounded cohort window: {tokenTruth.cohortWindowSampleCount ?? "unknown"} retained rows;
+              {" "}{tokenTruth.cohortOmittedCount ?? "unknown"} cohorts omitted. Separate from aggregate ledger totals; do not sum to reconcile.
+            </p>
+            {tokenTruth.cohorts.length ? tokenTruth.cohorts.map((cohort, index) => (
+              <div key={`${cohort.scope}-${cohort.packedKind}-${index}`} className="cl-impact-row">
+                <span>{cohort.scope} / {cohort.packedKind}</span>
+                <span>
+                  {formatCoverage(cohort.netSampleCount, cohort.sampleCount)} signed-net rows;
+                  {" "}wire {formatObserved(cohort.wireTokens)} ({formatCoverage(cohort.wireSampleCount, cohort.sampleCount)} rows);
+                  {" "}model-visible {formatObserved(cohort.modelVisibleTokens)} ({formatCoverage(cohort.modelVisibleSampleCount, cohort.sampleCount)} exact rows)
+                </span>
+                <strong>{cohort.netTokenDelta === null ? "unknown" : formatSigned(cohort.netTokenDelta)}</strong>
+              </div>
+            )) : <p className="cl-empty">No scoped cohort observations available.</p>}
           </div>
           <div className="cl-impact-stack">
             {tokenImpact.factors.map((item) => (
