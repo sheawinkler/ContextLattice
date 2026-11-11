@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -339,12 +340,16 @@ func fileOrDirSize(path string, maxFiles int) (int64, bool, error) {
 	if !info.IsDir() {
 		return info.Size(), false, nil
 	}
+	return trackedDirectorySize(path, maxFiles, filepath.WalkDir)
+}
+
+func trackedDirectorySize(path string, maxFiles int, walk func(string, fs.WalkDirFunc) error) (int64, bool, error) {
 	total := int64(0)
 	scanned := 0
 	truncated := false
-	err = filepath.WalkDir(path, func(_ string, entry os.DirEntry, walkErr error) error {
+	err := walk(path, func(_ string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
-			return nil
+			return walkErr
 		}
 		if entry.IsDir() {
 			return nil
@@ -352,16 +357,16 @@ func fileOrDirSize(path string, maxFiles int) (int64, bool, error) {
 		scanned += 1
 		if maxFiles > 0 && scanned > maxFiles {
 			truncated = true
-			return filepath.SkipDir
+			return filepath.SkipAll
 		}
 		item, statErr := entry.Info()
 		if statErr != nil {
-			return nil
+			return statErr
 		}
 		total += item.Size()
 		return nil
 	})
-	if err != nil && !errors.Is(err, filepath.SkipDir) {
+	if err != nil {
 		return total, truncated, err
 	}
 	return total, truncated, nil

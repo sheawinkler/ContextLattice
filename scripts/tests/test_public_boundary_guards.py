@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import fnmatch
 import os
 import shutil
 import subprocess
@@ -32,6 +33,30 @@ def commit_all(root: Path, message: str) -> None:
 
 
 class PublicBoundaryGuardTests(unittest.TestCase):
+    def test_paid_analytics_has_complete_public_projection_boundaries(self) -> None:
+        paid_paths = (
+            "contextlattice-dashboard/app/analytics/page.tsx",
+            "contextlattice-dashboard/app/api/telemetry/pro-analytics/route.ts",
+            "contextlattice-dashboard/components/ProAnalyticsBoard.tsx",
+            "contextlattice-dashboard/lib/proAnalyticsMetrics.ts",
+            "contextlattice-dashboard/tests/pro-analytics-access.test.ts",
+            "contextlattice-dashboard/tests/pro-analytics-metrics.test.ts",
+            "contextlattice-dashboard/tests/pro-analytics-panel.test.tsx",
+            "contextlattice-dashboard/tests/pro-analytics-proxy.test.ts",
+            "docs/pro-analytics.md",
+        )
+        patterns = [line.split("#", 1)[0].strip() for line in
+                    (ROOT / "config/public_sync_blocklist.txt").read_text().splitlines()]
+        for path in paid_paths:
+            with self.subTest(path=path):
+                self.assertTrue(any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns if pattern))
+                self.assertFalse((ROOT / path).exists(), path)
+        navigation = (ROOT / "contextlattice-dashboard/components/ShellNav.tsx").read_text()
+        self.assertNotIn('href: "/analytics"', navigation)
+        proxy = (ROOT / "contextlattice-dashboard/proxy.ts").read_text()
+        self.assertNotIn("paidAccess", proxy)
+        self.assertNotIn("proAnalyticsDevBypass", proxy)
+
     def test_public_installer_accepts_explicit_target_without_home(self) -> None:
         with tempfile.TemporaryDirectory(prefix="public-installer-headless-") as tmp:
             installer = Path(tmp) / "ContextLattice-Install.sh"

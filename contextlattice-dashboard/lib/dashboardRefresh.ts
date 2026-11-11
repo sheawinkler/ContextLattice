@@ -11,6 +11,7 @@ type RefreshOptions<T> = {
   initialData: T;
   intervalMs?: number;
   deadlineMs?: number;
+  retainLastGoodOnError?: boolean;
   now?: () => number;
   visible?: () => boolean;
   setTimer?: (fn: () => void, delay: number) => unknown;
@@ -60,7 +61,7 @@ export function createDashboardRefresh<T>(
       if (!active || ticket !== generation) return;
       if (result.errors.length) {
         failures++;
-        publish({ data: state.succeededAt === null ? result.data : state.data, errors: result.errors, stale: true });
+        publish({ data: options.retainLastGoodOnError === false || state.succeededAt === null ? result.data : state.data, errors: result.errors, stale: true });
       } else {
         failures = 0;
         publish({ data: result.data, errors: [], stale: false, succeededAt: new Date(now()).toISOString() });
@@ -68,7 +69,8 @@ export function createDashboardRefresh<T>(
     }, (error: unknown) => {
       if (!active || ticket !== generation) return;
       failures++;
-      publish({ errors: [error instanceof Error ? error.message : "Dashboard refresh failed"], stale: true });
+      publish({ data: options.retainLastGoodOnError === false ? options.initialData : state.data,
+        errors: [error instanceof Error ? error.message : "Dashboard refresh failed"], stale: true });
     }).finally(() => {
       clearTimer(timeout);
       controller.signal.removeEventListener("abort", onAbort);

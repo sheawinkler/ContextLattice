@@ -99,3 +99,26 @@ test("deadline bounds an unresponsive fetch and partial refreshes never replace 
   assert.equal(f.states.at(-1)?.data, 7);
   f.controller.stop();
 });
+
+test("access-sensitive refresh clears prior counters after HTTP failure or a partial response", async () => {
+  const states: RefreshState<number | null>[] = [];
+  let mode = "success";
+  const controller = createDashboardRefresh(async () => {
+    if (mode === "denied") throw new Error("Unauthorized");
+    if (mode === "partial") return { data: null, errors: ["source unavailable"] };
+    return { data: 71, errors: [] };
+  }, (state) => states.push(state), { initialData: null as number | null, retainLastGoodOnError: false });
+  try {
+    await controller.start();
+    assert.equal(states.at(-1)?.data, 71);
+    mode = "denied";
+    await controller.refresh();
+    assert.equal(states.at(-1)?.data, null);
+    mode = "success";
+    await controller.refresh();
+    mode = "partial";
+    await controller.refresh();
+    assert.equal(states.at(-1)?.data, null);
+    assert.equal(states.at(-1)?.stale, true);
+  } finally { controller.stop(); }
+});
