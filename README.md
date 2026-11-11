@@ -16,7 +16,7 @@
 
 <p align="center">
   <a href="#quickstart"><img src="https://img.shields.io/badge/Interface-CLI%20First-111111?style=for-the-badge" alt="CLI first"></a>
-  <a href="https://github.com/sheawinkler/ContextLattice/releases/tag/v5.0.2"><img src="https://img.shields.io/badge/Release-v5.0.2-292929?style=for-the-badge" alt="ContextLattice v5.0.2"></a>
+  <a href="https://github.com/sheawinkler/ContextLattice/releases/tag/v5.1.0"><img src="https://img.shields.io/badge/Release-v5.1.0-292929?style=for-the-badge" alt="ContextLattice v5.1.0"></a>
   <a href="#quickstart"><img src="https://img.shields.io/badge/Runtime-Local%20First-404040?style=for-the-badge" alt="Local-first runtime"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-575757?style=for-the-badge" alt="Apache License 2.0"></a>
 </p>
@@ -297,7 +297,7 @@ Security reports follow [SECURITY.md](SECURITY.md).
 | Local inference | [Local model options](docs/runtime/local-model-options.md) |
 | Full repository-backed manual | [Public field manual](docs/wiki/README.md) |
 
-The current release baseline is [`v5.0.2`](https://github.com/sheawinkler/ContextLattice/releases/tag/v5.0.2).
+The current release baseline is [`v5.1.0`](https://github.com/sheawinkler/ContextLattice/releases/tag/v5.1.0).
 
 ## License
 
