@@ -12,6 +12,7 @@ import re
 import sys
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import urlencode
 
 
 CONTRACT_PATH = Path("config/commercial_truth.v1.json")
@@ -682,8 +683,12 @@ def render_plan_rows(contract: dict[str, Any]) -> str:
             for feature_id in feature_ids
         )
         if plan["paid"]:
-            action_href = "https://app.contextlattice.io/billing"
-            action_label = "Configure Enterprise" if plan["pricing"]["custom"] else f"Choose {plan['buyer_label']}"
+            action_href = (
+                "mailto:hello@contextlattice.io?subject=ContextLattice%20Enterprise"
+                if plan["pricing"]["custom"]
+                else "https://app.contextlattice.io/billing?" + urlencode({"plan": plan["id"]})
+            )
+            action_label = "Discuss Enterprise" if plan["pricing"]["custom"] else f"Choose {plan['buyer_label']}"
             action_attrs = ' target="_blank" rel="noreferrer"'
             highlight_label = "Paid lane highlights"
         else:
@@ -693,7 +698,7 @@ def render_plan_rows(contract: dict[str, Any]) -> str:
             highlight_label = "Core capabilities"
         rows.extend(
             [
-                f'<article class="plan-card" data-plan="{plan_id}">',
+                f'<article class="plan-card" id="plan-{plan_id}" data-plan="{plan_id}">',
                 '  <div class="plan-cell">',
                 f'    <p class="plan-sequence">P{index - 1:02d} / {index:02d} OF {plan_count:02d}</p>',
                 f'    <h3 class="plan-title">{buyer_label}</h3>',
@@ -708,7 +713,7 @@ def render_plan_rows(contract: dict[str, Any]) -> str:
                 "    </ul>",
                 "  </div>",
                 '  <div class="plan-cell plan-action">',
-                f'    <p class="plan-count"><strong>{len(feature_ids):02d}</strong> verified capabilities</p>',
+                f'    <p class="plan-count"><strong>{len(feature_ids):02d}</strong> capabilities</p>',
                 f'    <a class="plan-cta" href="{action_href}"{action_attrs}>{html.escape(action_label)}</a>',
                 "  </div>",
                 '  <details class="plan-entitlements">',
