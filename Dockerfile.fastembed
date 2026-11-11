@@ -10,7 +10,10 @@ WORKDIR /app
 COPY services/fastembed_sidecar_rs/Cargo.toml ./Cargo.toml
 COPY services/fastembed_sidecar_rs/Cargo.lock ./Cargo.lock
 COPY services/fastembed_sidecar_rs/src ./src
-RUN cargo build --release --locked
+ARG CARGO_BUILD_JOBS=2
+RUN rustc -vV \
+    && cargo -V \
+    && cargo build --release --locked -j "${CARGO_BUILD_JOBS}"
 
 FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive
