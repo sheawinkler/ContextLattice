@@ -3,7 +3,7 @@ ARG CONTEXTLATTICE_BUILD_CHANNEL=hf-lite
 ARG CONTEXTLATTICE_SOURCE_COMMIT=unknown
 ARG CONTEXTLATTICE_SOURCE_TREE=unknown
 
-FROM --platform=$BUILDPLATFORM golang:1.26.4-bookworm AS gateway-builder
+FROM --platform=$BUILDPLATFORM golang:1.26.11-bookworm AS gateway-builder
 WORKDIR /src
 COPY services/gateway-go/go.mod services/gateway-go/go.sum ./services/gateway-go/
 RUN --mount=type=cache,id=contextlattice-go-mod,target=/go/pkg/mod \

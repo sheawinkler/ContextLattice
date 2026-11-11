@@ -2,7 +2,7 @@ module github.com/contextlattice/gateway-go
 
 go 1.26
 
-toolchain go1.26.4
+toolchain go1.26.11
 
 require (
 	filippo.io/age v1.3.1
