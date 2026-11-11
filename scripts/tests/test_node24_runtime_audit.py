@@ -27,7 +27,7 @@ class Node24RuntimeAuditTests(unittest.TestCase):
     def test_selected_runtime_matches_contract(self) -> None:
         payload = AUDIT.audit(ROOT, check_local=True)
         self.assertTrue(payload["ok"], payload["findings"])
-        self.assertEqual(payload["local_runtime"], {"node": "24.18.0", "npm": "11.16.0"})
+        self.assertEqual(payload["local_runtime"], {"node": "24.22.2", "npm": "11.19.1"})
 
     def test_node20_action_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -48,19 +48,53 @@ class Node24RuntimeAuditTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             (root / "Dockerfile.dashboard").write_text("FROM node:20-bookworm-slim\n", encoding="utf-8")
-            (root / "Dockerfile.memorymcp").write_text("FROM node:24.18.0-alpine\n", encoding="utf-8")
-            (root / "Dockerfile.mcp-gateway").write_text("FROM node:24.18.0-bookworm-slim\n", encoding="utf-8")
+            (root / "Dockerfile.memorymcp").write_text("FROM node:24.22.2-alpine\n", encoding="utf-8")
+            (root / "Dockerfile.mcp-gateway").write_text("FROM node:24.22.2-bookworm-slim\n", encoding="utf-8")
             findings: list[dict[str, str]] = []
             AUDIT.audit_dockerfiles(root, findings)
             kinds = [item["kind"] for item in findings]
             self.assertIn("docker_node_mismatch", kinds)
             self.assertIn("non_node24_base", kinds)
 
+    def test_every_node_container_stage_requires_the_reviewed_pin(self) -> None:
+        stages = {
+            "current": ("FROM node:24.22.2-bookworm-slim AS runtime", False),
+            "stale_runtime": ("FROM node:24.18.0-bookworm-slim AS runtime", True),
+            "platform_override": ("FROM --platform=$TARGETPLATFORM node:24.18.0-bookworm-slim AS runtime", True),
+            "lowercase": ("from node:24.18.0-bookworm-slim as runtime", True),
+            "default_registry": ("FROM docker.io/library/node:24.18.0-bookworm-slim AS runtime", True),
+            "untagged": ("FROM node AS runtime", True),
+            "digest_only": ("FROM node@sha256:" + "a" * 64 + " AS runtime", True),
+            "missing": ("FROM scratch", True),
+        }
+        for name, (stage, rejected) in stages.items():
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as raw:
+                root = Path(raw)
+                for relative, expected in AUDIT.EXPECTED_DOCKER_BASES.items():
+                    (root / relative).write_text(f"FROM {expected}\n", encoding="utf-8")
+                builder = "" if name == "missing" else "FROM node:24.22.2-bookworm-slim AS build\n"
+                (root / "Dockerfile.dashboard").write_text(builder + stage + "\n", encoding="utf-8")
+                findings: list[dict[str, str]] = []
+                AUDIT.audit_dockerfiles(root, findings)
+                self.assertEqual(bool(findings), rejected, findings)
+
+    def test_new_node_dockerfiles_cannot_hide_stale_or_floating_pins(self) -> None:
+        tags = ("24.18.0-alpine", "24-alpine", "24.22-alpine", "latest", "24.22.20-alpine")
+        for tag in tags:
+            with self.subTest(tag=tag), tempfile.TemporaryDirectory() as raw:
+                root = Path(raw)
+                for relative, expected in AUDIT.EXPECTED_DOCKER_BASES.items():
+                    (root / relative).write_text(f"FROM {expected}\n", encoding="utf-8")
+                (root / "Dockerfile.new-service").write_text(f"FROM node:{tag}\n", encoding="utf-8")
+                findings: list[dict[str, str]] = []
+                AUDIT.audit_dockerfiles(root, findings)
+                self.assertTrue(findings, f"unreviewed Node pin accepted: {tag}")
+
     def test_dashboard_dev_server_contract_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             (root / "Dockerfile.dashboard").write_text(
-                "FROM node:24.18.0-bookworm-slim\n"
+                "FROM node:24.22.2-bookworm-slim\n"
                 "ENV NODE_ENV=development\n"
                 'CMD ["sh", "-c", "npx --yes prisma db push && npm run dev"]\n',
                 encoding="utf-8",
@@ -81,8 +115,8 @@ class Node24RuntimeAuditTests(unittest.TestCase):
             dashboard = root / "contextlattice-dashboard"
             dashboard.mkdir(parents=True)
             package = {
-                "packageManager": "npm@11.16.0",
-                "engines": {"node": ">=24.18.0 <25", "npm": ">=11.16.0 <12"},
+                "packageManager": "npm@11.19.1",
+                "engines": {"node": ">=24.22.2 <25", "npm": ">=11.19.1 <12"},
                 "devDependencies": {"@types/node": "^24.13.3"},
                 "allowScripts": {"stale-package@1.0.0": True},
             }

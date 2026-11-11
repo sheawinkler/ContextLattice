@@ -1,4 +1,4 @@
-FROM node:24.18.0-alpine
+FROM node:24.22.2-alpine
 ENV npm_config_yes=true \
     npm_config_update_notifier=false \
     NODE_OPTIONS="--dns-result-order=ipv4first" \
