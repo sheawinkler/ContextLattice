@@ -172,6 +172,11 @@ def _host_identity(value: Any) -> str:
     return value if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_.:-]{1,180}", value) else ""
 
 
+def _handoff_file(session_id: Any) -> str:
+    native_id = _host_identity(session_id)
+    return f"notes/hermes/handoff/{native_id}.md" if native_id and native_id not in {".", ".."} else ""
+
+
 def _nonempty_digest(value: Any) -> str:
     if not isinstance(value, str):
         return ""
@@ -225,6 +230,10 @@ class ContextLatticeProvider(MemoryProvider):
         self._parent_session_id = ""
         self._primary = True
         self._pending_handoff = False
+        self._handoff_generation = 0
+        self._handoff_project = ""
+        self._handoff_parent_error = ""
+        self._handoff_receipt: Optional[Tuple[str, str, str]] = None
         self._last_status = "init"
         self._home = Path(os.environ.get("HERMES_HOME") or Path.home() / ".hermes")
         self._threads: List[threading.Thread] = []
@@ -252,7 +261,14 @@ class ContextLatticeProvider(MemoryProvider):
     def initialize(self, session_id: str, **kwargs) -> None:
         self._cfg = _load_config()
         self._key = _read_key(self._cfg["env_file"])
-        self._session_id = session_id or ""
+        with self._lock:
+            self._session_id = session_id or ""
+            self._handoff_generation += 1
+            self._pending_handoff = False
+            self._parent_session_id = ""
+            self._handoff_project = ""
+            self._handoff_parent_error = ""
+            self._handoff_receipt = None
         self._primary = kwargs.get("agent_context", "primary") == "primary"
         if kwargs.get("hermes_home"):
             self._home = Path(kwargs["hermes_home"])
@@ -407,15 +423,74 @@ class ContextLatticeProvider(MemoryProvider):
         status = str(cont.get("status") or cont.get("async_status") or cont.get("result_state") or "").lower()
         return bool(cont.get("pending_sources")) or status in {"queued", "running", "pending", "partial"}
 
-    @classmethod
-    def _handoff_search_complete(cls, d: Dict[str, Any]) -> bool:
-        if d.get("error") or d.get("degraded"):
-            return False
-        if any(isinstance(row, dict) for row in (d.get("results") or [])):
+    @staticmethod
+    def _handoff_suppressed(row: Dict[str, Any]) -> bool:
+        # Search is authoritative; never override an exclusion echoed by a backend.
+        assessment = row.get("memory_trust_assessment")
+        quarantine = assessment.get("quarantine") if isinstance(assessment, dict) else None
+        if isinstance(quarantine, dict) and quarantine.get("quarantined") is True:
             return True
+        excluded = {"retired", "superseded", "quarantined", "quarantine", "retracted", "revoked",
+                    "forgotten", "deleted", "expired", "ephemeral", "test", "stale", "unsafe"}
+        metadata = row.get("recall_metadata")
+        carriers = [row, row.get("metadata"), metadata, row.get("temporal_evidence"),
+                    metadata.get("temporal") if isinstance(metadata, dict) else None]
+        for carrier in carriers:
+            if not isinstance(carrier, dict):
+                continue
+            if any(carrier.get(key) for key in ("retired", "superseded", "quarantined", "forgotten")):
+                return True
+            if any(str(carrier.get(key) or "").strip().lower() in excluded for key in (
+                "lifecycle", "lifecycle_status", "status", "state", "quarantine_status",
+                "revocation_status", "forgetting_status", "freshness", "temporal_state",
+            )):
+                return True
+        return False
+
+    @classmethod
+    def _select_handoff(cls, d: Dict[str, Any], project: str, file: str,
+                        pinned_digest: str) -> Tuple[Optional[Dict[str, Any]], str]:
+        if d.get("error") or d.get("degraded"):
+            return None, "DEGRADED search"
         cont = d.get("continuation_async") or {}
+        cont = cont if isinstance(cont, dict) else {}
         status = str(cont.get("status") or cont.get("async_status") or cont.get("result_state") or "").lower()
-        return not cls._continuation_pending(d) and status not in {"failed", "degraded", "error"}
+        if status in {"failed", "degraded", "error"}:
+            return None, "DEGRADED continuation"
+        candidates = {}
+        for row in (d.get("results") or []):
+            if not isinstance(row, dict):
+                continue
+            digest = _nonempty_digest(row.get("content_hash"))
+            if not cls._readback_matches(row, project, file, digest):
+                continue
+            payload = row.get("payload")
+            if payload is not None and not isinstance(payload, dict):
+                continue
+            # Handoff identity is exact, including every supplied alias (no path/space normalization).
+            # Payload can veto top-level identity, never supply a missing top-level field.
+            if any(carrier[key] not in (None, "", expected) for carrier in (row, payload or {})
+                   for keys, expected in (
+                (("project", "projectName", "project_name"), project),
+                (("file", "fileName", "file_name"), file),
+            ) for key in keys if key in carrier):
+                continue
+            if payload and "content_hash" in payload and _nonempty_digest(payload["content_hash"]) != digest:
+                continue
+            if cls._handoff_suppressed(row):
+                continue
+            body = row.get("summary") or row.get("content")
+            if not isinstance(body, str) or not body.strip():
+                continue
+            candidates.setdefault(digest, dict(row, project=project, file=file, content_hash=digest))
+        if len(candidates) > 1:
+            return None, "ambiguous parent revisions"
+        if not candidates:
+            return None, "WARMING, not absent" if cls._continuation_pending(d) else "no valid exact parent hit"
+        digest, row = next(iter(candidates.items()))
+        if pinned_digest and pinned_digest != digest:
+            return None, "write hash mismatch"
+        return row, "write hash matched" if pinned_digest else "unpinned search result"
 
     def prefetch(self, query: str, *, session_id: str = "") -> str:
         if not query or not query.strip() or not self._key:
@@ -424,40 +499,77 @@ class ContextLatticeProvider(MemoryProvider):
             "MEMORY ARCHIVE (hermes-agent)": dict(project=self._cfg["project"], topic_path="memory"),
             "CROSS-PROJECT RECALL": dict(),
         }
-        if self._pending_handoff:
-            jobs["COMPACTION HANDOFF"] = dict(project=self._cfg["project"], topic_path=_HANDOFF_TOPIC,
-                                              limit=3)
+        with self._lock:
+            handoff = ((self._handoff_generation, self._handoff_project, self._parent_session_id,
+                        self._session_id) if self._pending_handoff else None)
+            handoff_error = self._handoff_parent_error
+            receipt = self._handoff_receipt
+        pinned_digest = ""
+        if handoff:
+            _, project, parent, child = handoff
+            file = _handoff_file(parent)
+            if session_id and session_id != child:
+                handoff_error = "receiver session mismatch"
+            elif not _handoff_file(child):
+                handoff_error = "missing/unsafe receiver session"
+            elif project != self._cfg["project"]:
+                handoff_error = "project mismatch"
+            if receipt and receipt[:2] == (project, file):
+                pinned_digest = receipt[2]
+            if file and not handoff_error:
+                jobs["COMPACTION HANDOFF"] = dict(project=project, topic_path=_HANDOFF_TOPIC, limit=8)
         results: Dict[str, Any] = {}
         errors: List[str] = []
         with ThreadPoolExecutor(max_workers=len(jobs)) as ex:
-            futs = {label: ex.submit(self._search, query, **kw) for label, kw in jobs.items()}
+            futs = {label: ex.submit(self._search, file if label == "COMPACTION HANDOFF" else query, **kw)
+                    for label, kw in jobs.items()}
             for label, fut in futs.items():
                 try:
                     results[label] = fut.result()
                 except Exception as exc:  # network/HTTP: surface, never silent
                     errors.append(f"{label}: {type(exc).__name__}")
-        if errors and not results:
-            self._last_status = "degraded"
-            return ("CONTEXTLATTICE DEGRADED THIS TURN (" + "; ".join(errors) + "). Recall is absent, "
-                    "not verified-empty. Use local memory (MEMORY.md) and say degraded before memory-dependent claims.")
         reported_errors = list(errors)
         for label, result in results.items():
             if result.get("error") or result.get("degraded"):
                 reported_errors.append(f"{label}: response_degraded")
         self._last_status = "degraded" if reported_errors else "ok"
-        if ("COMPACTION HANDOFF" in results
-                and self._handoff_search_complete(results["COMPACTION HANDOFF"])):
-            self._pending_handoff = False
-        seen: set = set()
-        lines = ["SEED RECALL (ContextLattice provider, fast mode - UNVERIFIED until you read the source):"]
-        for label in ("COMPACTION HANDOFF", "MEMORY ARCHIVE (hermes-agent)", "CROSS-PROJECT RECALL"):
-            if label in results:
-                lines += self._fmt_hits(label, results[label], seen)
-        if reported_errors:
-            lines.append("PARTIAL: " + "; ".join(reported_errors))
-        if len(lines) == 1:
-            lines.append("EMPTY for this prompt (fast seed only) - run cl_search scoped/balanced before concluding absence.")
-        return "\n".join(lines)
+        selected = None
+        if handoff and not handoff_error:
+            if "COMPACTION HANDOFF" in results:
+                selected, handoff_error = self._select_handoff(results["COMPACTION HANDOFF"], project, file,
+                                                               pinned_digest)
+            else:
+                handoff_error = "DEGRADED search unavailable"
+        # Linearize rendering and consumption with switch/reset and concurrent prefetches.
+        # A generation check also rejects A -> B -> A transitions with identical native IDs.
+        with self._lock:
+            seen: set = set()
+            handoff_rendered = False
+            lines = ["SEED RECALL (ContextLattice provider, fast mode - UNVERIFIED until you read the source):"]
+            if errors and not results:
+                lines = [("CONTEXTLATTICE DEGRADED THIS TURN (" + "; ".join(errors) + "). Recall is absent, "
+                          "not verified-empty. Use local memory (MEMORY.md) and say degraded before memory-dependent claims.")]
+            if (handoff and self._pending_handoff
+                    and handoff == (self._handoff_generation, self._handoff_project,
+                                    self._parent_session_id, self._session_id)
+                    and self._cfg["project"] == project):
+                if selected:
+                    lines += self._fmt_hits("COMPACTION HANDOFF", {"results": [selected]}, seen)
+                    lines.append(f"  (parent-scoped search; {handoff_error})")
+                    handoff_rendered = True
+                else:
+                    lines.append(f"COMPACTION HANDOFF UNAVAILABLE ({handoff_error}); continuity remains pending.")
+            for label in ("MEMORY ARCHIVE (hermes-agent)", "CROSS-PROJECT RECALL"):
+                if label in results:
+                    lines += self._fmt_hits(label, results[label], seen)
+            if reported_errors and results:
+                lines.append("PARTIAL: " + "; ".join(reported_errors))
+            if len(lines) == 1 and not errors:
+                lines.append("EMPTY for this prompt (fast seed only) - run cl_search scoped/balanced before concluding absence.")
+            rendered = "\n".join(lines)
+            if handoff_rendered:
+                self._pending_handoff = False
+            return rendered
 
     # -- tools ----------------------------------------------------------------------
     def get_tool_schemas(self) -> List[Dict[str, Any]]:
@@ -784,20 +896,28 @@ class ContextLatticeProvider(MemoryProvider):
     def on_pre_compress(self, messages: List[Dict[str, Any]], **kwargs) -> str:
         if not self._primary or not self._key:
             return ""
+        with self._lock:
+            project, source, generation = self._cfg["project"], self._session_id, self._handoff_generation
+        file = _handoff_file(source)
+        if not file:
+            return "ContextLattice handoff checkpoint unavailable (missing/unsafe source session)."
         users = [str(m.get("content") or "") for m in messages if m.get("role") == "user"]
         users = [u for u in users if u.strip() and "CONTEXT COMPACTION" not in u][-5:]
         last_asst = next((str(m.get("content") or "") for m in reversed(messages)
                           if m.get("role") == "assistant" and m.get("content")), "")
         content = (
-            f"Pre-compaction handoff (contextlattice provider) session={self._session_id} "
+            f"Pre-compaction handoff (contextlattice provider) session={source} "
             f"at {_dt.datetime.utcnow().isoformat()}Z, {len(messages)} messages compacted.\n\n"
             "## Last user messages (verbatim, newest last)\n" + "\n".join(f"> {u[:600]}" for u in users)
             + "\n\n## Last assistant output\n" + last_asst[:1500]
         )
-        file = f"notes/hermes/handoff/{self._session_id or 'session'}.md"
         try:
-            w = self._write(self._cfg["project"], _HANDOFF_TOPIC, file, content)
+            w = self._write(project, _HANDOFF_TOPIC, file, content)
             digest = _nonempty_digest(w.get("content_hash"))
+            with self._lock:
+                if (generation == self._handoff_generation and source == self._session_id
+                        and project == self._cfg["project"]):
+                    self._handoff_receipt = (project, file, digest)
             receipt = f"content hash={digest[:12]}" if digest else "content hash unavailable"
             return f"ContextLattice handoff checkpoint write accepted; {receipt}."
         except Exception as exc:
@@ -806,10 +926,18 @@ class ContextLatticeProvider(MemoryProvider):
 
     def on_session_switch(self, new_session_id: str, *, parent_session_id: str = "",
                           reset: bool = False, **kwargs) -> None:
-        self._parent_session_id = parent_session_id or self._session_id
-        self._session_id = new_session_id
-        if not reset:  # compression/resume/branch: continuation of the same work
-            self._pending_handoff = True
+        with self._lock:
+            self._handoff_generation += 1
+            self._session_id = new_session_id
+            self._pending_handoff = not reset
+            self._handoff_project = self._cfg["project"] if not reset else ""
+            self._parent_session_id = parent_session_id if not reset and _handoff_file(parent_session_id) else ""
+            self._handoff_parent_error = ""
+            if not reset and not self._parent_session_id:
+                self._handoff_parent_error = "missing parent" if parent_session_id in (None, "") else "unsafe parent"
+            if (reset or not self._handoff_receipt or self._handoff_receipt[:2] !=
+                    (self._handoff_project, _handoff_file(self._parent_session_id))):
+                self._handoff_receipt = None
 
     # -- subagent context (A) ------------------------------------------------------------
     def _delegation_recall(self, goal: str) -> str:

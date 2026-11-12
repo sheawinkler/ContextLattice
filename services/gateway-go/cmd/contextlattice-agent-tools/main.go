@@ -5597,6 +5597,29 @@ func (c *cli) cmdAdoptionProof(args []string) error {
 	}
 	c.applyBaseURL(parsed)
 	agents := splitCSV(parsed.string("agents", "codex,claude-code,opencode,hermes-agent,hermes-ultra,omp,mercury-agent,pi,droid,chatgpt-web,chatgpt-desktop,claude-web,claude-desktop"))
+	if parsed.has("agents") {
+		agents = splitCSV(parsed.values["agents"])
+	}
+	// parseArgs can consume a following positional value for --agents=.
+	emptyInlineAgents := false
+	for _, arg := range args {
+		if arg == "--" {
+			break
+		}
+		if strings.HasPrefix(arg, "-") {
+			name, value, inline := strings.Cut(strings.TrimLeft(arg, "-"), "=")
+			if name == "agents" {
+				emptyInlineAgents = inline && value == ""
+			}
+		}
+	}
+	if emptyInlineAgents {
+		agents = nil
+	}
+	findings := []map[string]any{}
+	if len(agents) == 0 {
+		findings = append(findings, map[string]any{"reason": "empty_agent_selection"})
+	}
 	cases := []map[string]any{}
 	for _, agent := range agents {
 		payload := map[string]any{"agent": agent, "project": parsed.string("project", "contextlattice"), "retrieval_mode": parsed.string("mode", "fast")}
@@ -5611,11 +5634,35 @@ func (c *cli) cmdAdoptionProof(args []string) error {
 			"findings":   errorFinding(err),
 		})
 	}
-	ok := true
+	ok := len(cases) > 0
 	for _, row := range cases {
 		ok = ok && asBool(row["ok"])
 	}
-	return c.emit(map[string]any{"ok": ok, "schema_id": "contextlattice_agent_adoption_proof_matrix.v1", "native_cli": true, "case_count": len(cases), "cases": cases}, parsed.bool("pretty"))
+	preflightState := "failed"
+	if len(cases) == 0 {
+		preflightState = "not_observed"
+	} else if ok {
+		preflightState = "passed"
+	}
+	if err := c.emit(map[string]any{
+		"ok": ok, "schema_id": "contextlattice_agent_adoption_proof_matrix.v1", "native_cli": true,
+		"case_count": len(cases), "cases": cases, "findings": findings,
+		"proof_scope": "preflight_contract_validation_only",
+		"stages": map[string]any{
+			"preflight_contract_validation": preflightState,
+			"handoff_persistence":           "not_observed",
+			"receiving_agent_retrieval":     "not_observed",
+			"host_delivery":                 "not_observed",
+			"model_consumption":             "not_observed",
+			"independent_task_acceptance":   "not_observed",
+		},
+	}, parsed.bool("pretty")); err != nil {
+		return err
+	}
+	if len(agents) == 0 {
+		return errCLIReportedFailure
+	}
+	return nil
 }
 
 func (c *cli) cmdAdapter(args []string) error {

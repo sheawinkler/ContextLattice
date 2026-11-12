@@ -9,7 +9,7 @@ with the Hermes memory lifecycle.
 |---|---|
 | `prefetch` | Two parallel scoped `/memory/search` calls (project archive + cross-project), injected into the user message so the cached system prompt is untouched |
 | `on_pre_compress` | Writes a handoff checkpoint to `runbooks/context-compaction-handoff` before the lossy summary rewrite |
-| `on_session_switch` | Next prefetch also pulls the compaction handoff |
+| `on_session_switch` | Next prefetch searches the exact native parent's handoff file in the configured project; reset cancels continuity |
 | `on_memory_write` | Mirrors built-in memory changes (primary agent only); replace/remove retires the prior file identity using the native `/memory/write` lifecycle field. Replace needs `metadata.previous_content`; otherwise retirement is explicitly blocked. Failed writes are queued in the bounded local outbox. |
 | `pre_tool_call` | `delegate_task` children run with `skip_memory=True`; requests one project-scoped `/memory/context-pack` per task and verifies the returned project before injection; falls back only to project-scoped `/memory/search` |
 | `post_tool_call` | Records a bounded session observation: host status, sample/task identity, exact rendered/context digests, and whether post-hook arguments still match. Does not infer first-pass success, retries, consumption, or independently verified utility. |
@@ -21,6 +21,34 @@ Failure mode: if the orchestrator is unreachable, recall is an explicit
 return hits while slower sources are still running, the hits are labeled complete;
 only an empty result with a pending continuation is labeled WARMING. Built-in
 `MEMORY.md` / `USER.md` stay local and always load, so core rules survive an outage.
+
+Continuation uses the normal authoritative `/memory/search` with the parent file
+identity as its query and the handoff topic/project scope. There is no raw-file
+GET fallback or lifecycle/quarantine bypass. A safe, explicit native parent ID
+is required; missing or unsafe parents are reported unavailable, never replaced
+by the receiver prompt or the previous session. Hits need exact project/file
+identity, consistent aliases, a valid SHA-256 content identity, and no echoed
+retirement, supersession, or quarantine marker. Supplied structured `payload`
+project/file aliases and `content_hash` must agree with the required top-level
+identity; they cannot fill missing top-level fields. The canonical
+`memory_trust_assessment.quarantine.quarantined: true` flag also vetoes a hit.
+Only these named carriers are inspected, not arbitrary nested data or words
+in checkpoint text. Duplicate revisions with the same
+hash are accepted once; competing hashes are ambiguous, not ranked by score.
+Empty, warming, degraded, mismatched, and ambiguous results keep continuity
+pending and emit a compact unavailable marker for a future prefetch retry.
+
+Pre-compression snapshots the source session/project before processing messages
+or writing. An acknowledged valid write hash pins a matching continuation in
+this provider lifetime; a mismatch cannot silently downgrade to unpinned recall.
+Without that receipt, accepted search hits remain explicitly unpinned. Reset
+discards both pending continuity and the receipt. Generation, project, and
+receiver-session guards prevent late or concurrent prefetches from consuming
+or rendering a successor's handoff, including A-to-B-to-A switches. Consumption
+means one bounded excerpt was returned by prefetch, not host dispatch or model
+consumption. Checkpoints remain bounded verbatim excerpts, not inferred goals,
+decisions, successful outcomes, or independently verified claims. Ordinary
+archive/cross-project recall and the static system prompt are unchanged.
 
 The mirror outbox uses a process lock and atomic same-directory replacement. It
 is capped at 256 entries and 2 MiB; an overflow or corrupt queue is reported as
@@ -125,8 +153,8 @@ from successful write/readback alone.
 
 ## Tests
 
-```bash
-python3 -m unittest discover -s integrations/hermes-memory-provider/tests
+```zsh
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s integrations/hermes-memory-provider/tests
 ```
 
 Stubs `agent.memory_provider` and fakes the orchestrator over local HTTP; no Hermes install needed.
