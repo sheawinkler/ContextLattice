@@ -48,6 +48,9 @@ Replace `sess_example` with the intended session. A validated cached session is
 preferred; otherwise discovery must find one live, scoped match. Multiple matches,
 duplicates, incomplete previews and unproven scope require explicit selection.
 `--agent-id` also constrains the owner identity; it does not grant permission.
+Selection precedence is `--session-id`, positional ID, environment, validated cache,
+then unique discovery. Implicit selection rechecks live status in the returned
+package; terminal, stale, missing or contradictory status is not current work.
 
 Completed sessions remain readable when explicitly selected, not as a fallback
 for current work. Wrong or missing package identity is rejected before output or
