@@ -1,0 +1,82 @@
+{
+  "schema_id": "contextlattice_memory_graph_reference_transaction.v1",
+  "version": 1,
+  "transaction_id": "ref_tx_223377bd559a04e932a58fcb4c99981c",
+  "request_digest": "sha256:65bf1a244d223154cecf36daf77e429401d7087fbb2f9c403d5e1904f62417b0",
+  "prepared_at": "2026-11-12T22:14:10.928875Z",
+  "content_ref": "sha256:641aa6ad068c59b0b01bd1cafdc0f31a0f597ec17e1f999bf87976090fb05e83",
+  "history_digest": "sha256:b0adc3d78dd5585e26ec4ae09426cc37b8f7f846486e0da32f6c130cdd6ac134",
+  "edge_set_digest": "sha256:13b24ccb7b5f3ddee6570b74cc0592263e80d109cb017b808feb0e0f8b9615ca",
+  "snapshot_digest": "sha256:54ea054d3c3446e27509fc34370ade169f314785c0d6d452a941c916389c4625",
+  "entry": {
+    "event_id": "6af63a32406ebb9fe026813d",
+    "project": "alpha",
+    "file": "notes/derived.md",
+    "topic_path": "pilot/legacy",
+    "summary": "original legacy derivative",
+    "content_hash": "641aa6ad068c59b0b01bd1cafdc0f31a0f597ec17e1f999bf87976090fb05e83",
+    "content_ref": "sha256:641aa6ad068c59b0b01bd1cafdc0f31a0f597ec17e1f999bf87976090fb05e83",
+    "data_class": "learning_memory",
+    "lifecycle": "durable",
+    "storage_tier": "hot",
+    "object_id": "obj_e3516d0ea1713ea6452c0ad2",
+    "diff_state": "new",
+    "diff_delta": 1,
+    "confidence": 0.6,
+    "last_accessed_at": "2026-11-12T22:14:10.925909Z",
+    "created_at": "2026-11-12T22:14:10.925909Z",
+    "raw_bytes": 27,
+    "source": "go_memory_store",
+    "references": [
+      {
+        "target_id": "alpha::notes/input.md",
+        "relation": "derived_from",
+        "confidence": 1
+      }
+    ],
+    "reference_transaction_id": "ref_tx_223377bd559a04e932a58fcb4c99981c"
+  },
+  "edges": [
+    {
+      "edge_id": "edge_de3766159fc8c3a52d0b71467e925b6a",
+      "source_id": "alpha::notes/derived.md",
+      "target_id": "alpha::notes/input.md",
+      "relation": "derived_from",
+      "project": "alpha",
+      "topic_path": "pilot/legacy",
+      "confidence": 1,
+      "provenance": {
+        "kind": "structured_write",
+        "parser_version": "memory_reference_parser.v1",
+        "schema_version": "memory_reference_claim.v1"
+      },
+      "metadata": {
+        "claim_kind": "structured_write",
+        "reference_transaction_id": "ref_tx_223377bd559a04e932a58fcb4c99981c",
+        "structured": true
+      },
+      "lifecycle": "durable",
+      "created_at": "2026-11-12T22:14:10.925995Z",
+      "source": "memory_edges",
+      "binding": {
+        "schema_version": "memory_reference_claim.v1",
+        "parser_version": "memory_reference_parser.v1",
+        "relation_semantic": "derived_from",
+        "source_content_hash": "641aa6ad068c59b0b01bd1cafdc0f31a0f597ec17e1f999bf87976090fb05e83",
+        "target_content_hash": "e8c9ee784dc69b8eeccdcd235b4749b34e450ac8a130f54501adba972be1adb4",
+        "source_event_id": "6af63a32406ebb9fe026813d",
+        "target_event_id": "6af63a32406ebb9fe026813c",
+        "source_topic_path": "pilot/legacy",
+        "target_topic_path": "pilot/legacy",
+        "source_lifecycle": "durable",
+        "target_lifecycle": "durable",
+        "semantic_digest": "sha256:43f037264e449d179242ee2a39a0587d613a2e78921c739056d9f3dd052fe8df",
+        "source_index_generation": 2,
+        "target_index_generation": 2,
+        "doc_set_digest": "sha256:54ea054d3c3446e27509fc34370ade169f314785c0d6d452a941c916389c4625",
+        "exclusion_policy_digest": "sha256:5b25f27bb1eb2054593d56a92545fe90a0b59bf2c02e5caa59fa6947537c1afd",
+        "bound_at": "2026-11-12T22:14:10.925995Z"
+      }
+    }
+  ]
+}

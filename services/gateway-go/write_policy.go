@@ -430,6 +430,12 @@ func buildForwardPayload(path string, item normalizedWrite, fanoutExcludeTargets
 		if item.createdAt != "" {
 			forward["created_at"] = item.createdAt
 		}
+		if item.lifecycle != "" {
+			forward["lifecycle"] = item.lifecycle
+		}
+		if len(item.references) > 0 {
+			setMemoryReferencePayload(forward, item.references)
+		}
 		return forward
 	case "/v1/memory/put":
 		rawItem := map[string]any{
@@ -452,6 +458,12 @@ func buildForwardPayload(path string, item normalizedWrite, fanoutExcludeTargets
 		}
 		if item.createdAt != "" {
 			rawItem["created_at"] = item.createdAt
+		}
+		if item.lifecycle != "" {
+			rawItem["lifecycle"] = item.lifecycle
+		}
+		if len(item.references) > 0 {
+			setMemoryReferencePayload(rawItem, item.references)
 		}
 		return map[string]any{
 			"item": rawItem,

@@ -6154,6 +6154,11 @@ func (s *server) runSourceBatch(
 		}
 		if len(result.rows) > 0 {
 			result.rows = s.normalizeSourceRowsWithOwner(result.source, result.sourceOwner, result.rows)
+			filtered, _, suppressed := s.filterDerivedMemoryRows(ctx, result.rows, false)
+			result.rows = filtered
+			if suppressed > 0 {
+				result.warnings = append(result.warnings, fmt.Sprintf("suppressed %d stale or unproven version-bound memory rows", suppressed))
+			}
 			// Backend rows are data. Bind their canonical trust assessment to a
 			// gateway-only envelope before any advisory analysis, and discard raw
 			// trust claims that could otherwise affect the shadow frontier.
@@ -7481,6 +7486,14 @@ func (s *server) executeRetrieval(
 		warnings = append(warnings, "Adaptive timeout policy skipped timed-out sources for remaining recall hops: "+strings.Join(skipped, ", ")+".")
 	}
 
+	// Recheck after rescue/fast-path sources, before grounding or compiler source capture.
+	for source, rows := range sourceRows {
+		filtered, _, suppressed := s.filterDerivedMemoryRows(ctx, rows, false)
+		sourceRows[source] = filtered
+		if suppressed > 0 {
+			warnings = append(warnings, fmt.Sprintf("%s: suppressed %d stale or unproven version-bound memory rows", source, suppressed))
+		}
+	}
 	allMerged := mergeRowsAll(sourceRows)
 	merged = truncateMergedRows(allMerged, limit)
 	returnedSources := make([]string, 0, len(sourceRows))

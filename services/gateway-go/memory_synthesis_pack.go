@@ -73,6 +73,7 @@ func (s *server) buildSynthesisPackResponse(
 	payload map[string]any,
 	surface string,
 ) (map[string]any, int, error) {
+	ctx, derivationGuard := withMemoryDerivationGuard(ctx, s.memoryStore)
 	requestPayload := cloneMap(payload)
 	packetRequested := agentPacketRequested(requestPayload)
 	if strings.TrimSpace(anyToString(requestPayload["retrieval_intent"])) == "" {
@@ -169,6 +170,9 @@ func (s *server) buildSynthesisPackResponse(
 	}
 	if packetRequested {
 		packet := finalizeAgentPacketForRequest(buildAgentPacket(response, requestPayload, agentPacketSurfaceForRoute("synthesis_pack", surface)), requestPayload)
+		if err := derivationGuard.verify(ctx); err != nil {
+			return nil, http.StatusServiceUnavailable, err
+		}
 		if !anyToBool(requestPayload["_suppress_final_token_impact_recording"]) {
 			s.recordTokenImpact(anyMap(packet["token_impact"]))
 		}
@@ -178,6 +182,9 @@ func (s *server) buildSynthesisPackResponse(
 		return attachPayloadFormatContract(synthesisPackContractID, value, agentID, "synthesis_pack", surface)
 	}
 	response = finalizeFullTransport(response, attach, "synthesis_pack_transport", "serialized_synthesis_pack_response_json")
+	if err := derivationGuard.verify(ctx); err != nil {
+		return nil, http.StatusServiceUnavailable, err
+	}
 	if !anyToBool(requestPayload["_suppress_final_token_impact_recording"]) {
 		s.recordTokenImpact(anyMap(response["token_impact"]))
 	}

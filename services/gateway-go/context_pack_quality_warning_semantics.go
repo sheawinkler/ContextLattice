@@ -43,7 +43,7 @@ var contextPackQualityAuthoritativeStaleSuppressionPattern = regexp.MustCompile(
 )
 
 var contextPackQualitySafetyFilteredEvidencePattern = regexp.MustCompile(
-	`^[a-z0-9][a-z0-9_.-]*: suppressed ([1-9][0-9]*) (exact-state rows from semantic retrieval; use direct memory-file read for current state|ephemeral/test memory rows; set include_ephemeral=true to include)$`,
+	`^[a-z0-9][a-z0-9_.-]*: suppressed ([1-9][0-9]*) (exact-state rows from semantic retrieval; use direct memory-file read for current state|ephemeral/test memory rows; set include_ephemeral=true to include|stale or unproven version-bound memory rows)$`,
 )
 
 func contextPackQualityWarningAssessmentFor(warnings []string) contextPackQualityWarningAssessment {
