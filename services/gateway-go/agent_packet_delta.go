@@ -382,7 +382,7 @@ func finalizeAgentPacketWithIdentityResult(packet map[string]any, baseIdentity m
 		packet = attachAgentPacketFormatContract(packet)
 		var accountingStable bool
 		packet, accountingStable = stabilizeAgentPacketTransportAccounting(packet)
-		if accountingStable {
+		if accountingStable && anyToBool(anyMap(packet["token_budget"])["within_hard_limit"]) {
 			result := agentPacketFinalization{packet: packet}
 			if captureProof {
 				wireDigest, digestErr := canonicalAgentPacketDigest(packet)
