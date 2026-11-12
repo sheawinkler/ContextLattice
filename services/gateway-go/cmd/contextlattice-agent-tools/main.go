@@ -2146,16 +2146,18 @@ func lifecycleSummary(payload map[string]any) map[string]any {
 
 func (c *cli) cmdWrite(args []string) error {
 	parsed := parseArgs(args, mergeStringFlags(commonStringFlags(), map[string]string{
-		"file":         "file",
-		"f":            "file",
-		"content":      "content",
-		"c":            "content",
-		"content-file": "content_file",
-		"session-id":   "session_id",
-		"agent-id":     "agent_id",
+		"file":            "file",
+		"f":               "file",
+		"content":         "content",
+		"c":               "content",
+		"content-file":    "content_file",
+		"session-id":      "session_id",
+		"agent-id":        "agent_id",
+		"references-json": "references_json",
+		"relations-json":  "relations_json",
 	}), mergeBoolFlags(commonBoolFlags(), map[string]string{"stdin": "stdin"}))
 	if parsed.bool("help") {
-		return c.emitUsage("contextlattice_write --file notes/x.md (--content text|--content-file path|--stdin) [--project p] [--topic-path t]")
+		return c.emitUsage("contextlattice_write --file notes/x.md (--content text|--content-file path|--stdin) [--project p] [--topic-path t] [--references-json '[\"project::notes/source.md\"]'] [--relations-json '[{\"target\":\"project::notes/source.md\",\"relation\":\"supports\"}]']")
 	}
 	c.applyBaseURL(parsed)
 	fileName := parsed.string("file", "")
@@ -2179,6 +2181,17 @@ func (c *cli) cmdWrite(args []string) error {
 	if topic := parsed.string("topic_path", ""); topic != "" {
 		payload["topicPath"] = topic
 	}
+	for _, field := range []string{"references", "relations"} {
+		flag := field + "_json"
+		if !parsed.has(flag) {
+			continue
+		}
+		claims, err := parseWriteGraphClaims(parsed.string(flag, ""))
+		if err != nil {
+			return fmt.Errorf("--%s-json: %w", field, err)
+		}
+		payload[field] = claims
+	}
 	result, _, err := c.requestJSON(context.Background(), http.MethodPost, "/memory/write", payload, parsed.float("timeout", 30))
 	if err != nil {
 		return err
@@ -2186,8 +2199,30 @@ func (c *cli) cmdWrite(args []string) error {
 	if err := c.emit(result, !parsed.bool("raw")); err != nil {
 		return err
 	}
+	if result["ok"] != true {
+		return errors.New("memory write was not explicitly confirmed")
+	}
 	c.autoDrainAsyncInbox(sessionID, project, agentID)
 	return nil
+}
+
+func parseWriteGraphClaims(raw string) ([]any, error) {
+	if len(raw) > 32768 || !strings.HasPrefix(strings.TrimSpace(raw), "[") {
+		return nil, errors.New("expected a JSON array of at most 32 claims within 32768 bytes")
+	}
+	var claims []any
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	decoder.UseNumber()
+	if err := decoder.Decode(&claims); err != nil || len(claims) > 32 {
+		return nil, errors.New("expected a JSON array of at most 32 claims")
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return nil, errors.New("unexpected content after the claims array")
+	}
+	// The gateway remains the authority for canonical target identities,
+	// relation vocabulary, scope, current revisions, and transactional writes.
+	return claims, nil
 }
 
 func resolveContent(parsed parsedArgs) (string, error) {
