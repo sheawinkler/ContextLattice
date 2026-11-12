@@ -33,3 +33,24 @@ the full packet. Small proof packets can be cheaper sent whole. Reconstruction
 preserves the content, proof and decision gate and revalidates its own receipt;
 receipt annotations need not be byte-identical. Compression is not proof of
 improved task outcomes or billing savings.
+
+## Resume Without Guessing
+
+Use the primary CLI to choose an exact session when several tasks are open:
+
+```sh
+contextlattice session list --project example --pretty
+contextlattice resume --project example --session-id sess_example
+contextlattice resume --project example --session-id sess_example --full
+```
+
+Replace `sess_example` with the intended session. A validated cached session is
+preferred; otherwise discovery must find one live, scoped match. Multiple matches,
+duplicates, incomplete previews and unproven scope require explicit selection.
+`--agent-id` also constrains the owner identity; it does not grant permission.
+
+Completed sessions remain readable when explicitly selected, not as a fallback
+for current work. Wrong or missing package identity is rejected before output or
+cache update. If compact identity is incomplete, request `--full`; clipped prefixes
+are not matching identities. A session restores historical intent, not current
+repository proof, a new decision, fresh evidence or permission to act.

@@ -2372,10 +2372,11 @@ func (c *cli) cmdResume(args []string) error {
 		"session-id": "session_id", "agent-id": "agent_id", "limit": "limit",
 	}), mergeBoolFlags(commonBoolFlags(), map[string]string{"full": "full"}))
 	if parsed.bool("help") {
-		return c.emitUsage("contextlattice resume [--session-id <id>] [--project <project>] [--full] [--pretty]")
+		return c.emitUsage("contextlattice resume [--session-id <id>] [--project <project>] [--agent-id <id>] [--full] [--pretty]; discovery requires one unambiguous live session, historical reads require an explicit session")
 	}
 	c.applyBaseURL(parsed)
 	project := parsed.string("project", envString("CONTEXTLATTICE_PROJECT", "contextlattice"))
+	agentID := parsed.string("agent_id", "")
 	sessionID := parsed.string("session_id", envString("CONTEXTLATTICE_SESSION_ID", ""))
 	if sessionID == "" && len(parsed.pos) > 0 {
 		sessionID = parsed.pos[0]
@@ -2383,32 +2384,28 @@ func (c *cli) cmdResume(args []string) error {
 	if sessionID == "" {
 		sessionID = firstString(readSessionState(project)["session_id"])
 		if sessionID != "" {
-			if cached, _, err := c.requestJSONForValidation(context.Background(), http.MethodGet, "/v1/agents/sessions/"+url.PathEscape(sessionID), nil, parsed.float("timeout", 10)); err != nil || !agentSessionStatusReusable(cached, sessionID, project, "", parsed.string("agent_id", ""), "") {
+			if cached, _, err := c.requestJSONForValidation(context.Background(), http.MethodGet, "/v1/agents/sessions/"+url.PathEscape(sessionID), nil, parsed.float("timeout", 10)); err != nil || cached["ok"] != true || !liveResumeSession(asMap(cached["session"]), project, agentID) || asMap(cached["session"])["id"] != sessionID {
 				sessionID = ""
 			}
 		}
 	}
 	if sessionID == "" {
+		limit := minInt(maxInt(parsed.int("limit", 20), 2), 500)
 		values := url.Values{}
 		values.Set("project", project)
-		values.Set("limit", strconv.Itoa(parsed.int("limit", 20)))
+		values.Set("limit", strconv.Itoa(limit))
+		if agentID != "" {
+			values.Set("agent", agentID)
+		}
 		values.Set("view", "compact")
 		values.Set("include_stale", "false")
 		listed, _, err := c.requestJSON(context.Background(), http.MethodGet, "/v1/agents/sessions?"+values.Encode(), nil, parsed.float("timeout", 10))
 		if err != nil {
 			return err
 		}
-		rows := asList(listed["sessions"])
-		for _, raw := range rows {
-			row := asMap(raw)
-			status := strings.ToLower(firstString(row["status"]))
-			if status == "active" || status == "paused" || status == "blocked" {
-				sessionID = firstString(row["id"])
-				break
-			}
-		}
-		if sessionID == "" && len(rows) > 0 {
-			sessionID = firstString(asMap(rows[0])["id"])
+		sessionID, err = uniqueResumeSession(listed, project, agentID, limit)
+		if err != nil {
+			return err
 		}
 	}
 	if sessionID == "" {
@@ -2422,8 +2419,139 @@ func (c *cli) cmdResume(args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := validateResumePackageIdentity(raw, sessionID, project, agentID); err != nil {
+		return err
+	}
 	writeSessionState(project, sessionID, firstString(raw["query"], asMap(raw["session"])["objective"]), parsed.string("agent_id", firstString(raw["agent_id"])))
 	return c.emit(raw, parsed.bool("pretty") || !parsed.bool("raw"))
+}
+
+func resumeIdentityMatches(row map[string]any, sessionID, project, agentID string) bool {
+	id, idOK := row["id"].(string)
+	scope, scopeOK := row["project"].(string)
+	if !idOK || id == "" || strings.TrimSpace(id) != id || id != sessionID || !scopeOK || scope == "" || !strings.EqualFold(scope, project) {
+		return false
+	}
+	actor, actorOK := row["agent_id"].(string)
+	return agentID == "" || actorOK && actor == agentID
+}
+
+func liveResumeSession(row map[string]any, project, agentID string) bool {
+	id, _ := row["id"].(string)
+	if !resumeIdentityMatches(row, id, project, agentID) {
+		return false
+	}
+	if stale, present := row["stale"]; present && stale != false {
+		return false
+	}
+	status, _ := row["status"].(string)
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "active", "paused", "blocked":
+		return true
+	default:
+		return false
+	}
+}
+
+func uniqueResumeSession(listed map[string]any, project, agentID string, limit int) (string, error) {
+	if listed["ok"] != true {
+		return "", errors.New("session discovery was not explicitly confirmed; select --session-id explicitly")
+	}
+	rows := asList(listed["sessions"])
+	// The list API has no completeness cursor. A full preview cannot prove
+	// uniqueness, even if only one of its rows looks applicable.
+	if len(rows) >= limit {
+		return "", errors.New("session preview may be incomplete; select --session-id explicitly")
+	}
+	selected := ""
+	seen := map[string]bool{}
+	unproven := errors.New("session discovery contains an unproven competing identity; select --session-id explicitly")
+	for _, raw := range rows {
+		row := asMap(raw)
+		id, _ := row["id"].(string)
+		if id != "" && seen[id] {
+			return "", errors.New("session discovery contains duplicate identities; select --session-id explicitly")
+		}
+		seen[id] = true
+		// Exclude only provably irrelevant rows. Unknown scope/status is not
+		// evidence that a competing session is ineligible.
+		scope, scopeOK := row["project"].(string)
+		if !scopeOK || scope == "" {
+			return "", unproven
+		}
+		if !strings.EqualFold(scope, project) {
+			continue
+		}
+		if agentID != "" {
+			actor, ok := row["agent_id"].(string)
+			if !ok || actor == "" {
+				return "", unproven
+			}
+			if actor != agentID {
+				continue
+			}
+		}
+		if !resumeIdentityMatches(row, id, project, agentID) {
+			return "", unproven
+		}
+		if stale, present := row["stale"]; present && stale != true && stale != false {
+			return "", unproven
+		}
+		status, _ := row["status"].(string)
+		switch strings.ToLower(strings.TrimSpace(status)) {
+		case "active", "paused", "blocked", "completed", "failed", "canceled", "cancelled", "expired":
+		default:
+			return "", unproven
+		}
+		if !liveResumeSession(row, project, agentID) {
+			continue
+		}
+		if selected != "" {
+			return "", errors.New("multiple live sessions match this scope; select --session-id explicitly")
+		}
+		selected = id
+	}
+	return selected, nil
+}
+
+func validateResumePackageIdentity(payload map[string]any, sessionID, project, agentID string) error {
+	invalid := errors.New("resume package does not confirm the selected session/project/agent; no package emitted or cached; select --session-id and use --full if compact identity is incomplete")
+	root := map[string]any{"id": payload["session_id"], "project": payload["project"], "agent_id": payload["agent_id"]}
+	if payload["ok"] != true || !resumeIdentityMatches(root, sessionID, project, agentID) {
+		return invalid
+	}
+	for _, field := range []string{"session", "rollup", "outcome"} {
+		value, present := payload[field]
+		if !present {
+			continue
+		}
+		row, ok := value.(map[string]any)
+		if !ok {
+			return invalid
+		}
+		for _, key := range []string{"id", "session_id"} {
+			if raw, present := row[key]; present {
+				id, ok := raw.(string)
+				if !ok || id != sessionID {
+					return invalid
+				}
+			}
+		}
+		if raw, present := row["project"]; present {
+			scope, ok := raw.(string)
+			if !ok || !strings.EqualFold(scope, project) {
+				return invalid
+			}
+		}
+		if raw, present := row["agent_id"]; present {
+			actor, ok := raw.(string)
+			rootActor, _ := payload["agent_id"].(string)
+			if !ok || agentID != "" && actor != agentID || actor != "" && rootActor != "" && actor != rootActor {
+				return invalid
+			}
+		}
+	}
+	return nil
 }
 
 func normalizeCorrectionCategory(raw string) (string, error) {
