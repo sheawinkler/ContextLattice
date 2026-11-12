@@ -27,6 +27,7 @@ const (
 
 type telemetrySink struct {
 	enabled                 bool
+	startup                 *telemetrySinkStartup
 	client                  *mongo.Client
 	events                  *mongo.Collection
 	blobs                   *mongo.Collection
@@ -56,6 +57,10 @@ type telemetryBlobRecord struct {
 }
 
 func newTelemetrySinkFromEnv() (*telemetrySink, error) {
+	return newTelemetrySinkFromEnvWithContext(context.Background())
+}
+
+func newTelemetrySinkFromEnvWithContext(parent context.Context) (*telemetrySink, error) {
 	enabled := envBool("GO_TELEMETRY_SINK_ENABLED", true)
 	if !enabled {
 		return &telemetrySink{enabled: false}, nil
@@ -83,15 +88,13 @@ func newTelemetrySinkFromEnv() (*telemetrySink, error) {
 	if connectTimeout < time.Second {
 		connectTimeout = time.Second
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), connectTimeout)
-	defer cancel()
+	if connectTimeout > 30*time.Second {
+		connectTimeout = 30 * time.Second
+	}
 
 	client, err := mongo.Connect(options.Client().ApplyURI(mongoURI))
 	if err != nil {
-		return nil, fmt.Errorf("connect mongo telemetry sink: %w", err)
-	}
-	if err := client.Ping(ctx, readpref.Primary()); err != nil {
-		return nil, fmt.Errorf("ping mongo telemetry sink: %w", err)
+		return nil, fmt.Errorf("invalid telemetry MongoDB configuration")
 	}
 
 	sink := &telemetrySink{
@@ -140,12 +143,12 @@ func newTelemetrySinkFromEnv() (*telemetrySink, error) {
 		sink.gcBatchLimit = 50
 	}
 
-	if err := sink.ensureIndexes(ctx); err != nil {
-		return nil, err
-	}
-	if sink.gcEnabled {
-		sink.startBlobGCWorker()
-	}
+	sink.initializeWithRecovery(parent, connectTimeout, func(ctx context.Context) error {
+		if err := client.Ping(ctx, readpref.Primary()); err != nil {
+			return err
+		}
+		return sink.ensureIndexes(ctx)
+	}, waitTelemetryRetry)
 	return sink, nil
 }
 
@@ -192,7 +195,7 @@ func (s *telemetrySink) ingestWrite(
 	item normalizedWrite,
 	meta map[string]any,
 ) (telemetryIngestResult, error) {
-	if s == nil || !s.enabled {
+	if !s.isReady() {
 		return telemetryIngestResult{}, fmt.Errorf("telemetry sink disabled")
 	}
 	now := time.Now().UTC()
@@ -318,7 +321,7 @@ func buildTelemetryBlobUpsertUpdate(
 }
 
 func (s *telemetrySink) runBlobGCOnce(ctx context.Context) (map[string]any, error) {
-	if s == nil || !s.enabled {
+	if !s.isReady() {
 		return map[string]any{"enabled": false}, nil
 	}
 	cutoff := time.Now().UTC().Add(-s.gcGrace)
@@ -378,10 +381,14 @@ func (s *telemetrySink) summary(ctx context.Context) (map[string]any, error) {
 	if s == nil || !s.enabled {
 		return map[string]any{"enabled": false}, nil
 	}
+	if !s.isReady() {
+		return map[string]any{"enabled": true, "ready": false, "initialization": s.initializationSnapshot()}, nil
+	}
 	eventCount, eventErr := s.events.EstimatedDocumentCount(ctx)
 	blobCount, blobErr := s.blobs.EstimatedDocumentCount(ctx)
 	summary := map[string]any{
 		"enabled":                 true,
+		"ready":                   true,
 		"database":                s.events.Database().Name(),
 		"eventsCollection":        s.events.Name(),
 		"blobsCollection":         s.blobs.Name(),
@@ -393,37 +400,47 @@ func (s *telemetrySink) summary(ctx context.Context) (map[string]any, error) {
 		"blobGCIntervalSecs":      int(s.gcInterval / time.Second),
 		"blobGCGraceSecs":         int(s.gcGrace / time.Second),
 		"blobGCBatchLimit":        s.gcBatchLimit,
-		"estimatedEventDocs":      eventCount,
-		"estimatedBlobDocs":       blobCount,
 		"capturedAt":              time.Now().UTC().Format(time.RFC3339),
 	}
 	if eventErr != nil {
-		summary["eventCountError"] = eventErr.Error()
+		summary["eventCountError"] = "mongo_event_count_failed"
+	} else {
+		summary["estimatedEventDocs"] = eventCount
 	}
 	if blobErr != nil {
-		summary["blobCountError"] = blobErr.Error()
+		summary["blobCountError"] = "mongo_blob_count_failed"
+	} else {
+		summary["estimatedBlobDocs"] = blobCount
 	}
 	return summary, nil
 }
 
 func (s *telemetrySink) startBlobGCWorker() {
-	if s == nil || !s.enabled || !s.gcEnabled {
+	if !s.isReady() || !s.gcEnabled {
 		return
 	}
 	interval := s.gcInterval
 	if interval <= 0 {
 		interval = time.Hour
 	}
+	lifecycle := context.Background()
+	if s.startup != nil {
+		lifecycle = s.startup.ctx
+	}
 	go func() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {
-			<-ticker.C
-			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			select {
+			case <-lifecycle.Done():
+				return
+			case <-ticker.C:
+			}
+			ctx, cancel := context.WithTimeout(lifecycle, 20*time.Second)
 			result, err := s.runBlobGCOnce(ctx)
 			cancel()
 			if err != nil {
-				log.Printf("telemetry blob gc failed: %v", err)
+				log.Printf("telemetry blob gc failed: mongo_blob_gc_failed")
 				continue
 			}
 			if deleted := anyToInt(result["deleted"], 0); deleted > 0 {
