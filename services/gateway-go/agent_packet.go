@@ -76,12 +76,15 @@ func buildAgentPacket(response map[string]any, request map[string]any, surface s
 	}
 
 	ranked := contextPackAnyList(contextPack["ranked_evidence"])
+	proofMode := false
 	if synthesis := anyMap(response["synthesis_pack"]); len(synthesis) > 0 {
-		if findings := contextPackAnyList(synthesis["high_signal_findings"]); len(findings) > 0 {
+		if _, proofMode = synthesis["proof_claims"]; proofMode {
+			ranked = agentPacketProofEvidence(contextPackAnyList(synthesis["proof_claims"]))
+		} else if findings := contextPackAnyList(synthesis["high_signal_findings"]); len(findings) > 0 {
 			ranked = findings
 		}
 	}
-	evidence, alignment := compactAgentPacketEvidence(ranked, query, 8)
+	evidence, alignment := compactAgentPacketEvidenceMode(ranked, query, 8, proofMode)
 	uncertainty := agentPacketUncertainty(evidence, alignment, sourceCoverage)
 	decisionGate := agentPacketDecisionGate(response, uncertainty)
 	quality := anyMap(response["context_pack_quality"])
@@ -99,6 +102,9 @@ func buildAgentPacket(response map[string]any, request map[string]any, surface s
 		"source_count":   len(returnedSources),
 		"sources":        returnedSources,
 		"citation_count": agentPacketCitationCount(evidence),
+	}
+	if proofMode {
+		provenance["proof_claim_candidates"] = len(ranked)
 	}
 	if disabled := anyToStringList(sourceCoverage["disabled"], 12); len(disabled) > 0 {
 		provenance["disabled_sources"] = disabled
@@ -168,10 +174,15 @@ func buildAgentPacket(response map[string]any, request map[string]any, surface s
 	if warnings := parseWarnings(response["warnings"]); len(warnings) > 0 {
 		packet["warnings"] = stringSliceAny(warnings[:minInt(len(warnings), 3)])
 	}
+	updateAgentPacketProofCoverage(packet)
 	return packet
 }
 
 func compactAgentPacketEvidence(items []any, query string, limit int) ([]any, float64) {
+	return compactAgentPacketEvidenceMode(items, query, limit, false)
+}
+
+func compactAgentPacketEvidenceMode(items []any, query string, limit int, proofMode bool) ([]any, float64) {
 	queryTerms := synthesisPackQueryTokens(query)
 	seen := map[string]struct{}{}
 	out := []any{}
@@ -186,6 +197,13 @@ func compactAgentPacketEvidence(items []any, query string, limit int) ([]any, fl
 			continue
 		}
 		key := normalizeEvidenceText(text)
+		proof := map[string]any{}
+		if proofMode {
+			proof = anyMap(item["_packet_proof"])
+		}
+		if id := anyToString(proof["claim_id"]); id != "" {
+			key = "proof:" + id
+		}
 		if _, exists := seen[key]; exists {
 			continue
 		}
@@ -202,6 +220,9 @@ func compactAgentPacketEvidence(items []any, query string, limit int) ([]any, fl
 			"text":      text,
 			"score":     roundFloat(anyToFloat(item["score"]), 3),
 			"relevance": roundFloat(relevance, 3),
+		}
+		if len(proof) > 0 {
+			row["proof"] = proof
 		}
 		for _, field := range []string{"project", "file", "source", "topic_path", "timestamp"} {
 			if value := strings.TrimSpace(anyToString(item[field])); value != "" {
@@ -473,6 +494,7 @@ func applyAgentPacketTransportAccounting(packet map[string]any, count tokenCount
 
 func shrinkAgentPacketToHardLimit(packet map[string]any, hard int) map[string]any {
 	for pass := 0; pass < 8; pass++ {
+		updateAgentPacketProofCoverage(packet)
 		probe := attachAgentPacketFormatContract(packet)
 		if contextPackCountAnyTokens(probe).Tokens <= hard {
 			return packet
@@ -487,6 +509,7 @@ func shrinkAgentPacketToHardLimit(packet map[string]any, hard int) map[string]an
 			for _, raw := range evidence {
 				item := anyMap(raw)
 				item["text"] = clipText(anyToString(item["text"]), 180)
+				shrinkAgentPacketProofDetails(item)
 				delete(item, "timestamp")
 			}
 			packet["prompt"] = clipText(anyToString(packet["prompt"]), 800)
@@ -494,11 +517,17 @@ func shrinkAgentPacketToHardLimit(packet map[string]any, hard int) map[string]an
 		case len(evidence) > 1:
 			packet["evidence"] = evidence[:1]
 		default:
+			for _, raw := range evidence {
+				minimizeAgentPacketProofDetails(anyMap(raw))
+			}
 			packet["prompt"] = clipText(anyToString(packet["prompt"]), 420)
 			packet["next_actions"] = []any{}
 			packet["warnings"] = []any{"Packet reached the transport hard limit; inspect cited provenance for omitted detail."}
 		}
 	}
+	updateAgentPacketProofCoverage(packet)
+	omitUnboundedAgentPacketProof(packet, hard)
+	updateAgentPacketProofCoverage(packet)
 	return packet
 }
 
