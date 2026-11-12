@@ -682,7 +682,7 @@ func (s *server) routeTelemetryWrite(
 	item normalizedWrite,
 	sourcePath string,
 ) (map[string]any, int, error) {
-	if s.telemetrySink == nil || !s.telemetrySink.enabled {
+	if !s.telemetrySink.isReady() {
 		return s.routeTelemetryToSpool(item, sourcePath, fmt.Errorf("telemetry sink unavailable"))
 	}
 	timeout := envDurationSeconds("GO_TELEMETRY_INGEST_TIMEOUT_SECS", 8)
@@ -702,7 +702,7 @@ func (s *server) routeTelemetryWrite(
 	}
 	result, err := s.telemetrySink.ingestWrite(ingestCtx, item, meta)
 	if err != nil {
-		return s.routeTelemetryToSpool(item, sourcePath, err)
+		return s.routeTelemetryToSpool(item, sourcePath, fmt.Errorf("mongo_telemetry_write_failed"))
 	}
 	compressionCodec := strings.TrimSpace(result.Codec)
 	if compressionCodec == "" {
@@ -956,7 +956,7 @@ func (s *server) telemetryBlobGC(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"ok": false, "error": "Invalid API key"})
 		return
 	}
-	if s.telemetrySink == nil || !s.telemetrySink.enabled {
+	if !s.telemetrySink.isReady() {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "telemetry sink unavailable"})
 		return
 	}
@@ -964,7 +964,7 @@ func (s *server) telemetryBlobGC(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	result, err := s.telemetrySink.runBlobGCOnce(ctx)
 	if err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "blob gc failed", "detail": err.Error()})
+		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "blob gc failed", "detail": "mongo_blob_gc_failed"})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "result": result})

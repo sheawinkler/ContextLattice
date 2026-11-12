@@ -1299,11 +1299,17 @@ func newServerWithContext(startupContext context.Context) *server {
 	if tradingHistoryLimit < 1 {
 		tradingHistoryLimit = 1
 	}
-	telemetrySinkInstance, sinkErr := newTelemetrySinkFromEnv()
+	telemetrySinkInstance, sinkErr := newTelemetrySinkFromEnvWithContext(startupContext)
 	if sinkErr != nil {
 		log.Printf("gateway-go telemetry sink disabled: %v", sinkErr)
 		telemetrySinkInstance = &telemetrySink{enabled: false}
 	}
+	telemetryTransferred := false
+	defer func() {
+		if !telemetryTransferred {
+			_ = (&server{telemetrySink: telemetrySinkInstance}).closeTelemetrySinkRuntime()
+		}
+	}()
 	telemetrySpoolInstance := newTelemetrySpoolFromEnv()
 	telemetryRingInstance := newTelemetryRingFromEnv()
 	agentSessionStoreInstance, agentSessionStoreErr := newAgentSessionStoreFromEnv()
@@ -1468,6 +1474,7 @@ func newServerWithContext(startupContext context.Context) *server {
 	t.start()
 	s.startContinuationDurableWorker()
 	s.startTaskDeliveryRecoveryWorker(startupContext)
+	telemetryTransferred = true
 	return s
 }
 
@@ -2941,20 +2948,21 @@ func (s *server) healthz(w http.ResponseWriter, r *http.Request) {
 	backend := s.backendHealthSnapshot(ctx)
 	readiness := s.runtimeReadinessSnapshot(backend)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":                    true,
-		"ready":                 anyToBool(readiness["ready"]),
-		"liveness":              "healthy",
-		"service":               "gateway-go",
-		"build":                 contextLatticeBuildIdentity(),
-		"backendUrl":            s.backendURL,
-		"backendHealth":         anyToBool(backend["healthy"]),
-		"backendRequired":       anyToBool(backend["required"]),
-		"backendStatus":         anyToString(backend["status"]),
-		"backendProbeChecked":   anyToBool(backend["checked"]),
-		"strictNoPythonRuntime": s.strictNoPythonRuntime,
-		"memoryStore":           s.memoryStore.migrationSnapshot(),
-		"qdrantPayloadIndexes":  s.qdrantPayloadIndexes.snapshot(),
-		"readiness":             readiness,
+		"ok":                          true,
+		"ready":                       anyToBool(readiness["ready"]),
+		"liveness":                    "healthy",
+		"service":                     "gateway-go",
+		"build":                       contextLatticeBuildIdentity(),
+		"backendUrl":                  s.backendURL,
+		"backendHealth":               anyToBool(backend["healthy"]),
+		"backendRequired":             anyToBool(backend["required"]),
+		"backendStatus":               anyToString(backend["status"]),
+		"backendProbeChecked":         anyToBool(backend["checked"]),
+		"strictNoPythonRuntime":       s.strictNoPythonRuntime,
+		"memoryStore":                 s.memoryStore.migrationSnapshot(),
+		"telemetrySinkInitialization": s.telemetrySink.initializationSnapshot(),
+		"qdrantPayloadIndexes":        s.qdrantPayloadIndexes.snapshot(),
+		"readiness":                   readiness,
 	})
 }
 
@@ -2972,17 +2980,18 @@ func (s *server) readyz(w http.ResponseWriter, r *http.Request) {
 		statusCode = http.StatusServiceUnavailable
 	}
 	writeJSON(w, statusCode, map[string]any{
-		"ok":                    anyToBool(readiness["ready"]),
-		"ready":                 anyToBool(readiness["ready"]),
-		"service":               "gateway-go",
-		"build":                 contextLatticeBuildIdentity(),
-		"backendHealth":         anyToBool(backend["healthy"]),
-		"backendRequired":       anyToBool(backend["required"]),
-		"backendStatus":         anyToString(backend["status"]),
-		"strictNoPythonRuntime": s.strictNoPythonRuntime,
-		"memoryStore":           s.memoryStore.migrationSnapshot(),
-		"qdrantPayloadIndexes":  s.qdrantPayloadIndexes.snapshot(),
-		"readiness":             readiness,
+		"ok":                          anyToBool(readiness["ready"]),
+		"ready":                       anyToBool(readiness["ready"]),
+		"service":                     "gateway-go",
+		"build":                       contextLatticeBuildIdentity(),
+		"backendHealth":               anyToBool(backend["healthy"]),
+		"backendRequired":             anyToBool(backend["required"]),
+		"backendStatus":               anyToString(backend["status"]),
+		"strictNoPythonRuntime":       s.strictNoPythonRuntime,
+		"memoryStore":                 s.memoryStore.migrationSnapshot(),
+		"telemetrySinkInitialization": s.telemetrySink.initializationSnapshot(),
+		"qdrantPayloadIndexes":        s.qdrantPayloadIndexes.snapshot(),
+		"readiness":                   readiness,
 	})
 }
 
@@ -3093,7 +3102,7 @@ func (s *server) strictRuntimeLaneStatus(source string) (string, string, string)
 		if !nativeSourceAdapterEnabled(sourceMongoRaw, true) {
 			return "disabled", sourceOwnerGoNative, "native adapter disabled by config"
 		}
-		if s.telemetrySink != nil && s.telemetrySink.enabled {
+		if s.telemetrySink.isReady() {
 			return "healthy", sourceOwnerGoNative, "native mongo telemetry collection adapter enabled"
 		}
 		if s.telemetrySpool != nil && s.telemetrySpool.enabled {
@@ -6566,8 +6575,8 @@ func retrievalSourceTransport(s *server, source, owner string) (string, string) 
 		}
 		return retrievalEndpointTransport(s.backendURL)
 	case sourceMongoRaw:
-		if s == nil || s.telemetrySink == nil || !s.telemetrySink.enabled {
-			return "in_process", "local_telemetry_lane_disabled_or_unconfigured"
+		if s == nil || !s.telemetrySink.isReady() {
+			return "in_process", "local_telemetry_sink_unavailable"
 		}
 		return "unknown", "mongo_transport_unbound"
 	case sourceMindsdb:
@@ -8649,6 +8658,7 @@ func startGatewayRuntime(ctx context.Context, factory func(context.Context) *ser
 				result.err = fmt.Errorf("gateway activation panic: %v", recovered)
 				if result.server != nil {
 					_ = result.server.closeTaskDeliveryRuntime()
+					_ = result.server.closeTelemetrySinkRuntime()
 				}
 			}
 			terminal <- result
@@ -8661,6 +8671,7 @@ func startGatewayRuntime(ctx context.Context, factory func(context.Context) *ser
 			if err := ctx.Err(); err != nil {
 				result.err = err
 				_ = result.server.closeTaskDeliveryRuntime()
+				_ = result.server.closeTelemetrySinkRuntime()
 				return
 			}
 			activate(result.server)
@@ -8670,6 +8681,7 @@ func startGatewayRuntime(ctx context.Context, factory func(context.Context) *ser
 				late := <-constructed
 				if late.server != nil {
 					_ = late.server.closeTaskDeliveryRuntime()
+					_ = late.server.closeTelemetrySinkRuntime()
 				}
 			}()
 		}
@@ -8713,11 +8725,13 @@ func main() {
 		log.Printf("gateway-go runtime handler activated")
 	})
 	httpServer := newGatewayHTTPServer(startupHandler)
-	if err := serveGatewayUntilShutdown(shutdownContext, httpServer, listener, gatewayShutdownTimeout()); err != nil {
-		log.Fatal(err)
-	}
+	serveErr := serveGatewayUntilShutdown(shutdownContext, httpServer, listener, gatewayShutdownTimeout())
+	stopSignals()
 	terminal := <-startupResult
 	if terminal.server != nil {
+		if err := terminal.server.closeTelemetrySinkRuntime(); err != nil {
+			log.Printf("gateway-go telemetry runtime close failed")
+		}
 		if err := terminal.server.closeTaskDeliveryRuntime(); err != nil {
 			log.Printf("gateway-go task delivery runtime close failed: %v", err)
 		}
@@ -8726,4 +8740,7 @@ func main() {
 		log.Printf("gateway-go startup terminated: %v", terminal.err)
 	}
 	log.Printf("gateway-go shutdown complete")
+	if serveErr != nil {
+		log.Fatal(serveErr)
+	}
 }

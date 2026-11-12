@@ -564,7 +564,7 @@ func (s *server) storageTelemetry(w http.ResponseWriter, r *http.Request) {
 		summary, err := s.telemetrySink.summary(ctx)
 		if err != nil {
 			log.Printf("storage telemetry sink summary failed: %v", err)
-			telemetrySummary = map[string]any{"enabled": s.telemetrySink.enabled, "error": "telemetry_summary_error"}
+			telemetrySummary = map[string]any{"enabled": s.telemetrySink.enabled, "ready": s.telemetrySink.isReady(), "error": "telemetry_summary_error"}
 		} else {
 			telemetrySummary = summary
 		}
@@ -707,19 +707,20 @@ func (s *server) storageMaintenanceRun(w http.ResponseWriter, r *http.Request) {
 	taskResults := map[string]any{}
 	errorsList := []string{}
 
-	if s.telemetrySink == nil || !s.telemetrySink.enabled {
+	if !s.telemetrySink.isReady() {
 		taskResults["telemetry_blob_gc"] = map[string]any{
-			"enabled": false,
+			"enabled": s.telemetrySink != nil && s.telemetrySink.enabled,
+			"ready":   false,
 			"skipped": true,
-			"reason":  "telemetry sink disabled",
+			"reason":  "telemetry sink unavailable",
 		}
 	} else {
 		ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
 		defer cancel()
 		result, err := s.telemetrySink.runBlobGCOnce(ctx)
 		if err != nil {
-			taskResults["telemetry_blob_gc"] = map[string]any{"enabled": true, "ok": false, "error": err.Error()}
-			errorsList = append(errorsList, "telemetry_blob_gc: "+err.Error())
+			taskResults["telemetry_blob_gc"] = map[string]any{"enabled": true, "ok": false, "error": "mongo_blob_gc_failed"}
+			errorsList = append(errorsList, "telemetry_blob_gc: mongo_blob_gc_failed")
 		} else {
 			taskResults["telemetry_blob_gc"] = map[string]any{"enabled": true, "ok": true, "result": result}
 		}

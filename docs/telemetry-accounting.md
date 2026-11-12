@@ -1,5 +1,13 @@
 # Reading ContextLattice telemetry
 
+## Mongo startup recovery
+
+Telemetry is optional and has a separate initialization state from core gateway readiness. `/healthz` and `/readyz` expose `telemetrySinkInitialization` (`configured`, `ready`, `phase`, attempt count and a fixed nonsecret failure code). A ready gateway does not imply Mongo telemetry is ready.
+
+If Mongo starts late, the gateway retains its configured client and retries Ping plus required event/blob indexes without a gateway restart. Each attempt is bounded by `GO_TELEMETRY_CONNECT_TIMEOUT_SECS` (1-30 seconds, default 5); retry delays increase from 1 to 30 seconds and stay capped while the gateway is running. Static invalid configuration is rejected rather than retried.
+
+Before initialization succeeds, writes use the existing telemetry spool/error policy, reads can use the spool, and blob GC does not start. New writes use Mongo after initialization; this does not automatically drain earlier spool entries. Later database outages still use existing operation-time fallback. Shutdown cancels retries and GC. `GO_TELEMETRY_SINK_ENABLED=false` disables the client and retries entirely. Unobserved telemetry counts remain unknown, not measured zero.
+
 The dashboard measures context accounting, not hypothetical billing savings.
 
 - **Signed net context delta** retains expansion as a negative result. Compare the named cohort and window, not unrelated lifetime totals.

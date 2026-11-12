@@ -149,10 +149,10 @@ func (s *server) queryMongoRawSource(
 
 	warnings := []string{}
 	rows := []map[string]any{}
-	if s.telemetrySink != nil && s.telemetrySink.enabled && s.telemetrySink.events != nil {
+	if s.telemetrySink.isReady() && s.telemetrySink.events != nil {
 		mongoRows, mongoErr := s.queryMongoRawTelemetryCollection(ctx, query, limit, scanLimit, projectFilter, topicFilter)
 		if mongoErr != nil {
-			warnings = append(warnings, "mongo_raw telemetry collection query failed: "+mongoErr.Error())
+			warnings = append(warnings, "mongo_raw telemetry collection query failed: mongo_telemetry_query_failed")
 		} else {
 			rows = append(rows, mongoRows...)
 		}
