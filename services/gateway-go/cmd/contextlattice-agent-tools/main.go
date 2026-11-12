@@ -2192,9 +2192,20 @@ func (c *cli) cmdWrite(args []string) error {
 		}
 		payload[field] = claims
 	}
+	derivations := writeDerivationCount(asList(payload["relations"]))
+	if derivations > 0 {
+		capabilities, _, err := c.requestJSON(context.Background(), http.MethodGet, "/ops/capabilities", nil, min(parsed.float("timeout", 30), 10.0))
+		capability := asMap(capabilities["derivedMemory"])
+		if err != nil || capability["available"] != true || !writeDerivationIntegerEquals(capability["version"], 1) {
+			return errors.New("gateway does not confirm ready derivation custody v1; upgrade or enable its native memory/retrieval owner before writing a derived summary")
+		}
+	}
 	result, _, err := c.requestJSON(context.Background(), http.MethodPost, "/memory/write", payload, parsed.float("timeout", 30))
 	if err != nil {
 		return err
+	}
+	if derivations > 0 && result["ok"] == true && !validWriteDerivationReceipt(asMap(result["derivation_custody"]), derivations) {
+		return errors.New("write may have completed but derivation custody was not confirmed; do not treat it as protected or blindly retry")
 	}
 	if err := c.emit(result, !parsed.bool("raw")); err != nil {
 		return err
@@ -2204,6 +2215,41 @@ func (c *cli) cmdWrite(args []string) error {
 	}
 	c.autoDrainAsyncInbox(sessionID, project, agentID)
 	return nil
+}
+
+func writeDerivationCount(claims []any) int {
+	count := 0
+	for _, raw := range claims {
+		claim := asMap(raw)
+		relation := strings.Trim(strings.ReplaceAll(strings.ReplaceAll(strings.ToLower(firstString(claim["relation"], claim["type"])), "-", "_"), " ", "_"), "_")
+		if relation == "derived_from" {
+			count++
+		}
+	}
+	return count
+}
+
+func writeDerivationIntegerEquals(raw any, value int) bool {
+	switch v := raw.(type) {
+	case int:
+		return v == value
+	case float64:
+		return v == float64(value)
+	case json.Number:
+		return string(v) == strconv.Itoa(value)
+	default:
+		return false
+	}
+}
+
+func validWriteDerivationReceipt(receipt map[string]any, count int) bool {
+	id, ok := receipt["transaction_id"].(string)
+	if !ok || !strings.HasPrefix(id, "ref_tx_") || len(id) != 39 || receipt["registered"] != true || receipt["scope"] != "same_project" ||
+		!writeDerivationIntegerEquals(receipt["version"], 1) || !writeDerivationIntegerEquals(receipt["input_count"], count) {
+		return false
+	}
+	_, err := hex.DecodeString(id[7:])
+	return err == nil
 }
 
 func parseWriteGraphClaims(raw string) ([]any, error) {

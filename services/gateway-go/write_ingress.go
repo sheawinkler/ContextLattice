@@ -56,6 +56,9 @@ func (s *server) handleWriteIngress(w http.ResponseWriter, r *http.Request, path
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
 	}
+	if s.rejectUnavailableMemoryDerivations(w, []normalizedWrite{item}) {
+		return
+	}
 	secretFilter := writeSecretFilterResult{Mode: writeSecretsStorageMode()}
 	item, secretFilter, err = secureNormalizedWrite(item)
 	if err != nil {
@@ -111,7 +114,7 @@ func (s *server) handleWriteIngress(w http.ResponseWriter, r *http.Request, path
 			fanout[source] = status
 		}
 		s.recordMemoryWriteTelemetry(startedAt, 1, 0)
-		writeJSON(w, http.StatusOK, maybeAttachWritebackContract(path, attachWriteSecretFilter(map[string]any{
+		writeJSON(w, http.StatusOK, maybeAttachWritebackContract(path, attachWriteSecretFilter(addMemoryDerivationWriteReceipt(map[string]any{
 			"ok":                    true,
 			"event_id":              entry.EventID,
 			"source":                "go_memory_store",
@@ -124,7 +127,7 @@ func (s *server) handleWriteIngress(w http.ResponseWriter, r *http.Request, path
 			"deduped":               deduped,
 			"latest_hash_unchanged": deduped,
 			"fanout":                fanout,
-		}, secretFilter), item, http.StatusOK))
+		}, entry), secretFilter), item, http.StatusOK))
 		return
 	}
 	if s.strictNoPythonRuntime {
@@ -186,6 +189,9 @@ func (s *server) handleWriteBatchIngress(
 	items, err := normalizeWriteBatchPayload(batchPath, payload)
 	if err != nil {
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": err.Error()})
+		return
+	}
+	if s.rejectUnavailableMemoryDerivations(w, items) {
 		return
 	}
 	secretFilter := writeSecretFilterResult{Mode: writeSecretsStorageMode()}
@@ -311,7 +317,8 @@ func (s *server) handleWriteBatchIngress(
 							}
 							row["fanout"] = fanout
 							row["warnings"] = warnings
-							ok = true
+							row = addMemoryDerivationWriteReceipt(row, entry)
+							ok = anyToBool(row["ok"])
 						}
 					} else {
 						if s.strictNoPythonRuntime {
@@ -432,6 +439,12 @@ func mergeForwardPayload(
 		if item.createdAt != "" {
 			forward["created_at"] = item.createdAt
 		}
+		if item.lifecycle != "" {
+			forward["lifecycle"] = item.lifecycle
+		}
+		if len(item.references) > 0 {
+			setMemoryReferencePayload(forward, item.references)
+		}
 		return forward
 	}
 	if path == "/v1/memory/put" {
@@ -457,6 +470,12 @@ func mergeForwardPayload(
 		}
 		if item.createdAt != "" {
 			rawItem["created_at"] = item.createdAt
+		}
+		if item.lifecycle != "" {
+			rawItem["lifecycle"] = item.lifecycle
+		}
+		if len(item.references) > 0 {
+			setMemoryReferencePayload(rawItem, item.references)
 		}
 		forward["item"] = rawItem
 		return forward

@@ -255,9 +255,30 @@ func clampMemoryReferenceInt64(value int64, lower int64, upper int64) int64 {
 // canonicalized before it is stored; callers must provide project::file so a
 // claim cannot silently resolve against an unrelated project.
 type memoryStructuredReference struct {
-	TargetID   string  `json:"target_id"`
-	Relation   string  `json:"relation"`
-	Confidence float64 `json:"confidence,omitempty"`
+	TargetID          string  `json:"target_id"`
+	Relation          string  `json:"relation"`
+	Confidence        float64 `json:"confidence,omitempty"`
+	TargetEventID     string  `json:"target_event_id,omitempty"`
+	TargetContentHash string  `json:"target_content_hash,omitempty"`
+}
+
+func setMemoryReferencePayload(payload map[string]any, refs []memoryStructuredReference) {
+	delete(payload, "references")
+	delete(payload, "relations")
+	ordinary, relations := []memoryStructuredReference{}, []memoryStructuredReference{}
+	for _, ref := range refs {
+		if ref.Relation == "references" {
+			ordinary = append(ordinary, ref)
+		} else {
+			relations = append(relations, ref)
+		}
+	}
+	if len(ordinary) > 0 {
+		payload["references"] = ordinary
+	}
+	if len(relations) > 0 {
+		payload["relations"] = relations
+	}
 }
 
 type memoryReferenceCursorState struct {
@@ -572,7 +593,16 @@ func parseMemoryStructuredReferenceList(value any, field string) ([]memoryStruct
 				return nil, fmt.Errorf("%s[%d] confidence must be between 0 and 1", field, index)
 			}
 		}
-		claims = append(claims, memoryStructuredReference{TargetID: target, Relation: relation, Confidence: confidence})
+		claim := memoryStructuredReference{TargetID: target, Relation: relation, Confidence: confidence}
+		if normalized, _ := normalizeMemoryEdgeRelation(relation); normalized == memoryDerivationRelation {
+			var eventOK, hashOK bool
+			claim.TargetEventID, eventOK = object["target_event_id"].(string)
+			claim.TargetContentHash, hashOK = object["target_content_hash"].(string)
+			if !eventOK || !hashOK {
+				return nil, fmt.Errorf("%s[%d] derivation requires string target event and content hash", field, index)
+			}
+		}
+		claims = append(claims, claim)
 	}
 	return claims, nil
 }
@@ -599,9 +629,11 @@ func memoryStructuredReferenceAnySlice(value any) ([]any, bool) {
 		out := make([]any, 0, len(rows))
 		for _, row := range rows {
 			out = append(out, map[string]any{
-				"target_id":  row.TargetID,
-				"relation":   row.Relation,
-				"confidence": row.Confidence,
+				"target_id":           row.TargetID,
+				"relation":            row.Relation,
+				"confidence":          row.Confidence,
+				"target_event_id":     row.TargetEventID,
+				"target_content_hash": row.TargetContentHash,
 			})
 		}
 		return out, true
@@ -678,7 +710,15 @@ func canonicalizeMemoryStructuredReferences(claims []memoryStructuredReference) 
 			return nil, fmt.Errorf("reference %d duplicates target and relation", index)
 		}
 		seen[key] = struct{}{}
-		out = append(out, memoryStructuredReference{TargetID: targetID, Relation: relation, Confidence: confidence})
+		claim.TargetID, claim.Relation, claim.Confidence = targetID, relation, confidence
+		if relation == memoryDerivationRelation {
+			claim.TargetEventID = strings.TrimSpace(claim.TargetEventID)
+			claim.TargetContentHash = normalizeProjectedContentHash(claim.TargetContentHash)
+			if !memoryDerivationPinsValid(claim) {
+				return nil, fmt.Errorf("reference %d derivation requires exact target event and content hash", index)
+			}
+		}
+		out = append(out, claim)
 	}
 	sort.Slice(out, func(i, j int) bool {
 		left := strings.ToLower(out[i].Relation + "\x00" + out[i].TargetID)
@@ -965,6 +1005,9 @@ func (m *memoryStore) buildMemoryReferenceEdge(source memoryStoreEntry, target m
 	if sourceID == targetID {
 		return memoryEdgeEntry{}, errors.New("reference claim cannot target its source")
 	}
+	if claim.Relation == memoryDerivationRelation && (!strings.EqualFold(source.Project, target.Project) || !memoryDerivationReferenceMatchesTarget(claim, target)) {
+		return memoryEdgeEntry{}, errors.New("derivation input does not match its original owner version")
+	}
 	now := nowUTCISO()
 	return memoryEdgeEntry{
 		EdgeID:     deterministicMemoryEdgeID(sourceID, claim.Relation, targetID),
@@ -1009,7 +1052,7 @@ func (m *memoryStore) buildMemoryReferenceEdge(source memoryStoreEntry, target m
 
 func memoryGraphRelationRequiresBinding(relation string) bool {
 	switch strings.TrimSpace(relation) {
-	case "references", "same_session", "same_topic", "same_agent", "inferred_related":
+	case "references", "same_session", "same_topic", "same_agent", "inferred_related", memoryDerivationRelation:
 		return true
 	default:
 		return false
@@ -1084,6 +1127,10 @@ func (m *memoryStore) bindPromotedMemoryEdge(snapshot *memoryReferenceSnapshot, 
 	sourceTopic := sanitizeTopicPath(source.TopicPath, source.FileName)
 	targetTopic := sanitizeTopicPath(target.TopicPath, target.FileName)
 	switch normalized.Relation {
+	case memoryDerivationRelation:
+		if !memoryDerivationEntryDeclaresTarget(source, target) {
+			return memoryEdgeEntry{}, errors.New("derivation repair requires recomputation against the original pinned input")
+		}
 	case "same_session":
 		if strings.TrimSpace(source.SessionID) == "" || source.SessionID != target.SessionID {
 			return memoryEdgeEntry{}, errors.New("same_session endpoints do not share an exact current session")
@@ -1322,6 +1369,9 @@ func memoryReferenceTransactionValid(transaction memoryReferenceTransaction) boo
 		claimKey := strings.ToLower(edge.Relation + "\x00" + edge.TargetID)
 		if _, duplicate := seenClaims[claimKey]; duplicate || !memoryReferenceClaimPresent(transaction.Entry, edge) || memoryReferenceTransactionIDFromEdge(edge) != transaction.TransactionID || !memoryReferenceBindingValid(edge.Binding) ||
 			edge.Binding.SourceEventID != transaction.Entry.EventID || !strings.EqualFold(edge.Binding.SourceContentHash, transaction.Entry.ContentHash) || edge.Binding.DocSetDigest != transaction.SnapshotDigest {
+			return false
+		}
+		if edge.Relation == memoryDerivationRelation && !memoryDerivationBindingMatchesPins(transaction.Entry, edge, true) {
 			return false
 		}
 		seenClaims[claimKey] = struct{}{}
@@ -1855,10 +1905,19 @@ func (m *memoryStore) closeMemoryReferenceTransaction(transaction memoryReferenc
 
 func (m *memoryStore) memoryReferenceTransactionEndpointsCurrent(transaction memoryReferenceTransaction) bool {
 	currentExclusionDigest := m.referenceExclusionPolicyDigest()
+	derived := memoryEntryHasDerivation(transaction.Entry)
 	for _, edge := range transaction.Edges {
-		if edge.Binding == nil || edge.Binding.SourceEventID != transaction.Entry.EventID || !strings.EqualFold(edge.Binding.SourceContentHash, transaction.Entry.ContentHash) ||
-			edge.Binding.RelationSemantic != edge.Relation || edge.Binding.ExclusionPolicyDigest != currentExclusionDigest || edge.Binding.SemanticDigest == "" {
+		if edge.Relation == memoryDerivationRelation && !memoryDerivationBindingMatchesPins(transaction.Entry, edge, false) {
 			return false
+		}
+		if edge.Binding == nil || edge.Binding.SourceEventID != transaction.Entry.EventID || !strings.EqualFold(edge.Binding.SourceContentHash, transaction.Entry.ContentHash) ||
+			edge.Binding.RelationSemantic != edge.Relation || (!derived && edge.Binding.ExclusionPolicyDigest != currentExclusionDigest) || edge.Binding.SemanticDigest == "" {
+			return false
+		}
+		// An ordinary citation changing must not retire the original custody of
+		// an otherwise unchanged derivation. Each citation still has its own live-edge check.
+		if derived && edge.Relation != memoryDerivationRelation {
+			continue
 		}
 		targetProject, targetFile, _, _, err := canonicalMemoryID(edge.TargetID)
 		if err != nil {
@@ -2181,6 +2240,10 @@ func (m *memoryStore) referenceEdgeCurrentWithFence(edge memoryEdgeEntry, fence 
 		return false
 	}
 	switch edge.Relation {
+	case memoryDerivationRelation:
+		if !memoryDerivationEntryDeclaresTarget(source, target) {
+			return false
+		}
 	case "same_session":
 		if strings.TrimSpace(source.SessionID) == "" || source.SessionID != target.SessionID || source.SessionID != edge.Binding.SourceSessionID || target.SessionID != edge.Binding.TargetSessionID {
 			return false

@@ -1672,6 +1672,9 @@ func (m *memoryStore) put(item normalizedWrite) (memoryStoreEntry, bool, error) 
 	}
 	unlockPath := m.lockMemoryPaths(lockKeys...)
 	defer unlockPath()
+	if err := m.validateMemoryDerivationRegistration(memoryStoreEntry{Project: project, FileName: fileName, TopicPath: sanitizeTopicPath(item.topicPath, fileName), DataClass: item.dataClass, References: item.references}, fence); err != nil {
+		return memoryStoreEntry{}, false, err
+	}
 	exactState, exactErr := m.isExactStatePathWithFenceChecked(project, fileName, fence)
 	if exactErr != nil {
 		return memoryStoreEntry{}, false, fmt.Errorf("validate exact state path: %w", exactErr)
@@ -1798,6 +1801,11 @@ func (m *memoryStore) put(item normalizedWrite) (memoryStoreEntry, bool, error) 
 		// remain part of the equality proof, so A-B-A writes still create a new
 		// source version after any intervening current state.
 		if _, err := os.Stat(filePath); err == nil {
+			if memoryEntryHasDerivation(previousState.Entry) {
+				if err := m.checkMemoryDerivation(context.Background(), previousState.Entry, fence, newMemoryDerivationWalk(), 0); err != nil {
+					return memoryStoreEntry{}, false, errMemoryDerivationUnavailable
+				}
+			}
 			m.mu.Lock()
 			m.confidence[key] = confState
 			m.mu.Unlock()

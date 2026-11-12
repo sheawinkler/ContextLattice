@@ -544,6 +544,7 @@ func (s *server) buildContextPackResponseForSurfaceWithOptions(
 	packetSurface string,
 	options contextPackResponseBuildOptions,
 ) (map[string]any, int, error) {
+	ctx, derivationGuard := withMemoryDerivationGuard(ctx, s.memoryStore)
 	requestPayload := cloneMap(payload)
 	activeContextPolicy := map[string]any{}
 	query := strings.TrimSpace(anyToString(requestPayload["query"]))
@@ -655,6 +656,9 @@ func (s *server) buildContextPackResponseForSurfaceWithOptions(
 	}
 
 	tokenBudget := contextPackTokenBudgetFromRequest(requestPayload)
+	if err := s.captureContextPackDerivations(ctx, searchResponse, derivationGuard); err != nil {
+		return nil, http.StatusServiceUnavailable, err
+	}
 	s.attachContextPackCompilerEvidence(retrievalCtx, searchResponse, limit)
 	contextPack := buildContextPackPayload(query, searchResponse, maxFacts, limit)
 	stripContextPackCompilerEvidence(searchResponse)
@@ -710,6 +714,18 @@ func (s *server) buildContextPackResponseForSurfaceWithOptions(
 	}
 	artifacts := buildContextPackCompilationArtifacts(compilationInput)
 	compilationHook := options.compilationHook
+	upstreamDerivationHook := compilationHook
+	var derivationErr error
+	compilationHook = func(input contextPackCompilationInput, artifacts contextPackCompilationArtifacts, durable bool) contextPackCompilationArtifacts {
+		if upstreamDerivationHook != nil {
+			artifacts = upstreamDerivationHook(input, artifacts, durable)
+		}
+		if err := derivationGuard.verify(ctx); err != nil {
+			derivationErr = err
+			artifacts.SideEffectsSuppressed = true
+		}
+		return artifacts
+	}
 	if options.suppressSideEffects {
 		upstreamHook := compilationHook
 		compilationHook = func(input contextPackCompilationInput, artifacts contextPackCompilationArtifacts, durable bool) contextPackCompilationArtifacts {
@@ -721,6 +737,9 @@ func (s *server) buildContextPackResponseForSurfaceWithOptions(
 		}
 	}
 	artifacts = s.persistContextPackCompilationOrFallbackWithHook(compilationInput, artifacts, compilationHook)
+	if derivationErr != nil {
+		return nil, http.StatusServiceUnavailable, derivationErr
+	}
 	contextPack = artifacts.ContextPack
 	compiled := artifacts.Compiled
 	learnedDecision = artifacts.Learned
@@ -851,6 +870,9 @@ func (s *server) buildContextPackResponseForSurfaceWithOptions(
 	}
 	if agentPacketRequested(requestPayload) {
 		packet := finalizeAgentPacketForRequest(buildAgentPacket(response, requestPayload, packetSurface), requestPayload)
+		if err := derivationGuard.verify(ctx); err != nil {
+			return nil, http.StatusServiceUnavailable, err
+		}
 		if !sideEffectsSuppressed && !anyToBool(requestPayload["_suppress_token_impact_recording"]) {
 			s.recordTokenImpact(anyMap(packet["token_impact"]))
 		}
@@ -865,6 +887,9 @@ func (s *server) buildContextPackResponseForSurfaceWithOptions(
 	responseImpact := anyMap(response["token_impact"])
 	copyProofTimelineIdentity(responseImpact, proofIdentity)
 	response["token_impact"] = responseImpact
+	if err := derivationGuard.verify(ctx); err != nil {
+		return nil, http.StatusServiceUnavailable, err
+	}
 	if !sideEffectsSuppressed && !anyToBool(requestPayload["_suppress_token_impact_recording"]) {
 		s.recordTokenImpact(anyMap(response["token_impact"]))
 	}
@@ -907,6 +932,7 @@ func (s *server) enrichContextPackWithGraph(
 	contextPack map[string]any,
 	requestPayload map[string]any,
 ) map[string]any {
+	ctx, derivationGuard := withMemoryDerivationGuard(ctx, s.memoryStore)
 	signals := map[string]any{
 		"seed_count":           0,
 		"candidate_count":      0,
@@ -964,6 +990,7 @@ func (s *server) enrichContextPackWithGraph(
 	seeds := 0
 	candidates := 0
 	hydrationFailures := 0
+	derivationSuppressed := 0
 	for _, raw := range results {
 		if seeds >= seedLimit || len(graphRows) >= totalLimit {
 			break
@@ -1002,6 +1029,13 @@ func (s *server) enrichContextPackWithGraph(
 				hydrationFailures++
 				continue
 			}
+			filtered, observed, suppressed := s.filterDerivedMemoryRows(ctx, []map[string]any{rendered}, true)
+			if suppressed > 0 {
+				derivationSuppressed++
+				continue
+			}
+			derivationGuard.capture(observed)
+			rendered = filtered[0]
 			key := strings.ToLower(strings.Join([]string{
 				anyToString(rendered["memory_id"]),
 				anyToString(rendered["relation"]),
@@ -1025,6 +1059,9 @@ func (s *server) enrichContextPackWithGraph(
 	signals["candidate_count"] = candidates
 	signals["added_evidence_count"] = len(graphRows)
 	signals["hydration_failure_count"] = hydrationFailures
+	if derivationSuppressed > 0 {
+		signals["stale_derivation_count"] = derivationSuppressed
+	}
 	relationSignals := map[string]any{}
 	for relation, count := range relationCounts {
 		relationSignals[relation] = count

@@ -75,6 +75,7 @@ func (s *server) capabilityMapPayload() map[string]any {
 	return map[string]any{
 		"enabled":       true,
 		"defaultRunner": "go_scheduler",
+		"derivedMemory": s.memoryDerivationCapability(),
 		"evaluationCleanupMarkerCapMigration": map[string]any{
 			"route":                 "/ops/evaluation-cleanup/marker-cap-migration",
 			"schema_id":             continuationEvaluationCleanupMarkerMigrationSchemaID,
