@@ -1841,7 +1841,7 @@ func TestUnifiedContextAndResumeCommandsUseCompactContracts(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "sessions": []any{map[string]any{"id": "sess-resume", "status": "active", "project": "alpha"}}})
 		case "/v1/agents/sessions/sess-resume/context-package":
 			resumeCompact = r.URL.Query().Get("view") == "compact"
-			_ = json.NewEncoder(w).Encode(testAgentPacketResponse("sess-resume", "cpq_unified_resume", map[string]any{"surface": "session_resume", "project": "alpha"}))
+			_ = json.NewEncoder(w).Encode(testAgentPacketResponse("sess-resume", "cpq_unified_resume", map[string]any{"surface": "session_resume", "project": "alpha", "session": map[string]any{"id": "sess-resume", "project": "alpha", "status": "active"}}))
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}

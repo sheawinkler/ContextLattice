@@ -128,6 +128,114 @@ func TestResumeDiscoveryDoesNotTreatUnknownRowsAsIneligible(t *testing.T) {
 	}
 }
 
+func TestResumeExplicitSelectorPrecedence(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"positional_over_environment", []string{"sess-positional"}, "sess-positional"},
+		{"flag_over_environment", []string{"--session-id", "sess-flag"}, "sess-flag"},
+		{"flag_over_positional", []string{"sess-positional", "--session-id", "sess-flag"}, "sess-flag"},
+		{"environment_fallback", nil, "sess-environment"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			isolateResumeIdentityTest(t)
+			t.Setenv("CONTEXTLATTICE_SESSION_ID", "sess-environment")
+			gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.URL.Path != "/v1/agents/sessions/"+tc.want+"/context-package" {
+					t.Errorf("explicit selection ignored: %s want %s", r.URL.Path, tc.want)
+				}
+				parts := strings.Split(r.URL.Path, "/")
+				id := parts[len(parts)-2]
+				_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "session_id": id, "project": "alpha", "session": map[string]any{"id": id, "project": "alpha", "status": "completed"}})
+			}))
+			defer gateway.Close()
+			var out bytes.Buffer
+			c := newCLI(&out, ioDiscard{})
+			c.baseURL = gateway.URL
+			if err := c.cmdResume(append([]string{"--project", "alpha", "--raw"}, tc.args...)); err != nil {
+				t.Fatal(err)
+			}
+			if readSessionState("alpha")["session_id"] != tc.want {
+				t.Fatalf("wrong selected ID cached: %#v", readSessionState("alpha"))
+			}
+		})
+	}
+}
+
+func TestResumeImplicitSelectionRechecksPackageLiveness(t *testing.T) {
+	for _, view := range []string{"compact", "full"} {
+		for _, source := range []string{"discovery", "cache"} {
+			for _, drift := range []string{"completed", "expired", "stale", "missing", "typed", "contradictory"} {
+				t.Run(view+"/"+source+"/"+drift, func(t *testing.T) {
+					isolateResumeIdentityTest(t)
+					var before []byte
+					if source == "cache" {
+						writeSessionState("alpha", "sess-a", "prior intent", "actor-a")
+						before, _ = os.ReadFile(sessionStatePath("alpha"))
+					}
+					gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						w.Header().Set("Content-Type", "application/json")
+						live := map[string]any{"id": "sess-a", "project": "alpha", "agent_id": "actor-a", "status": "active", "stale": false}
+						if r.URL.Path == "/v1/agents/sessions" {
+							_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "sessions": []any{live}})
+							return
+						}
+						if r.URL.Path == "/v1/agents/sessions/sess-a" {
+							_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "session": live})
+							return
+						}
+						payload := map[string]any{"ok": true, "session_id": "sess-a", "project": "alpha", "agent_id": "actor-a"}
+						owner := map[string]any{"project": "alpha", "agent_id": "actor-a", "status": "active"}
+						if view == "full" {
+							owner["session_id"] = "sess-a"
+							payload["rollup"] = owner
+						} else {
+							owner["id"] = "sess-a"
+							payload["session"] = owner
+							payload["session_rollup"] = map[string]any{"status": "active"}
+						}
+						switch drift {
+						case "completed", "expired":
+							owner["status"] = drift
+						case "stale":
+							owner["stale"] = true
+						case "missing":
+							delete(owner, "status")
+						case "typed":
+							owner["status"] = true
+						case "contradictory":
+							if view == "full" {
+								payload["status"] = "completed"
+							} else {
+								asMap(payload["session_rollup"])["status"] = "completed"
+							}
+						}
+						_ = json.NewEncoder(w).Encode(payload)
+					}))
+					defer gateway.Close()
+					var out bytes.Buffer
+					c := newCLI(&out, ioDiscard{})
+					c.baseURL = gateway.URL
+					args := []string{"--project", "alpha", "--agent-id", "actor-a", "--raw"}
+					if view == "full" {
+						args = append(args, "--full")
+					}
+					if err := c.cmdResume(args); err == nil {
+						t.Fatalf("implicit resume accepted final %s liveness: %s", drift, out.String())
+					}
+					after, _ := os.ReadFile(sessionStatePath("alpha"))
+					if out.Len() != 0 || !bytes.Equal(before, after) {
+						t.Fatal("implicit drift emitted or changed cached state")
+					}
+				})
+			}
+		}
+	}
+}
+
 func TestResumeExactSelectionAndCacheSafety(t *testing.T) {
 	for _, name := range []string{"explicit_history", "positional", "environment", "cached", "cached_foreign", "cached_stale", "cached_unknown", "refused_package_keeps_cache", "limit_cannot_hide_ambiguity"} {
 		t.Run(name, func(t *testing.T) {

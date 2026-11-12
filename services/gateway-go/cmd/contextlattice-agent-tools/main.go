@@ -2377,10 +2377,14 @@ func (c *cli) cmdResume(args []string) error {
 	c.applyBaseURL(parsed)
 	project := parsed.string("project", envString("CONTEXTLATTICE_PROJECT", "contextlattice"))
 	agentID := parsed.string("agent_id", "")
-	sessionID := parsed.string("session_id", envString("CONTEXTLATTICE_SESSION_ID", ""))
+	sessionID := parsed.string("session_id", "")
 	if sessionID == "" && len(parsed.pos) > 0 {
 		sessionID = parsed.pos[0]
 	}
+	if sessionID == "" {
+		sessionID = envString("CONTEXTLATTICE_SESSION_ID", "")
+	}
+	explicitSelection := sessionID != ""
 	if sessionID == "" {
 		sessionID = firstString(readSessionState(project)["session_id"])
 		if sessionID != "" {
@@ -2421,6 +2425,11 @@ func (c *cli) cmdResume(args []string) error {
 	}
 	if err := validateResumePackageIdentity(raw, sessionID, project, agentID); err != nil {
 		return err
+	}
+	if !explicitSelection {
+		if err := validateResumePackageLiveness(raw); err != nil {
+			return err
+		}
 	}
 	writeSessionState(project, sessionID, firstString(raw["query"], asMap(raw["session"])["objective"]), parsed.string("agent_id", firstString(raw["agent_id"])))
 	return c.emit(raw, parsed.bool("pretty") || !parsed.bool("raw"))
@@ -2550,6 +2559,43 @@ func validateResumePackageIdentity(payload map[string]any, sessionID, project, a
 				return invalid
 			}
 		}
+	}
+	return nil
+}
+
+func validateResumePackageLiveness(payload map[string]any) error {
+	invalid := errors.New("selected session is no longer confirmed live; no package emitted or cached; use --session-id explicitly for historical reads")
+	status := ""
+	check := func(row map[string]any, required bool) bool {
+		if raw, present := row["status"]; present {
+			value, ok := raw.(string)
+			value = strings.ToLower(strings.TrimSpace(value))
+			if !ok || value != "active" && value != "paused" && value != "blocked" || status != "" && value != status {
+				return false
+			}
+			status = value
+		} else if required {
+			return false
+		}
+		if stale, present := row["stale"]; present && stale != false {
+			return false
+		}
+		return true
+	}
+	ownerSeen := false
+	for _, field := range []string{"session", "rollup", "session_rollup"} {
+		value, present := payload[field]
+		if !present {
+			continue
+		}
+		row, ok := value.(map[string]any)
+		if !ok || !check(row, true) {
+			return invalid
+		}
+		ownerSeen = ownerSeen || field == "session" || field == "rollup"
+	}
+	if !ownerSeen || !check(payload, false) {
+		return invalid
 	}
 	return nil
 }
