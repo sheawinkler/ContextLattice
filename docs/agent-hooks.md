@@ -64,9 +64,9 @@ Installed commands:
 | `contextlattice_async_inbox_hook` | Fail-open hook entrypoint for runtimes with post-tool or post-command hooks. |
 | `contextlattice_agent_trace` | Contract-valid run trace, exportable run card, and optional `--proof` timeline linking context, action, correction, verification, outcome, and learning. |
 | `contextlattice_adopt` | Zero-friction adoption front door for status, install guidance, proof, profiles, and CI-style adoption scenarios. |
-| `contextlattice_doctor` | One-command adoption proof for local readiness, lifecycle proof, and trace-visible run shaping evidence. |
-| `contextlattice_agent_runtime_proof` | One-command live proof that bootstrap, scoped recall, checkpoint, handoff, context-package, completion, status, and runtime telemetry work end to end. |
-| `contextlattice_agent_adoption_proof` | Matrix proof that configured agent profiles can use the same memory lifecycle and expose skills/context/session/graph/handoff evidence. |
+| `contextlattice_doctor` | Readiness diagnostic for local wrappers, gateway health, boundary/native-ownership checks, runner/storage telemetry, agent discovery, and optional repo integration audit. |
+| `contextlattice_agent_runtime_proof` | Diagnostic GET matrix for `/health`, `/ops/context-boundary`, `/ops/native-ownership`, and `/telemetry/agents/runtime`; not an end-to-end lifecycle test. |
+| `contextlattice_agent_adoption_proof` | Agent-profile preflight contract-validation matrix via `/v1/agents/preflight`; not lifecycle or handoff proof. |
 | `contextlattice_agent_runtime_doctor` | Local helper, hook, wrapper, and gateway drift audit. |
 | `contextlattice_state` | Canonical gateway durable-state inventory plus explicit dry-run migration and manifest-bound rollback. |
 | `contextlattice_memory_topology` | Memory topology audit for base/default lanes, full backend fabric, partition keys, clusters, and graph health. |
@@ -483,6 +483,16 @@ scripts/agent/audit-context-overflow-recovery
 scripts/agent/eval-skill-policy
 scripts/agent/audit-compaction-hooks
 ```
+
+`contextlattice_agent_adoption_proof` preserves `ok`, `case_count`, and `cases`;
+`ok` reports only preflight success and contract-validation status. Its additive
+`proof_scope` is `preflight_contract_validation_only`. The `stages` map reports
+preflight contract validation as `passed`, `failed`, or `not_observed`, while
+handoff persistence, receiving-agent retrieval, host delivery, model consumption,
+and independent task acceptance remain `not_observed` even when preflight passes.
+Explicit empty `--agents` selections fail with the machine-readable finding
+`empty_agent_selection` and make no preflight requests; omitting the flag keeps
+the normal profile defaults. These diagnostics are not release or efficacy proof.
 
 Agent-facing boundary payloads use the shared registry at
 `config/agent_contracts/agent_output_contracts.json`. Preflight responses include

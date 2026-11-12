@@ -128,6 +128,7 @@ class FakeCL:
         self.files = set()
         self.fail_paths = set()
         self.search_response = {"results": []}
+        self.search_handler = None
         self.pack_response = {"reference_prompt": "PACKED",
                               "context_pack": {"project": "hermes-agent"},
                               "context_pack_quality": {"sample_id": "cpq_1"}}
@@ -161,7 +162,8 @@ class FakeCL:
                     row = dict(body, id="sess_" + hashlib.sha256(body["native_session_id"].encode()).hexdigest()[:24])
                     return self._send(200, {"ok": True, "session": fake.session_override or row})
                 if self.path == "/memory/search":
-                    return self._send(200, fake.search_response)
+                    response = fake.search_handler(body) if fake.search_handler else fake.search_response
+                    return self._send(200, response)
                 if self.path == "/memory/context-pack":
                     response = dict(fake.pack_response)
                     if fake.pack_sample_ids:
@@ -242,6 +244,373 @@ class PrefetchTests(Base):
         self.cl.search_response = {"results": [], "continuation_async": {"pending_sources": ["letta"]}}
         out = self.p.prefetch("q")
         self.assertIn("WARMING, not absent", out)
+
+
+class HandoffTests(Base):
+    def setUp(self):
+        super().setUp()
+        self.response = {"results": []}
+        self.cl.search_handler = lambda body: (
+            self.response if body.get("topic_path") == plugin._HANDOFF_TOPIC else {"results": []}
+        )
+
+    @staticmethod
+    def row(parent="parent-a", text="intended checkpoint", **changes):
+        row = {"project": "hermes-agent", "file": f"notes/hermes/handoff/{parent}.md",
+               "content_hash": plugin._text_digest(text), "summary": text, "lifecycle": "durable"}
+        row.update(changes)
+        return row
+
+    def switch(self, parent="parent-a", child="child"):
+        self.p.on_session_switch(child, parent_session_id=parent)
+
+    def handoff_calls(self):
+        return [body for _, path, body in self.cl.calls
+                if path == "/memory/search" and body.get("topic_path") == plugin._HANDOFF_TOPIC]
+
+    @contextmanager
+    def stalled_prefetch(self):
+        entered, release = threading.Event(), threading.Event()
+        search = self.p._search
+        result = {}
+
+        def stalled(query, **kwargs):
+            if kwargs.get("topic_path") == plugin._HANDOFF_TOPIC:
+                entered.set()
+                if not release.wait(3):
+                    raise TimeoutError("test release timed out")
+            return search(query, **kwargs)
+
+        def fetch():
+            try:
+                result["text"] = self.p.prefetch("unrelated receiver prompt", session_id="child")
+            except Exception as exc:
+                result["error"] = exc
+
+        with patch.object(self.p, "_search", side_effect=stalled):
+            thread = threading.Thread(target=fetch)
+            thread.start()
+            try:
+                self.assertTrue(entered.wait(3))
+                yield result
+            finally:
+                release.set()
+                thread.join(3)
+                self.assertFalse(thread.is_alive())
+        self.assertNotIn("error", result)
+
+    def test_wrong_parent_cannot_consume_pending(self):
+        self.switch()
+        self.response = {"results": [self.row("parent-b", "wrong checkpoint")]}
+        out = self.p.prefetch("query")
+        self.assertTrue(self.p._pending_handoff)
+        self.assertIn("COMPACTION HANDOFF UNAVAILABLE", out)
+        self.assertNotIn("wrong checkpoint", out)
+        self.assertEqual(self.cl.paths("GET"), [])
+
+    def test_reset_discards_pending_parent(self):
+        self.switch()
+        self.p.on_session_switch("fresh", parent_session_id="parent-b", reset=True)
+        self.assertFalse(self.p._pending_handoff)
+        self.assertEqual(self.p._parent_session_id, "")
+        self.assertNotIn("COMPACTION HANDOFF", self.p.prefetch("query"))
+        self.assertEqual(self.handoff_calls(), [])
+
+    def test_late_completion_cannot_inject_or_clear_successor(self):
+        self.switch()
+        self.response = {"results": [self.row()]}
+        with self.stalled_prefetch() as result:
+            self.switch("parent-b", "successor")
+        self.assertTrue(self.p._pending_handoff)
+        self.assertNotIn("COMPACTION HANDOFF", result["text"])
+        self.assertNotIn("intended checkpoint", result["text"])
+
+    def test_exact_parent_query_accepts_once_with_duplicate_revisions(self):
+        self.switch()
+        row = self.row()
+        self.response = {"results": [self.row("parent-b", "wrong checkpoint", score=1),
+                                     row, dict(row, revision=2, score=0.1)]}
+        out = self.p.prefetch("irrelevant receiver prompt", session_id="child")
+        self.assertEqual(self.handoff_calls()[0]["query"], row["file"])
+        self.assertEqual(self.handoff_calls()[0]["project"], "hermes-agent")
+        self.assertEqual(out.count("COMPACTION HANDOFF:"), 1)
+        self.assertEqual(out.count("intended checkpoint"), 1)
+        self.assertNotIn("wrong checkpoint", out)
+        self.assertFalse(self.p._pending_handoff)
+        self.assertNotIn("COMPACTION HANDOFF", self.p.prefetch("again"))
+        self.assertEqual(len(self.handoff_calls()), 1)
+        self.assertEqual(self.cl.paths("GET"), [])
+
+    def test_identity_hash_and_lifecycle_rejections_remain_retryable(self):
+        row = self.row()
+        invalid = [
+            dict(row, project="other"), dict(row, file="notes/other.md"),
+            {k: v for k, v in row.items() if k != "project"},
+            {k: v for k, v in row.items() if k != "file"},
+            {k: v for k, v in row.items() if k != "content_hash"},
+            dict(row, content_hash="sha256:bad"), dict(row, content_hash="g" * 64),
+            dict(row, projectName="other"), dict(row, project_name="other"),
+            dict(row, fileName="notes/other.md"), dict(row, file_name="notes/other.md"),
+            dict(row, project=" hermes-agent"), dict(row, summary=""),
+            dict(row, lifecycle="retired"), dict(row, lifecycle="superseded"),
+            dict(row, lifecycle="quarantined"), dict(row, status="quarantined"),
+            dict(row, quarantined=True), dict(row, quarantine_status="quarantined"),
+            dict(row, metadata={"lifecycle": "retired"}),
+            dict(row, recall_metadata={"lifecycle": "superseded"}),
+        ]
+        for candidate in invalid:
+            with self.subTest(candidate=candidate):
+                self.switch()
+                self.response = {"results": [candidate]}
+                out = self.p.prefetch("query")
+                self.assertTrue(self.p._pending_handoff)
+                self.assertIn("COMPACTION HANDOFF UNAVAILABLE", out)
+                self.assertNotIn("intended checkpoint", out)
+        self.response = {"results": [row]}
+        self.assertIn("intended checkpoint", self.p.prefetch("retry"))
+        self.assertFalse(self.p._pending_handoff)
+
+    def test_consistent_identity_aliases_and_digest_normalization(self):
+        self.switch()
+        row = self.row()
+        row["projectName"] = row.pop("project")
+        row["project_name"] = row["projectName"]
+        row["fileName"] = row.pop("file")
+        row["file_name"] = row["fileName"]
+        row["content_hash"] = "SHA256:" + row["content_hash"].upper()
+        self.response = {"results": [row]}
+        out = self.p.prefetch("query")
+        self.assertIn("[hermes-agent] notes/hermes/handoff/parent-a.md", out)
+        self.assertFalse(self.p._pending_handoff)
+
+    def test_structured_payload_identity_conflicts_preserve_pending(self):
+        row = self.row()
+        for key, wrong in (
+            ("project", "other"), ("projectName", "other"), ("project_name", "other"),
+            ("file", "notes/other.md"), ("fileName", "notes/other.md"), ("file_name", "notes/other.md"),
+            ("project", " hermes-agent"), ("content_hash", plugin._text_digest("other revision")),
+            ("content_hash", "invalid"), ("content_hash", ""),
+        ):
+            with self.subTest(key=key, wrong=wrong):
+                self.switch()
+                payload = {name: row[name] for name in ("project", "file", "content_hash")}
+                payload[key] = wrong
+                self.response = {"results": [dict(row, payload=payload)]}
+                out = self.p.prefetch("query")
+                self.assertTrue(self.p._pending_handoff)
+                self.assertIn("COMPACTION HANDOFF UNAVAILABLE", out)
+                self.assertNotIn("intended checkpoint", out)
+                self.response = {"results": [row]}
+                self.assertIn("intended checkpoint", self.p.prefetch("retry"))
+                self.assertFalse(self.p._pending_handoff)
+
+    def test_payload_cannot_supply_missing_top_level_identity(self):
+        row = self.row()
+        payload = {name: row[name] for name in ("project", "file", "content_hash")}
+        for missing in payload:
+            with self.subTest(missing=missing):
+                self.switch()
+                candidate = {key: value for key, value in row.items() if key != missing}
+                self.response = {"results": [dict(candidate, payload=payload)]}
+                self.assertIn("COMPACTION HANDOFF UNAVAILABLE", self.p.prefetch("query"))
+                self.assertTrue(self.p._pending_handoff)
+
+    def test_consistent_payload_and_non_authoritative_nested_data_are_allowed(self):
+        row = self.row()
+        for payload in (
+            {name: row[name] for name in ("project", "file", "content_hash")},
+            {"projectName": row["project"], "project_name": row["project"],
+             "fileName": row["file"], "file_name": row["file"],
+             "content_hash": "SHA256:" + row["content_hash"].upper()},
+            {"project": row["project"]},
+            {"notes": {"project": "other", "quarantined": True}, "text": "retired quarantined"},
+        ):
+            with self.subTest(payload=payload):
+                self.switch()
+                self.response = {"results": [dict(row, payload=payload,
+                    memory_trust_assessment={"quarantine": {"quarantined": False}})]}
+                self.assertIn("intended checkpoint", self.p.prefetch("query"))
+                self.assertFalse(self.p._pending_handoff)
+
+    def test_canonical_trust_quarantine_preserves_pending_and_allows_clean_retry(self):
+        self.switch()
+        row = self.row()
+        self.response = {"results": [dict(row, memory_trust_assessment={
+            "quarantine": {"quarantined": True}, "status": "current",
+        })]}
+        out = self.p.prefetch("query")
+        self.assertIn("COMPACTION HANDOFF UNAVAILABLE", out)
+        self.assertNotIn("intended checkpoint", out)
+        self.assertTrue(self.p._pending_handoff)
+        self.response = {"results": [dict(row, memory_trust_assessment={
+            "quarantine": {"quarantined": False},
+        })]}
+        self.assertIn("intended checkpoint", self.p.prefetch("retry"))
+        self.assertFalse(self.p._pending_handoff)
+        self.assertEqual(self.cl.paths("GET"), [])
+
+    def test_competing_hashes_are_ambiguous_regardless_of_score(self):
+        self.switch()
+        self.response = {"results": [self.row(score=1), self.row(text="different revision", score=0)]}
+        out = self.p.prefetch("query")
+        self.assertTrue(self.p._pending_handoff)
+        self.assertIn("ambiguous", out)
+        self.assertNotIn("intended checkpoint", out)
+        self.assertNotIn("different revision", out)
+
+    def test_missing_or_unsafe_parent_never_falls_back_to_previous_session(self):
+        for parent in ("", None, "../s1", ".", "..", "/s1", "https://host/s1", "s1%2fother",
+                       "s1\\other", "s1\n", "a" * 181, 123):
+            with self.subTest(parent=parent):
+                self.switch(parent)
+                out = self.p.prefetch("query")
+                self.assertTrue(self.p._pending_handoff)
+                self.assertIn("COMPACTION HANDOFF UNAVAILABLE", out)
+                self.assertEqual(self.p._parent_session_id, "")
+        self.assertEqual(self.handoff_calls(), [])
+        self.assertEqual(self.cl.paths("GET"), [])
+
+    def test_warming_empty_error_and_outage_retry_without_fallback(self):
+        self.switch()
+        for response in (
+            {"results": []},
+            {"results": [], "continuation_async": {"status": "running"}},
+            {"results": [self.row()], "degraded": True},
+            {"results": [self.row()], "error": "upstream"},
+            {"results": [], "continuation_async": {"status": "failed"}},
+        ):
+            with self.subTest(response=response):
+                self.response = response
+                out = self.p.prefetch("query")
+                self.assertTrue(self.p._pending_handoff)
+                self.assertIn("COMPACTION HANDOFF UNAVAILABLE", out)
+        self.cl.fail_paths.add("/memory/search")
+        self.assertIn("DEGRADED", self.p.prefetch("query"))
+        self.assertTrue(self.p._pending_handoff)
+        self.cl.fail_paths.clear()
+        self.response = {"results": [self.row()]}
+        self.assertIn("intended checkpoint", self.p.prefetch("query"))
+        self.assertFalse(self.p._pending_handoff)
+        self.assertEqual(self.cl.paths("GET"), [])
+
+    def test_safe_native_id_and_same_session_continuation(self):
+        parent = "20261112_abc-12.def:34"
+        self.switch(parent, parent)
+        self.response = {"results": [self.row(parent)]}
+        self.assertIn("intended checkpoint", self.p.prefetch("query", session_id=parent))
+        self.assertFalse(self.p._pending_handoff)
+
+    def test_receiver_session_mismatch_cannot_consume(self):
+        self.switch()
+        self.response = {"results": [self.row()]}
+        out = self.p.prefetch("query", session_id="other-child")
+        self.assertTrue(self.p._pending_handoff)
+        self.assertIn("session mismatch", out)
+        self.assertNotIn("intended checkpoint", out)
+        self.assertEqual(self.handoff_calls(), [])
+
+    def test_late_completion_cancelled_by_reset_aba_and_project_change(self):
+        for change in ("reset", "aba", "project", "session"):
+            with self.subTest(change=change):
+                self.p._cfg["project"] = "hermes-agent"
+                self.switch()
+                self.response = {"results": [self.row()]}
+                with self.stalled_prefetch() as result:
+                    if change == "reset":
+                        self.p.on_session_switch("fresh", reset=True)
+                    elif change == "aba":
+                        self.switch("parent-b", "other-child")
+                        self.switch()
+                    elif change == "project":
+                        self.p._cfg["project"] = "other-project"
+                    else:
+                        self.p._session_id = "different-child"
+                self.assertNotIn("intended checkpoint", result["text"])
+                self.assertNotIn("COMPACTION HANDOFF", result["text"])
+                self.assertEqual(self.p._pending_handoff, change != "reset")
+
+    def test_concurrent_prefetches_return_handoff_at_most_once(self):
+        self.switch()
+        self.response = {"results": [self.row()]}
+        with self.stalled_prefetch() as first:
+            # Bypass the stalled wrapper for the second caller only.
+            with patch.object(self.p, "_search", side_effect=plugin.ContextLatticeProvider._search.__get__(self.p)):
+                second = self.p.prefetch("query", session_id="child")
+        self.assertEqual(sum("intended checkpoint" in out for out in (first["text"], second)), 1)
+        self.assertFalse(self.p._pending_handoff)
+
+    def test_precompress_snapshots_source_identity_before_message_processing(self):
+        provider = self.p
+
+        class SwitchingMessage(dict):
+            def get(self, key, default=None):
+                if key == "role":
+                    provider.on_session_switch("child", parent_session_id="s1")
+                    provider._cfg["project"] = "other-project"
+                return super().get(key, default)
+
+        self.p.on_pre_compress([SwitchingMessage(role="user", content="source work")])
+        written = self.cl.write_records[-1]
+        self.assertEqual(written["projectName"], "hermes-agent")
+        self.assertEqual(written["fileName"], "notes/hermes/handoff/s1.md")
+        self.assertIn("session=s1 ", written["content"])
+
+    def test_known_write_digest_cannot_silently_downgrade_or_choose_new_revision(self):
+        self.p.on_pre_compress([{"role": "user", "content": "source work"}])
+        written = self.cl.write_records[-1]
+        self.switch("s1")
+        self.response = {"results": [self.row("s1")]}
+        out = self.p.prefetch("query")
+        self.assertTrue(self.p._pending_handoff)
+        self.assertIn("hash mismatch", out)
+        self.assertNotIn("intended checkpoint", out)
+        self.response = {"results": [self.row("s1", text=written["content"])]}
+        self.assertIn("COMPACTION HANDOFF:", self.p.prefetch("query"))
+        self.assertFalse(self.p._pending_handoff)
+
+    def test_reset_clears_write_receipt_and_unpinned_is_not_readback(self):
+        self.p.on_pre_compress([{"role": "user", "content": "source work"}])
+        self.p.on_session_switch("fresh", reset=True)
+        self.switch("s1")
+        self.response = {"results": [self.row("s1")]}
+        out = self.p.prefetch("query")
+        self.assertIn("intended checkpoint", out)
+        self.assertIn("unpinned", out)
+        self.assertNotIn("verified readback", out)
+
+    def test_missing_write_hash_and_unsafe_source_are_explicit(self):
+        self.cl.omit_write_digest = True
+        receipt = self.p.on_pre_compress([{"role": "user", "content": "source work"}])
+        self.assertIn("content hash unavailable", receipt)
+        self.switch("s1")
+        self.response = {"results": [self.row("s1")]}
+        self.assertIn("unpinned", self.p.prefetch("query"))
+        for source in ("", "../unsafe"):
+            self.p._session_id = source
+            before = len(self.cl.write_records)
+            self.assertIn("unavailable", self.p.on_pre_compress([]))
+            self.assertEqual(len(self.cl.write_records), before)
+
+    def test_normal_recall_static_prompt_and_no_automatic_outcomes(self):
+        prompt = self.p.system_prompt_block()
+        self.switch()
+        self.response = {"results": [self.row(text="x" * 10000)]}
+        handoff_response = self.cl.search_handler
+        self.cl.search_handler = lambda body: (
+            handoff_response(body) if body.get("topic_path") == plugin._HANDOFF_TOPIC else
+            {"results": [{"project": "normal", "file": "notes/rule.md", "summary": "ordinary recall"}]}
+        )
+        self.assertEqual(self.p.prefetch("  "), "")
+        self.assertTrue(self.p._pending_handoff)
+        out = self.p.prefetch("query")
+        self.assertIn("ordinary recall", out)
+        self.assertLess(len(out), 1400)
+        self.assertEqual(self.p.system_prompt_block(), prompt)
+        ordinary = [body for _, path, body in self.cl.calls
+                    if path == "/memory/search" and body.get("topic_path") != plugin._HANDOFF_TOPIC]
+        self.assertEqual(len(ordinary), 2)
+        self.assertTrue(all(body["query"] == "query" for body in ordinary))
+        self.assertTrue(all(path == "/memory/search" for _, path, _ in self.cl.calls))
 
 
 class SearchDrainTests(Base):
@@ -740,22 +1109,6 @@ class MirrorReconcileTests(Base):
         self.assertIn("reconciliation was not attempted", result)
         self.assertNotIn("/memory/write", self.cl.paths())
         self.assertFalse((self.home / "contextlattice-plugin" / "reconcile.json").exists())
-
-    def test_pending_handoff_survives_warming_and_error_then_clears_on_complete_empty(self):
-        self.p._pending_handoff = True
-        self.cl.search_response = {
-            "results": [], "continuation_async": {"pending_sources": ["memory_bank"]}
-        }
-        self.p.prefetch("query")
-        self.assertTrue(self.p._pending_handoff)
-
-        self.cl.search_response = {"error": "upstream failure", "results": []}
-        self.p.prefetch("query")
-        self.assertTrue(self.p._pending_handoff)
-
-        self.cl.search_response = {"results": []}
-        self.p.prefetch("query")
-        self.assertFalse(self.p._pending_handoff)
 
     def test_mirror_and_reconcile_share_one_target(self):
         self.p.on_memory_write("add", "memory", "delta rule")
