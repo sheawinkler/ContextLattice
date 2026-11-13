@@ -71,7 +71,10 @@ def fixed_binary(path: str, package: str) -> dict:
     for ancestor in [binary, *binary.parents]:
         info = ancestor.stat()
         require(info.st_uid == 0 and not info.st_mode & 0o022 and not info.st_mode & (stat.S_ISUID | stat.S_ISGID), "unsafe_binary_ownership")
-    require(run(["/usr/bin/dpkg-query", "-S", path]).decode().startswith(package + ": "), "wrong_binary_package")
+    # Dpkg can retain /sbin paths while usr-merged systems resolve them under
+    # /usr/sbin. Verify the listed package member's canonical file, not spelling.
+    members = run(["/usr/bin/dpkg-query", "-L", package]).decode().splitlines()
+    require(any(member.startswith("/") and Path(member).resolve() == binary for member in members), "wrong_binary_package")
     require(not run(["/usr/sbin/getcap", path]).strip(), "unexpected_file_capabilities")
     return {"path": path, "sha256": hashlib.sha256(binary.read_bytes()).hexdigest()}
 
