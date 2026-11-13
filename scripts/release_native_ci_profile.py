@@ -54,7 +54,7 @@ def trusted_runner(environment: dict[str, str], system: str, release: str, uid: 
 
 def attributed_denial(observation: dict, rows: list[dict]) -> bool:
     tools = observation.get("tools", [])
-    if len(tools) != 2 or {item.get("tool") for item in tools} != {"msiinfo", "msiextract"}:
+    if observation.get("purpose") != "benign_bwrap_setup_only" or len(tools) != 1 or tools[0].get("tool") != "msiinfo":
         return False
     for item in tools:
         if (item.get("returncode") != 1 or item.get("output_truncated") or
@@ -66,6 +66,15 @@ def attributed_denial(observation: dict, rows: list[dict]) -> bool:
                    for row in rows):
             return False
     return True
+
+
+def same_native_tool_identity(observation: dict, identities: list[dict]) -> bool:
+    expected = {item["path"]: item["sha256"] for item in identities}
+    bwrap = observation.get("bwrap", {})
+    if bwrap.get("executable") != "/usr/bin/bwrap" or bwrap.get("sha256") != expected.get("/usr/bin/bwrap"):
+        return False
+    return all(item.get("executable") == "/usr/bin/" + item.get("tool", "") and item.get("sha256") == expected.get(item.get("executable"))
+               for item in observation.get("tools", []))
 
 
 def fixed_binary(path: str, package: str) -> dict:
@@ -123,8 +132,12 @@ def prepare(report: dict) -> dict:
     identities = [fixed_binary(path, package) for path, package in (
         ("/usr/bin/bwrap", "bubblewrap"), ("/usr/bin/msiinfo", "msitools"), ("/usr/bin/msiextract", "msitools"), (PARSER, "apparmor"))]
     require(run(["/usr/bin/dpkg-query", "-W", "-f=${Version}", "apparmor"]).decode() == VERSION, "unreviewed_parser_version")
-    before = probe(ROOT)
+    # Admission concerns common bwrap setup before either parser executes.
+    # One fixed fresh witness avoids requiring redundant kernel audit events;
+    # both parser versions and isolation negatives remain final gates.
+    before = probe(ROOT, single_setup_probe=True)
     report.update({"before": before, "binary_identities": identities, "kernel_denials": [], "kernel_read_attempts": 0})
+    require(same_native_tool_identity(before, identities), "setup_probe_binary_identity_changed")
     if before["ok"]:
         require(Path("/proc/sys/kernel/apparmor_restrict_unprivileged_userns").read_text().strip() == "1", "global_restriction_changed")
         return {**report, "ok": True, "preparation": "not_needed", "global_restriction_unchanged": True}
@@ -157,7 +170,7 @@ def prepare(report: dict) -> dict:
         # definitions from compiled stdin. No host include/cache/policy rewrite.
         run(["/usr/bin/sudo", "-n", PARSER, "--config-file", "/dev/null", "--skip-cache", "--binary", "--add"], data=compiled)
     after = probe(ROOT)
-    require(after["ok"], "profile_did_not_restore_contained_version_execution")
+    require(after["ok"] and same_native_tool_identity(after, identities), "profile_did_not_restore_same_contained_tool_execution")
     require(Path("/proc/sys/kernel/apparmor_restrict_unprivileged_userns").read_text().strip() == "1", "global_restriction_changed")
     return {"schema_id": "contextlattice_native_ci_profile.v1", "ok": True, "artifact_audit": False,
             "global_restriction_unchanged": True,
