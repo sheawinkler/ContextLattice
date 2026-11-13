@@ -8,6 +8,9 @@ on:
       - '.github/workflows/public-release-installers.yml'
       - '.github/workflows/release-installers.yml'
       - 'scripts/release_native_toolchain_preflight.py'
+      - 'scripts/release_native_ci_profile.py'
+      - 'scripts/release_native_containment_holdouts.py'
+      - 'scripts/tests/test_release_native*'
       - 'scripts/agent/audit-public-installer-package'
 
 permissions:
@@ -15,6 +18,7 @@ permissions:
 
 jobs:
   native-msi-containment:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -22,7 +26,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Check diagnostic contracts
-        run: python3 -m unittest scripts.tests.test_release_native_toolchain_preflight
+        run: python3 -m unittest scripts.tests.test_release_native_toolchain_preflight scripts.tests.test_release_native_ci_profile
       - name: Install reviewed native tool versions
         run: |
           set -euo pipefail
@@ -33,6 +37,8 @@ jobs:
           test "$(dpkg-query -W msitools | cut -f2)" = '0.103+repack-1build3'
           test "$(dpkg-query -W bubblewrap | cut -f2)" = '0.9.0-1ubuntu0.3'
       - name: Probe the real audit containment without parsing an installer
+        id: baseline
+        continue-on-error: true
         run: |
           set +e
           date +%s > native-probe-started
@@ -54,6 +60,17 @@ jobs:
           cat native-toolchain-preflight.json
           cat native-toolchain-kernel-denials.jsonl
           exit "$result"
+      - name: Prepare the reviewed distribution profile only after fresh attributed denial
+        if: steps.baseline.outcome == 'failure'
+        env:
+          CONTEXTLATTICE_OWNED_NATIVE_CI: 'true'
+        run: |
+          set -euo pipefail
+          python3 scripts/release_native_ci_profile.py --prepare-github-hosted-ci | tee native-toolchain-profile.json
+      - name: Require contained tools and fixed isolation negatives
+        run: |
+          python3 scripts/release_native_toolchain_preflight.py > native-toolchain-final.json
+          python3 scripts/release_native_containment_holdouts.py > native-toolchain-holdouts.json
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -63,5 +80,8 @@ jobs:
             native-toolchain-identity.txt
             native-toolchain-kernel-denials.jsonl
             native-toolchain-kernel-read.stderr
+            native-toolchain-profile.json
+            native-toolchain-final.json
+            native-toolchain-holdouts.json
           if-no-files-found: error
           retention-days: 7
