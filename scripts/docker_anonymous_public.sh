@@ -79,9 +79,44 @@ approved_image_ref() {
 }
 
 extract_image_ref() {
+  local operation="$1"
+  shift
+  local -a original_arguments=("$@")
+  # Only parse the reviewed packaging options. An approved digest in a mount
+  # value or command argument cannot authorize a different executed image.
+  while [[ "$#" -gt 0 ]]; do
+    case "$1" in
+      --platform|-v|--volume|-w|--workdir|--network|--security-opt|--tmpfs)
+        [[ "${operation}" == run || "$1" == --platform ]] || \
+          fail "unsupported option for anonymous public pull."
+        [[ "$#" -ge 2 && -n "$2" ]] || fail "Docker option requires a value."
+        shift 2
+        ;;
+      --platform=*|--volume=*|--workdir=*|--network=*|--security-opt=*|--tmpfs=*)
+        [[ "${operation}" == run || "$1" == --platform=* ]] || \
+          fail "unsupported option for anonymous public pull."
+        [[ -n "${1#*=}" ]] || fail "Docker option requires a value."
+        shift
+        ;;
+      --rm|--read-only)
+        [[ "${operation}" == run ]] || fail "unsupported option for anonymous public pull."
+        shift
+        ;;
+      --)
+        shift
+        break
+        ;;
+      -*) fail "unsupported anonymous public Docker option." ;;
+      *) break ;;
+    esac
+  done
+  [[ "$#" -gt 0 ]] || fail "an approved public image is required."
+  approved_image_ref "$1" || fail "executed image is not an approved public release image."
+  [[ "${operation}" == run || "$#" -eq 1 ]] || fail "public pull requires exactly one image."
+
   local argument
   local -a image_refs=()
-  for argument in "$@"; do
+  for argument in "${original_arguments[@]}"; do
     if [[ "${argument}" =~ ^[A-Za-z0-9._/-]+@sha256:[0-9a-f]{64}$ ]]; then
       image_refs+=("${argument}")
     fi
@@ -151,7 +186,7 @@ main() {
   esac
 
   reject_unsafe_argument "$@"
-  extract_image_ref "$@" >/dev/null
+  extract_image_ref "${operation}" "$@" >/dev/null
 
   # Capture the local endpoint while the caller's Docker context/config is
   # still available.  The command below never changes the selected context.
