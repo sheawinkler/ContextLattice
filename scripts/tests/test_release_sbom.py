@@ -25,6 +25,23 @@ def document(files=None):
 
 
 class ReleaseSBOMTests(unittest.TestCase):
+    @unittest.skipUnless(os.environ.get("CONTEXTLATTICE_TEST_SYFT_BINARY"), "explicit pinned native Syft required")
+    def test_real_scanner_output_has_no_ephemeral_scan_root(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            artifact = root / "ContextLattice-linux-bootstrap.tar.gz"
+            with tarfile.open(artifact, "w:gz") as archive:
+                content = b"actual scanner content\n"
+                info = tarfile.TarInfo("notes.txt")
+                info.size = len(content)
+                archive.addfile(info, io.BytesIO(content))
+            output = root / "result.json"
+            generate(Path(os.environ["CONTEXTLATTICE_TEST_SYFT_BINARY"]), artifact, output, root)
+            raw = output.read_text()
+            self.assertNotIn("release-sbom-", raw)
+            self.assertNotIn(str(root).lstrip("/"), raw)
+            self.assertTrue(any(row["fileName"] == "notes.txt" for row in json.loads(raw)["files"]))
+
     def test_workflow_uses_reviewed_driver_without_modifying_payload_source(self):
         workflow = (Path(__file__).resolve().parents[2] / ".github/workflows/public-release-installers.yml").read_text()
         self.assertIn('RELEASE_SBOM_TOOL_COMMIT: ${{ github.workflow_sha }}', workflow)
