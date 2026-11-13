@@ -505,16 +505,37 @@ jobs:
           echo "SYFT_BIN=$RUNNER_TEMP/syft-bin/syft" >> "$GITHUB_ENV"
 
       - name: Generate real post-final-byte SPDX SBOMs
+        env:
+          RELEASE_SBOM_TOOL_COMMIT: ${{ github.workflow_sha }}
         run: |
           set -euo pipefail
+          [[ "$RELEASE_SBOM_TOOL_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$RELEASE_SBOM_TOOL_COMMIT" == "$GITHUB_WORKFLOW_SHA" ]]
+          driver="$RUNNER_TEMP/release-sbom-driver.py"
+          git show "$RELEASE_SBOM_TOOL_COMMIT:scripts/release_sbom.py" > "$driver"
+          mkdir -p "$RUNNER_TEMP/release-sbom-receipts"
+          printf 'SBOM workflow tool %s; payload source %s\n' "$RELEASE_SBOM_TOOL_COMMIT" "$RELEASE_COMMIT"
+          sha256sum "$driver"
           for name in \
             ContextLattice-macOS-universal.dmg \
             ContextLattice-windows-x64.msi \
             ContextLattice-linux-bootstrap.tar.gz; do
-            "$SYFT_BIN" "file:dist/$name" \
-              -o "spdx-json=dist/$name.sbom.spdx.json"
+            python3 -I "$driver" \
+              --syft "$SYFT_BIN" \
+              --artifact "dist/$name" \
+              --output "dist/$name.sbom.spdx.json" \
+              --temp-root "$RUNNER_TEMP" \
+              > "$RUNNER_TEMP/release-sbom-receipts/$name.generation.json"
             test -s "dist/$name.sbom.spdx.json"
           done
+
+      - name: Retain SBOM generation diagnostics separately from release assets
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: public-release-sbom-generation
+          path: ${{ runner.temp }}/release-sbom-receipts
+          if-no-files-found: ignore
 
       - name: Generate immutable final SBOM bindings
         run: |
