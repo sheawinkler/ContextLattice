@@ -30,6 +30,13 @@ def workflow_job(workflow: str, name: str) -> str:
 
 
 class PublicReleaseWorkflowTests(unittest.TestCase):
+    def test_pr_evidence_edits_trigger_the_truth_gate_without_source_changes(self) -> None:
+        workflow = PRODUCT_TRUTH_WORKFLOW.read_text(encoding="utf-8")
+        pull_request = workflow.split("  pull_request:\n", 1)[1].split("  push:\n", 1)[0]
+        self.assertIn("types: [opened, synchronize, reopened, edited]", pull_request)
+        self.assertIn("--changed-files-stdin", workflow)
+        self.assertIn("--pr-body-env CONTEXTLATTICE_PR_BODY", workflow)
+
     def test_public_builders_bind_the_shared_outer_installer_contract(self) -> None:
         self.assertTrue(OUTER_CONTRACT.is_file())
         self.assertTrue(PAYLOAD_POLICY.is_file())
