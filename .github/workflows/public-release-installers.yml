@@ -274,22 +274,6 @@ jobs:
           source_ref_tip="$(git rev-parse --verify "${APPROVED_SOURCE_TRACKING_REF}^{commit}")"
           git merge-base --is-ancestor "$EXPECTED_RELEASE_COMMIT" "$source_ref_tip"
 
-      - name: Build public Linux bundle
-        run: bash scripts/build_linux_bundle.sh
-
-      - name: Build public Windows MSI
-        env:
-          MSI_VERSION: ${{ needs.verify-release.outputs.tag }}
-        run: bash scripts/build_windows_msi.sh
-
-      - name: Verify final Linux and MSI files
-        run: |
-          set -euo pipefail
-          test -s dist/ContextLattice-linux-bootstrap.tar.gz
-          test -s dist/ContextLattice-windows-x64.msi
-          test ! -L dist/ContextLattice-linux-bootstrap.tar.gz
-          test ! -L dist/ContextLattice-windows-x64.msi
-
       - name: Install and attest MSI audit tooling
         run: |
           set -euo pipefail
@@ -307,6 +291,41 @@ jobs:
             "$tool" --version
             sha256sum "$tool_path"
           done
+
+      - name: Require reviewed native containment before MSI parsing
+        env:
+          NATIVE_TOOLING_COMMIT: ${{ github.workflow_sha }}
+          CONTEXTLATTICE_OWNED_NATIVE_CI: 'true'
+        run: |
+          set -euo pipefail
+          git cat-file -e "${NATIVE_TOOLING_COMMIT}^{commit}"
+          git show "${NATIVE_TOOLING_COMMIT}:scripts/release_native_ci_gate.py" > "$RUNNER_TEMP/release_native_ci_gate.py"
+          python3 "$RUNNER_TEMP/release_native_ci_gate.py"
+
+      - name: Retain native containment receipts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-containment-${{ github.job }}
+          path: ${{ runner.temp }}/native-containment-*.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Build public Linux bundle
+        run: bash scripts/build_linux_bundle.sh
+
+      - name: Build public Windows MSI
+        env:
+          MSI_VERSION: ${{ needs.verify-release.outputs.tag }}
+        run: bash scripts/build_windows_msi.sh
+
+      - name: Verify final Linux and MSI files
+        run: |
+          set -euo pipefail
+          test -s dist/ContextLattice-linux-bootstrap.tar.gz
+          test -s dist/ContextLattice-windows-x64.msi
+          test ! -L dist/ContextLattice-linux-bootstrap.tar.gz
+          test ! -L dist/ContextLattice-windows-x64.msi
 
       - name: Audit final Linux and MSI package contents
         run: |
@@ -798,6 +817,25 @@ jobs:
             "$tool" --version
             sha256sum "$tool_path"
           done
+
+      - name: Require reviewed native containment before MSI parsing
+        env:
+          NATIVE_TOOLING_COMMIT: ${{ github.workflow_sha }}
+          CONTEXTLATTICE_OWNED_NATIVE_CI: 'true'
+        run: |
+          set -euo pipefail
+          git cat-file -e "${NATIVE_TOOLING_COMMIT}^{commit}"
+          git show "${NATIVE_TOOLING_COMMIT}:scripts/release_native_ci_gate.py" > "$RUNNER_TEMP/release_native_ci_gate.py"
+          python3 "$RUNNER_TEMP/release_native_ci_gate.py"
+
+      - name: Retain native containment receipts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-containment-${{ github.job }}
+          path: ${{ runner.temp }}/native-containment-*.json
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Download Linux and MSI installers from the draft release
         env:

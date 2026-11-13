@@ -136,8 +136,9 @@ def prepare() -> dict:
         run(["/usr/bin/sudo", "-n", PARSER, "--config-file", "/dev/null", "--skip-cache", "--binary", "--add"], data=compiled)
     after = probe(ROOT)
     require(after["ok"], "profile_did_not_restore_contained_version_execution")
+    require(Path("/proc/sys/kernel/apparmor_restrict_unprivileged_userns").read_text().strip() == "1", "global_restriction_changed")
     return {"schema_id": "contextlattice_native_ci_profile.v1", "ok": True, "artifact_audit": False,
-            "global_restriction_unchanged": Path("/proc/sys/kernel/apparmor_restrict_unprivileged_userns").read_text().strip() == "1",
+            "global_restriction_unchanged": True,
             "binary_identities": identities, "profile_sha256": PROFILE_SHA, "package_hashes": PACKAGES,
             "compiled_profile_sha256": hashlib.sha256(compiled).hexdigest(), "before": before, "kernel_denials": rows, "after": after}
 

@@ -9,6 +9,7 @@ on:
       - '.github/workflows/release-installers.yml'
       - 'scripts/release_native_toolchain_preflight.py'
       - 'scripts/release_native_ci_profile.py'
+      - 'scripts/release_native_ci_gate.py'
       - 'scripts/release_native_containment_holdouts.py'
       - 'scripts/tests/test_release_native*'
       - 'scripts/agent/audit-public-installer-package'
@@ -26,7 +27,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Check diagnostic contracts
-        run: python3 -m unittest scripts.tests.test_release_native_toolchain_preflight scripts.tests.test_release_native_ci_profile
+        run: python3 -m unittest scripts.tests.test_release_native_toolchain_preflight scripts.tests.test_release_native_ci_profile scripts.tests.test_release_native_ci_gate
       - name: Install reviewed native tool versions
         run: |
           set -euo pipefail
@@ -71,6 +72,11 @@ jobs:
         run: |
           python3 scripts/release_native_toolchain_preflight.py > native-toolchain-final.json
           python3 scripts/release_native_containment_holdouts.py > native-toolchain-holdouts.json
+      - name: Verify the workflow/source tooling join
+        env:
+          NATIVE_TOOLING_COMMIT: ${{ github.workflow_sha }}
+          CONTEXTLATTICE_OWNED_NATIVE_CI: 'true'
+        run: python3 scripts/release_native_ci_gate.py
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -83,5 +89,6 @@ jobs:
             native-toolchain-profile.json
             native-toolchain-final.json
             native-toolchain-holdouts.json
+            ${{ runner.temp }}/native-containment-*.json
           if-no-files-found: error
           retention-days: 7
