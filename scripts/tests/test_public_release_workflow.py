@@ -30,6 +30,26 @@ def workflow_job(workflow: str, name: str) -> str:
 
 
 class PublicReleaseWorkflowTests(unittest.TestCase):
+    def test_native_msi_audit_jobs_pin_matching_supported_os_and_packages(self) -> None:
+        workflows = {
+            WORKFLOW: ("build-linux-and-msi", "audit-remote-linux-msi"),
+            ROOT / ".github/workflows/release-installers.yml": (
+                "build-linux-and-msi", "audit-paid-downloaded-linux-msi", "release-integrity"
+            ),
+        }
+        for path, jobs in workflows.items():
+            if not path.is_file():
+                continue
+            for name in jobs:
+                with self.subTest(workflow=path.name, job=name):
+                    job = workflow_job(path.read_text(encoding="utf-8"), name)
+                    self.assertIn("runs-on: ubuntu-24.04", job)
+                    self.assertIn("test \"${ID}:${VERSION_ID}\" = 'ubuntu:24.04'", job)
+                    self.assertIn("msitools_version='0.103+repack-1build3'", job)
+                    self.assertIn("bubblewrap_version='0.9.0-1ubuntu0.3'", job)
+                    self.assertIn("dpkg-query", job)
+                    self.assertIn('sha256sum "$tool_path"', job)
+
     def test_pr_evidence_edits_trigger_the_truth_gate_without_source_changes(self) -> None:
         workflow = PRODUCT_TRUTH_WORKFLOW.read_text(encoding="utf-8")
         pull_request = workflow.split("  pull_request:\n", 1)[1].split("  push:\n", 1)[0]
