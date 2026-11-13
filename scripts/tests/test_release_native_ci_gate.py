@@ -4,6 +4,7 @@ import importlib.util
 import json
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -29,8 +30,8 @@ class NativeCIGateTests(unittest.TestCase):
                 return subprocess.CompletedProcess(argv, 0, b"reviewed containment fixture", b"")
             with mock.patch.object(GATE.subprocess, "run", side_effect=show) as run:
                 hashes = GATE.extract_tooling("a" * 40, extracted, source)
-                self.assertEqual(len(hashes), 4)
-                self.assertEqual(run.call_count, 4)
+                self.assertEqual(len(hashes), len(GATE.TOOL_PATHS))
+                self.assertEqual(run.call_count, len(GATE.TOOL_PATHS))
                 tool.write_bytes(b"changed tagged containment")
                 with self.assertRaisesRegex(ValueError, "tagged_audit_containment_differs"):
                     GATE.extract_tooling("a" * 40, extracted, source)
@@ -39,12 +40,26 @@ class NativeCIGateTests(unittest.TestCase):
                     GATE.extract_tooling("main", extracted, source)
                 run.assert_not_called()
 
+    def test_staged_auditor_import_closure_does_not_depend_on_checkout_imports(self):
+        commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True, cwd=ROOT).strip()
+        with tempfile.TemporaryDirectory() as directory:
+            staging = Path(directory)
+            GATE.extract_tooling(commit, staging, ROOT)
+            result = subprocess.run([sys.executable, "-I", "-c",
+                "import runpy,sys; module=runpy.run_path(sys.argv[1],run_name='isolated_import'); assert callable(module['_confined_bwrap_command'])",
+                str(staging / "scripts/agent/audit-public-installer-package")], cwd=directory, capture_output=True, check=False, timeout=15)
+            self.assertEqual(result.returncode, 0, result.stderr.decode())
+
     def test_nonzero_missing_or_artifact_claim_never_passes_toolchain_gate(self):
         with tempfile.TemporaryDirectory() as directory:
             for code, body in ((1, {"ok": True, "artifact_audit": False}), (0, {"ok": False, "artifact_audit": False}), (0, {"ok": True, "artifact_audit": True}), (0, {"ok": True})):
                 result = subprocess.CompletedProcess([], code, json.dumps(body).encode(), b"")
                 with mock.patch.object(GATE.subprocess, "run", return_value=result):
                     self.assertFalse(GATE.command_report(["fixed"], Path(directory) / "receipt.json"))
+            failure = subprocess.CompletedProcess([], 1, b"", b"controlled import failure")
+            with mock.patch.object(GATE.subprocess, "run", return_value=failure):
+                self.assertFalse(GATE.command_report(["fixed"], Path(directory) / "empty.json"))
+            self.assertEqual(json.loads((Path(directory) / "empty.process.json").read_text())["stderr"], "controlled import failure")
 
     def test_all_native_release_jobs_require_separate_workflow_bound_gate(self):
         for path, jobs in {
