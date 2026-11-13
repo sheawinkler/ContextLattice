@@ -1,0 +1,46 @@
+name: Native Release Toolchain Preflight
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/release-native-toolchain-preflight.yml'
+      - '.github/workflows/public-release-installers.yml'
+      - '.github/workflows/release-installers.yml'
+      - 'scripts/release_native_toolchain_preflight.py'
+      - 'scripts/agent/audit-public-installer-package'
+
+permissions:
+  contents: read
+
+jobs:
+  native-msi-containment:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install reviewed native tool versions
+        run: |
+          set -euo pipefail
+          . /etc/os-release
+          test "$ID:$VERSION_ID" = 'ubuntu:24.04'
+          sudo apt-get update
+          sudo apt-get install -y msitools=0.103+repack-1build3 bubblewrap=0.9.0-1ubuntu0.3
+          test "$(dpkg-query -W msitools | cut -f2)" = '0.103+repack-1build3'
+          test "$(dpkg-query -W bubblewrap | cut -f2)" = '0.9.0-1ubuntu0.3'
+      - name: Probe the real audit containment without parsing an installer
+        run: |
+          set +e
+          python3 scripts/release_native_toolchain_preflight.py > native-toolchain-preflight.json
+          result=$?
+          cat native-toolchain-preflight.json
+          exit "$result"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: native-toolchain-preflight
+          path: native-toolchain-preflight.json
+          if-no-files-found: error
+          retention-days: 7
