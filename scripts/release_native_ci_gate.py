@@ -15,7 +15,10 @@ import tempfile
 
 TOOL_PATHS = (
     "scripts/release_native_toolchain_preflight.py", "scripts/release_native_ci_profile.py",
-    "scripts/release_native_containment_holdouts.py", "scripts/agent/audit-public-installer-package",
+    "scripts/release_native_containment_holdouts.py",
+    "scripts/public_release_material_scan.py", "scripts/public_release_package_scan.py",
+    "scripts/release_installer_outer.py", "scripts/release_payload_policy.py",
+    "scripts/agent/audit-public-installer-package",
 )
 
 
@@ -41,6 +44,12 @@ def command_report(argv: list[str], output: Path) -> bool:
     if len(result.stdout) > 4 * 1024 * 1024 or len(result.stderr) > 16384:
         raise ValueError("unbounded_native_diagnostic")
     output.write_bytes(result.stdout)
+    output.with_name(output.stem + ".process.json").write_text(json.dumps({
+        "returncode": result.returncode, "stderr": result.stderr.decode(errors="replace"),
+        "stdout_sha256": hashlib.sha256(result.stdout).hexdigest(),
+    }, sort_keys=True) + "\n")
+    if result.returncode != 0:
+        return False
     report = json.loads(result.stdout)
     return result.returncode == 0 and report.get("ok") is True and report.get("artifact_audit") is False
 
