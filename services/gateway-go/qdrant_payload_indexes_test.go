@@ -431,10 +431,12 @@ func TestQdrantWriteDimensionHonorsAutoCreatePolicyAndObservedDimension(t *testi
 			t.Setenv("ORCH_FASTEMBED_RS_BASE_URL", fastembed.URL)
 
 			var exists atomic.Bool
+			var getCalls atomic.Int32
 			var putCalls atomic.Int32
 			qdrant := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.Method {
 				case http.MethodGet:
+					getCalls.Add(1)
 					if !exists.Load() {
 						writeJSON(w, http.StatusNotFound, map[string]any{"status": "not found"})
 						return
@@ -459,6 +461,8 @@ func TestQdrantWriteDimensionHonorsAutoCreatePolicyAndObservedDimension(t *testi
 			}))
 			defer qdrant.Close()
 
+			// Reproduce state left by a prior fixture if the listener address is reused.
+			nativeQdrantSetCachedDim(qdrant.URL, "contextlattice_notes", 768)
 			dim, err := nativeQdrantWriteEmbeddingDimension(context.Background(), qdrant.Client(), qdrant.URL, "contextlattice_notes")
 			if tc.wantErr != nil {
 				if !errors.Is(err, tc.wantErr) {
@@ -472,6 +476,9 @@ func TestQdrantWriteDimensionHonorsAutoCreatePolicyAndObservedDimension(t *testi
 			}
 			if got := embedCalls.Load(); got != tc.wantEmbeds {
 				t.Fatalf("write dimension probes=%d, want %d", got, tc.wantEmbeds)
+			}
+			if getCalls.Load() == 0 {
+				t.Fatal("cold collection policy was never observed from the mock owner")
 			}
 		})
 	}
