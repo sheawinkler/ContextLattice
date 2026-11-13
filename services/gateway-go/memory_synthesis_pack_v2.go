@@ -76,6 +76,16 @@ func (s *server) buildSynthesisPackV2Response(
 	payload map[string]any,
 	surface string,
 ) (map[string]any, int, error) {
+	return s.buildSynthesisPackV2ResponseWithOptions(ctx, incomingHeaders, payload, surface, synthesisResponseBuildOptions{})
+}
+
+func (s *server) buildSynthesisPackV2ResponseWithOptions(
+	ctx context.Context,
+	incomingHeaders http.Header,
+	payload map[string]any,
+	surface string,
+	options synthesisResponseBuildOptions,
+) (map[string]any, int, error) {
 	ctx, derivationGuard := withMemoryDerivationGuard(ctx, s.memoryStore)
 	requestPayload := cloneMap(payload)
 	packetRequested := agentPacketRequested(requestPayload)
@@ -87,7 +97,7 @@ func (s *server) buildSynthesisPackV2Response(
 	delete(legacyRequest, "projection")
 	delete(legacyRequest, "response_mode")
 	legacyRequest["_suppress_final_token_impact_recording"] = true
-	legacy, status, err := s.buildSynthesisPackResponse(ctx, incomingHeaders, legacyRequest, surface)
+	legacy, status, err := s.buildSynthesisPackResponseWithOptions(ctx, incomingHeaders, legacyRequest, surface, synthesisResponseBuildOptions{})
 	if err != nil || status >= http.StatusBadRequest || !anyToBool(legacy["ok"]) {
 		return legacy, status, err
 	}
@@ -199,6 +209,9 @@ func (s *server) buildSynthesisPackV2Response(
 		if value, ok := legacy[key]; ok {
 			response[key] = value
 		}
+	}
+	if options.beforeFinalGuard != nil {
+		options.beforeFinalGuard(synthesisPackV2ContractID)
 	}
 	if packetRequested {
 		packet := finalizeAgentPacketForRequest(buildAgentPacket(response, requestPayload, agentPacketSurfaceForRoute("synthesis_pack_v2", surface)), requestPayload)

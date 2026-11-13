@@ -67,11 +67,26 @@ func (s *server) toolsSynthesisPack(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, status, response)
 }
 
+type synthesisResponseBuildOptions struct {
+	// Internal request-scoped test phase seam, never decoded from request input.
+	beforeFinalGuard func(version string)
+}
+
 func (s *server) buildSynthesisPackResponse(
 	ctx context.Context,
 	incomingHeaders http.Header,
 	payload map[string]any,
 	surface string,
+) (map[string]any, int, error) {
+	return s.buildSynthesisPackResponseWithOptions(ctx, incomingHeaders, payload, surface, synthesisResponseBuildOptions{})
+}
+
+func (s *server) buildSynthesisPackResponseWithOptions(
+	ctx context.Context,
+	incomingHeaders http.Header,
+	payload map[string]any,
+	surface string,
+	options synthesisResponseBuildOptions,
 ) (map[string]any, int, error) {
 	ctx, derivationGuard := withMemoryDerivationGuard(ctx, s.memoryStore)
 	requestPayload := cloneMap(payload)
@@ -167,6 +182,9 @@ func (s *server) buildSynthesisPackResponse(
 				"last_event_type":     session["last_event_type"],
 			}
 		}
+	}
+	if options.beforeFinalGuard != nil {
+		options.beforeFinalGuard(synthesisPackContractID)
 	}
 	if packetRequested {
 		packet := finalizeAgentPacketForRequest(buildAgentPacket(response, requestPayload, agentPacketSurfaceForRoute("synthesis_pack", surface)), requestPayload)
