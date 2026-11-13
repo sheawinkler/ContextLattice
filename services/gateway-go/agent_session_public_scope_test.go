@@ -294,3 +294,24 @@ func TestPublicSessionMixedHistoryCannotMaskUnsupportedOwner(t *testing.T) {
 		}
 	}
 }
+
+func TestPublicSessionMixedValidHistoryAllowsNewLane(t *testing.T) {
+	continuity, store, payload, binding := agentDecisionFixture(t)
+	for _, lane := range []string{"lane_first", "lane_second"} {
+		start := cloneJSONMap(payload)
+		start["session_id"], start["execution_lane_id"] = "sess_"+lane, lane
+		if _, _, err := store.startOrReuseDecisionScoped(start, newAgentSessionPublicScopeOwnership("alpha"), binding); err != nil {
+			t.Fatal(err)
+		}
+	}
+	request := cloneJSONMap(payload)
+	delete(request, "session_id")
+	request["ensure"] = true
+	body, _ := json.Marshal(request)
+	s := &server{agentSessions: store, continuity: continuity}
+	w := httptest.NewRecorder()
+	s.agentsSessionsStart(w, httptest.NewRequest(http.MethodPost, "/v1/agents/sessions/start", bytes.NewReader(body)))
+	if w.Code != http.StatusOK || len(store.sessions) != 3 {
+		t.Fatal("valid public histories were globally blocked or cross-lane reused", w.Code, w.Body.String())
+	}
+}
