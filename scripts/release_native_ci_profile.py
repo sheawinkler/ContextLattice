@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 
 from release_native_toolchain_preflight import ROOT, probe
 
@@ -95,7 +96,21 @@ def unpack_reviewed_data(package: Path, expected: str, destination: Path, *, pro
             target.write_bytes(archive.extractfile(member).read())
 
 
-def prepare() -> dict:
+def wait_attributed_denials(before: dict, report: dict) -> list[dict]:
+    journal = ["/usr/bin/sudo", "-n", "/usr/bin/journalctl", "-k", "--since", "@" + str(int(min(item["started_epoch"] for item in before["tools"]))),
+               "--no-pager", "--output=json", '--grep=apparmor="DENIED".*(bwrap|unprivileged_userns)']
+    deadline = time.monotonic() + 2
+    while True:
+        result = subprocess.run(journal, capture_output=True, check=False, timeout=5)
+        require(result.returncode in (0, 1) and len(result.stdout) <= 1024 * 1024, "kernel_denial_read_failed")
+        rows = [json.loads(line) for line in result.stdout.splitlines()]
+        report["kernel_denials"], report["kernel_read_attempts"] = rows, report.get("kernel_read_attempts", 0) + 1
+        if attributed_denial(before, rows) or time.monotonic() >= deadline:
+            return rows
+        time.sleep(.05)
+
+
+def prepare(report: dict) -> dict:
     release = dict(line.split("=", 1) for line in Path("/etc/os-release").read_text().splitlines() if "=" in line)
     require(trusted_runner(dict(os.environ), sys.platform, release.get("ID", "").strip('"') + ":" + release.get("VERSION_ID", "").strip('"'), os.geteuid()), "not_owned_hosted_ubuntu_ci")
     if os.environ["GITHUB_EVENT_NAME"] == "pull_request":
@@ -107,8 +122,10 @@ def prepare() -> dict:
         ("/usr/bin/bwrap", "bubblewrap"), ("/usr/bin/msiinfo", "msitools"), ("/usr/bin/msiextract", "msitools"), (PARSER, "apparmor"))]
     require(run(["/usr/bin/dpkg-query", "-W", "-f=${Version}", "apparmor"]).decode() == VERSION, "unreviewed_parser_version")
     before = probe(ROOT)
-    rows = [json.loads(line) for line in run(["/usr/bin/sudo", "-n", "/usr/bin/journalctl", "-k", "--since", "@" + str(int(min(item["started_epoch"] for item in before["tools"]))),
-            "--no-pager", "--output=json", '--grep=apparmor="DENIED".*(bwrap|unprivileged_userns)']).splitlines()]
+    report.update({"before": before, "binary_identities": identities, "kernel_denials": [], "kernel_read_attempts": 0})
+    # Journald ingestion is asynchronous. Wait only for the already-executed
+    # probes' exact bounded events; never retry probes or loosen attribution.
+    rows = wait_attributed_denials(before, report)
     require(attributed_denial(before, rows), "fresh_exact_denial_not_attributed")
     loaded = run(["/usr/bin/sudo", "-n", "/usr/bin/cat", "/sys/kernel/security/apparmor/profiles"]).decode()
     require(not re.search(r"(?m)^(bwrap|unpriv_bwrap)(?:\s|//|$)", loaded), "existing_profile_name_collision")
@@ -147,11 +164,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--prepare-github-hosted-ci", action="store_true")
     args = parser.parse_args()
+    report = {"schema_id": "contextlattice_native_ci_profile.v1", "ok": False, "artifact_audit": False}
     try:
         require(args.prepare_github_hosted_ci, "explicit_ci_preparation_required")
-        report = prepare()
+        report.update(prepare(report))
     except (ValueError, OSError, subprocess.SubprocessError, KeyError) as exc:
-        report = {"ok": False, "artifact_audit": False, "error": str(exc) if isinstance(exc, ValueError) else type(exc).__name__}
+        report["error"] = str(exc) if isinstance(exc, ValueError) else type(exc).__name__
     print(json.dumps(report, sort_keys=True))
     return 0 if report["ok"] else 1
 
