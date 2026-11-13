@@ -7,7 +7,6 @@ umask 077
 # a tag or an unapproved digest is never accepted for the anonymous lane.
 readonly PUBLIC_MSITOOLS_IMAGE="marco98/msitools@sha256:0ac5297e0691e6768e1de4d7bdecef376ecdbff41c4cd7d4f3b55c5e7d42c48e"
 readonly PUBLIC_MSITOOLS_CANONICAL_IMAGE="docker.io/${PUBLIC_MSITOOLS_IMAGE}"
-readonly ORBSTACK_CONTEXT_NAME="orbstack"
 readonly DOCKER_COMMAND="docker"
 readonly DOCKER_CONFIG_TEMPLATE="${TMPDIR:-/tmp}/contextlattice-anonymous-docker.XXXXXX"
 
@@ -19,7 +18,10 @@ usage: scripts/docker_anonymous_public.sh <run|pull> <docker arguments>
 
 The arguments must contain exactly one approved public image reference pinned
 by digest.  This wrapper never accepts login, logout, push, private images,
-credential flags, or a caller-selected Docker context/configuration.
+credential flags, or command-line Docker context/configuration overrides.
+The selected local Unix-socket context is captured before an empty, temporary
+credential configuration is used. DOCKER_ANONYMOUS_PUBLIC_CONTEXT may select
+an installed context explicitly; remote endpoints are never permitted.
 EOF
 }
 
@@ -64,9 +66,6 @@ reject_unsafe_argument() {
 if [[ -n "${DOCKER_AUTH_CONFIG:-}" ]]; then
   fail "DOCKER_AUTH_CONFIG is not allowed in the anonymous public lane."
 fi
-if [[ -n "${DOCKER_ANONYMOUS_PUBLIC_CONTEXT:-}" && "${DOCKER_ANONYMOUS_PUBLIC_CONTEXT}" != "${ORBSTACK_CONTEXT_NAME}" ]]; then
-  fail "the anonymous public lane only permits the OrbStack Docker context."
-fi
 
 approved_image_ref() {
   case "$1" in
@@ -97,21 +96,30 @@ extract_image_ref() {
   printf '%s\n' "${image_refs[0]}"
 }
 
-capture_orbstack_socket() {
+capture_local_context_socket() {
+  local context_name="${DOCKER_ANONYMOUS_PUBLIC_CONTEXT:-}"
+  if [[ -z "${context_name}" ]]; then
+    context_name="$(
+      env -u DOCKER_HOST -u DOCKER_CONTEXT -u DOCKER_AUTH_CONFIG \
+        "${DOCKER_COMMAND}" context show
+    )" || fail "could not resolve the selected Docker context."
+  fi
+  [[ "${context_name}" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ ]] || \
+    fail "invalid anonymous public Docker context name."
   local socket
   if ! socket="$(
     env -u DOCKER_HOST -u DOCKER_CONTEXT -u DOCKER_AUTH_CONFIG \
       "${DOCKER_COMMAND}" \
-      --context "${ORBSTACK_CONTEXT_NAME}" \
-      context inspect "${ORBSTACK_CONTEXT_NAME}" \
+      --context "${context_name}" \
+      context inspect "${context_name}" \
       --format '{{.Endpoints.docker.Host}}'
   )"; then
-    fail "could not inspect the OrbStack Docker context."
+    fail "could not inspect the selected local Docker context."
   fi
 
   socket="$(printf '%s\n' "${socket}" | sed -e 's/[[:space:]]*$//' | sed -n '/./{p;q;}')"
-  if [[ ! "${socket}" =~ ^unix://[^[:space:]]+$ ]]; then
-    fail "OrbStack Docker context did not provide a Unix socket."
+  if [[ ! "${socket}" =~ ^unix:///[^[:space:]]+$ ]]; then
+    fail "anonymous public Docker context must provide a local Unix socket."
   fi
   printf '%s\n' "${socket}"
 }
@@ -145,15 +153,15 @@ main() {
   reject_unsafe_argument "$@"
   extract_image_ref "$@" >/dev/null
 
-  # Capture the OrbStack endpoint while the caller's Docker context/config is
+  # Capture the local endpoint while the caller's Docker context/config is
   # still available.  The command below never changes the selected context.
-  local orbstack_socket
-  orbstack_socket="$(capture_orbstack_socket)"
+  local docker_socket
+  docker_socket="$(capture_local_context_socket)"
 
   prepare_anonymous_config
   env -u DOCKER_CONTEXT -u DOCKER_AUTH_CONFIG \
     DOCKER_CONFIG="${DOCKER_CONFIG_DIR}" \
-    DOCKER_HOST="${orbstack_socket}" \
+    DOCKER_HOST="${docker_socket}" \
     DOCKER_CLI_HINTS=false \
     "${DOCKER_COMMAND}" "${operation}" "$@"
 }

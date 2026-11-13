@@ -27,6 +27,10 @@ def write_executable(path: Path, body: str) -> None:
 FAKE_DOCKER = """#!/bin/sh
 set -eu
 printf 'argv=%s\\n' "$*" >> "$FAKE_DOCKER_LOG"
+if [ "${1:-}" = "context" ] && [ "${2:-}" = "show" ]; then
+  printf '%s\\n' "${FAKE_SELECTED_CONTEXT:-orbstack}"
+  exit 0
+fi
 if [ "${1:-}" = "--context" ]; then
   printf '%s\\n' "$FAKE_ORBSTACK_SOCKET"
   exit 0
@@ -141,10 +145,11 @@ class DockerAnonymousPublicTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
 
             log_lines = Path(env["FAKE_DOCKER_LOG"]).read_text(encoding="utf-8").splitlines()
-            self.assertEqual(len(log_lines), 2)
-            self.assertIn("--context orbstack context inspect orbstack", log_lines[0])
-            self.assertTrue(log_lines[1].startswith("argv=run --rm --platform linux/amd64"))
-            self.assertIn(IMAGE, log_lines[1])
+            self.assertEqual(len(log_lines), 3)
+            self.assertEqual(log_lines[0], "argv=context show")
+            self.assertIn("--context orbstack context inspect orbstack", log_lines[1])
+            self.assertTrue(log_lines[2].startswith("argv=run --rm --platform linux/amd64"))
+            self.assertIn(IMAGE, log_lines[2])
 
             config_dir = Path(Path(env["FAKE_CONFIG_DIR_CAPTURE"]).read_text().strip())
             self.assertNotEqual(config_dir, Path(env["DOCKER_CONFIG"]))
@@ -259,16 +264,51 @@ class DockerAnonymousPublicTests(unittest.TestCase):
         finally:
             temp_dir.cleanup()
 
-    def test_non_orbstack_context_override_is_rejected_before_docker(self) -> None:
-        temp_dir, env, _ = self.fixture()
+    def test_explicit_default_context_supports_linux_without_credentials(self) -> None:
+        temp_dir, env, original_before = self.fixture()
         try:
-            env["DOCKER_ANONYMOUS_PUBLIC_CONTEXT"] = "colima"
+            env["DOCKER_ANONYMOUS_PUBLIC_CONTEXT"] = "default"
             result = self.run_wrapper(env, "run", IMAGE, "wixl")
-            self.assertNotEqual(result.returncode, 0)
-            self.assertFalse(Path(env["FAKE_DOCKER_LOG"]).exists())
+            self.assertEqual(result.returncode, 0, result.stderr)
+            log = Path(env["FAKE_DOCKER_LOG"]).read_text(encoding="utf-8")
+            self.assertIn("--context default context inspect default", log)
             self.assertFalse(Path(temp_dir.name, "helper-called").exists())
+            self.assertEqual((Path(env["DOCKER_CONFIG"]) / "config.json").read_bytes(), original_before)
         finally:
             temp_dir.cleanup()
+
+    def test_invalid_context_selector_is_rejected_before_docker(self) -> None:
+        for context in ("../context", "--host", "space context", "remote\nother"):
+            with self.subTest(context=context):
+                temp_dir, env, _ = self.fixture()
+                try:
+                    env["DOCKER_ANONYMOUS_PUBLIC_CONTEXT"] = context
+                    result = self.run_wrapper(env, "run", IMAGE, "wixl")
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertFalse(Path(env["FAKE_DOCKER_LOG"]).exists())
+                    self.assertFalse(Path(temp_dir.name, "helper-called").exists())
+                finally:
+                    temp_dir.cleanup()
+
+    def test_selected_local_contexts_and_remote_endpoint_holdouts(self) -> None:
+        for context in ("default", "desktop-linux", "orbstack"):
+            with self.subTest(context=context):
+                temp_dir, env, original_before = self.fixture()
+                try:
+                    env.pop("DOCKER_ANONYMOUS_PUBLIC_CONTEXT", None)
+                    env["FAKE_SELECTED_CONTEXT"] = context
+                    result = self.run_wrapper(env, "pull", IMAGE)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    log = Path(env["FAKE_DOCKER_LOG"]).read_text(encoding="utf-8")
+                    self.assertIn(f"--context {context} context inspect {context}", log)
+                    self.assertFalse(Path(temp_dir.name, "helper-called").exists())
+                    self.assertEqual((Path(env["DOCKER_CONFIG"]) / "config.json").read_bytes(), original_before)
+                    for endpoint in ("tcp://127.0.0.1:2375", "ssh://remote", "unix://relative", "unix:///path with space"):
+                        env["FAKE_ORBSTACK_SOCKET"] = endpoint
+                        result = self.run_wrapper(env, "pull", IMAGE)
+                        self.assertNotEqual(result.returncode, 0)
+                finally:
+                    temp_dir.cleanup()
 
 
 if __name__ == "__main__":

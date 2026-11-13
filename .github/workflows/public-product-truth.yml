@@ -4,6 +4,11 @@ on:
   pull_request:
     paths:
       - "AGENTS.md"
+      - ".gitattributes"
+      - ".gitignore"
+      - "scripts/docker_anonymous_public.sh"
+      - "scripts/release_payload_policy.py"
+      - "scripts/tests/test_docker_anonymous_public.py"
       - ".github/pull_request_template.md"
       - "README.md"
       - "LICENSE"
@@ -55,6 +60,11 @@ on:
       - public-paid/main
     paths:
       - "AGENTS.md"
+      - ".gitattributes"
+      - ".gitignore"
+      - "scripts/docker_anonymous_public.sh"
+      - "scripts/release_payload_policy.py"
+      - "scripts/tests/test_docker_anonymous_public.py"
       - ".github/pull_request_template.md"
       - "README.md"
       - "LICENSE"
@@ -144,6 +154,7 @@ jobs:
           scripts.tests.test_public_product_truth
           scripts.tests.test_public_release_package_scan
           scripts.tests.test_public_release_workflow
+          scripts.tests.test_docker_anonymous_public
           scripts.tests.test_task_agent_worker_claim_identity
           scripts.tests.test_host_supervisor_safety_audit
           scripts.tests.test_retention_runner_install

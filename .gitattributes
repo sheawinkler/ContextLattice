@@ -28,6 +28,8 @@ archive/services/orchestrator_legacy_python/** linguist-vendored
 /docker_compose_backup/** export-ignore
 /dist export-ignore
 /dist/** export-ignore
+/out export-ignore
+/out/** export-ignore
 /docs/audits export-ignore
 /docs/audits/** export-ignore
 /docs/evals export-ignore
