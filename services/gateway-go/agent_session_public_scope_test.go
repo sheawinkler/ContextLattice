@@ -191,3 +191,46 @@ func TestPublicSessionLegacyAndCanonicalScopesRemainUsable(t *testing.T) {
 		}
 	}
 }
+
+func TestPublicSessionValidTypedEnsureCannotReinterpretUnsupportedOwner(t *testing.T) {
+	for name, mutate := range publicSessionInvalidScopes() {
+		t.Run(name, func(t *testing.T) {
+			continuity, store, payload, binding := agentDecisionFixture(t)
+			if _, _, err := store.startOrReuseDecisionScoped(payload, nil, binding); err != nil {
+				t.Fatal(err)
+			}
+			id := anyToString(payload["session_id"])
+			mutate(store.sessions[id])
+			before := agentDecisionDigest(store.sessions[id])
+			disk, _ := os.ReadFile(store.path)
+			s := &server{agentSessions: store, continuity: continuity}
+			for _, implicit := range []bool{false, true} {
+				ensure := cloneJSONMap(payload)
+				ensure["ensure"] = true
+				if implicit {
+					delete(ensure, "session_id")
+				}
+				// Prove this holdout reaches the typed store seam rather than
+				// merely failing the wrapper's missing-selector validation.
+				if selected, err := parseAgentDecisionStart(ensure); err != nil || selected == nil {
+					t.Fatal("typed denial fixture is not a valid selection", err)
+				}
+				for _, scope := range []map[string]any{nil, newAgentSessionPublicScopeOwnership("alpha")} {
+					if _, _, err := store.startOrReuseDecisionScoped(ensure, scope, binding); err == nil {
+						t.Fatal("valid typed ensure reinterpreted unsupported owner")
+					}
+				}
+				body, _ := json.Marshal(ensure)
+				w := httptest.NewRecorder()
+				s.agentsSessionsStart(w, httptest.NewRequest(http.MethodPost, "/v1/agents/sessions/start", bytes.NewReader(body)))
+				if w.Code < 400 {
+					t.Fatal("HTTP typed ensure replaced unsupported owner", w.Body.String())
+				}
+			}
+			after, _ := os.ReadFile(store.path)
+			if len(store.sessions) != 1 || agentDecisionDigest(store.sessions[id]) != before || !bytes.Equal(disk, after) || len(store.events[id]) != 0 {
+				t.Fatal("denied valid typed ensure changed custody, utility, events or disk")
+			}
+		})
+	}
+}
