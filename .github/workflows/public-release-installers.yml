@@ -511,11 +511,15 @@ jobs:
           set -euo pipefail
           [[ "$RELEASE_SBOM_TOOL_COMMIT" =~ ^[0-9a-f]{40}$ ]]
           [[ "$RELEASE_SBOM_TOOL_COMMIT" == "$GITHUB_WORKFLOW_SHA" ]]
-          driver="$RUNNER_TEMP/release-sbom-driver.py"
-          git show "$RELEASE_SBOM_TOOL_COMMIT:scripts/release_sbom.py" > "$driver"
+          tools_dir="$RUNNER_TEMP/release-sbom-tools"
+          mkdir -p "$tools_dir"
+          for tool in release_sbom.py release_artifact_manifest.py; do
+            git show "$RELEASE_SBOM_TOOL_COMMIT:scripts/$tool" > "$tools_dir/$tool"
+          done
+          driver="$tools_dir/release_sbom.py"
           mkdir -p "$RUNNER_TEMP/release-sbom-receipts"
           printf 'SBOM workflow tool %s; payload source %s\n' "$RELEASE_SBOM_TOOL_COMMIT" "$RELEASE_COMMIT"
-          sha256sum "$driver"
+          sha256sum "$driver" "$tools_dir/release_artifact_manifest.py"
           for name in \
             ContextLattice-macOS-universal.dmg \
             ContextLattice-windows-x64.msi \

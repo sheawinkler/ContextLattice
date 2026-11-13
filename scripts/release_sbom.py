@@ -11,7 +11,12 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
+
+# The workflow stages this fixed two-module closure from its reviewed W commit.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from release_artifact_manifest import ReleaseMetadataError, _walk_metadata  # noqa: E402
 
 INSTALLERS = frozenset(("ContextLattice-macOS-universal.dmg", "ContextLattice-windows-x64.msi", "ContextLattice-linux-bootstrap.tar.gz"))
 SYFT_VERSION = "1.32.0"
@@ -32,8 +37,10 @@ def syft_document(document):
     require(document.get("spdxVersion") == "SPDX-2.3", "unsupported scanner SPDX version")
     require(document.get("SPDXID") == "SPDXRef-DOCUMENT", "invalid scanner document identity")
     require(isinstance(document.get("packages"), list), "scanner package list missing")
+    require(all(isinstance(row, dict) for row in document["packages"]), "scanner package record malformed")
     require(isinstance(document.get("creationInfo"), dict), "scanner creation information missing")
     creators = document["creationInfo"].get("creators", [])
+    require(isinstance(creators, list) and all(isinstance(value, str) for value in creators), "scanner creator list malformed")
     require(f"Tool: syft-{SYFT_VERSION}" in creators, "scanner version does not match the pin")
 
 
@@ -62,7 +69,8 @@ def merge_documents(components, outer, name, sha):
     require(isinstance(files, list), "component file list is malformed")
     existing = [item for item in files if isinstance(item, dict) and item.get("fileName") in (name, "./" + name, "/" + name)]
     if existing:
-        outer_file(result, name, sha)
+        existing_row = outer_file(result, name, sha)
+        existing_row["fileName"] = "./" + name
         return result
     row = copy.deepcopy(row)
     row["SPDXID"] = "SPDXRef-Installer-" + sha
@@ -96,6 +104,50 @@ def merge_documents(components, outer, name, sha):
     return result
 
 
+def portable_scanner_roots(document, scratch, sha):
+    """Virtualize only Syft's known scratch directory, never payload paths."""
+    result = copy.deepcopy(document)
+    roots = []
+    prefix = scratch.as_posix().lstrip("/") + "/"
+    for row in result.get("files", []):
+        require(isinstance(row, dict), "scanner file record malformed")
+        name = row.get("fileName", "")
+        if isinstance(name, str) and name.lstrip("/").startswith(prefix):
+            suffix = name.lstrip("/")[len(prefix):]
+            require(re.fullmatch(r"syft-archive-contents-[0-9]+", suffix) is not None,
+                    "unexpected scanner scratch path")
+            require(row.get("fileTypes") == ["OTHER"], "scratch root is not a scanner directory")
+            require(isinstance(row.get("SPDXID"), str), "scratch root identity missing")
+            roots.append(row)
+    replacements = {}
+    for index, row in enumerate(sorted(roots, key=lambda value: value["SPDXID"])):
+        replacements[row["SPDXID"]] = f"SPDXRef-ScanRoot-{sha}-{index}"
+        row["fileName"] = "." if index == 0 else f"./.scanner-root-{index}"
+
+    def replace(value):
+        if isinstance(value, dict):
+            return {key: replace(child) for key, child in value.items()}
+        if isinstance(value, list):
+            return [replace(child) for child in value]
+        return replacements.get(value, value) if isinstance(value, str) else value
+
+    result = replace(result)
+    ids = [result["SPDXID"]] + [row.get("SPDXID") for group in ("packages", "files", "snippets") for row in result.get(group, [])]
+    require(all(isinstance(value, str) for value in ids) and len(ids) == len(set(ids)), "colliding normalized SPDX identity")
+    relationships = result.get("relationships", [])
+    require(isinstance(relationships, list) and all(isinstance(row, dict) for row in relationships), "malformed SPDX relationships")
+    for row in relationships:
+        require(row.get("spdxElementId") in ids and row.get("relatedSpdxElement") in ids, "unresolved SPDX relationship")
+    raw = json.dumps(result)
+    require(scratch.as_posix().lstrip("/") not in raw, "scanner scratch identity survived normalization")
+    if roots:
+        result["creationInfo"]["comment"] = result["creationInfo"].get("comment", "") + (
+            " Scanner-owned extraction-root directory names and their SPDX references were canonicalized to relative virtual roots; "
+            "payload file records and package inventories were not removed."
+        )
+    return result
+
+
 def generate(syft, artifact, output, temp_root):
     require(artifact.name in INSTALLERS and artifact.is_file() and not artifact.is_symlink(), "installer must be a regular canonical file")
     require(syft.is_file() and not syft.is_symlink(), "scanner must be an explicit regular executable")
@@ -116,6 +168,8 @@ def generate(syft, artifact, output, temp_root):
                                        cwd=root, env=env, capture_output=True, timeout=600, check=True)
             documents.append(json.loads(completed.stdout))
         result = merge_documents(*documents, artifact.name, sha)
+        result = portable_scanner_roots(result, root, sha)
+        _walk_metadata(result, public_safe=True)
         require(digest(artifact) == sha and digest(staged) == sha and digest(syft) == tool_sha, "installer or scanner changed during generation")
         raw = (json.dumps(result, indent=2, sort_keys=True) + "\n").encode()
         if output.exists():
@@ -137,7 +191,7 @@ def main():
     args = parser.parse_args()
     try:
         print(json.dumps(generate(Path(args.syft).absolute(), Path(args.artifact).absolute(), Path(args.output).absolute(), args.temp_root), sort_keys=True))
-    except (ValueError, OSError, subprocess.SubprocessError, json.JSONDecodeError) as exc:
+    except (ValueError, OSError, subprocess.SubprocessError, json.JSONDecodeError, ReleaseMetadataError) as exc:
         print(json.dumps({"ok": False, "error": type(exc).__name__, "artifact_audit": False}))
         return 1
     return 0

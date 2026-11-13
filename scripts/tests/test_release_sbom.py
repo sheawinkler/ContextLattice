@@ -13,7 +13,8 @@ import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from release_sbom import INSTALLERS, generate, merge_documents
+from release_sbom import INSTALLERS, generate, merge_documents, portable_scanner_roots
+from release_artifact_manifest import ReleaseMetadataError, _walk_metadata
 
 
 def document(files=None):
@@ -25,6 +26,72 @@ def document(files=None):
 
 
 class ReleaseSBOMTests(unittest.TestCase):
+    def test_existing_outer_record_uses_same_portability_and_collision_gate(self):
+        name = sorted(INSTALLERS)[0]
+        sha = "a" * 64
+        row = {"SPDXID": "SPDXRef-outer", "fileName": "/" + name, "checksums": [{"algorithm": "SHA256", "checksumValue": sha}]}
+        source = document([row])
+        result = portable_scanner_roots(merge_documents(source, source, name, sha), Path("/scanner/scratch"), sha)
+        self.assertEqual(result["files"][0]["fileName"], "./" + name)
+        _walk_metadata(result, public_safe=True)
+        duplicate = copy.deepcopy(source)
+        duplicate["packages"] = [{"SPDXID": row["SPDXID"]}]
+        with self.assertRaises(ValueError):
+            portable_scanner_roots(merge_documents(duplicate, source, name, sha), Path("/scanner/scratch"), sha)
+        unsafe = copy.deepcopy(source)
+        unsafe["files"].append({"SPDXID": "SPDXRef-unsafe", "fileName": "/unrelated/payload.txt"})
+        result = portable_scanner_roots(merge_documents(unsafe, source, name, sha), Path("/scanner/scratch"), sha)
+        with self.assertRaises(ReleaseMetadataError):
+            _walk_metadata(result, public_safe=True)
+
+    def test_virtual_root_updates_references_without_sanitizing_payload_paths(self):
+        root = Path("/scanner/scratch")
+        original = document([
+            {"SPDXID": "SPDXRef-root", "fileName": "scanner/scratch/syft-archive-contents-123", "fileTypes": ["OTHER"]},
+            {"SPDXID": "SPDXRef-real", "fileName": "payload/notes.txt", "checksums": [{"algorithm": "SHA256", "checksumValue": "b" * 64}]},
+        ])
+        original["relationships"] = [{"spdxElementId": "SPDXRef-root", "relatedSpdxElement": "SPDXRef-real", "relationshipType": "CONTAINS"}]
+        result = portable_scanner_roots(original, root, "a" * 64)
+        self.assertEqual(result["files"][0]["fileName"], ".")
+        self.assertEqual(result["relationships"][0]["spdxElementId"], result["files"][0]["SPDXID"])
+        self.assertEqual(result["files"][1], original["files"][1])
+        self.assertNotEqual(result["files"][0], original["files"][0])
+        wrong_root = copy.deepcopy(original)
+        wrong_root["files"][0]["fileName"] += "/not-a-root"
+        with self.assertRaises(ValueError):
+            portable_scanner_roots(wrong_root, root, "a" * 64)
+        collision = copy.deepcopy(original)
+        collision["files"][1]["SPDXID"] = "SPDXRef-ScanRoot-" + "a" * 64 + "-0"
+        with self.assertRaises(ValueError):
+            portable_scanner_roots(collision, root, "a" * 64)
+        payload = document([{"SPDXID": "SPDXRef-untrusted", "fileName": "/unrelated/payload.txt"}])
+        self.assertEqual(portable_scanner_roots(payload, root, "a" * 64)["files"], payload["files"])
+
+    @unittest.skipUnless(os.environ.get("CONTEXTLATTICE_TEST_SYFT_BINARY"), "explicit pinned native Syft required")
+    def test_real_sboms_pass_unchanged_closed_asset_audit(self):
+        repository = Path(__file__).resolve().parents[2]
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for name in sorted(INSTALLERS):
+                artifact = root / name
+                if name.endswith(".tar.gz"):
+                    with tarfile.open(artifact, "w:gz") as archive:
+                        info = tarfile.TarInfo("notes.txt")
+                        content = b"scanner fixture, not installed runtime evidence\n"
+                        info.size = len(content)
+                        archive.addfile(info, io.BytesIO(content))
+                else:
+                    artifact.write_bytes(b"opaque native fixture, not package acceptance\n")
+                generate(Path(os.environ["CONTEXTLATTICE_TEST_SYFT_BINARY"]), artifact, root / (name + ".sbom.spdx.json"), root)
+            identity = ["--dist-dir", str(root), "--lane", "public", "--channel", "stable", "--tag", "v5.1.2", "--commit", "a" * 40]
+            generated = subprocess.run([sys.executable, str(repository / "scripts/release_artifact_manifest.py"), *identity,
+                                        "--provenance-name", "ContextLattice-release-provenance.json", "--integrity-dir", str(root),
+                                        "--sbom-dir", str(root), "--public-safe", "--verify"], capture_output=True, text=True)
+            self.assertEqual(generated.returncode, 0, generated.stderr)
+            audited = subprocess.run([sys.executable, str(repository / "scripts/agent/audit-public-release-assets"), *identity], capture_output=True, text=True)
+            self.assertEqual(audited.returncode, 0, audited.stderr)
+            self.assertIn('"closed_asset_set": true', audited.stdout)
+
     @unittest.skipUnless(os.environ.get("CONTEXTLATTICE_TEST_SYFT_BINARY"), "explicit pinned native Syft required")
     def test_real_scanner_output_has_no_ephemeral_scan_root(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -45,7 +112,8 @@ class ReleaseSBOMTests(unittest.TestCase):
     def test_workflow_uses_reviewed_driver_without_modifying_payload_source(self):
         workflow = (Path(__file__).resolve().parents[2] / ".github/workflows/public-release-installers.yml").read_text()
         self.assertIn('RELEASE_SBOM_TOOL_COMMIT: ${{ github.workflow_sha }}', workflow)
-        self.assertIn('git show "$RELEASE_SBOM_TOOL_COMMIT:scripts/release_sbom.py" > "$driver"', workflow)
+        self.assertIn('for tool in release_sbom.py release_artifact_manifest.py; do', workflow)
+        self.assertIn('git show "$RELEASE_SBOM_TOOL_COMMIT:scripts/$tool" > "$tools_dir/$tool"', workflow)
         self.assertIn('python3 -I "$driver"', workflow)
         self.assertIn('--temp-root "$RUNNER_TEMP"', workflow)
         self.assertLess(workflow.index('python3 -I "$driver"'), workflow.index('name: Generate immutable final SBOM bindings'))
