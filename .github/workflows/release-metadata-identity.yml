@@ -1,0 +1,45 @@
+name: Release Metadata Identity
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/release-metadata-identity.yml'
+      - 'scripts/release_artifact_manifest.py'
+      - 'scripts/tests/test_release_artifact_stream_identity.py'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-metadata-identity-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  stream-identity:
+    name: stream-identity (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Verify native artifact stream identity
+        shell: python {0}
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+          TMPDIR: ${{ runner.temp }}
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+        run: |
+          import subprocess
+          import sys
+          subprocess.run([sys.executable, '-m', 'unittest', '-v',
+                          'scripts.tests.test_release_artifact_stream_identity'], check=True)

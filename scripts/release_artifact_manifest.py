@@ -15,6 +15,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import sys
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterable, Mapping
@@ -48,12 +49,100 @@ class ReleaseMetadataError(RuntimeError):
     """The release metadata is unsafe, incomplete, or not reproducible."""
 
 
+def _stream_identity(info: os.stat_result, *, cross_api: bool = False) -> tuple:
+    windows_cross_api = cross_api and os.name == "nt"
+    # Windows path stat synthesizes execute bits from the filename extension.
+    mode = info.st_mode & ~0o111 if windows_cross_api else info.st_mode
+    return (info.st_dev, info.st_ino, mode, info.st_nlink, info.st_size,
+            info.st_mtime_ns, None if windows_cross_api else info.st_ctime_ns,
+            getattr(info, "st_file_attributes", 0))
+
+
+def _open_read_descriptor(path: Path, flags: int) -> int:
+    if os.name != "nt":
+        return os.open(path, flags)
+    import ctypes
+    from ctypes import wintypes
+    import msvcrt
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    create = kernel.CreateFileW
+    create.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
+                       wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+    create.restype = wintypes.HANDLE
+    close = kernel.CloseHandle
+    close.argtypes, close.restype = [wintypes.HANDLE], wintypes.BOOL
+    # Read sharing only: refuse existing writers and block new writers/deletion
+    # for the stream lifetime. Never follow a leaf reparse point at open time.
+    handle = create(str(path), 0x80000000, 1, None, 3, 0x80 | 0x00200000, None)
+    if handle == wintypes.HANDLE(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        return msvcrt.open_osfhandle(handle, flags)
+    except BaseException:
+        close(handle)
+        raise
+
+
+def _descriptor_change_time(descriptor: int) -> int | None:
+    if os.name != "nt":
+        return None
+    import ctypes
+    from ctypes import wintypes
+    import msvcrt
+
+    class BasicInfo(ctypes.Structure):
+        _fields_ = [(name, ctypes.c_longlong) for name in
+                    ("CreationTime", "LastAccessTime", "LastWriteTime", "ChangeTime")]
+        _fields_.append(("FileAttributes", wintypes.DWORD))
+
+    query = ctypes.WinDLL("kernel32", use_last_error=True).GetFileInformationByHandleEx
+    query.argtypes = [wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD]
+    query.restype = wintypes.BOOL
+    info = BasicInfo()
+    if not query(msvcrt.get_osfhandle(descriptor), 0, ctypes.byref(info), ctypes.sizeof(info)):
+        raise ctypes.WinError(ctypes.get_last_error())
+    if info.ChangeTime <= 0:
+        raise ReleaseMetadataError("release artifact change-time observation is unavailable")
+    # Python's Windows st_ctime is creation time, not metadata change time.
+    return info.ChangeTime
+
+
 def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    """Hash a regular stream, refusing observed identity or metadata changes."""
+    descriptor = None
+    try:
+        before = path.lstat()
+        if (not stat.S_ISREG(before.st_mode)
+                or getattr(before, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)):
+            raise ReleaseMetadataError("release artifact is not a regular nonsymlink file")
+        flags = (os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+                 | getattr(os, "O_BINARY", 0))
+        descriptor = _open_read_descriptor(path, flags)
+        stream = os.fdopen(descriptor, "rb")
+        descriptor = None
+        with stream as handle:
+            opened = os.fstat(handle.fileno())
+            changed_at = _descriptor_change_time(handle.fileno())
+            if _stream_identity(opened, cross_api=True) != _stream_identity(before, cross_api=True):
+                raise ReleaseMetadataError("release artifact changed before reading")
+            digest, size = hashlib.sha256(), 0
+            while chunk := handle.read(min(1024 * 1024, before.st_size - size + 1)):
+                size += len(chunk)
+                if size > before.st_size:
+                    raise ReleaseMetadataError("release artifact grew while reading")
+                digest.update(chunk)
+            if (size != before.st_size
+                    or _stream_identity(os.fstat(handle.fileno())) != _stream_identity(opened)
+                    or _descriptor_change_time(handle.fileno()) != changed_at
+                    or _stream_identity(path.lstat()) != _stream_identity(before)):
+                raise ReleaseMetadataError("release artifact changed while reading")
+        return digest.hexdigest()
+    except OSError:
+        raise ReleaseMetadataError("release artifact could not be read as a stable regular file") from None
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
 
 
 def _portable_asset_name(name: str) -> str:
