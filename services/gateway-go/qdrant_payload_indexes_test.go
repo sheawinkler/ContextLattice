@@ -463,6 +463,14 @@ func TestQdrantWriteDimensionHonorsAutoCreatePolicyAndObservedDimension(t *testi
 
 			// Reproduce state left by a prior fixture if the listener address is reused.
 			nativeQdrantSetCachedDim(qdrant.URL, "contextlattice_notes", 768)
+			key := nativeQdrantCollectionDimCacheKey(qdrant.URL, "contextlattice_notes")
+			clearFixtureCache := func() {
+				nativeQdrantDimCacheMu.Lock()
+				delete(nativeQdrantDimCache, key)
+				nativeQdrantDimCacheMu.Unlock()
+			}
+			clearFixtureCache()
+			t.Cleanup(clearFixtureCache)
 			dim, err := nativeQdrantWriteEmbeddingDimension(context.Background(), qdrant.Client(), qdrant.URL, "contextlattice_notes")
 			if tc.wantErr != nil {
 				if !errors.Is(err, tc.wantErr) {
