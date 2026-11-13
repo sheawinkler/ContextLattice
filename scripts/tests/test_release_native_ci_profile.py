@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 from pathlib import Path
+import subprocess
 import sys
 import unittest
 from unittest import mock
@@ -47,6 +48,26 @@ class NativeCIProfileTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "distribution_package_hash_mismatch"):
                 PROFILE.unpack_reviewed_data(package, "0" * 64, Path("unused"), profiles=True)
         run.assert_not_called()
+
+    def test_waits_for_ingestion_without_repeating_probes_or_accepting_old_denials(self):
+        tools = [{"tool": name, "returncode": 1, "stderr": "bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted\n", "started_epoch": at, "completed_epoch": at + .2}
+                 for name, at in (("msiinfo", 100), ("msiextract", 102))]
+        message = 'apparmor="DENIED" operation="capable" profile="unprivileged_userns" comm="bwrap" capname="net_admin"'
+        rows = [{"MESSAGE": message, "__REALTIME_TIMESTAMP": str(int(at * 1_000_000))} for at in (100.1, 102.1)]
+        report = {}
+        with mock.patch.object(PROFILE.subprocess, "run", side_effect=[subprocess.CompletedProcess([], 1, b"", b""),
+                subprocess.CompletedProcess([], 0, b"\n".join(json.dumps(row).encode() for row in rows), b"")]) as run, \
+                mock.patch.object(PROFILE, "probe") as probe, mock.patch.object(PROFILE.time, "sleep"):
+            self.assertEqual(PROFILE.wait_attributed_denials({"tools": tools}, report), rows)
+        self.assertEqual(report["kernel_read_attempts"], 2)
+        self.assertEqual(run.call_count, 2)
+        probe.assert_not_called()
+        self.assertTrue(all(call.args[0][2] == "/usr/bin/journalctl" for call in run.call_args_list))
+        stale = [{**row, "__REALTIME_TIMESTAMP": "1"} for row in rows]
+        with mock.patch.object(PROFILE.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, b"\n".join(json.dumps(row).encode() for row in stale), b"")), \
+                mock.patch.object(PROFILE.time, "monotonic", side_effect=[0, 3]):
+            observed = PROFILE.wait_attributed_denials({"tools": tools}, {})
+        self.assertFalse(PROFILE.attributed_denial({"tools": tools}, observed))
 
     def test_only_compiled_distribution_add_no_global_policy_fallback(self):
         source = (ROOT / "scripts/release_native_ci_profile.py").read_text()
