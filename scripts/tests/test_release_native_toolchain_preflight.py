@@ -45,11 +45,17 @@ class NativeToolchainPreflightTests(unittest.TestCase):
                 self.assertNotIn("shell", call.kwargs)
             self.assertEqual(report["tools"][0]["stderr"], "fixture denied")
             self.assertFalse(report["artifact_audit"])
+            self.assertEqual(report["bwrap"]["executable"], str(tool.resolve()))
+            self.assertEqual(len(report["bwrap"]["sha256"]), 64)
+            self.assertLessEqual(report["tools"][0]["started_epoch"], report["tools"][0]["completed_epoch"])
 
     def test_workflow_cannot_publish_or_disable_security_policy(self) -> None:
         workflow = (ROOT / ".github/workflows/release-native-toolchain-preflight.yml").read_text()
         self.assertIn("contents: read", workflow)
         self.assertIn("runs-on: ubuntu-24.04", workflow)
         self.assertIn("timeout-minutes: 5", workflow)
+        self.assertIn("python3 -m unittest scripts.tests.test_release_native_toolchain_preflight", workflow)
+        self.assertIn("native-toolchain-kernel-denials.jsonl", workflow)
+        self.assertIn("--since", workflow)
         for forbidden in ("contents: write", "gh release", "sysctl", "apparmor_parser", "chmod", "chown"):
             self.assertNotIn(forbidden, workflow)
