@@ -122,30 +122,32 @@ type decisionRef struct {
 }
 
 type decisionChange struct {
-	SchemaID           string           `json:"schema_id"`
-	DecisionChangeID   string           `json:"decision_change_id"`
-	Project            string           `json:"project"`
-	ObjectiveID        string           `json:"objective_id"`
-	TaskIdentityID     string           `json:"task_identity_id,omitempty"`
-	SessionID          string           `json:"session_id,omitempty"`
-	IdempotencyKey     string           `json:"idempotency_key"`
-	Before             decisionRef      `json:"before"`
-	After              decisionRef      `json:"after"`
-	TriggerEvidence    []map[string]any `json:"trigger_evidence"`
-	ConfidenceBefore   float64          `json:"confidence_before"`
-	ConfidenceAfter    float64          `json:"confidence_after"`
-	ConfidenceDelta    float64          `json:"confidence_delta"`
-	Alternatives       []decisionRef    `json:"alternatives"`
-	Actor              string           `json:"actor"`
-	Rationale          string           `json:"rationale"`
-	ReasonCode         string           `json:"reason_code"`
-	Verification       map[string]any   `json:"verification"`
-	OccurredAt         string           `json:"occurred_at"`
-	RecordedAt         string           `json:"recorded_at"`
-	PageCursor         string           `json:"page_cursor,omitempty"`
-	ledgerSequence     uint64
-	idempotentReplay   bool
-	occurredAtExplicit bool
+	SchemaID              string                 `json:"schema_id"`
+	DecisionChangeID      string                 `json:"decision_change_id"`
+	Project               string                 `json:"project"`
+	ObjectiveID           string                 `json:"objective_id"`
+	TaskIdentityID        string                 `json:"task_identity_id,omitempty"`
+	SessionID             string                 `json:"session_id,omitempty"`
+	IdempotencyKey        string                 `json:"idempotency_key"`
+	Before                decisionRef            `json:"before"`
+	After                 decisionRef            `json:"after"`
+	TriggerEvidence       []map[string]any       `json:"trigger_evidence"`
+	ConfidenceBefore      float64                `json:"confidence_before"`
+	ConfidenceAfter       float64                `json:"confidence_after"`
+	ConfidenceDelta       float64                `json:"confidence_delta"`
+	Alternatives          []decisionRef          `json:"alternatives"`
+	Actor                 string                 `json:"actor"`
+	Rationale             string                 `json:"rationale"`
+	ReasonCode            string                 `json:"reason_code"`
+	Verification          map[string]any         `json:"verification"`
+	OccurredAt            string                 `json:"occurred_at"`
+	RecordedAt            string                 `json:"recorded_at"`
+	PageCursor            string                 `json:"page_cursor,omitempty"`
+	Applicability         *decisionApplicability `json:"applicability,omitempty"`
+	RequestTaskIdentityID string                 `json:"request_task_identity_id,omitempty"`
+	ledgerSequence        uint64
+	idempotentReplay      bool
+	occurredAtExplicit    bool
 }
 
 type decisionChangeCursor struct {
@@ -958,6 +960,12 @@ func decisionConfidence(payload map[string]any, name string, nested map[string]a
 }
 
 func normalizeDecisionChange(payload map[string]any) (decisionChange, objectiveTransition, error) {
+	if err := validateRawDecisionApplicability(payload); err != nil {
+		return decisionChange{}, objectiveTransition{}, err
+	}
+	if _, present := payload["request_task_identity_id"]; present {
+		return decisionChange{}, objectiveTransition{}, errors.New("request_task_identity_id is server-computed")
+	}
 	if err := rejectContinuitySecrets(payload); err != nil {
 		return decisionChange{}, objectiveTransition{}, err
 	}
@@ -1052,6 +1060,20 @@ func normalizeDecisionChange(payload map[string]any) (decisionChange, objectiveT
 		Actor:           actor, Rationale: rationale, ReasonCode: reasonCode, Verification: verification, OccurredAt: occurredAt,
 		occurredAtExplicit: occurredAtExplicit,
 	}
+	if raw, present := payload["applicability"]; present {
+		requestTask, ok := payload["task_identity_id"].(string)
+		if !ok || !decisionApplicabilityText(requestTask, 160) || !continuityIDPattern.MatchString(requestTask) {
+			return decisionChange{}, objectiveTransition{}, errors.New("typed applicability requires an exact task_identity_id")
+		}
+		change.RequestTaskIdentityID = requestTask
+		change.Applicability, err = normalizeDecisionApplicability(raw)
+		if err != nil {
+			return decisionChange{}, objectiveTransition{}, err
+		}
+		if err := validateDecisionApplicabilityShape(change); err != nil {
+			return decisionChange{}, objectiveTransition{}, err
+		}
+	}
 	transition, err := normalizeObjectiveTransition(map[string]any{
 		"project": project, "objective_id": objectiveID, "objective": objective,
 		"transition_id":   "ot_" + sha256Hex(strings.ToLower(project) + "\x00decision-transition\x00" + idempotencyKey)[:24],
@@ -1070,54 +1092,106 @@ func normalizeDecisionChange(payload map[string]any) (decisionChange, objectiveT
 }
 
 func (s *continuityStore) recordDecisionChange(payload map[string]any) (decisionChange, objectiveTransition, error) {
+	return s.recordDecisionChangeWithOwner(payload, nil)
+}
+
+func (s *continuityStore) recordDecisionChangeWithOwner(payload map[string]any, validateOwner func(decisionChange) error) (decisionChange, objectiveTransition, error) {
 	change, transition, err := normalizeDecisionChange(payload)
 	if err != nil {
 		return decisionChange{}, objectiveTransition{}, err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	change.TaskIdentityID, err = s.resolveTaskIdentityLinkLocked(change.TaskIdentityID, change.Project)
-	if err != nil {
-		return decisionChange{}, objectiveTransition{}, err
-	}
-	transition.TaskIdentityID = change.TaskIdentityID
-	if existingIndex, exists := s.decisionIdempotency[continuityIdempotencyIndexKey(change.Project, change.IdempotencyKey)]; exists {
-		if existingIndex < 0 || existingIndex >= len(s.decisionChanges) {
-			return decisionChange{}, objectiveTransition{}, errors.New("decision change idempotency index is corrupt")
+	ownerValidated, validatedTask := false, ""
+	for {
+		// Historical retries compare immutable request selection, not today's merge
+		// target. Returning a stored receipt is not a new owner-currentness claim.
+		if index, exists := s.decisionIdempotency[continuityIdempotencyIndexKey(change.Project, change.IdempotencyKey)]; exists {
+			if index < 0 || index >= len(s.decisionChanges) {
+				return decisionChange{}, objectiveTransition{}, errors.New("decision change idempotency index is corrupt")
+			}
+			existing := s.decisionChanges[index]
+			if existing.Applicability != nil || change.Applicability != nil {
+				transitionIndex, found := s.decisionTransitionIndex[continuityScopedIndexKey(change.Project, existing.DecisionChangeID)]
+				if !found || transitionIndex < 0 || transitionIndex >= len(s.objectiveTransitions) {
+					return decisionChange{}, objectiveTransition{}, errors.New("decision objective transition index is corrupt")
+				}
+				candidate, companion := change, transition
+				candidate.TaskIdentityID, companion.TaskIdentityID = existing.TaskIdentityID, existing.TaskIdentityID
+				storedTransition := s.objectiveTransitions[transitionIndex]
+				if !decisionChangeEquivalent(existing, candidate) || !objectiveTransitionEquivalent(storedTransition, companion) {
+					return decisionChange{}, objectiveTransition{}, errors.New("idempotency_key already exists with different decision provenance")
+				}
+				existing.idempotentReplay, storedTransition.idempotentReplay = true, true
+				return existing, storedTransition, nil
+			}
 		}
-		existingChange := s.decisionChanges[existingIndex]
-		transitionIndex, transitionExists := s.decisionTransitionIndex[continuityScopedIndexKey(change.Project, existingChange.DecisionChangeID)]
-		if !transitionExists || transitionIndex < 0 || transitionIndex >= len(s.objectiveTransitions) {
-			return decisionChange{}, objectiveTransition{}, errors.New("decision objective transition index is corrupt")
+		change.TaskIdentityID, err = s.resolveTaskIdentityLinkLocked(change.TaskIdentityID, change.Project)
+		if err != nil {
+			return decisionChange{}, objectiveTransition{}, err
 		}
-		existingTransition := s.objectiveTransitions[transitionIndex]
-		if !decisionChangeEquivalent(existingChange, change) || !objectiveTransitionEquivalent(existingTransition, transition) {
-			return decisionChange{}, objectiveTransition{}, errors.New("idempotency_key already exists with different decision provenance")
+		transition.TaskIdentityID = change.TaskIdentityID
+		if err := s.validateDecisionApplicabilityScopeLocked(change); err != nil {
+			return decisionChange{}, objectiveTransition{}, err
 		}
-		existingChange.idempotentReplay = true
-		existingTransition.idempotentReplay = true
-		return existingChange, existingTransition, nil
+		if ownerValidated && validatedTask != change.TaskIdentityID {
+			return decisionChange{}, objectiveTransition{}, errors.New("decision task scope changed during owner validation")
+		}
+		if existingIndex, exists := s.decisionIdempotency[continuityIdempotencyIndexKey(change.Project, change.IdempotencyKey)]; exists {
+			if existingIndex < 0 || existingIndex >= len(s.decisionChanges) {
+				return decisionChange{}, objectiveTransition{}, errors.New("decision change idempotency index is corrupt")
+			}
+			existingChange := s.decisionChanges[existingIndex]
+			transitionIndex, transitionExists := s.decisionTransitionIndex[continuityScopedIndexKey(change.Project, existingChange.DecisionChangeID)]
+			if !transitionExists || transitionIndex < 0 || transitionIndex >= len(s.objectiveTransitions) {
+				return decisionChange{}, objectiveTransition{}, errors.New("decision objective transition index is corrupt")
+			}
+			existingTransition := s.objectiveTransitions[transitionIndex]
+			if !decisionChangeEquivalent(existingChange, change) || !objectiveTransitionEquivalent(existingTransition, transition) {
+				return decisionChange{}, objectiveTransition{}, errors.New("idempotency_key already exists with different decision provenance")
+			}
+			existingChange.idempotentReplay = true
+			existingTransition.idempotentReplay = true
+			return existingChange, existingTransition, nil
+		}
+		if _, exists := s.decisionChangeIDs[change.DecisionChangeID]; exists {
+			return decisionChange{}, objectiveTransition{}, errors.New("decision_change_id already exists")
+		}
+		if _, exists := s.objectiveTransitionIDs[transition.TransitionID]; exists {
+			return decisionChange{}, objectiveTransition{}, errors.New("decision objective transition id already exists")
+		}
+		if change.Applicability != nil && !ownerValidated {
+			if validateOwner == nil {
+				return decisionChange{}, objectiveTransition{}, errDecisionApplicabilityOwner
+			}
+			validatedTask = change.TaskIdentityID
+			// Never enter the memory writer fence while holding the continuity lock.
+			s.mu.Unlock()
+			err := func() error {
+				defer s.mu.Lock()
+				return validateOwner(change)
+			}()
+			if err != nil {
+				return decisionChange{}, objectiveTransition{}, err
+			}
+			ownerValidated = true
+			continue
+		}
+		bundle := continuityDecisionBundle{
+			SchemaID:            continuityDecisionBundleSchemaID,
+			DecisionChange:      change,
+			ObjectiveTransition: transition,
+		}
+		entries, err := s.appendLocked([]continuityLedgerAppend{{kind: continuityLedgerKindDecisionBundle, payload: bundle}})
+		if err != nil {
+			return decisionChange{}, objectiveTransition{}, err
+		}
+		change.RecordedAt = entries[0].RecordedAt
+		transition.RecordedAt = entries[0].RecordedAt
+		change.ledgerSequence = entries[0].Sequence
+		transition.ledgerSequence = entries[0].Sequence
+		return change, transition, nil
 	}
-	if _, exists := s.decisionChangeIDs[change.DecisionChangeID]; exists {
-		return decisionChange{}, objectiveTransition{}, errors.New("decision_change_id already exists")
-	}
-	if _, exists := s.objectiveTransitionIDs[transition.TransitionID]; exists {
-		return decisionChange{}, objectiveTransition{}, errors.New("decision objective transition id already exists")
-	}
-	bundle := continuityDecisionBundle{
-		SchemaID:            continuityDecisionBundleSchemaID,
-		DecisionChange:      change,
-		ObjectiveTransition: transition,
-	}
-	entries, err := s.appendLocked([]continuityLedgerAppend{{kind: continuityLedgerKindDecisionBundle, payload: bundle}})
-	if err != nil {
-		return decisionChange{}, objectiveTransition{}, err
-	}
-	change.RecordedAt = entries[0].RecordedAt
-	transition.RecordedAt = entries[0].RecordedAt
-	change.ledgerSequence = entries[0].Sequence
-	transition.ledgerSequence = entries[0].Sequence
-	return change, transition, nil
 }
 
 func decisionChangeChronologyNewer(left decisionChange, right decisionChange) bool {
@@ -1402,7 +1476,12 @@ func (s *server) memoryDecisionChanges(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"ok": false, "error": "decision_change_idempotency_required", "detail": "provide idempotency_key, Idempotency-Key, or decision_change_id"})
 			return
 		}
-		change, transition, err := s.continuity.recordDecisionChange(payload)
+		change, transition, err := s.continuity.recordDecisionChangeWithOwner(payload, func(change decisionChange) error {
+			if !s.memoryDerivationAvailable() {
+				return errDecisionApplicabilityOwner
+			}
+			return s.memoryStore.validateDecisionApplicabilityOwner(r.Context(), change.Applicability)
+		})
 		if err != nil {
 			writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"ok": false, "error": "invalid_decision_change", "detail": err.Error()})
 			return

@@ -271,6 +271,10 @@ Adapter, trace, discovery, and adoption commands remain available as advanced
 harness-integration and debugging surfaces; agents do not need them for the
 normal task lifecycle.
 
+For explicit decision-bound continuation, see [Decision Evidence Continuity](decision-evidence-continuity.md).
+Session start/ensure/event accept `--payload-file`; typed writes negotiate server
+support and confirm receipts. `contextlattice resume` stays the primary read path.
+
 ## Policy Laboratory CLI
 
 Use the CLI as the primary read surface for policy-lab status:
