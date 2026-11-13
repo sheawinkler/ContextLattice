@@ -21,6 +21,8 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+      - name: Check diagnostic contracts
+        run: python3 -m unittest scripts.tests.test_release_native_toolchain_preflight
       - name: Install reviewed native tool versions
         run: |
           set -euo pipefail
@@ -33,14 +35,33 @@ jobs:
       - name: Probe the real audit containment without parsing an installer
         run: |
           set +e
+          date +%s > native-probe-started
+          {
+            uname -a
+            id
+            cat /proc/self/attr/current
+            cat /sys/module/apparmor/parameters/enabled
+            cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns
+            sudo cat /sys/kernel/security/apparmor/profiles
+            dpkg-query -W apparmor bubblewrap msitools
+            stat -c '%n %U %G %a' /usr /usr/bin /usr/bin/bwrap /usr/bin/msiinfo /usr/bin/msiextract
+            getcap /usr/bin/bwrap /usr/bin/msiinfo /usr/bin/msiextract
+          } > native-toolchain-identity.txt 2>&1
           python3 scripts/release_native_toolchain_preflight.py > native-toolchain-preflight.json
           result=$?
+          sudo journalctl -k --since "@$(cat native-probe-started)" --no-pager --output=json \
+            --grep='apparmor="DENIED".*(bwrap|unprivileged_userns)' > native-toolchain-kernel-denials.jsonl 2> native-toolchain-kernel-read.stderr
           cat native-toolchain-preflight.json
+          cat native-toolchain-kernel-denials.jsonl
           exit "$result"
       - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: native-toolchain-preflight
-          path: native-toolchain-preflight.json
+          path: |
+            native-toolchain-preflight.json
+            native-toolchain-identity.txt
+            native-toolchain-kernel-denials.jsonl
+            native-toolchain-kernel-read.stderr
           if-no-files-found: error
           retention-days: 7

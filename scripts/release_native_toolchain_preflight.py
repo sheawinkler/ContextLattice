@@ -4,14 +4,17 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import hashlib
 import json
+import os
 from pathlib import Path
 import runpy
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -25,6 +28,8 @@ def probe(root: Path) -> dict[str, object]:
         "artifact_audit": False,
         "cwd": str(Path.cwd()),
         "tools": [],
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "pid": os.getpid(),
     }
     if sys.platform != "linux":
         report["error"] = "native_probe_requires_linux"
@@ -33,6 +38,8 @@ def probe(root: Path) -> dict[str, object]:
     if any(value is None for value in paths.values()):
         report["error"] = "native_tool_unavailable"
         return report
+    bwrap = Path(paths["bwrap"]).resolve()
+    report["bwrap"] = {"executable": str(bwrap), "sha256": hashlib.sha256(bwrap.read_bytes()).hexdigest()}
     audit_path = root / "scripts/agent/audit-public-installer-package"
     audit = runpy.run_path(str(audit_path), run_name="native_preflight_import")
     report["audit_helper_sha256"] = hashlib.sha256(audit_path.read_bytes()).hexdigest()
@@ -57,6 +64,7 @@ def probe(root: Path) -> dict[str, object]:
                 "executable": str(tool),
                 "sha256": hashlib.sha256(tool.read_bytes()).hexdigest(),
                 "argv": argv,
+                "started_epoch": time.time(),
             }
             try:
                 result = subprocess.run(
@@ -72,6 +80,7 @@ def probe(root: Path) -> dict[str, object]:
                 })
             except (OSError, subprocess.SubprocessError) as exc:
                 row.update({"returncode": None, "error": type(exc).__name__})
+            row["completed_epoch"] = time.time()
             rows.append(row)
     report["tools"] = rows
     report["ok"] = bool(rows) and all(row["returncode"] == 0 for row in rows)
