@@ -43,9 +43,11 @@ def run(argv: list[str], *, cwd: Path | None = None, data: bytes | None = None) 
 
 
 def trusted_runner(environment: dict[str, str], system: str, release: str, uid: int) -> bool:
+    repository = environment.get("GITHUB_REPOSITORY", "")
     return (system == "linux" and uid != 0 and release == 'ubuntu:24.04' and
             environment.get("GITHUB_ACTIONS") == "true" and environment.get("RUNNER_ENVIRONMENT") == "github-hosted" and
-            environment.get("GITHUB_REPOSITORY") in {"sheawinkler/ContextLattice", "sheawinkler/http-context-and-memory-orchestrator"} and
+            re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository) is not None and
+            environment.get("GITHUB_WORKFLOW_REF", "").startswith(repository + "/.github/workflows/") and
             environment.get("GITHUB_EVENT_NAME") in {"pull_request", "workflow_dispatch", "push"} and
             environment.get("CONTEXTLATTICE_OWNED_NATIVE_CI") == "true")
 
@@ -123,6 +125,9 @@ def prepare(report: dict) -> dict:
     require(run(["/usr/bin/dpkg-query", "-W", "-f=${Version}", "apparmor"]).decode() == VERSION, "unreviewed_parser_version")
     before = probe(ROOT)
     report.update({"before": before, "binary_identities": identities, "kernel_denials": [], "kernel_read_attempts": 0})
+    if before["ok"]:
+        require(Path("/proc/sys/kernel/apparmor_restrict_unprivileged_userns").read_text().strip() == "1", "global_restriction_changed")
+        return {**report, "ok": True, "preparation": "not_needed", "global_restriction_unchanged": True}
     # Journald ingestion is asynchronous. Wait only for the already-executed
     # probes' exact bounded events; never retry probes or loosen attribution.
     rows = wait_attributed_denials(before, report)

@@ -37,12 +37,9 @@ jobs:
           sudo apt-get install -y msitools=0.103+repack-1build3 bubblewrap=0.9.0-1ubuntu0.3
           test "$(dpkg-query -W msitools | cut -f2)" = '0.103+repack-1build3'
           test "$(dpkg-query -W bubblewrap | cut -f2)" = '0.9.0-1ubuntu0.3'
-      - name: Probe the real audit containment without parsing an installer
-        id: baseline
-        continue-on-error: true
+      - name: Record owned runner identity before the single native probe
         run: |
           set +e
-          date +%s > native-probe-started
           {
             uname -a
             id
@@ -54,26 +51,6 @@ jobs:
             stat -c '%n %U %G %a' /usr /usr/bin /usr/bin/bwrap /usr/bin/msiinfo /usr/bin/msiextract
             getcap /usr/bin/bwrap /usr/bin/msiinfo /usr/bin/msiextract
           } > native-toolchain-identity.txt 2>&1
-          python3 scripts/release_native_toolchain_preflight.py > native-toolchain-preflight.json
-          result=$?
-          # Only the journal read needs privilege; output stays runner-owned.
-          # shellcheck disable=SC2024
-          sudo journalctl -k --since "@$(cat native-probe-started)" --no-pager --output=json \
-            --grep='apparmor="DENIED".*(bwrap|unprivileged_userns)' > native-toolchain-kernel-denials.jsonl 2> native-toolchain-kernel-read.stderr
-          cat native-toolchain-preflight.json
-          cat native-toolchain-kernel-denials.jsonl
-          exit "$result"
-      - name: Prepare the reviewed distribution profile only after fresh attributed denial
-        if: steps.baseline.outcome == 'failure'
-        env:
-          CONTEXTLATTICE_OWNED_NATIVE_CI: 'true'
-        run: |
-          set -euo pipefail
-          python3 scripts/release_native_ci_profile.py --prepare-github-hosted-ci | tee native-toolchain-profile.json
-      - name: Require contained tools and fixed isolation negatives
-        run: |
-          python3 scripts/release_native_toolchain_preflight.py > native-toolchain-final.json
-          python3 scripts/release_native_containment_holdouts.py > native-toolchain-holdouts.json
       - name: Verify the workflow/source tooling join
         env:
           NATIVE_TOOLING_COMMIT: ${{ github.workflow_sha }}
@@ -84,13 +61,7 @@ jobs:
         with:
           name: native-toolchain-preflight
           path: |
-            native-toolchain-preflight.json
             native-toolchain-identity.txt
-            native-toolchain-kernel-denials.jsonl
-            native-toolchain-kernel-read.stderr
-            native-toolchain-profile.json
-            native-toolchain-final.json
-            native-toolchain-holdouts.json
             ${{ runner.temp }}/native-containment-*.json
           if-no-files-found: error
           retention-days: 7

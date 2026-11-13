@@ -55,7 +55,7 @@ class NativeToolchainPreflightTests(unittest.TestCase):
         self.assertIn("runs-on: ubuntu-24.04", workflow)
         self.assertIn("timeout-minutes: 5", workflow)
         self.assertIn("python3 -m unittest scripts.tests.test_release_native_toolchain_preflight", workflow)
-        self.assertIn("native-toolchain-kernel-denials.jsonl", workflow)
-        self.assertIn("--since", workflow)
+        self.assertIn("native-containment-*.json", workflow)
+        self.assertIn("python3 scripts/release_native_ci_gate.py", workflow)
         for forbidden in ("contents: write", "gh release", "sysctl", "apparmor_parser", "chmod", "chown"):
             self.assertNotIn(forbidden, workflow)

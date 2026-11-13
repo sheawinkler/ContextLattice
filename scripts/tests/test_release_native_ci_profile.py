@@ -19,6 +19,7 @@ SPEC.loader.exec_module(PROFILE)
 class NativeCIProfileTests(unittest.TestCase):
     def test_refuses_default_non_ci_root_and_wrong_runner(self):
         env = {"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted", "GITHUB_REPOSITORY": "sheawinkler/ContextLattice",
+               "GITHUB_WORKFLOW_REF": "sheawinkler/ContextLattice/.github/workflows/preflight.yml@refs/heads/main",
                "GITHUB_EVENT_NAME": "pull_request", "CONTEXTLATTICE_OWNED_NATIVE_CI": "true"}
         self.assertTrue(PROFILE.trusted_runner(env, "linux", "ubuntu:24.04", 1001))
         for key in env:
