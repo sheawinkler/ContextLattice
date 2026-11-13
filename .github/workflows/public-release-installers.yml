@@ -244,7 +244,7 @@ jobs:
   build-linux-and-msi:
     name: Build Linux bundle and Windows MSI
     if: github.repository == 'sheawinkler/ContextLattice'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: verify-release
     steps:
       - name: Checkout exact release tag
@@ -294,8 +294,10 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          msitools_version='0.103-3build1'
-          bubblewrap_version='0.9.0-1ubuntu0.1'
+          . /etc/os-release
+          test "${ID}:${VERSION_ID}" = 'ubuntu:24.04'
+          msitools_version='0.103+repack-1build3'
+          bubblewrap_version='0.9.0-1ubuntu0.3'
           sudo apt-get install -y "msitools=${msitools_version}" "bubblewrap=${bubblewrap_version}"
           test "$(dpkg-query -W -f='${Version}' msitools)" = "$msitools_version"
           test "$(dpkg-query -W -f='${Version}' bubblewrap)" = "$bubblewrap_version"
@@ -759,7 +761,7 @@ jobs:
   audit-remote-linux-msi:
     name: Independently audit downloaded remote Linux and MSI packages
     if: github.repository == 'sheawinkler/ContextLattice'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs:
       - verify-release
       - publish-assets
@@ -783,8 +785,10 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          msitools_version='0.103-3build1'
-          bubblewrap_version='0.9.0-1ubuntu0.1'
+          . /etc/os-release
+          test "${ID}:${VERSION_ID}" = 'ubuntu:24.04'
+          msitools_version='0.103+repack-1build3'
+          bubblewrap_version='0.9.0-1ubuntu0.3'
           sudo apt-get install -y "msitools=${msitools_version}" "bubblewrap=${bubblewrap_version}"
           test "$(dpkg-query -W -f='${Version}' msitools)" = "$msitools_version"
           test "$(dpkg-query -W -f='${Version}' bubblewrap)" = "$bubblewrap_version"
