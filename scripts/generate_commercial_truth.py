@@ -777,7 +777,7 @@ def update_premium(text: str, contract: dict[str, Any]) -> str:
     version = contract["product"]["version"]
     intro = marker_block(
         "premium-release",
-        f'<p class="muted-note">Current release: <code>v{version}</code>. The CLI is the primary product interface; the dashboard is the account and visibility companion.</p>',
+        f'<p class="muted-note">Current public release: <code>v{version}</code>. The CLI is the primary product interface; the dashboard is the account and visibility companion.</p>',
         indent="      ",
     )
     text = replace_or_bootstrap(
@@ -1068,7 +1068,7 @@ def update_cli(text: str, contract: dict[str, Any]) -> str:
     version = contract["product"]["version"]
     summary = marker_block(
         "cli-release-summary",
-        f'<p class="muted-note">Current release: <code>v{version}</code>. The CLI is the primary product interface; dashboard, HTTP, and MCP remain companion surfaces.</p>',
+        f'<p class="muted-note">Current public release: <code>v{version}</code>. The CLI is the primary product interface; dashboard, HTTP, and MCP remain companion surfaces.</p>',
         indent="      ",
     )
     text = replace_or_bootstrap(
