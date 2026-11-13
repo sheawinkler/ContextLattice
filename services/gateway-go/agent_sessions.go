@@ -1805,6 +1805,15 @@ func (s *agentSessionStore) startOrReuseScopedLocked(payload map[string]any, sco
 		}
 	}
 	if ensure && explicitID == "" {
+		// Enrichment may supply a lane for an older task whose retained session
+		// predates lanes. Never turn that mismatch into a new public owner. This
+		// probe only denies unsupported custody; it cannot grant cross-lane reuse.
+		ownerProbe := cloneAnyMap(payload)
+		delete(ownerProbe, "execution_lane_id")
+		delete(ownerProbe, "executionLaneId")
+		if candidate := s.findReusableLocked(ownerProbe, now, taskLinks...); len(candidate) > 0 && validatePublicAgentSessionScope(candidate) != nil {
+			return nil, false, errAgentSessionReuseConflict
+		}
 		if existing := s.findReusableLocked(payload, now, taskLinks...); len(existing) > 0 {
 			if err := validatePublicAgentSessionScope(existing); err != nil {
 				return nil, false, errAgentSessionReuseConflict

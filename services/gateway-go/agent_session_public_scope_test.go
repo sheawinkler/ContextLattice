@@ -234,3 +234,21 @@ func TestPublicSessionValidTypedEnsureCannotReinterpretUnsupportedOwner(t *testi
 		})
 	}
 }
+
+func TestPublicSessionOwnerProbeNeverGrantsCrossLaneReuse(t *testing.T) {
+	_, store, payload, binding := agentDecisionFixture(t)
+	payload["execution_lane_id"] = "lane_original"
+	if _, _, err := store.startOrReuseDecisionScoped(payload, newAgentSessionPublicScopeOwnership("alpha"), binding); err != nil {
+		t.Fatal(err)
+	}
+	id := anyToString(payload["session_id"])
+	original := agentDecisionDigest(store.sessions[id])
+	request := cloneJSONMap(payload)
+	delete(request, "session_id")
+	request["ensure"] = true
+	request["execution_lane_id"] = "lane_new"
+	row, reused, err := store.startOrReuseDecisionScoped(request, newAgentSessionPublicScopeOwnership("alpha"), binding)
+	if err != nil || reused || row["id"] == id || row["execution_lane_id"] != "lane_new" || len(store.sessions) != 2 || agentDecisionDigest(store.sessions[id]) != original {
+		t.Fatal("denial-only owner probe granted cross-lane reuse or mutated a valid original", err)
+	}
+}
