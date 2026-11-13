@@ -2,6 +2,7 @@ name: Public product truth
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, edited]
     paths:
       - "AGENTS.md"
       - ".gitattributes"
