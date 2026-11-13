@@ -1622,7 +1622,7 @@ func validateAgentSessionEventOwnership(session map[string]any, requested map[st
 	return nil
 }
 
-func (s *agentSessionStore) findReusableLocked(payload map[string]any, now time.Time, taskLinks ...agentSessionTaskLinks) map[string]any {
+func (s *agentSessionStore) visitReusableLocked(payload map[string]any, now time.Time, visit func(map[string]any) bool, taskLinks ...agentSessionTaskLinks) {
 	reuseKey := strings.TrimSpace(firstNonEmptyStrings(anyToString(payload["reuse_key"]), anyToString(payload["reuseKey"])))
 	project := strings.TrimSpace(firstNonEmptyStrings(anyToString(payload["project"]), anyToString(payload["project_name"])))
 	agentID := strings.TrimSpace(firstNonEmptyStrings(anyToString(payload["agent_id"]), anyToString(payload["agentId"])))
@@ -1656,27 +1656,43 @@ func (s *agentSessionStore) findReusableLocked(payload map[string]any, now time.
 		}
 		if reuseKey != "" {
 			if strings.EqualFold(anyToString(row["reuse_key"]), reuseKey) {
-				return row
+				if !visit(row) {
+					return
+				}
 			}
 			continue
 		}
 		if taskIdentityID != "" {
 			if agentSessionTasksLinked(strings.TrimSpace(anyToString(row["task_identity_id"])), taskIdentityID, taskLinks...) {
-				return row
+				if !visit(row) {
+					return
+				}
 			}
 			continue
 		}
 		if taskID != "" {
 			if strings.EqualFold(anyToString(row["task_id"]), taskID) {
-				return row
+				if !visit(row) {
+					return
+				}
 			}
 			continue
 		}
 		if nativeID != "" && strings.EqualFold(anyToString(row["native_session_id"]), nativeID) {
-			return row
+			if !visit(row) {
+				return
+			}
 		}
 	}
-	return nil
+}
+
+func (s *agentSessionStore) findReusableLocked(payload map[string]any, now time.Time, taskLinks ...agentSessionTaskLinks) map[string]any {
+	var selected map[string]any
+	s.visitReusableLocked(payload, now, func(row map[string]any) bool {
+		selected = row
+		return false
+	}, taskLinks...)
+	return selected
 }
 
 func agentSessionReuseCompatible(existing map[string]any, requested map[string]any, taskLinks ...agentSessionTaskLinks) bool {
@@ -1811,7 +1827,12 @@ func (s *agentSessionStore) startOrReuseScopedLocked(payload map[string]any, sco
 		ownerProbe := cloneAnyMap(payload)
 		delete(ownerProbe, "execution_lane_id")
 		delete(ownerProbe, "executionLaneId")
-		if candidate := s.findReusableLocked(ownerProbe, now, taskLinks...); len(candidate) > 0 && validatePublicAgentSessionScope(candidate) != nil {
+		denied := false
+		s.visitReusableLocked(ownerProbe, now, func(candidate map[string]any) bool {
+			denied = validatePublicAgentSessionScope(candidate) != nil
+			return !denied
+		}, taskLinks...)
+		if denied {
 			return nil, false, errAgentSessionReuseConflict
 		}
 		if existing := s.findReusableLocked(payload, now, taskLinks...); len(existing) > 0 {
