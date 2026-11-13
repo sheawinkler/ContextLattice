@@ -725,6 +725,9 @@ func (s *continuityStore) validateObjectiveTransitionLocked(transition objective
 }
 
 func (s *continuityStore) validateDecisionChangeLocked(change decisionChange) error {
+	if err := s.validateDecisionApplicabilityScopeLocked(change); err != nil {
+		return err
+	}
 	if change.SchemaID != decisionChangeContractID || change.DecisionChangeID == "" || change.ObjectiveID == "" {
 		return errors.New("invalid decision change")
 	}
@@ -815,6 +818,9 @@ func (s *continuityStore) applyEntryLocked(entry continuityLedgerEntry) error {
 		s.applyObjectiveTransitionValidatedLocked(transition)
 		return nil
 	case continuityLedgerKindDecisionChange:
+		if err := validateStoredDecisionApplicability(entry.Payload); err != nil {
+			return err
+		}
 		var change decisionChange
 		if err := decodeContinuityPayload(entry.Payload, &change); err != nil {
 			return err
@@ -827,6 +833,14 @@ func (s *continuityStore) applyEntryLocked(entry continuityLedgerEntry) error {
 		s.applyDecisionChangeValidatedLocked(change)
 		return nil
 	case continuityLedgerKindDecisionBundle:
+		for key := range entry.Payload {
+			if key != "decision_change" && strings.EqualFold(key, "decision_change") {
+				return errors.New("decision bundle requires the canonical decision_change field")
+			}
+		}
+		if err := validateStoredDecisionApplicability(anyMap(entry.Payload["decision_change"])); err != nil {
+			return err
+		}
 		var bundle continuityDecisionBundle
 		if err := decodeContinuityPayload(entry.Payload, &bundle); err != nil {
 			return err

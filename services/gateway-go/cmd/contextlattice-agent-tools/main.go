@@ -3150,12 +3150,28 @@ func (c *cli) cmdDecisionChange(args []string) error {
 	payload["agent_id"] = firstNonEmpty(firstString(payload["agent_id"]), envString("CONTEXTLATTICE_AGENT_ID", ""))
 	payload["session_id"] = firstNonEmpty(firstString(payload["session_id"]), envString("CONTEXTLATTICE_SESSION_ID", ""))
 	payload["actor"] = firstNonEmpty(firstString(payload["actor"]), firstString(payload["agent_id"]))
-	if firstString(payload["idempotency_key"]) == "" && firstString(payload["decision_change_id"]) == "" {
+	generatedRequestID := firstString(payload["idempotency_key"]) == "" && firstString(payload["decision_change_id"]) == ""
+	if generatedRequestID {
 		payload["idempotency_key"] = cliContinuityIdempotencyKey("decision")
+	}
+	typed := cliDecisionTyped(payload, "applicability")
+	if typed {
+		if asMap(payload["applicability"])["schema_id"] != "decision_applicability.v1" {
+			return errors.New("explicit applicability must use the canonical non-null decision_applicability.v1 object; no write attempted")
+		}
+		if err := c.requireDecisionContinuity(parsed.float("timeout", 30)); err != nil {
+			return err
+		}
 	}
 	result, _, err := c.requestJSON(context.Background(), http.MethodPost, "/memory/decision-changes", payload, parsed.float("timeout", 30))
 	if err != nil {
 		return err
+	}
+	if typed && (result["ok"] != true || !cliDecisionJSONEqual(payload["applicability"], asMap(result["decision_change"])["applicability"])) {
+		if generatedRequestID {
+			return fmt.Errorf("decision write may have completed but applicability was not confirmed; inspect generated request_id=%s before retrying", payload["idempotency_key"])
+		}
+		return errors.New("decision write may have completed but its original applicability receipt was not confirmed; inspect its idempotency key before retrying")
 	}
 	return c.emit(result, !parsed.bool("raw"))
 }
@@ -4587,12 +4603,16 @@ func sessionCommonFlags() (map[string]string, map[string]string) {
 		"cwd":               "cwd",
 		"worktree":          "worktree",
 		"task-id":           "task_id",
+		"task-identity-id":  "task_identity_id",
+		"execution-lane-id": "execution_lane_id",
 		"native-session-id": "native_session_id",
 		"tag":               "tag",
 		"metadata-json":     "metadata_json",
 		"summary":           "summary",
 		"status":            "status",
 		"limit":             "limit",
+		"payload-file":      "payload_file",
+		"view":              "view",
 	}), commonBoolFlags()
 }
 
@@ -4601,10 +4621,20 @@ func (c *cli) sessionStart(kind string, args []string) error {
 	parsed := parseArgs(args, stringsFlags, mergeBoolFlags(bools, map[string]string{"persist": "persist", "strict": "strict"}))
 	c.applyBaseURL(parsed)
 	objective := strings.TrimSpace(strings.Join(parsed.pos, " "))
+	payload, err := payloadFromOptionalFile(parsed.string("payload_file", ""))
+	if err != nil {
+		return err
+	}
+	if err := normalizeSessionFileAliases(payload, true); err != nil {
+		return err
+	}
+	if objective == "" {
+		objective = firstString(payload["objective"])
+	}
 	if objective == "" {
 		return errors.New("objective is required")
 	}
-	payload := map[string]any{
+	defaults := map[string]any{
 		"session_id":        parsed.string("session_id", ""),
 		"agent":             parsed.string("agent", envString("CONTEXTLATTICE_AGENT", "")),
 		"agent_id":          parsed.string("agent_id", envString("CONTEXTLATTICE_AGENT_ID", "")),
@@ -4617,28 +4647,45 @@ func (c *cli) sessionStart(kind string, args []string) error {
 		"cwd":               parsed.string("cwd", currentWorkingDir()),
 		"worktree":          parsed.string("worktree", currentWorkingDir()),
 		"task_id":           parsed.string("task_id", ""),
+		"task_identity_id":  parsed.string("task_identity_id", ""),
+		"execution_lane_id": parsed.string("execution_lane_id", ""),
 		"native_session_id": parsed.string("native_session_id", envString("CONTEXTLATTICE_NATIVE_SESSION_ID", "")),
 		"tags":              []string{"go-native-cli", kind},
 		"metadata":          parseJSONObject(parsed.string("metadata_json", "")),
 	}
+	overlaySessionDefaults(payload, defaults, parsed)
+	payload["objective"] = objective
+	if parsed.has("metadata_json") {
+		payload["metadata"] = defaults["metadata"]
+	}
 	if kind == "ensure" {
 		payload["ensure"] = true
-		payload["reuse_key"] = agentSessionReuseKey(
-			firstString(payload["project"]), firstString(payload["agent"]), firstString(payload["agent_id"]), payload,
-		)
+		if _, present := payload["reuse_key"]; !present && firstString(payload["session_id"]) == "" && firstString(payload["task_identity_id"]) == "" {
+			payload["reuse_key"] = agentSessionReuseKey(
+				firstString(payload["project"]), firstString(payload["agent"]), firstString(payload["agent_id"]), payload,
+			)
+		}
 	}
-	payload = dropEmpty(payload)
+	typed := cliDecisionTyped(payload, "decision_binding", "decision_ack", "decision_baseline", "decision_receipts")
+	if typed {
+		if err := c.requireDecisionContinuity(parsed.float("timeout", 10)); err != nil {
+			return err
+		}
+	}
 	raw, _, err := c.requestJSON(context.Background(), http.MethodPost, "/v1/agents/sessions/start", payload, parsed.float("timeout", 10))
 	if err != nil {
-		if kind == "ensure" && !parsed.bool("strict") {
+		if kind == "ensure" && !parsed.bool("strict") && !typed {
 			return c.emit(map[string]any{"ok": false, "session_id": "", "error": truncate(err.Error(), 500)}, parsed.bool("pretty"))
 		}
 		return err
 	}
+	if typed && !cliDecisionStartReceipt(payload, raw) {
+		return errors.New("session write may have completed but its selected decision binding receipt was not confirmed; inspect the session before retrying")
+	}
 	session := asMap(raw["session"])
 	if id := firstString(session["id"], raw["session_id"]); id != "" {
 		raw["export"] = "export CONTEXTLATTICE_SESSION_ID=" + id
-		writeSessionState(parsed.string("project", "contextlattice"), id, objective, parsed.string("agent_id", ""))
+		writeSessionState(firstString(payload["project"]), id, objective, firstString(payload["agent_id"]))
 	}
 	return c.emit(raw, parsed.bool("pretty"))
 }
@@ -4647,6 +4694,13 @@ func (c *cli) sessionEvent(kind string, args []string) error {
 	stringsFlags, bools := sessionCommonFlags()
 	parsed := parseArgs(args, stringsFlags, bools)
 	c.applyBaseURL(parsed)
+	payload, err := payloadFromOptionalFile(parsed.string("payload_file", ""))
+	if err != nil {
+		return err
+	}
+	if err := normalizeSessionFileAliases(payload, false); err != nil {
+		return err
+	}
 	eventType := "session." + kind
 	if kind == "complete" {
 		eventType = "session.completed"
@@ -4655,10 +4709,13 @@ func (c *cli) sessionEvent(kind string, args []string) error {
 		eventType = "session.failed"
 	}
 	if kind == "event" {
-		if len(parsed.pos) == 0 {
+		if len(parsed.pos) == 0 && firstString(payload["type"]) == "" {
 			return errors.New("event type is required")
 		}
-		eventType = parsed.pos[0]
+		eventType = firstString(payload["type"])
+		if len(parsed.pos) > 0 {
+			eventType = parsed.pos[0]
+		}
 	}
 	status := parsed.string("status", "")
 	if kind == "complete" {
@@ -4675,7 +4732,7 @@ func (c *cli) sessionEvent(kind string, args []string) error {
 	} else if len(parsed.pos) > 0 {
 		positionalSummary = strings.Join(parsed.pos, " ")
 	}
-	payload := dropEmpty(map[string]any{
+	defaults := map[string]any{
 		"session_id": parsed.string("session_id", envString("CONTEXTLATTICE_SESSION_ID", "")),
 		"agent":      parsed.string("agent", envString("CONTEXTLATTICE_AGENT", "")),
 		"agent_id":   parsed.string("agent_id", envString("CONTEXTLATTICE_AGENT_ID", "")),
@@ -4684,15 +4741,34 @@ func (c *cli) sessionEvent(kind string, args []string) error {
 		"summary":    parsed.string("summary", positionalSummary),
 		"status":     status,
 		"metadata":   parseJSONObject(parsed.string("metadata_json", "")),
-	})
+	}
+	overlaySessionDefaults(payload, defaults, parsed)
+	payload["type"] = eventType
+	if positionalSummary != "" && !parsed.has("summary") {
+		payload["summary"] = positionalSummary
+	}
+	if parsed.has("metadata_json") {
+		payload["metadata"] = defaults["metadata"]
+	}
+	typed := cliDecisionTyped(payload, "decision_binding", "decision_ack", "decision_baseline", "decision_receipts") || eventType == "decision.bound"
+	if typed {
+		if err := c.requireDecisionContinuity(parsed.float("timeout", 10)); err != nil {
+			return err
+		}
+	}
 	raw, _, err := c.requestJSON(context.Background(), http.MethodPost, "/v1/agents/sessions/event", payload, parsed.float("timeout", 10))
 	if err != nil {
 		return err
 	}
+	if typed && !cliDecisionAckReceipt(payload, raw) {
+		return errors.New("event may have completed but its exact decision acknowledgement receipt was not confirmed; inspect the event id before retrying")
+	}
 	if err := c.emit(raw, parsed.bool("pretty")); err != nil {
 		return err
 	}
-	c.autoDrainAsyncInbox(parsed.string("session_id", envString("CONTEXTLATTICE_SESSION_ID", "")), parsed.string("project", "contextlattice"), parsed.string("agent_id", envString("CONTEXTLATTICE_AGENT_ID", "")))
+	if !typed {
+		c.autoDrainAsyncInbox(firstString(payload["session_id"]), firstString(payload["project"]), firstString(payload["agent_id"]))
+	}
 	return nil
 }
 
@@ -4710,6 +4786,15 @@ func (c *cli) sessionGet(kind string, args []string) error {
 	suffix := ""
 	if kind != "status" {
 		suffix = "/" + kind
+	}
+	if kind == "context-package" && parsed.has("view") {
+		view := parsed.string("view", "")
+		if view != "full" && view != "compact" {
+			return errors.New("--view must be full or compact")
+		}
+		if view == "compact" {
+			suffix += "?view=compact"
+		}
 	}
 	raw, _, err := c.requestJSON(context.Background(), http.MethodGet, "/v1/agents/sessions/"+url.PathEscape(sessionID)+suffix, nil, parsed.float("timeout", 10))
 	if err != nil {

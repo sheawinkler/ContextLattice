@@ -216,6 +216,10 @@ func (m *memoryStore) checkMemoryDerivation(ctx context.Context, entry memorySto
 	if walk.nodes > memoryDerivationMaxNodes || !lifecycleSurfacesByDefault(entry.Lifecycle) {
 		return errMemoryDerivationUnavailable
 	}
+	exact, exactErr := m.isExactStatePathWithFenceChecked(entry.Project, entry.FileName, fence)
+	if exactErr != nil || exact || entry.DataClass == dataClassRuntimeStateMirror {
+		return errMemoryDerivationUnavailable
+	}
 	if excluded, _ := m.memoryGraphArtifactExcluded(entry.Project, entry.FileName, entry.TopicPath); excluded {
 		return errMemoryDerivationUnavailable
 	}
@@ -401,6 +405,12 @@ func (g *memoryDerivationGuard) capture(other *memoryDerivationGuard) {
 }
 
 func (g *memoryDerivationGuard) verify(ctx context.Context) error {
+	return g.verifyAndThen(ctx, nil)
+}
+
+// The callback may take the session lock, never the reverse. Holding the owner
+// fence through that final read gives both owners one validation boundary.
+func (g *memoryDerivationGuard) verifyAndThen(ctx context.Context, then func() error) error {
 	g.mu.Lock()
 	roots := append([]memoryStoreEntry(nil), g.roots...)
 	invalid := g.invalid
@@ -409,6 +419,9 @@ func (g *memoryDerivationGuard) verify(ctx context.Context) error {
 		return errMemoryDerivationUnavailable
 	}
 	if len(roots) == 0 {
+		if then != nil {
+			return then()
+		}
 		return nil
 	}
 	if g.store == nil || len(roots) > memoryDerivationMaxNodes {
@@ -424,6 +437,9 @@ func (g *memoryDerivationGuard) verify(ctx context.Context) error {
 		if err := g.store.checkMemoryDerivation(ctx, root, fence, walk, 0); err != nil {
 			return errMemoryDerivationUnavailable
 		}
+	}
+	if then != nil {
+		return then()
 	}
 	return nil
 }

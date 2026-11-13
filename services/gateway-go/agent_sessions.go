@@ -58,8 +58,8 @@ func newAgentSessionPublicScopeOwnership(project string) map[string]any {
 
 type agentSessionProjectVisibility struct{}
 
-func (agentSessionProjectVisibility) allows(map[string]any) bool {
-	return true
+func (agentSessionProjectVisibility) allows(row map[string]any) bool {
+	return validatePublicAgentSessionScope(row) == nil
 }
 
 func (s *server) agentSessionProjectVisibilityForRequest(*http.Request) agentSessionProjectVisibility {
@@ -72,14 +72,18 @@ var errAgentSessionOwnershipConflict = errors.New("agent session event conflicts
 var errAgentSessionIDInvalid = errors.New("agent session id must be a bounded machine-safe identifier")
 
 type agentSessionStore struct {
-	mu        sync.RWMutex
-	path      string
-	maxKeep   int
-	maxEvents int
-	idleTTL   time.Duration
-	sessions  map[string]map[string]any
-	order     []string
-	events    map[string][]map[string]any
+	mu                       sync.RWMutex
+	path                     string
+	maxKeep                  int
+	maxEvents                int
+	idleTTL                  time.Duration
+	sessions                 map[string]map[string]any
+	order                    []string
+	events                   map[string][]map[string]any
+	decisionDurableWrite     bool
+	decisionUncertain        bool
+	decisionWriteHook        func(string) error
+	successfulSnapshotWrites uint64
 }
 
 func agentSessionsPath() string {
@@ -147,6 +151,12 @@ func (s *agentSessionStore) load() error {
 		if id == "" {
 			continue
 		}
+		if err := validatePublicAgentSessionScope(row); err != nil {
+			return errors.New("unsupported persisted agent session ownership")
+		}
+		if err := validateStoredAgentDecision(row); err != nil {
+			return fmt.Errorf("invalid persisted session decision state: %w", err)
+		}
 		row["memory_contribution"] = normalizeAgentContribution(anyMap(row["memory_contribution"]))
 		loadedSessions[id] = row
 		order = append(order, id)
@@ -181,6 +191,9 @@ func (s *agentSessionStore) persistLocked() error {
 	if s == nil {
 		return errors.New("agent session store unavailable")
 	}
+	if s.decisionUncertain {
+		return errAgentDecisionUnavailable
+	}
 	if strings.TrimSpace(s.path) == "" {
 		return errors.New("agent session store path is empty")
 	}
@@ -206,7 +219,30 @@ func (s *agentSessionStore) persistLocked() error {
 	if err != nil {
 		return err
 	}
-	return writeOwnerOnlyAtomicFile(s.path, raw, false)
+	if s.decisionDurableWrite || s.hasAgentDecisionCustodyLocked() {
+		replaced := false
+		err := writeOwnerOnlyDurableAtomicFileWithHook(s.path, raw, false, func(phase string) error {
+			if phase == "after_replace" {
+				replaced = true
+			}
+			if s.decisionWriteHook != nil {
+				return s.decisionWriteHook(phase)
+			}
+			return nil
+		})
+		if err != nil && replaced && !ownerOnlyAtomicWriteCommitted(err) {
+			return &ownerOnlyAtomicWriteError{Operation: "persist session decision snapshot", Committed: true, Err: err}
+		}
+		if err == nil {
+			s.successfulSnapshotWrites++
+		}
+		return err
+	}
+	err = writeOwnerOnlyAtomicFile(s.path, raw, false)
+	if err == nil {
+		s.successfulSnapshotWrites++
+	}
+	return err
 }
 
 func (s *agentSessionStore) enforceBoundsLocked() {
@@ -392,7 +428,14 @@ func (s *agentSessionStore) effectiveSessionLocked(row map[string]any, now time.
 	if s == nil {
 		return agentSessionEffectiveSnapshot(row, 0, now)
 	}
-	return agentSessionEffectiveSnapshot(row, s.idleTTL, now)
+	result := agentSessionEffectiveSnapshot(row, s.idleTTL, now)
+	if baseline, err := agentDecisionBaselineForRow(row); err == nil {
+		result["decision_baseline"] = agentDecisionJSONMap(baseline)
+	}
+	if s.decisionUncertain {
+		result["decision_store_unavailable"] = true
+	}
+	return result
 }
 
 func agentSessionOwnership(session map[string]any) map[string]any {
@@ -1433,7 +1476,7 @@ func buildAgentRunTrace(session map[string]any, events []map[string]any, now tim
 	return attachPayloadFormatContract(agentRunTraceContractID, trace, anyToString(rollup["agent_id"]), "agent_run_trace", "/v1/agents/sessions/{session_id}/trace")
 }
 
-func normalizeAgentSessionStart(payload map[string]any, fallbackID string) map[string]any {
+func normalizeAgentSessionStart(payload map[string]any, fallbackID string, scopeOwnership ...map[string]any) map[string]any {
 	now := nowUTCISO()
 	sessionID := strings.TrimSpace(firstNonEmptyStrings(
 		anyToString(payload["session_id"]),
@@ -1477,6 +1520,10 @@ func normalizeAgentSessionStart(payload map[string]any, fallbackID string) map[s
 		"metadata":            compactAgentSessionMetadata(anyMap(payload["metadata"])),
 		"memory_contribution": normalizeAgentContribution(anyMap(payload["memory_contribution"])),
 	}
+	if len(scopeOwnership) > 0 && len(scopeOwnership[0]) > 0 {
+		record["scope_ownership"] = cloneAnyMap(scopeOwnership[0])
+	}
+	initializeAgentDecisionBaseline(record, nil)
 	return record
 }
 
@@ -1575,7 +1622,7 @@ func validateAgentSessionEventOwnership(session map[string]any, requested map[st
 	return nil
 }
 
-func (s *agentSessionStore) findReusableLocked(payload map[string]any, now time.Time) map[string]any {
+func (s *agentSessionStore) findReusableLocked(payload map[string]any, now time.Time, taskLinks ...agentSessionTaskLinks) map[string]any {
 	reuseKey := strings.TrimSpace(firstNonEmptyStrings(anyToString(payload["reuse_key"]), anyToString(payload["reuseKey"])))
 	project := strings.TrimSpace(firstNonEmptyStrings(anyToString(payload["project"]), anyToString(payload["project_name"])))
 	agentID := strings.TrimSpace(firstNonEmptyStrings(anyToString(payload["agent_id"]), anyToString(payload["agentId"])))
@@ -1589,7 +1636,7 @@ func (s *agentSessionStore) findReusableLocked(payload map[string]any, now time.
 		if len(row) == 0 || agentSessionTerminal(agentSessionEffectiveStatus(row, now, s.idleTTL)) {
 			continue
 		}
-		if !agentSessionReuseCompatible(row, payload) {
+		if !agentSessionReuseCompatible(row, payload, taskLinks...) {
 			continue
 		}
 		if project == "" && agentSessionProject(row) != "" {
@@ -1614,7 +1661,7 @@ func (s *agentSessionStore) findReusableLocked(payload map[string]any, now time.
 			continue
 		}
 		if taskIdentityID != "" {
-			if strings.TrimSpace(anyToString(row["task_identity_id"])) == taskIdentityID {
+			if agentSessionTasksLinked(strings.TrimSpace(anyToString(row["task_identity_id"])), taskIdentityID, taskLinks...) {
 				return row
 			}
 			continue
@@ -1632,7 +1679,7 @@ func (s *agentSessionStore) findReusableLocked(payload map[string]any, now time.
 	return nil
 }
 
-func agentSessionReuseCompatible(existing map[string]any, requested map[string]any) bool {
+func agentSessionReuseCompatible(existing map[string]any, requested map[string]any, taskLinks ...agentSessionTaskLinks) bool {
 	for _, fields := range []struct {
 		existing      string
 		requested     []string
@@ -1658,6 +1705,9 @@ func agentSessionReuseCompatible(existing map[string]any, requested map[string]a
 		want := strings.TrimSpace(firstNonEmptyStrings(values...))
 		if want != "" {
 			got := strings.TrimSpace(anyToString(existing[fields.existing]))
+			if fields.existing == "task_identity_id" && agentSessionTasksLinked(got, want, taskLinks...) {
+				continue
+			}
 			if fields.caseSensitive && got != want {
 				return false
 			}
@@ -1676,11 +1726,37 @@ func agentSessionReuseCompatible(existing map[string]any, requested map[string]a
 }
 
 func (s *agentSessionStore) startOrReuse(payload map[string]any) (map[string]any, bool, error) {
+	return s.startOrReuseScoped(payload, nil)
+}
+
+func (s *agentSessionStore) startOrReuseScoped(payload map[string]any, scopeOwnership map[string]any, taskLinks ...agentSessionTaskLinks) (map[string]any, bool, error) {
 	if s == nil {
 		return nil, false, errors.New("agent session store unavailable")
 	}
+	if err := rejectAgentDecisionAliases(payload); err != nil {
+		return nil, false, err
+	}
+	for _, field := range []string{"decision_binding", "decision_ack", "decision_baseline", "decision_receipts"} {
+		if _, present := payload[field]; present {
+			return nil, false, errAgentDecisionConflict
+		}
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.decisionUncertain {
+		return nil, false, errAgentDecisionUnavailable
+	}
+	var row map[string]any
+	var reused bool
+	err := s.withAgentSessionMutationLocked(false, func() error {
+		var err error
+		row, reused, err = s.startOrReuseScopedLocked(payload, scopeOwnership, nil, taskLinks...)
+		return err
+	})
+	return row, reused, err
+}
+
+func (s *agentSessionStore) startOrReuseScopedLocked(payload map[string]any, scopeOwnership map[string]any, binding *agentDecisionBinding, taskLinks ...agentSessionTaskLinks) (map[string]any, bool, error) {
 	now := time.Now().UTC()
 	ensure := anyToBool(firstNonEmptyAny(payload["ensure"], payload["reuse_existing"], payload["reuseExisting"]))
 	explicitID := strings.TrimSpace(firstNonEmptyStrings(anyToString(payload["session_id"]), anyToString(payload["sessionId"]), anyToString(payload["id"])))
@@ -1689,24 +1765,89 @@ func (s *agentSessionStore) startOrReuse(payload map[string]any) (map[string]any
 			return nil, false, err
 		}
 		if existing := s.sessions[explicitID]; len(existing) > 0 {
+			if err := validatePublicAgentSessionScope(existing); err != nil {
+				return nil, false, errAgentSessionReuseConflict
+			}
+			if err := agentDecisionStartReuse(existing, binding); err != nil {
+				return nil, false, err
+			}
+			existing = cloneJSONMap(existing)
+			s.sessions[explicitID] = existing
 			if agentSessionTerminal(agentSessionEffectiveStatus(existing, now, s.idleTTL)) {
 				return nil, false, errAgentSessionTerminal
 			}
-			if !agentSessionReuseCompatible(existing, payload) {
+			if !agentSessionReuseCompatible(existing, payload, taskLinks...) {
 				return nil, false, errAgentSessionReuseConflict
 			}
 			if ensure {
+				candidate := cloneAnyMap(existing)
+				changed, scopeErr := establishAgentSessionScopeOwnership(candidate, scopeOwnership)
+				if scopeErr != nil {
+					return nil, false, fmt.Errorf("%w: %v", errAgentSessionReuseConflict, scopeErr)
+				}
+				if changed {
+					previous, hadPrevious := existing["scope_ownership"]
+					existing["scope_ownership"] = candidate["scope_ownership"]
+					if err := s.persistLocked(); err != nil {
+						if ownerOnlyAtomicWriteCommitted(err) {
+							return nil, false, err
+						} else if hadPrevious {
+							existing["scope_ownership"] = previous
+						} else {
+							delete(existing, "scope_ownership")
+						}
+						return nil, false, err
+					}
+				}
 				return s.effectiveSessionLocked(existing, now), true, nil
 			}
 			return nil, false, errAgentSessionReuseConflict
 		}
 	}
 	if ensure && explicitID == "" {
-		if existing := s.findReusableLocked(payload, now); len(existing) > 0 {
+		if existing := s.findReusableLocked(payload, now, taskLinks...); len(existing) > 0 {
+			if err := validatePublicAgentSessionScope(existing); err != nil {
+				return nil, false, errAgentSessionReuseConflict
+			}
+			if err := agentDecisionStartReuse(existing, binding); err != nil {
+				return nil, false, err
+			}
+			existing = cloneJSONMap(existing)
+			s.sessions[anyToString(existing["id"])] = existing
+			candidate := cloneAnyMap(existing)
+			changed, scopeErr := establishAgentSessionScopeOwnership(candidate, scopeOwnership)
+			if scopeErr != nil {
+				return nil, false, fmt.Errorf("%w: %v", errAgentSessionReuseConflict, scopeErr)
+			}
+			if changed {
+				previous, hadPrevious := existing["scope_ownership"]
+				existing["scope_ownership"] = candidate["scope_ownership"]
+				if err := s.persistLocked(); err != nil {
+					if ownerOnlyAtomicWriteCommitted(err) {
+						return nil, false, err
+					} else if hadPrevious {
+						existing["scope_ownership"] = previous
+					} else {
+						delete(existing, "scope_ownership")
+					}
+					return nil, false, err
+				}
+			}
 			return s.effectiveSessionLocked(existing, now), true, nil
 		}
 	}
-	record := normalizeAgentSessionStart(payload, "")
+	record := normalizeAgentSessionStart(payload, "", scopeOwnership)
+	if binding != nil {
+		if !agentDecisionRowScope(record, binding) {
+			return nil, false, errAgentDecisionConflict
+		}
+		initializeAgentDecisionBaseline(record, binding)
+	}
+	if len(scopeOwnership) > 0 {
+		if scopeErr := validatePublicAgentSessionScope(record); scopeErr != nil {
+			return nil, false, fmt.Errorf("%w: %v", errAgentSessionReuseConflict, scopeErr)
+		}
+	}
 	id := anyToString(record["id"])
 	if _, exists := s.sessions[id]; exists {
 		return nil, false, errAgentSessionReuseConflict
@@ -1739,11 +1880,39 @@ func agentSessionAllowsPostTerminalEvent(eventType string) bool {
 }
 
 func (s *agentSessionStore) appendEvent(sessionID string, payload map[string]any) (map[string]any, map[string]any, error) {
+	return s.appendEventScoped(sessionID, payload, nil)
+}
+
+func (s *agentSessionStore) appendEventScoped(sessionID string, payload map[string]any, scopeOwnership map[string]any) (map[string]any, map[string]any, error) {
 	if s == nil {
 		return nil, nil, errors.New("agent session store unavailable")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	var session, event map[string]any
+	err := s.withAgentSessionMutationLocked(false, func() error {
+		var err error
+		session, event, err = s.appendEventScopedLocked(sessionID, payload, scopeOwnership)
+		return err
+	})
+	return session, event, err
+}
+
+func (s *agentSessionStore) appendEventScopedLocked(sessionID string, payload map[string]any, scopeOwnership map[string]any) (map[string]any, map[string]any, error) {
+	if s.decisionUncertain {
+		return nil, nil, errAgentDecisionUnavailable
+	}
+	if err := rejectAgentDecisionAliases(payload); err != nil {
+		return nil, nil, err
+	}
+	if agentDecisionEventRequested(payload) {
+		return nil, nil, errAgentDecisionConflict
+	}
+	for _, field := range []string{"decision_binding", "decision_ack", "decision_baseline", "decision_receipts"} {
+		if _, present := payload[field]; present {
+			return nil, nil, errAgentDecisionConflict
+		}
+	}
 	sessionID = strings.TrimSpace(firstNonEmptyStrings(
 		sessionID,
 		anyToString(payload["session_id"]),
@@ -1760,13 +1929,22 @@ func (s *agentSessionStore) appendEvent(sessionID string, payload map[string]any
 		return nil, nil, err
 	}
 	session, existed := s.sessions[sessionID]
+	if existed {
+		session = cloneJSONMap(session)
+		s.sessions[sessionID] = session
+	}
 	if !existed {
-		session = normalizeAgentSessionStart(payload, sessionID)
+		session = normalizeAgentSessionStart(payload, sessionID, scopeOwnership)
 		session["last_event_type"] = ""
 		session["event_count"] = 0
 	}
 	if err := validateAgentSessionEventOwnership(session, requestedOwnership, existed); err != nil {
 		return nil, nil, err
+	}
+	scopeCandidate := cloneAnyMap(session)
+	scopeChanged, scopeErr := establishAgentSessionScopeOwnership(scopeCandidate, scopeOwnership)
+	if scopeErr != nil {
+		return nil, nil, fmt.Errorf("%w: %v", errAgentSessionOwnershipConflict, scopeErr)
 	}
 	if !existed {
 		s.sessions[sessionID] = session
@@ -1778,6 +1956,9 @@ func (s *agentSessionStore) appendEvent(sessionID string, payload map[string]any
 	terminalBefore := agentSessionTerminal(terminalStatus)
 	if terminalBefore && !agentSessionAllowsPostTerminalEvent(eventType) {
 		return nil, nil, errAgentSessionTerminal
+	}
+	if scopeChanged {
+		session["scope_ownership"] = scopeCandidate["scope_ownership"]
 	}
 	if terminalBefore {
 		// Effective expiry is absorbing even when a post-terminal audit/outcome arrives.
@@ -1899,7 +2080,8 @@ func compactAgentSessionRow(row map[string]any) map[string]any {
 	for _, key := range []string{
 		"id", "agent", "agent_id", "project", "status", "objective", "task_id", "task_identity_id", "execution_lane_id", "native_session_id",
 		"reuse_key", "started_at", "updated_at", "last_event_at", "last_event_type", "event_count",
-		"stale", "expired_at", "idle_ttl_seconds",
+		"stale", "expired_at", "idle_ttl_seconds", "scope_ownership",
+		"decision_binding", "decision_baseline", "decision_store_unavailable",
 	} {
 		if value, exists := row[key]; exists {
 			out[key] = value
@@ -1931,7 +2113,7 @@ func (s *agentSessionStore) list(status string, project string, agent string, li
 	for i := len(s.order) - 1; i >= 0; i-- {
 		id := s.order[i]
 		row, ok := s.sessions[id]
-		if !ok {
+		if !ok || validatePublicAgentSessionScope(row) != nil {
 			continue
 		}
 		copyRow := s.effectiveSessionLocked(row, now)
@@ -1969,7 +2151,7 @@ func (s *agentSessionStore) get(sessionID string) (map[string]any, []map[string]
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	row, ok := s.sessions[sessionID]
-	if !ok {
+	if !ok || validatePublicAgentSessionScope(row) != nil {
 		return nil, nil, false
 	}
 	events := make([]map[string]any, 0, len(s.events[sessionID]))
@@ -1994,7 +2176,7 @@ func (s *agentSessionStore) runtimeSnapshot(limit int) map[string]any {
 	for i := len(s.order) - 1; i >= 0; i-- {
 		id := s.order[i]
 		row, ok := s.sessions[id]
-		if !ok {
+		if !ok || validatePublicAgentSessionScope(row) != nil {
 			continue
 		}
 		copyRow := s.effectiveSessionLocked(row, now)
@@ -2020,7 +2202,7 @@ func (s *agentSessionStore) runtimeSnapshot(limit int) map[string]any {
 	return map[string]any{
 		"enabled":                 true,
 		"store_ref":               ownerOnlyStoreRef("agent_sessions"),
-		"total":                   len(s.sessions),
+		"total":                   scoreCount,
 		"active":                  counts["active"],
 		"completed":               counts["completed"],
 		"failed":                  counts["failed"],
@@ -2132,6 +2314,43 @@ func (s *server) agentsSessionsStart(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json", "detail": err.Error()})
 		return
 	}
+	project := strings.TrimSpace(firstNonEmptyStrings(anyToString(payload["project"]), anyToString(payload["project_name"])))
+	if project != "" {
+		project, err = sanitizeMemoryProject(project)
+		if err != nil {
+			writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"ok": false, "error": "invalid_project", "detail": err.Error()})
+			return
+		}
+	}
+	explicitSessionID := strings.TrimSpace(firstNonEmptyStrings(anyToString(payload["session_id"]), anyToString(payload["sessionId"]), anyToString(payload["id"])))
+	if explicitSessionID != "" {
+		if err := validateAgentSessionID(explicitSessionID); err != nil {
+			writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"ok": false, "error": "agent_session_id_invalid", "detail": err.Error()})
+			return
+		}
+	}
+	if project == "" && explicitSessionID != "" {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
+			"ok": false, "error": "agent_session_project_required",
+			"detail": "project is required when selecting an explicit session id",
+		})
+		return
+	}
+	scopeOwnership := newAgentSessionPublicScopeOwnership(project)
+	if explicitSessionID != "" {
+		payload["session_id"] = explicitSessionID
+		delete(payload, "sessionId")
+		delete(payload, "id")
+	}
+	if project != "" {
+		payload["project"] = project
+		delete(payload, "project_name")
+	}
+	selectedDecision, decisionErr := parseAgentDecisionStart(payload)
+	if decisionErr != nil {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"ok": false, "error": "invalid_session_decision_binding"})
+		return
+	}
 	continuity, continuityErr := s.enrichAgentSessionContinuity(payload)
 	if continuityErr != nil {
 		status := http.StatusUnprocessableEntity
@@ -2143,8 +2362,29 @@ func (s *server) agentsSessionsStart(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, status, map[string]any{"ok": false, "error": code, "detail": continuityErr.Error()})
 		return
 	}
-	session, reused, err := s.agentSessions.startOrReuse(payload)
+	var session map[string]any
+	var reused bool
+	taskLinks, linksErr := s.agentSessionRequestTaskLinks(payload)
+	if linksErr != nil {
+		err = linksErr
+	} else if selectedDecision != nil {
+		binding, bindingErr := s.continuity.resolveAgentDecisionBinding(selectedDecision, payload)
+		if bindingErr != nil {
+			writeJSON(w, http.StatusConflict, map[string]any{"ok": false, "error": "agent_session_decision_conflict"})
+			return
+		}
+		session, reused, err = s.agentSessions.startOrReuseDecisionScoped(payload, scopeOwnership, binding, taskLinks)
+	} else {
+		session, reused, err = s.agentSessions.startOrReuseScoped(payload, scopeOwnership, taskLinks)
+	}
 	if err != nil {
+		if writeAgentDecisionPersistenceFailure(w, err) {
+			return
+		}
+		if errors.Is(err, errAgentDecisionConflict) || errors.Is(err, errAgentDecisionUnavailable) {
+			writeJSON(w, http.StatusConflict, map[string]any{"ok": false, "error": "agent_session_decision_conflict", "detail": err.Error()})
+			return
+		}
 		if errors.Is(err, errAgentSessionIDInvalid) {
 			writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"ok": false, "error": "agent_session_id_invalid", "detail": err.Error()})
 			return
@@ -2183,6 +2423,13 @@ func (s *server) agentsSessionsStart(w http.ResponseWriter, r *http.Request) {
 				"tags":              session["tags"],
 			},
 		})
+	}
+	if selectedDecision != nil && eventErr != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "partial": true,
+			"error": "agent_session_start_event_unconfirmed", "session_id": session["id"], "binding_recorded": true,
+			"decision_store_unavailable": ownerOnlyAtomicWriteCommitted(eventErr) || errors.Is(eventErr, errAgentDecisionUnavailable),
+			"detail":                     "Binding was recorded, but the session-start event was not confirmed; inspect the session before retrying."})
+		return
 	}
 	if eventErr == nil {
 		session, _, _ = s.agentSessions.get(anyToString(session["id"]))
@@ -2239,9 +2486,11 @@ func (s *server) agentsSessionContextPackage(w http.ResponseWriter, r *http.Requ
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": "agent session not found"})
 		return
 	}
-	payload := buildAgentPromptContextPackage(session, events, time.Now().UTC())
-	if strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("view")), "compact") {
-		payload = buildAgentSessionPacket(session, events, time.Now().UTC())
+	compact := strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("view")), "compact")
+	payload, err := s.buildAgentDecisionContextPackage(r.Context(), session, events, time.Now().UTC(), compact)
+	if err != nil {
+		writeJSON(w, http.StatusConflict, map[string]any{"ok": false, "error": "agent_session_resume_scope_changed"})
+		return
 	}
 	writeJSON(w, http.StatusOK, payload)
 }
@@ -2311,8 +2560,24 @@ func (s *server) agentsSessionsEvent(w http.ResponseWriter, r *http.Request, ses
 				return
 			}
 		}
-		session, event, err := s.agentSessions.appendEvent(effectiveSessionID, payload)
+		var scopeOwnership map[string]any
+		if requestedProject != "" || effectiveSessionID == "" {
+			scopeOwnership = newAgentSessionPublicScopeOwnership(requestedProject)
+		}
+		var session, event map[string]any
+		if agentDecisionEventRequested(payload) {
+			session, event, err = s.agentSessions.acknowledgeDecisionScoped(effectiveSessionID, payload, scopeOwnership, s.continuity.resolveAgentDecisionBinding)
+		} else {
+			session, event, err = s.agentSessions.appendEventScoped(effectiveSessionID, payload, scopeOwnership)
+		}
 		if err != nil {
+			if writeAgentDecisionPersistenceFailure(w, err) {
+				return
+			}
+			if errors.Is(err, errAgentDecisionConflict) || errors.Is(err, errAgentDecisionUnavailable) {
+				writeJSON(w, http.StatusConflict, map[string]any{"ok": false, "error": "agent_session_decision_conflict"})
+				return
+			}
 			if errors.Is(err, errAgentSessionIDInvalid) {
 				writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"ok": false, "error": "agent_session_id_invalid", "detail": err.Error()})
 				return
@@ -2331,7 +2596,11 @@ func (s *server) agentsSessionsEvent(w http.ResponseWriter, r *http.Request, ses
 		_, events, _ := s.agentSessions.get(anyToString(session["id"]))
 		rollup := buildAgentSessionRollup(session, events, time.Now().UTC())
 		response := map[string]any{"ok": true, "session": session, "event": event, "rollup": rollup}
-		if reconciliation := s.recordUtilitySessionEvent(session, event); len(reconciliation) > 0 {
+		var reconciliation map[string]any
+		if event["type"] != "decision.bound" && !anyToBool(event["idempotent_replay"]) {
+			reconciliation = s.recordUtilitySessionEvent(session, event)
+		}
+		if len(reconciliation) > 0 {
 			response["utility_reconciliation"] = reconciliation
 			if reconciliationOK, present := reconciliation["ok"]; present && !anyToBool(reconciliationOK) {
 				// The event is already durable, so expose partial success without
