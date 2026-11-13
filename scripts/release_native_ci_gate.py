@@ -60,9 +60,10 @@ def main() -> int:
             receipt["source_commit"] = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True, timeout=10).strip()
             receipt["tooling_hashes"] = extract_tooling(commit, tooling, Path.cwd())
             scripts = tooling / "scripts"
-            if not command_report([sys.executable, str(scripts / "release_native_toolchain_preflight.py")], temporary / "native-containment-baseline.json"):
-                if not command_report([sys.executable, str(scripts / "release_native_ci_profile.py"), "--prepare-github-hosted-ci"], temporary / "native-containment-profile.json"):
-                    raise ValueError("reviewed_native_preparation_failed")
+            # Preparation owns the ONE fresh baseline and its attribution.
+            # Repeated denied probes can be audit-rate-limited by the kernel.
+            if not command_report([sys.executable, str(scripts / "release_native_ci_profile.py"), "--prepare-github-hosted-ci"], temporary / "native-containment-profile.json"):
+                raise ValueError("reviewed_native_preparation_failed")
             if not command_report([sys.executable, str(scripts / "release_native_toolchain_preflight.py")], temporary / "native-containment-final.json"):
                 raise ValueError("final_native_probe_failed")
             if not command_report([sys.executable, str(scripts / "release_native_containment_holdouts.py")], temporary / "native-containment-holdouts.json"):
