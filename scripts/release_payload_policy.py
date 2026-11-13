@@ -21,6 +21,7 @@ DENIED_ROOTS = {
     "dist",
     "docker_compose_backup",
     "logs",
+    "out",
     "packaging",
     "private",
     "private_docs",

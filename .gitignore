@@ -10,6 +10,8 @@
 .envrc
 
 # build/merge artifacts
+/dist/
+/out/
 .compose.*
 .vols.*
 .yaml.err

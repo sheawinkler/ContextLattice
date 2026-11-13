@@ -27,6 +27,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import release_installer_outer as OUTER  # noqa: E402
+from release_payload_policy import payload_exclusion_reason  # noqa: E402
 from public_release_material_scan import PublicReleaseMaterialError  # noqa: E402
 from public_release_package_scan import (  # noqa: E402
     PackageScanLimits,
@@ -151,11 +152,18 @@ class PublicReleasePackageScanTests(unittest.TestCase):
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT / relative, destination)
         (source / ".gitattributes").write_text(
-            "/.gitattributes export-ignore\n/packaging export-ignore\n"
+            "/.gitattributes export-ignore\n/.gitignore export-ignore\n/packaging export-ignore\n"
             "/scripts export-ignore\n"
             "/scripts/agent/audit-public-installer-package export-ignore\n"
             "/scripts/public_release_package_scan.py export-ignore\n"
             "/scripts/release_installer_outer.py export-ignore\n",
+            encoding="utf-8",
+        )
+        (source / ".gitignore").write_text(
+            "\n".join(
+                line for line in (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
+                if line in {"/dist/", "/out/"}
+            ) + "\n",
             encoding="utf-8",
         )
         (source / ".env.example").write_text(
@@ -172,6 +180,7 @@ class PublicReleasePackageScanTests(unittest.TestCase):
         runtime.write_text("bounded public runtime\n", encoding="utf-8")
         commands = (
             ("init", "-q"),
+            ("config", "core.excludesFile", os.devnull),
             ("add", "."),
             (
                 "-c",
@@ -194,6 +203,25 @@ class PublicReleasePackageScanTests(unittest.TestCase):
                 check=True,
             )
         return source
+
+    def test_declared_build_outputs_do_not_dirty_release_source(self) -> None:
+        metadata = self.payload_metadata()
+        source = self.source_repo()
+        for relative in ("dist/ContextLattice.dmg", "out/contextlattice-release.json"):
+            (source / relative).parent.mkdir(parents=True, exist_ok=True)
+            _write(source / relative, b"generated build output\n")
+        _, observed = AUDIT._validate_public_payload_metadata(
+            metadata, source_root=source, tag=TAG, artifact_name="fixture.dmg"
+        )
+        self.assertEqual(observed["tag"], TAG)
+
+    def test_generated_build_roots_remain_outside_payload_material(self) -> None:
+        for path in ("dist/installer.dmg", "out/contextlattice-release.json", "out/nested/runtime.go"):
+            with self.subTest(path=path):
+                self.assertIsNotNone(payload_exclusion_reason(path))
+        for path in ("services/gateway-go/main.go", "docs/output-contracts.md"):
+            with self.subTest(path=path):
+                self.assertIsNone(payload_exclusion_reason(path))
 
     def payload_metadata(self) -> bytes:
         source = self.source_repo()
