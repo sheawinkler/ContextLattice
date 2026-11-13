@@ -20,11 +20,11 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def probe(root: Path) -> dict[str, object]:
+def probe(root: Path, *, single_setup_probe: bool = False) -> dict[str, object]:
     report: dict[str, object] = {
         "schema_id": "contextlattice_native_toolchain_preflight.v1",
         "ok": False,
-        "purpose": "benign_version_containment_only",
+        "purpose": "benign_bwrap_setup_only" if single_setup_probe else "benign_version_containment_only",
         "artifact_audit": False,
         "cwd": str(Path.cwd()),
         "tools": [],
@@ -50,7 +50,7 @@ def probe(root: Path) -> dict[str, object]:
         artifact.write_bytes(b"not an installer; never parsed\n")
         output = scratch / "output"
         output.mkdir(mode=0o700)
-        for name in ("msiinfo", "msiextract"):
+        for name in (("msiinfo",) if single_setup_probe else ("msiinfo", "msiextract")):
             tool = Path(paths[name]).resolve()
             argv = audit["_confined_bwrap_command"](
                 bwrap_path=str(Path(paths["bwrap"]).resolve()),
