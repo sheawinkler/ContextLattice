@@ -56,6 +56,8 @@ jobs:
           } > native-toolchain-identity.txt 2>&1
           python3 scripts/release_native_toolchain_preflight.py > native-toolchain-preflight.json
           result=$?
+          # Only the journal read needs privilege; output stays runner-owned.
+          # shellcheck disable=SC2024
           sudo journalctl -k --since "@$(cat native-probe-started)" --no-pager --output=json \
             --grep='apparmor="DENIED".*(bwrap|unprivileged_userns)' > native-toolchain-kernel-denials.jsonl 2> native-toolchain-kernel-read.stderr
           cat native-toolchain-preflight.json
