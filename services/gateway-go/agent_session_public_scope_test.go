@@ -252,3 +252,45 @@ func TestPublicSessionOwnerProbeNeverGrantsCrossLaneReuse(t *testing.T) {
 		t.Fatal("denial-only owner probe granted cross-lane reuse or mutated a valid original", err)
 	}
 }
+
+func TestPublicSessionMixedHistoryCannotMaskUnsupportedOwner(t *testing.T) {
+	for name, mutate := range publicSessionInvalidScopes() {
+		for _, reverse := range []bool{false, true} {
+			t.Run(name+map[bool]string{false: "_original_order", true: "_reversed"}[reverse], func(t *testing.T) {
+				continuity, store, payload, binding := agentDecisionFixture(t)
+				if _, _, err := store.startOrReuseDecisionScoped(payload, nil, binding); err != nil {
+					t.Fatal(err)
+				}
+				id := anyToString(payload["session_id"])
+				other := cloneJSONMap(payload)
+				other["session_id"], other["execution_lane_id"] = "sess_other_lane", "lane_other"
+				if _, _, err := store.startOrReuseDecisionScoped(other, newAgentSessionPublicScopeOwnership("alpha"), binding); err != nil {
+					t.Fatal(err)
+				}
+				mutate(store.sessions[id])
+				if reverse {
+					store.order[0], store.order[1] = store.order[1], store.order[0]
+				}
+				if err := store.persistLocked(); err != nil {
+					t.Fatal(err)
+				}
+				before, _ := os.ReadFile(store.path)
+				rows, events := agentDecisionDigest(store.sessions), agentDecisionDigest(store.events)
+				request := cloneJSONMap(payload)
+				delete(request, "session_id")
+				request["ensure"] = true
+				body, _ := json.Marshal(request)
+				s := &server{agentSessions: store, continuity: continuity}
+				w := httptest.NewRecorder()
+				s.agentsSessionsStart(w, httptest.NewRequest(http.MethodPost, "/v1/agents/sessions/start", bytes.NewReader(body)))
+				if w.Code < 400 {
+					t.Fatal("newer public cross-lane history masked unsupported matching owner")
+				}
+				after, _ := os.ReadFile(store.path)
+				if !bytes.Equal(before, after) || len(store.sessions) != 2 || rows != agentDecisionDigest(store.sessions) || events != agentDecisionDigest(store.events) {
+					t.Fatal("mixed-history denial changed custody, events, utility or disk")
+				}
+			})
+		}
+	}
+}
