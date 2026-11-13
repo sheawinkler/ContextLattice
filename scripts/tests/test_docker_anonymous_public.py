@@ -240,6 +240,40 @@ class DockerAnonymousPublicTests(unittest.TestCase):
         finally:
             temp_dir.cleanup()
 
+    def test_approved_digest_cannot_be_smuggled_as_command_or_option_data(self) -> None:
+        cases = (
+            ("run", "unreviewed:latest", IMAGE),
+            ("run", "--platform", "linux/amd64", "unreviewed:latest", "echo", IMAGE),
+            ("run", "-v", IMAGE, "unreviewed:latest"),
+            ("run", "--unknown", IMAGE, "unreviewed:latest"),
+            ("pull", IMAGE, "unreviewed:latest"),
+        )
+        for case in cases:
+            with self.subTest(case=case):
+                temp_dir, env, _ = self.fixture()
+                try:
+                    result = self.run_wrapper(env, *case)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertFalse(Path(env["FAKE_DOCKER_LOG"]).exists())
+                finally:
+                    temp_dir.cleanup()
+
+    def test_reviewed_installer_and_audit_argument_shapes_pass(self) -> None:
+        cases = (
+            ("run", "--rm", "--platform", "linux/amd64", "-v", "/stage:/work", "-w", "/work", IMAGE, "wixl", "-v"),
+            ("run", "--platform=linux/amd64", "--network", "none", "--read-only", "--security-opt", "no-new-privileges",
+             "--tmpfs", "/tmp", "--tmpfs", "/run", "-v", "/artifact:/input:ro", "-v", "/result:/output", IMAGE,
+             "msiextract", "-C", "/output", "/input/installer.msi"),
+            ("run", "--", IMAGE, "wixl"),
+        )
+        for case in cases:
+            with self.subTest(case=case):
+                temp_dir, env, _ = self.fixture()
+                try:
+                    self.assertEqual(self.run_wrapper(env, *case).returncode, 0)
+                finally:
+                    temp_dir.cleanup()
+
     def test_all_msitools_callers_use_digest_and_public_wrapper(self) -> None:
         source = WINDOWS_BUILDER.read_text(encoding="utf-8")
         self.assertIn(IMAGE, source)
