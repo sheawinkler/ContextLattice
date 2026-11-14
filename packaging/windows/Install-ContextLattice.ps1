@@ -9,6 +9,19 @@ Param(
 $ErrorActionPreference = "Stop"
 $ExpectedReleaseLane = "@RELEASE_LANE@"
 
+if (-not $ExtractOnly.IsPresent -and -not $NoLaunch.IsPresent) {
+    if (-not (Get-Command docker -ErrorAction SilentlyContinue) -or
+        -not (Get-Command curl.exe -ErrorAction SilentlyContinue)) {
+        throw "Docker Compose and curl.exe are required to launch and verify ContextLattice."
+    }
+    & docker compose version *> $null
+    if ($LASTEXITCODE -ne 0) { throw "Docker Compose v2 is required to launch ContextLattice." }
+    $dockerServerOS = @(& docker info --format '{{.OSType}}')
+    if ($LASTEXITCODE -ne 0 -or $dockerServerOS.Count -ne 1 -or $dockerServerOS[0] -cne 'linux') {
+        throw "A reachable Linux-container Docker daemon is required; no installation files were replaced."
+    }
+}
+
 if ($ExpectedReleaseLane -ne "public") {
     throw "Public installer lane was not baked at build time."
 }
@@ -46,6 +59,15 @@ function Read-ReleaseMetadata {
     }
     if ($metadata.commit -notmatch "^[0-9a-f]{40}$") {
         throw "Release metadata commit is invalid."
+    }
+    if ($metadata.source_tree -notmatch "^[0-9a-f]{40}$") {
+        throw "Release metadata source tree is invalid."
+    }
+    if ($metadata.runtime_version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$') {
+        throw "Release metadata runtime version is invalid."
+    }
+    if ($metadata.build_channel -notin @("stable", "candidate")) {
+        throw "Release metadata build channel is invalid."
     }
     if ($metadata.tag -notmatch "^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$") {
         throw "Release metadata tag is invalid."
@@ -469,27 +491,87 @@ try {
         }
     }
     Remove-Item -LiteralPath $tempExtract -Recurse -Force -ErrorAction SilentlyContinue
-    if (-not $keepTransaction) {
+    if (-not $keepTransaction -and -not $committed) {
         Remove-Item -LiteralPath $transactionDir -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
 
 Write-Host "ContextLattice $($metadata.lane) payload $($metadata.tag) ($($metadata.commit)) installed atomically at $InstallDir."
 if ($ExtractOnly.IsPresent -or $NoLaunch.IsPresent) {
+    Remove-Item -LiteralPath $transactionDir -Recurse -Force -ErrorAction SilentlyContinue
     exit 0
 }
 
-if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
-    throw "Docker Desktop with Compose v2 is required to launch ContextLattice."
+try {
+    Set-Location $InstallDir
+} catch {
+    Write-Warning "Launch failed after file commit; retaining both current install at $InstallDir and transaction at $transactionDir. Runtime state may have changed; automatic rollback is unsafe."
+    throw
 }
 
-Set-Location $InstallDir
-if (Test-Path -LiteralPath "scripts\install_global_agent_tools.ps1") {
+function Get-GatewayReadinessIdentity {
+    Param([string]$ContainerId)
+    # No embedded quotes: Windows PowerShell 5.1 uses legacy native argv passing.
+    $format = '[{{json .State.Running}},{{if .State.Health}}{{json .State.Health.Status}}{{else}}null{{end}},{{json .Config.Labels}},{{json .State.StartedAt}},{{json .RestartCount}}]'
+    $raw = (& docker inspect --format $format $ContainerId | Out-String)
+    if ($LASTEXITCODE -ne 0) { return $null }
+    $probe = @($raw | ConvertFrom-Json)
+    if ($probe.Count -ne 5 -or $probe[0] -isnot [bool] -or $probe[1] -isnot [string] -or
+        $probe[2] -isnot [System.Management.Automation.PSCustomObject] -or
+        $probe[2].'org.opencontainers.image.revision' -isnot [string] -or
+        $probe[2].'io.contextlattice.source-tree' -isnot [string] -or
+        $probe[2].'org.opencontainers.image.version' -isnot [string] -or
+        [string]::IsNullOrWhiteSpace([string]$probe[3]) -or
+        ($probe[4] -isnot [int] -and $probe[4] -isnot [long]) -or $probe[4] -lt 0) { return $null }
+    $identity = @($probe[0], $probe[1], $probe[2].'org.opencontainers.image.revision',
+        $probe[2].'io.contextlattice.source-tree', $probe[2].'org.opencontainers.image.version',
+        $probe[3], $probe[4])
+    return ConvertTo-Json -InputObject $identity -Compress
+}
+
+function Test-GatewayReadiness {
+    Param([string]$ComposeFile, $Metadata)
     try {
-        & powershell -ExecutionPolicy Bypass -File "scripts\install_global_agent_tools.ps1"
-    } catch {
-        Write-Warning "Global agent tool install failed: $($_.Exception.Message)"
-    }
+        $id = @(& docker compose -f $ComposeFile ps -q gateway-go)
+        if ($LASTEXITCODE -ne 0 -or $id.Count -ne 1 -or $id[0] -cnotmatch '^[0-9a-f]{64}$') { return $false }
+        $state = Get-GatewayReadinessIdentity -ContainerId $id[0]
+        if ([string]::IsNullOrWhiteSpace($state)) { return $false }
+        $fields = @($state | ConvertFrom-Json)
+        if ($fields.Count -ne 7 -or $fields[0] -ne $true -or $fields[1] -cne 'healthy' -or
+            $fields[2] -cne $Metadata.commit -or $fields[3] -cne $Metadata.source_tree -or
+            $fields[4] -cne $Metadata.runtime_version -or [string]::IsNullOrWhiteSpace($fields[5]) -or
+            $fields[6] -cnotmatch '^[0-9]+$') { return $false }
+        $port = & docker exec $id[0] printenv PORT
+        if ($LASTEXITCODE -ne 0 -or $port -notmatch '^[0-9]{1,5}$') { return $false }
+        $bindings = @(& docker port $id[0] "$port/tcp")
+        if ($LASTEXITCODE -ne 0) { return $false }
+        $loopback = @($bindings | Where-Object { $_ -match '^(127\.0\.0\.1|0\.0\.0\.0):([0-9]+)$' })
+        if ($loopback.Count -ne 1 -or $loopback[0] -notmatch '^(127\.0\.0\.1|0\.0\.0\.0):([0-9]+)$') { return $false }
+        $hostPort = $Matches[2]
+        $inside = (& docker exec $id[0] wget -qO- -T 3 "http://127.0.0.1:$port/readyz" | Out-String)
+        if ($LASTEXITCODE -ne 0) { return $false }
+        $outside = (& curl.exe --noproxy '*' -fsS --max-time 3 "http://127.0.0.1:$hostPort/readyz" | Out-String)
+        if ($LASTEXITCODE -ne 0) { return $false }
+        $a = $inside | ConvertFrom-Json
+        $b = $outside | ConvertFrom-Json
+        foreach ($response in @($a, $b)) {
+            if ($response -isnot [System.Management.Automation.PSCustomObject] -or
+                $response.build -isnot [System.Management.Automation.PSCustomObject] -or
+                $response.service -isnot [string] -or $response.build.source_commit -isnot [string] -or
+                $response.build.source_tree -isnot [string] -or
+                $response.ok -isnot [bool] -or $response.ready -isnot [bool] -or
+                $response.ok -ne $true -or $response.ready -ne $true -or $response.service -cne 'gateway-go' -or
+                $response.build.source_commit -cne $Metadata.commit -or $response.build.source_tree -cne $Metadata.source_tree) { return $false }
+            if ($response.build.boot_nonce -isnot [string] -or $response.build.boot_nonce -cnotmatch '\A[0-9a-f]{32}\z') { return $false }
+        }
+        if ([string]::IsNullOrWhiteSpace($a.build.boot_nonce) -or $a.build.boot_nonce -cne $b.build.boot_nonce) { return $false }
+        $again = @(& docker compose -f $ComposeFile ps -q gateway-go)
+        if ($LASTEXITCODE -ne 0 -or $again.Count -ne 1 -or $again[0] -cne $id[0]) { return $false }
+        $finalState = Get-GatewayReadinessIdentity -ContainerId $id[0]
+        if ([string]::IsNullOrWhiteSpace($finalState) -or $finalState -cne $state) { return $false }
+        $script:gatewayReadyPort = $hostPort
+        return $true
+    } catch { return $false }
 }
 
 $composeFile = "docker-compose.lite.yml"
@@ -497,12 +579,46 @@ if ($FullMode.IsPresent) {
     $composeFile = "docker-compose.yml"
 }
 Write-Host "Launching stack with $composeFile ..."
-docker compose -f $composeFile up -d --build
-if ($LASTEXITCODE -ne 0) {
-    throw "docker compose failed."
+$launchIdentity = @{
+    "CONTEXTLATTICE_BUILD_VERSION" = [string]$metadata.runtime_version
+    "CONTEXTLATTICE_BUILD_CHANNEL" = [string]$metadata.build_channel
+    "CONTEXTLATTICE_SOURCE_COMMIT" = [string]$metadata.commit
+    "CONTEXTLATTICE_SOURCE_TREE" = [string]$metadata.source_tree
+}
+$previousLaunchIdentity = @{}
+foreach ($setting in $launchIdentity.GetEnumerator()) {
+    $previousLaunchIdentity[$setting.Key] = [Environment]::GetEnvironmentVariable($setting.Key, "Process")
+    [Environment]::SetEnvironmentVariable($setting.Key, $setting.Value, "Process")
+}
+try {
+    & docker compose -f $composeFile up -d --build
+    if ($LASTEXITCODE -ne 0) {
+        throw "docker compose failed."
+    }
+    $ready = $false
+    for ($attempt = 0; $attempt -lt 30; $attempt++) {
+        if (Test-GatewayReadiness -ComposeFile $composeFile -Metadata $metadata) { $ready = $true; break }
+        Start-Sleep -Seconds 2
+    }
+    if (-not $ready) { throw "Installed gateway readiness was not verified." }
+} catch {
+    Write-Warning "Launch/readiness failed after file commit; retaining both current install at $InstallDir and transaction at $transactionDir. Runtime state may have changed; automatic rollback is unsafe."
+    throw
+} finally {
+    foreach ($setting in $previousLaunchIdentity.GetEnumerator()) {
+        [Environment]::SetEnvironmentVariable($setting.Key, $setting.Value, "Process")
+    }
 }
 
-Write-Host "Install complete. API: http://127.0.0.1:8075 Dashboard: http://127.0.0.1:3000"
+Remove-Item -LiteralPath $transactionDir -Recurse -Force -ErrorAction SilentlyContinue
+if (Test-Path -LiteralPath "scripts\install_global_agent_tools.ps1") {
+    try {
+        & powershell -ExecutionPolicy Bypass -File "scripts\install_global_agent_tools.ps1"
+    } catch {
+        Write-Warning "Global agent tool install failed: $($_.Exception.Message)"
+    }
+}
+Write-Host "Install complete. Gateway API: http://127.0.0.1:$gatewayReadyPort Dashboard: http://127.0.0.1:3000"
 try {
     Start-Process "http://127.0.0.1:3000" | Out-Null
 } catch {

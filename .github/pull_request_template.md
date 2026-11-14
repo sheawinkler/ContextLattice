@@ -33,9 +33,18 @@ Impact classification:
 - [ ] This PR does not change a host supervisor, installer, scheduler, runtime start/stop path, or recovery policy.
 - [ ] This PR is host-lifecycle critical and includes every item below.
 
-Required when host-lifecycle critical:
+One-shot bootstrap-only source merge (all changed paths must fit the finite installer/source-guard scope; do not use for scheduled behavior):
+
+- [ ] This PR changes only one-shot bootstrap installers and their source guards, not scheduled payloads, cadence, or recovery policy code.
+- [ ] A peer reviewed the allowed-file changes; scheduled supervisor payloads, cadence and recovery policy code are unchanged.
+- [ ] Native installed and final-artifact qualification remain release gates; source merge does not claim them.
+
+Required for either critical source-merge path:
 
 - [ ] The source audit and failure injection suite pass.
+
+Additionally required before merge for scheduled payloads, supervision, cadence, recovery, mixed or unclassified critical changes:
+
 - [ ] The installed payload matches the reviewed source and the upgrade path was exercised.
 - [ ] Any launchd smoke uses an isolated launchd label and cannot touch an operator's loaded job.
 - [ ] Docker-unavailable, startup-transition, health-failure, high-CPU, locking, and stop-failure cases were exercised.
