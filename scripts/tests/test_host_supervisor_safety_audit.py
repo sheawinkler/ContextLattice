@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import importlib.machinery
+import importlib.util
 import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 
@@ -44,7 +48,8 @@ def run_audit(
     changed_files: list[str] | None = None,
     pr_body: str = "",
 ) -> tuple[subprocess.CompletedProcess[str], dict[str, object]]:
-    argv = ["python3", str(AUDIT), "--root", str(root)]
+    argv = [sys.executable, str(AUDIT), "--root", str(root), "--syntax-shell",
+            os.environ.get("CONTEXTLATTICE_AUDIT_SYNTAX_SHELL", "bash")]
     env = os.environ.copy()
     input_text = None
     if changed_files is not None:
@@ -69,6 +74,90 @@ def failure_ids(payload: dict[str, object]) -> set[str]:
 
 
 class HostSupervisorSafetyAuditTests(unittest.TestCase):
+    def test_bootstrap_source_merge_is_finite_and_not_release_authority(self) -> None:
+        loader = importlib.machinery.SourceFileLoader("bootstrap_safety_audit_fixture", str(AUDIT))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        audit = importlib.util.module_from_spec(spec)
+        with mock.patch.dict(sys.modules, {loader.name: audit}):
+            loader.exec_module(audit)
+        body = "\n".join("- [x] " + label for label in audit.BOOTSTRAP_PR_CHECKS)
+        entry = "packaging/linux/ContextLattice-Install.sh"
+        syntax = subprocess.CompletedProcess(["mocked-syntax-check"], 0, "", "")
+        with mock.patch.object(audit.shutil, "which", return_value="/mocked/zsh"), mock.patch.object(
+            audit.subprocess, "run", return_value=syntax
+        ) as run:
+            for paths in ([entry], sorted(audit.BOOTSTRAP_SOURCE_PATHS)):
+                with self.subTest(paths=paths):
+                    payload = audit.run_audit(ROOT, paths, body, syntax_shell="zsh")
+                    self.assertTrue(payload["ok"], payload["failures"])
+                    self.assertEqual(payload["evidence_scope"], "source_merge")
+                    self.assertIs(payload["release_qualified"], False)
+            self.assertEqual(run.call_args.args[0][0], "/mocked/zsh")
+            self.assertEqual(run.call_args.kwargs["timeout"], 10)
+            for paths in ([entry, "scripts/orbstack_self_heal.sh"],
+                          [entry, "scripts/install_retention_runner.sh"],
+                          [entry, "scripts/install_global_agent_tools.sh"],
+                          [entry, "unclassified-change.py"],
+                          ["scripts/tests/test_installer_transaction_readiness.py"],
+                          ["scripts/agent/audit-host-supervisor-safety"],
+                          ["docs/host-supervisor-release-safety.md"]):
+                with self.subTest(invalid_paths=paths):
+                    self.assertIn("pr_evidence", failure_ids(audit.run_audit(ROOT, paths, body)))
+            for label in audit.BOOTSTRAP_PR_CHECKS:
+                incomplete = body.replace("- [x] " + label, "- [ ] " + label)
+                self.assertIn("pr_evidence", failure_ids(audit.run_audit(ROOT, [entry], incomplete)))
+            contradictory = body + "\n- [x] " + audit.NO_IMPACT_CHECK
+            self.assertIn("pr_evidence", failure_ids(audit.run_audit(ROOT, [entry], contradictory)))
+            before = run.call_count
+            with self.assertRaises(ValueError):
+                audit.run_audit(ROOT, syntax_shell="arbitrary-command")
+            self.assertEqual(run.call_count, before)
+
+    def test_installer_paths_require_completed_pr_evidence_without_shell(self) -> None:
+        loader = importlib.machinery.SourceFileLoader("host_safety_audit_fixture", str(AUDIT))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        audit = importlib.util.module_from_spec(spec)
+        with mock.patch.dict(sys.modules, {loader.name: audit}):
+            loader.exec_module(audit)
+
+        paths = (
+            "packaging/linux/ContextLattice-Install.sh",
+            "packaging/windows/Install-ContextLattice.ps1",
+            "packaging/windows/ContextLattice-Install.cmd",
+            "scripts/tests/test_installer_transaction_readiness.py",
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            make_fixture(root)
+            unchecked = (root / ".github/pull_request_template.md").read_text(encoding="utf-8")
+            checked = unchecked.replace("- [ ] This PR is host-lifecycle critical", "- [x] This PR is host-lifecycle critical")
+            for prefix in ("The source", "The installed", "Any launchd", "Docker-unavailable", "At least", "Destructive recovery"):
+                checked = checked.replace(f"- [ ] {prefix}", f"- [x] {prefix}")
+
+            # Isolate the classifier from the auditor's unrelated shell syntax subprocess.
+            syntax = subprocess.CompletedProcess(["mocked-syntax-check"], 0, "", "")
+            with mock.patch.object(audit.shutil, "which", return_value="/mocked/bash"), mock.patch.object(
+                audit.subprocess, "run", return_value=syntax
+            ):
+                for path in paths:
+                    for body in ("", unchecked):
+                        with self.subTest(path=path, evidence="missing" if not body else "unchecked"):
+                            payload = audit.run_audit(root, changed_files=[path], pr_body=body)
+                            self.assertFalse(payload["ok"])
+                            self.assertIn("pr_evidence", failure_ids(payload))
+                    with self.subTest(path=path, evidence="checked"):
+                        payload = audit.run_audit(root, changed_files=[path], pr_body=checked)
+                        self.assertTrue(payload["ok"], payload["failures"])
+                        self.assertNotIn("pr_evidence", failure_ids(payload))
+                    with self.subTest(path=path, evidence="contradictory"):
+                        payload = audit.run_audit(
+                            root, changed_files=[path], pr_body=checked + "\n- [x] " + audit.NO_IMPACT_CHECK
+                        )
+                        self.assertIn("pr_evidence", failure_ids(payload))
+                payload = audit.run_audit(root, changed_files=["docs/host-supervisor-release-safety.md"], pr_body="")
+                self.assertTrue(payload["ok"], payload["failures"])
+                self.assertNotIn("pr_evidence", failure_ids(payload))
+
     def test_repository_contract_passes(self) -> None:
         result, payload = run_audit(ROOT)
         self.assertEqual(result.returncode, 0, result.stderr)

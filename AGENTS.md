@@ -27,7 +27,8 @@ ContextLattice routes local memory and capabilities for this repo.
 
 ## Host Lifecycle Safety
 - Host supervisors, installers, schedulers, runtime start/stop paths, and recovery policy are host-lifecycle critical.
-- Before merge, complete the PR evidence contract; run `scripts/agent/audit-host-supervisor-safety`, matching failure injection, an installed upgrade smoke under an isolated scheduler identity, and at least two real scheduled intervals with identity/restart-count proof.
+- Before merge, complete the applicable PR evidence contract and `scripts/agent/audit-host-supervisor-safety` with matching failure injection. Scheduled payload, cadence, runtime supervision or recovery changes additionally require an installed upgrade smoke under an isolated scheduler identity and at least two real scheduled intervals with identity/restart-count proof.
+- One-shot bootstrap-only source changes may merge after local source checks and review using the finite bootstrap checklist; mixed changes retain the full scheduled gate. A path declaration cannot waive changed scheduled behavior. Native installed/final-artifact qualification still gates release, not bootstrap-only source merge. See `docs/host-supervisor-release-safety.md`.
 - Source tests do not prove installed behavior. Never reuse an operator scheduler label or tag a host-lifecycle change without tested rollback.
 
 ## Compaction

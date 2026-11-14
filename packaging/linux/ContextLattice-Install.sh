@@ -19,6 +19,7 @@ BACKUP_MOVED=0
 STAGE_PUBLISHED=0
 COMMITTED=0
 HAD_EXISTING_INSTALL=0
+RUN_COMPLETE=0
 
 usage() {
   cat <<USAGE
@@ -84,13 +85,25 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ -n "${INSTALL_DIR}" ]] || fail "HOME is unset; pass --install-dir PATH."
+if [[ "${NO_LAUNCH}" != "1" ]]; then
+  case "$(uname -s)" in
+    Linux|Darwin) ;;
+    *) fail "Unix bundle launch requires Linux or macOS; use the native platform installer or --no-launch. No installation files were replaced." ;;
+  esac
+  for required in docker curl python3; do
+    command -v "${required}" >/dev/null 2>&1 || fail "${required} is required to launch and verify ContextLattice."
+  done
+  docker compose version >/dev/null 2>&1 || fail "Docker Compose v2 is required to launch ContextLattice."
+  docker_server_os="$(docker info --format '{{.OSType}}')" || fail "Docker daemon is unavailable; no installation files were replaced."
+  [[ "${docker_server_os}" == "linux" ]] || fail "A Linux-container Docker daemon is required to launch ContextLattice."
+fi
 
 [[ "${EXPECTED_RELEASE_LANE}" == "public" ]] || fail "public installer lane was not baked at build time."
 EXPECTED_SOURCE_REPOSITORY="sheawinkler/ContextLattice"
 EXPECTED_SOURCE_REF="refs/heads/main"
 
 cleanup() {
-  local status=$?
+  local exit_code=$?
   set +e
   trap - EXIT HUP INT TERM
 
@@ -106,11 +119,14 @@ cleanup() {
     elif [[ "${HAD_EXISTING_INSTALL}" == "0" && "${STAGE_PUBLISHED}" == "1" ]]; then
       rm -rf -- "${INSTALL_DIR}"
     fi
+  elif [[ "${RUN_COMPLETE}" != "1" ]]; then
+    warn "Launch/readiness failed after file commit; retaining current install at ${INSTALL_DIR} and transaction at ${TRANSACTION_DIR}. Runtime state may have changed; automatic rollback is unsafe."
+    TRANSACTION_DIR=""
   fi
 
   [[ -z "${TMP_EXTRACT}" ]] || rm -rf -- "${TMP_EXTRACT}"
   [[ -z "${TRANSACTION_DIR}" ]] || rm -rf -- "${TRANSACTION_DIR}"
-  exit "${status}"
+  exit "${exit_code}"
 }
 trap cleanup EXIT
 trap 'exit 129' HUP
@@ -124,17 +140,17 @@ metadata_value() {
 }
 
 sha256_file() {
-  local path="$1"
+  local file_path="$1"
   if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "${path}" | awk '{print tolower($1)}'
+    sha256sum "${file_path}" | awk '{print tolower($1)}'
   elif command -v shasum >/dev/null 2>&1; then
-    shasum -a 256 "${path}" | awk '{print tolower($1)}'
+    shasum -a 256 "${file_path}" | awk '{print tolower($1)}'
   else
     fail "sha256sum or shasum is required to verify the embedded payload."
   fi
 }
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 if [[ -z "${PAYLOAD_DIR}" ]]; then
   if [[ -d "${SCRIPT_DIR}/payload" ]]; then
     PAYLOAD_DIR="${SCRIPT_DIR}/payload"
@@ -161,6 +177,9 @@ metadata_schema="$(metadata_value "${METADATA_PATH}" schema_id)"
 metadata_lane="$(metadata_value "${METADATA_PATH}" lane)"
 metadata_tag="$(metadata_value "${METADATA_PATH}" tag)"
 metadata_commit="$(metadata_value "${METADATA_PATH}" commit)"
+metadata_source_tree="$(metadata_value "${METADATA_PATH}" source_tree)"
+metadata_runtime_version="$(metadata_value "${METADATA_PATH}" runtime_version)"
+metadata_build_channel="$(metadata_value "${METADATA_PATH}" build_channel)"
 metadata_release_ref="$(metadata_value "${METADATA_PATH}" release_ref)"
 metadata_source="$(metadata_value "${METADATA_PATH}" source)"
 metadata_source_repository="$(metadata_value "${METADATA_PATH}" approved_source_repository)"
@@ -171,6 +190,9 @@ metadata_source_ref="$(metadata_value "${METADATA_PATH}" approved_source_ref)"
 [[ "${metadata_lane}" == "${EXPECTED_RELEASE_LANE}" ]] || \
   fail "release lane mismatch: installer=${EXPECTED_RELEASE_LANE}, payload=${metadata_lane:-missing}"
 [[ "${metadata_commit}" =~ ^[0-9a-f]{40}$ ]] || fail "release metadata commit is invalid."
+[[ "${metadata_source_tree}" =~ ^[0-9a-f]{40}$ ]] || fail "release metadata source tree is invalid."
+[[ "${metadata_runtime_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || fail "release metadata runtime version is invalid."
+[[ "${metadata_build_channel}" == "stable" || "${metadata_build_channel}" == "candidate" ]] || fail "release metadata build channel is invalid."
 [[ "${metadata_tag}" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$ ]] || fail "release metadata tag is invalid."
 [[ "${metadata_release_ref}" == "refs/tags/${metadata_tag}" ]] || fail "release metadata tag ref is invalid."
 [[ "${metadata_source}" == "approved_lane_tagged_checkout" ]] || fail "release metadata source is invalid."
@@ -444,34 +466,68 @@ COMMITTED=1
 
 echo "ContextLattice ${metadata_lane} payload ${metadata_tag} (${metadata_commit}) installed atomically at ${INSTALL_DIR}."
 if [[ "${EXTRACT_ONLY}" == "1" || "${NO_LAUNCH}" == "1" ]]; then
+  RUN_COMPLETE=1
   exit 0
 fi
 
-command -v docker >/dev/null 2>&1 || fail "Docker with Compose v2 is required to launch ContextLattice."
 compose_file="docker-compose.lite.yml"
 if [[ "${FULL_MODE}" == "1" ]]; then
   compose_file="docker-compose.yml"
 fi
 
 cd "${INSTALL_DIR}"
+
+echo "Launching stack with ${compose_file} ..."
+CONTEXTLATTICE_BUILD_VERSION="${metadata_runtime_version}" \
+CONTEXTLATTICE_BUILD_CHANNEL="${metadata_build_channel}" \
+CONTEXTLATTICE_SOURCE_COMMIT="${metadata_commit}" \
+CONTEXTLATTICE_SOURCE_TREE="${metadata_source_tree}" \
+  docker compose -f "${compose_file}" up -d --build
+
+gateway_ready() {
+  local id status_line final_state running health revision tree version started restarts port binding host_port inside outside again
+  local inspect_format='{{.State.Running}}|{{if .State.Health}}{{.State.Health.Status}}{{end}}|{{index .Config.Labels "org.opencontainers.image.revision"}}|{{index .Config.Labels "io.contextlattice.source-tree"}}|{{index .Config.Labels "org.opencontainers.image.version"}}|{{.State.StartedAt}}|{{.RestartCount}}'
+  id="$(docker compose -f "${compose_file}" ps -q gateway-go)" || return 1
+  [[ "${id}" =~ ^[0-9a-f]{64}$ ]] || return 1
+  status_line="$(docker inspect --format "${inspect_format}" "${id}")" || return 1
+  IFS='|' read -r running health revision tree version started restarts <<< "${status_line}"
+  [[ "${running}" == "true" && "${health}" == "healthy" && "${revision}" == "${metadata_commit}" && "${tree}" == "${metadata_source_tree}" && "${version}" == "${metadata_runtime_version}" && -n "${started}" && "${restarts}" =~ ^[0-9]+$ ]] || return 1
+  [[ "${status_line}" == "${running}|${health}|${revision}|${tree}|${version}|${started}|${restarts}" ]] || return 1
+  port="$(docker exec "${id}" printenv PORT)" || return 1
+  [[ "${port}" =~ ^[0-9]{1,5}$ ]] || return 1
+  binding="$(docker port "${id}" "${port}/tcp")" || return 1
+  host_port="$(printf '%s\n' "${binding}" | sed -nE 's/^(127\.0\.0\.1|0\.0\.0\.0):([0-9]+)$/\2/p')"
+  [[ "${host_port}" =~ ^[0-9]{1,5}$ ]] || return 1
+  inside="$(docker exec "${id}" wget -qO- -T 3 "http://127.0.0.1:${port}/readyz")" || return 1
+  outside="$(curl --noproxy '*' -fsS --max-time 3 "http://127.0.0.1:${host_port}/readyz")" || return 1
+  printf '%s\n%s\n' "${inside}" "${outside}" | python3 -c 'import json,re,sys
+try:
+ a,b=(json.loads(line) for line in sys.stdin)
+ expected=sys.argv[1:]
+ if not all(x.get("ok") is True and x.get("ready") is True and x.get("service")=="gateway-go" and [x["build"]["source_commit"],x["build"]["source_tree"]]==expected for x in (a,b)): sys.exit(1)
+ nonce=a["build"]["boot_nonce"]
+ if not isinstance(nonce,str) or re.fullmatch(r"[0-9a-f]{32}",nonce) is None or nonce!=b["build"]["boot_nonce"]: sys.exit(1)
+except (ValueError,KeyError,TypeError,AttributeError): sys.exit(1)' "${metadata_commit}" "${metadata_source_tree}" || return 1
+  again="$(docker compose -f "${compose_file}" ps -q gateway-go)" || return 1
+  [[ "${again}" == "${id}" ]] || return 1
+  final_state="$(docker inspect --format "${inspect_format}" "${id}")" || return 1
+  [[ "${final_state}" == "${status_line}" ]] || return 1
+  READY_PORT="${host_port}"
+}
+
+echo "Waiting for the installed gateway readiness..."
+ready=0
+for _ in {1..30}; do
+  if gateway_ready; then ready=1; break; fi
+  sleep 2
+done
+[[ "${ready}" == "1" ]] || fail "Installed gateway readiness was not verified."
+RUN_COMPLETE=1
 if [[ -x scripts/install_global_agent_tools.sh ]]; then
   scripts/install_global_agent_tools.sh --quiet || warn "global agent tools were not installed."
 fi
 
-echo "Launching stack with ${compose_file} ..."
-docker compose -f "${compose_file}" up -d --build
-
-if command -v curl >/dev/null 2>&1; then
-  echo "Waiting for API health..."
-  for _ in {1..30}; do
-    if curl -fsS "http://127.0.0.1:8075/health" >/dev/null 2>&1; then
-      break
-    fi
-    sleep 2
-  done
-fi
-
-echo "Install complete. API: http://127.0.0.1:8075 Dashboard: http://127.0.0.1:3000"
+echo "Install complete. Gateway API: http://127.0.0.1:${READY_PORT} Dashboard: http://127.0.0.1:3000"
 if command -v open >/dev/null 2>&1; then
   open "http://127.0.0.1:3000" >/dev/null 2>&1 || true
 elif command -v xdg-open >/dev/null 2>&1; then
