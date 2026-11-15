@@ -223,6 +223,16 @@ class PublicReleasePackageScanTests(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertIsNone(payload_exclusion_reason(path))
 
+    def test_private_research_roots_and_descendants_are_not_release_payload(self) -> None:
+        for root in ("services/gateway-go/internal/researcheval",
+                     "services/gateway-go/cmd/contextlattice-research-eval"):
+            for path in (root, root + "/ledger.go", root + "/nested/source.go", root.upper()):
+                with self.subTest(path=path):
+                    self.assertEqual(payload_exclusion_reason(path), "private research tooling")
+            for path in (root + "-public/source.go", root + "ish/source.go"):
+                with self.subTest(path=path):
+                    self.assertIsNone(payload_exclusion_reason(path))
+
     def payload_metadata(self) -> bytes:
         source = self.source_repo()
         commit = subprocess.check_output(

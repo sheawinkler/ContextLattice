@@ -141,6 +141,11 @@ def payload_exclusion_reason(relative: str | PurePosixPath) -> str | None:
         return "developer/local-state root"
     if len(lowered_parts) >= 2 and lowered_parts[0] == "docs" and lowered_parts[1] in DENIED_DOCS:
         return "private or test-evidence documentation"
+    if any(lowered_value == root or lowered_value.startswith(root + "/") for root in (
+        "services/gateway-go/internal/researcheval",
+        "services/gateway-go/cmd/contextlattice-research-eval",
+    )):
+        return "private research tooling"
     if lowered_value == "services/orchestrator":
         return "legacy runtime symlink"
     if len(lowered_parts) >= 2 and lowered_parts[:2] == ("config", "runtime-license"):
