@@ -199,5 +199,7 @@ scripts/frontier_t1_source_contract.py
 scripts/tests/test_frontier_t1_source_manifest.py
 scripts/tests/test_frontier_t1_source_archive.py
 scripts/tests/test_release_payload_provenance.py
+scripts/resolve_frontier_release_source.py
+scripts/tests/test_frontier_release_source_resolver.py
 scripts/validate_frontier_t1_source_archive.py
 scripts/validate_frontier_t1_release_provenance.py

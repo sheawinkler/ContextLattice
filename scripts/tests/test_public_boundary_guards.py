@@ -33,6 +33,16 @@ def commit_all(root: Path, message: str) -> None:
 
 
 class PublicBoundaryGuardTests(unittest.TestCase):
+    def test_paid_source_resolver_is_not_an_oss_dependency(self) -> None:
+        rules = (ROOT / "config/public_sync_blocklist.txt").read_text().splitlines()
+        for path in ("scripts/resolve_frontier_release_source.py",
+                     "scripts/tests/test_frontier_release_source_resolver.py"):
+            with self.subTest(path=path):
+                self.assertIn(path, rules)
+                self.assertFalse((ROOT / path).exists())
+        auditor = (ROOT / "scripts/agent/audit-paid-release-assets").read_text()
+        self.assertIn("contextlattice_frontier_release_source_resolution.v1", auditor)
+
     def test_paid_analytics_has_complete_public_projection_boundaries(self) -> None:
         paid_paths = (
             "contextlattice-dashboard/app/analytics/page.tsx",

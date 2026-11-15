@@ -6,6 +6,7 @@
 # env (keep example files tracked)
 .env
 .env.*
+.env_*
 !.env.example
 .envrc
 
