@@ -6116,6 +6116,9 @@ func (c *cli) adapterStatus(args []string) error {
 
 func (c *cli) adapterBootstrap(args []string) error {
 	parsed := parseArgs(args, mergeStringFlags(adapterStringFlags(), map[string]string{"agent": "agent", "agent-id": "agent_id", "query": "query", "objective": "objective", "mission": "mission", "goal": "goal"}), commonBoolFlags())
+	if parsed.bool("help") {
+		return c.emitUsage("contextlattice_agent_adapter bootstrap --agent codex --project contextlattice [--objective '<task>'] --pretty")
+	}
 	c.applyBaseURL(parsed)
 	agent := parsed.string("agent", "codex")
 	profile := resolveAdapterProfile(parsed)

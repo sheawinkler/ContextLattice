@@ -4511,6 +4511,34 @@ func TestRunnerQualityCommandUsesNativeTelemetryEndpoint(t *testing.T) {
 	}
 }
 
+func TestAdapterBootstrapHelpHasNoNetworkOrSessionSideEffects(t *testing.T) {
+	for _, flag := range []string{"--help", "-h"} {
+		t.Run(flag, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("CONTEXTLATTICE_GLOBAL_HOME", filepath.Join(home, "global"))
+			t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg"))
+			var requests atomic.Int32
+			var out, errOut bytes.Buffer
+			c := newCLI(&out, &errOut)
+			c.client = &http.Client{Transport: testRoundTripper(func(*http.Request) (*http.Response, error) {
+				requests.Add(1)
+				return nil, errors.New("help must not make a request")
+			})}
+			if err := c.run([]string{"contextlattice", "adapter", "bootstrap", flag}); err != nil {
+				t.Fatalf("bootstrap help failed: %v", err)
+			}
+			if requests.Load() != 0 || !strings.Contains(out.String(), "bootstrap --agent") || errOut.Len() != 0 {
+				t.Fatalf("unexpected help output or request: stdout=%q stderr=%q requests=%d", out.String(), errOut.String(), requests.Load())
+			}
+			entries, err := os.ReadDir(home)
+			if err != nil || len(entries) != 0 {
+				t.Fatalf("bootstrap help wrote session state: entries=%v error=%v", entries, err)
+			}
+		})
+	}
+}
+
 func TestAdapterBootstrapCompactsPreflightResult(t *testing.T) {
 	workingDir := t.TempDir()
 	t.Chdir(workingDir)
