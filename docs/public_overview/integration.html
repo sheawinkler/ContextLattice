@@ -59,10 +59,10 @@
         <div class="kicker">Version clarity</div>
         <h3>Integration target for launch</h3>
         <ul class="spec-list">
-          <li><strong>Use this for production/public integration:</strong> current public <code>v5.1.x</code> lane on <code>http://127.0.0.1:8075</code>.</li>
+          <li><strong>Choose a published build:</strong> use the <a href="https://github.com/sheawinkler/ContextLattice/releases">release page</a>, then verify your installed version and source identity at <code>http://127.0.0.1:8075/health</code>.</li>
           <li><strong>Primary interface:</strong> install, adopt, context-pack, checkpoint, and validate through CLI commands first.</li>
           <li><strong>HTTP/MCP role:</strong> use these when an app, local AI workspace, or agent harness needs a programmatic integration surface.</li>
-          <li><strong>Current public retrieval baseline:</strong> staged fast-return with async slow-source continuation and Qdrant-first local Lite recall.</li>
+          <li><strong>Retrieval depends on your profile:</strong> full stacks can use Qdrant with staged slow-source continuation; HF Lite uses topic rollups by default. Check the enabled sources in your runtime rather than assuming every Lite profile has the same backends.</li>
         </ul>
       </article>
     </section>
@@ -124,20 +124,24 @@ curl -fsS -H "x-api-key: ${ORCH_KEY}" http://127.0.0.1:8075/status | jq</code></
     <section class="section" id="integration-smoke">
       <article class="card">
         <div class="kicker">Quick wiring</div>
-        <h3>5-minute integration smoke test</h3>
+        <h3>Basic integration smoke test</h3>
         <div class="priority-row"><span class="priority-chip required">Required</span></div>
-        <p>Run this once to confirm your app can write and retrieve memory through Context Lattice before wiring UI-specific settings.</p>
+        <p>Check write, search, and exact readback before wiring UI-specific settings. This example requires the Go memory store and authorization for the listed API routes; profile-specific unavailable routes are not a successful smoke test.</p>
 <pre><code>ORCH_KEY="$(awk -F= '/^CONTEXTLATTICE_ORCHESTRATOR_API_KEY=/{print substr($0,index($0,"=")+1)}' .env)"
 
 curl -fsS -H "content-type: application/json" -H "x-api-key: ${ORCH_KEY}" \
-  -d '{"projectName":"_global","fileName":"smoke/integration_check.md","content":"integration smoke ok"}' \
+  -d '{"projectName":"integration-smoke","fileName":"smoke/integration_check.md","content":"integration smoke ok"}' \
   http://127.0.0.1:8075/memory/write | jq
 
 curl -fsS -H "content-type: application/json" -H "x-api-key: ${ORCH_KEY}" \
-  -d '{"query":"integration smoke ok","limit":3}' \
-  http://127.0.0.1:8075/memory/search | jq</code></pre>
+  -d '{"project":"integration-smoke","query":"integration smoke ok","limit":3}' \
+  http://127.0.0.1:8075/memory/search | jq
+
+curl -fsS -H "content-type: application/json" -H "x-api-key: ${ORCH_KEY}" \
+  -d '{"project":"integration-smoke","file":"smoke/integration_check.md"}' \
+  http://127.0.0.1:8075/tools/memory_file_get | jq</code></pre>
         <ul class="spec-list">
-          <li><strong>If both calls return <code>ok: true</code>:</strong> your app can safely integrate.</li>
+          <li><strong>Check each result:</strong> verify the write acknowledgement, inspect search evidence separately, then confirm exact-file readback returns this project, file, and <code>integration smoke ok</code> content. Search can return summaries or rollups rather than complete file bodies; an <code>ok: true</code> flag alone does not prove recall, permissions, or production readiness.</li>
           <li><strong>If you get <code>401</code>:</strong> verify <code>CONTEXTLATTICE_ORCHESTRATOR_API_KEY</code> and restart the caller process.</li>
         </ul>
       </article>
