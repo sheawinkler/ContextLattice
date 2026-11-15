@@ -31,18 +31,18 @@ fail() {
 }
 
 cleanup() {
-  local status=$?
+  local exit_code=$?
   trap - EXIT
   if [[ -n "${DOCKER_CONFIG_DIR}" && -d "${DOCKER_CONFIG_DIR}" ]]; then
     local config_prefix="${DOCKER_CONFIG_TEMPLATE%XXXXXX}"
     if [[ "${DOCKER_CONFIG_DIR}" != "${config_prefix}"* ]]; then
       echo "ERROR: refusing to remove an unexpected temporary Docker config path." >&2
-      status=1
+      exit_code=1
     else
       rm -rf -- "${DOCKER_CONFIG_DIR}"
     fi
   fi
-  exit "${status}"
+  exit "${exit_code}"
 }
 trap cleanup EXIT
 
@@ -125,10 +125,10 @@ extract_image_ref() {
   if [[ "${#image_refs[@]}" -ne 1 ]]; then
     fail "exactly one public image reference pinned by digest is required."
   fi
-  if ! approved_image_ref "${image_refs[0]}"; then
+  if ! approved_image_ref "${image_refs[@]}"; then
     fail "image is not an approved public release image."
   fi
-  printf '%s\n' "${image_refs[0]}"
+  printf '%s\n' "${image_refs[@]}"
 }
 
 capture_local_context_socket() {
@@ -160,10 +160,10 @@ capture_local_context_socket() {
 }
 
 prepare_anonymous_config() {
-  DOCKER_CONFIG_DIR="$(mktemp -d "${DOCKER_CONFIG_TEMPLATE}")"
-  chmod 700 "${DOCKER_CONFIG_DIR}"
-  printf '%s\n' '{"auths":{}}' > "${DOCKER_CONFIG_DIR}/config.json"
-  chmod 600 "${DOCKER_CONFIG_DIR}/config.json"
+  DOCKER_CONFIG_DIR="$(mktemp -d "${DOCKER_CONFIG_TEMPLATE}")" || fail "could not create temporary Docker config."
+  chmod 700 "${DOCKER_CONFIG_DIR}" || fail "could not secure temporary Docker config."
+  printf '%s\n' '{"auths":{}}' > "${DOCKER_CONFIG_DIR}/config.json" || fail "could not write temporary Docker config."
+  chmod 600 "${DOCKER_CONFIG_DIR}/config.json" || fail "could not secure temporary Docker credentials file."
 }
 
 main() {
@@ -198,7 +198,7 @@ main() {
     DOCKER_CONFIG="${DOCKER_CONFIG_DIR}" \
     DOCKER_HOST="${docker_socket}" \
     DOCKER_CLI_HINTS=false \
-    "${DOCKER_COMMAND}" "${operation}" "$@"
+    "${DOCKER_COMMAND}" "${operation}" "$@" || exit $?
 }
 
 main "$@"

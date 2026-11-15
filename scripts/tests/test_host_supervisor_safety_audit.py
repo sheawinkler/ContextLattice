@@ -15,6 +15,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 AUDIT = ROOT / "scripts/agent/audit-host-supervisor-safety"
+GUARD_EXPECTED_COMPANIONS = frozenset({
+    "scripts/agent/audit-host-supervisor-safety",
+    "scripts/tests/test_host_supervisor_safety_audit.py",
+    "scripts/tests/test_installer_transaction_readiness.py",
+    "AGENTS.md", ".github/pull_request_template.md", "docs/host-supervisor-release-safety.md",
+    "scripts/docker_anonymous_public.sh", "scripts/tests/test_docker_anonymous_public.py",
+})
 FIXTURE_PATHS = (
     Path(".env.example"),
     Path("LICENSE"),
@@ -24,6 +31,7 @@ FIXTURE_PATHS = (
     Path("scripts/agent/audit-agent-global-install-smoke"),
     Path("scripts/tests/test_orbstack_self_heal_install.py"),
     Path("scripts/tests/test_retention_runner_install.py"),
+    Path("scripts/tests/test_host_supervisor_safety_audit.py"),
     Path(".github/workflows/public-product-truth.yml"),
     Path(".github/workflows/release-installers.yml"),
     Path(".github/pull_request_template.md"),
@@ -74,6 +82,99 @@ def failure_ids(payload: dict[str, object]) -> set[str]:
 
 
 class HostSupervisorSafetyAuditTests(unittest.TestCase):
+    def test_source_guard_mode_accepts_only_finite_critical_paths(self) -> None:
+        loader = importlib.machinery.SourceFileLoader("guard_safety_audit_fixture", str(AUDIT))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        audit = importlib.util.module_from_spec(spec)
+        with mock.patch.dict(sys.modules, {loader.name: audit}):
+            loader.exec_module(audit)
+        expected = {
+            "scripts/agent/audit-host-supervisor-safety",
+            "scripts/tests/test_host_supervisor_safety_audit.py",
+            "scripts/tests/test_installer_transaction_readiness.py",
+        }
+        self.assertEqual(audit.SOURCE_GUARD_CRITICAL_PATHS, expected)
+        body = "\n".join("- [x] " + label for label in audit.SOURCE_GUARD_PR_CHECKS)
+        self.assertEqual(audit.SOURCE_GUARD_COMPANION_PATHS, GUARD_EXPECTED_COMPANIONS)
+        syntax = subprocess.CompletedProcess(["mocked-syntax-check"], 0, "", "")
+        with mock.patch.object(audit.shutil, "which", return_value="/mocked/zsh"), mock.patch.object(
+            audit.subprocess, "run", return_value=syntax
+        ):
+            for paths in ([path] for path in sorted(expected)):
+                with self.subTest(paths=paths):
+                    payload = audit.run_audit(ROOT, paths, body, syntax_shell="zsh")
+                    self.assertTrue(payload["ok"], payload["failures"])
+                    self.assertEqual(payload["evidence_scope"], "source_merge")
+                    self.assertIs(payload["release_qualified"], False)
+            for companion in audit.SOURCE_GUARD_COMPANION_PATHS - expected:
+                with self.subTest(companion=companion):
+                    payload = audit.run_audit(ROOT, [next(iter(expected)), companion], body, syntax_shell="zsh")
+                    self.assertNotIn("pr_evidence", failure_ids(payload))
+            payload = audit.run_audit(ROOT, sorted(expected) + [
+                "scripts/docker_anonymous_public.sh", "scripts/tests/test_docker_anonymous_public.py"
+            ], body, syntax_shell="zsh")
+            self.assertTrue(payload["ok"], payload["failures"])
+
+    def test_source_guard_mode_rejects_scope_and_checkbox_conflicts(self) -> None:
+        loader = importlib.machinery.SourceFileLoader("guard_scope_audit_fixture", str(AUDIT))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        audit = importlib.util.module_from_spec(spec)
+        with mock.patch.dict(sys.modules, {loader.name: audit}):
+            loader.exec_module(audit)
+        body = "\n".join("- [x] " + label for label in audit.SOURCE_GUARD_PR_CHECKS)
+        entry = "scripts/tests/test_installer_transaction_readiness.py"
+        syntax = subprocess.CompletedProcess(["mocked-syntax-check"], 0, "", "")
+        with mock.patch.object(audit.shutil, "which", return_value="/mocked/zsh"), mock.patch.object(
+            audit.subprocess, "run", return_value=syntax
+        ):
+            for extra in ("packaging/linux/ContextLattice-Install.sh", "packaging/windows/Install-ContextLattice.ps1",
+                          "scripts/orbstack_self_heal.sh", "scripts/retention_runner.sh",
+                          "scripts/install_retention_runner.sh", "scripts/build_windows_msi.sh", ".env.example",
+                          "services/gateway-go/runtime.go", "contextlattice-dashboard/app/page.tsx", "docker-compose.yml",
+                          "scripts/other_runtime.sh", "scripts/build_release_payload.py",
+                          ".env.production", "config/env/strict_runtime.env", ".github/workflows/new-scheduled.yml",
+                          "../scripts/orbstack_self_heal.sh", "scripts//orbstack_self_heal.sh"):
+                with self.subTest(extra=extra):
+                    self.assertIn("pr_evidence", failure_ids(audit.run_audit(ROOT, [entry, extra], body, syntax_shell="zsh")))
+            self.assertIn("pr_evidence", failure_ids(audit.run_audit(ROOT, ["docs/ordinary.md"], body, syntax_shell="zsh")))
+            for label in audit.SOURCE_GUARD_PR_CHECKS:
+                incomplete = body.replace("- [x] " + label, "- [ ] " + label)
+                self.assertIn("pr_evidence", failure_ids(audit.run_audit(ROOT, [entry], incomplete, syntax_shell="zsh")))
+            unknown = body.replace(audit.SOURCE_GUARD_PR_CHECKS[0], "Unknown source-guard scope.")
+            self.assertIn("pr_evidence", failure_ids(audit.run_audit(ROOT, [entry], unknown, syntax_shell="zsh")))
+            for conflicting in (audit.NO_IMPACT_CHECK, audit.BOOTSTRAP_PR_CHECKS[0],
+                                audit.BOOTSTRAP_PR_CHECKS[1], audit.REQUIRED_PR_CHECKS[0],
+                                audit.REQUIRED_PR_CHECKS[2]):
+                self.assertIn("pr_evidence", failure_ids(audit.run_audit(
+                    ROOT, [entry], body + "\n- [x] " + conflicting, syntax_shell="zsh"
+                )))
+
+    def test_source_guard_mode_cannot_waive_existing_failure_controls(self) -> None:
+        loader = importlib.machinery.SourceFileLoader("guard_controls_audit_fixture", str(AUDIT))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        audit = importlib.util.module_from_spec(spec)
+        with mock.patch.dict(sys.modules, {loader.name: audit}):
+            loader.exec_module(audit)
+        body = "\n".join("- [x] " + label for label in audit.SOURCE_GUARD_PR_CHECKS)
+        syntax = subprocess.CompletedProcess(["mocked-syntax-check"], 0, "", "")
+        with tempfile.TemporaryDirectory() as temp_dir, mock.patch.object(
+            audit.shutil, "which", return_value="/mocked/zsh"
+        ), mock.patch.object(audit.subprocess, "run", return_value=syntax):
+            root = Path(temp_dir)
+            make_fixture(root)
+            entry = "scripts/agent/audit-host-supervisor-safety"
+            supervisor_tests = root / "scripts/tests/test_orbstack_self_heal_install.py"
+            original = supervisor_tests.read_text(encoding="utf-8")
+            supervisor_tests.write_text(original.replace("def test_stop_waits_for_confirmed_unload_before_removing_plist(",
+                                                          "def removed_failure_control(", 1), encoding="utf-8")
+            self.assertIn("failure_injection_tests", failure_ids(audit.run_audit(root, [entry], body, syntax_shell="zsh")))
+            supervisor_tests.write_text(original, encoding="utf-8")
+            own_tests = root / "scripts/tests/test_host_supervisor_safety_audit.py"
+            own_tests.write_text(own_tests.read_text(encoding="utf-8").replace(
+                "def test_source_guard_mode_accepts_only_finite_critical_paths(", "def removed_guard_regression(", 1
+            ), encoding="utf-8")
+            self.assertIn("source_guard_regression_tests", failure_ids(audit.run_audit(root, [entry], body, syntax_shell="zsh")))
+
     def test_bootstrap_source_merge_is_finite_and_not_release_authority(self) -> None:
         loader = importlib.machinery.SourceFileLoader("bootstrap_safety_audit_fixture", str(AUDIT))
         spec = importlib.util.spec_from_loader(loader.name, loader)
