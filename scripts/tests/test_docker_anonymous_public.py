@@ -6,6 +6,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -89,12 +90,13 @@ class DockerAnonymousPublicTests(unittest.TestCase):
         original_before = original_config_file.read_bytes()
         (root / "helper-called").unlink(missing_ok=True)
         helper = fake_bin / "docker-credential-fake-helper"
+        fixture_shell = "#!/bin/zsh -f" if os.environ.get("CONTEXTLATTICE_AUDIT_SYNTAX_SHELL") == "zsh" else "#!/bin/sh"
         write_executable(
             helper,
-            f"#!/bin/sh\nprintf 'called\\n' > '{root / 'helper-called'}'\nexit 99\n",
+            f"{fixture_shell}\nprintf 'called\\n' > '{root / 'helper-called'}'\nexit 99\n",
         )
         fake_docker = fake_bin / "docker"
-        write_executable(fake_docker, FAKE_DOCKER)
+        write_executable(fake_docker, FAKE_DOCKER.replace("#!/bin/sh", fixture_shell, 1))
 
         env = os.environ.copy()
         env.update(
@@ -104,6 +106,7 @@ class DockerAnonymousPublicTests(unittest.TestCase):
                 "DOCKER_CONTEXT": "unrelated-context",
                 "DOCKER_HOST": "tcp://unrelated.invalid:2375",
                 "TMPDIR": temp_root,
+                "TMPPREFIX": str(root / "zsh"),
                 "FAKE_ORBSTACK_SOCKET": f"unix://{root / 'orbstack.sock'}",
                 "FAKE_DOCKER_LOG": str(root / "docker.log"),
                 "FAKE_CONFIG_DIR_CAPTURE": str(root / "config-dir"),
@@ -120,8 +123,12 @@ class DockerAnonymousPublicTests(unittest.TestCase):
     def run_wrapper(
         self, env: dict[str, str], *arguments: str
     ) -> subprocess.CompletedProcess[str]:
+        shell = env.get("CONTEXTLATTICE_AUDIT_SYNTAX_SHELL", "")
+        if shell not in ("", "zsh"):
+            raise ValueError("unsupported audit syntax shell")
+        command = ["zsh", "-f", str(WRAPPER)] if shell == "zsh" else [str(WRAPPER)]
         return subprocess.run(
-            [str(WRAPPER), *arguments],
+            [*command, *arguments],
             cwd=ROOT,
             env=env,
             text=True,
@@ -210,6 +217,9 @@ class DockerAnonymousPublicTests(unittest.TestCase):
             temp_dir.cleanup()
 
     def test_rejects_credentials_private_images_and_mutable_refs_before_docker(self) -> None:
+        with mock.patch.object(subprocess, "run", side_effect=AssertionError("must not start")):
+            with self.assertRaisesRegex(ValueError, "unsupported audit syntax shell"):
+                self.run_wrapper({"CONTEXTLATTICE_AUDIT_SYNTAX_SHELL": "invalid"}, "pull", IMAGE)
         cases = (
             ("login", "--username", "operator"),
             ("logout", "docker.io"),
@@ -275,6 +285,14 @@ class DockerAnonymousPublicTests(unittest.TestCase):
                     temp_dir.cleanup()
 
     def test_all_msitools_callers_use_digest_and_public_wrapper(self) -> None:
+        wrapper = WRAPPER.read_text(encoding="utf-8")
+        count_guard = 'if [[ "${#image_refs[@]}" -ne 1 ]]; then'
+        approval = 'approved_image_ref "${image_refs[@]}"'
+        self.assertNotIn("${image_refs[-1]}", wrapper)
+        self.assertIn(count_guard, wrapper)
+        self.assertIn(approval, wrapper)
+        self.assertIn('printf \'%s\\n\' "${image_refs[@]}"', wrapper)
+        self.assertLess(wrapper.index(count_guard), wrapper.index(approval))
         source = WINDOWS_BUILDER.read_text(encoding="utf-8")
         self.assertIn(IMAGE, source)
         self.assertNotIn(MUTABLE_IMAGE, source)

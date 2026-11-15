@@ -108,7 +108,8 @@ print '{"ok":true,"ready":true,"service":"gateway-go","build":{"source_commit":"
 python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest(),sys.argv[1])' "$1"
 ''')
         self.env = {'PATH': str(self.bin)+':/usr/bin:/bin:/usr/sbin:/sbin', 'HOME': str(self.root),
-                    'TMPDIR': str(self.root), 'PAYLOAD_DIR': str(payload), 'FIXTURE_LOG': str(self.log),
+                    'TMPDIR': str(self.root), 'TMPPREFIX': str(self.root / 'zsh'),
+                    'PAYLOAD_DIR': str(payload), 'FIXTURE_LOG': str(self.log),
                     'FIXTURE_INSTALL': str(self.install), 'FIXTURE_HTTP_DONE': str(self.root / 'http-done'), 'LC_ALL': 'C'}
 
     def fake(self, name, body):

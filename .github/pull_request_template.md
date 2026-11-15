@@ -33,13 +33,20 @@ Impact classification:
 - [ ] This PR does not change a host supervisor, installer, scheduler, runtime start/stop path, or recovery policy.
 - [ ] This PR is host-lifecycle critical and includes every item below.
 
+Source-guard-only source merge (select this scope instead of the other impact classifications):
+
+- [ ] Source-guard-only: all host-lifecycle critical changes are source fixtures or guards, not installer, supervisor, scheduler, cadence, or recovery payload changes.
+- [ ] A peer reviewed the full diff, preserved failure controls, and verified no indirect runtime payload change.
+- [ ] The affected source audit and failure injection checks pass.
+- [ ] Native installed and final-artifact qualification remain release gates; this source-guard merge does not claim them.
+
 One-shot bootstrap-only source merge (all changed paths must fit the finite installer/source-guard scope; do not use for scheduled behavior):
 
 - [ ] This PR changes only one-shot bootstrap installers and their source guards, not scheduled payloads, cadence, or recovery policy code.
 - [ ] A peer reviewed the allowed-file changes; scheduled supervisor payloads, cadence and recovery policy code are unchanged.
 - [ ] Native installed and final-artifact qualification remain release gates; source merge does not claim them.
 
-Required for either critical source-merge path:
+Required for bootstrap-only and full critical source-merge paths:
 
 - [ ] The source audit and failure injection suite pass.
 
