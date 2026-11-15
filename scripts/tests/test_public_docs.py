@@ -38,6 +38,17 @@ ROUTES = (
 
 
 class PublicDocsTests(unittest.TestCase):
+    def test_public_release_labels_follow_product_truth(self) -> None:
+        contract = json.loads((ROOT / "config/commercial_truth.v1.json").read_text(encoding="utf-8"))
+        tag = contract["product"]["stable_tag"]
+        for page in (DOCS_ROOT / "index.html", DOCS_ROOT / "releases/index.html"):
+            with self.subTest(page=page):
+                text = page.read_text(encoding="utf-8")
+                self.assertIn(f"<strong>Public release</strong> {tag}", text)
+                self.assertIn(f"ContextLattice / public docs / {tag}", text)
+        index = json.loads((DOCS_ROOT / "search-index.json").read_text(encoding="utf-8"))
+        self.assertEqual(index["release"], tag)
+
     def test_generated_documentation_is_current(self) -> None:
         result = subprocess.run(
             ["python3", str(BUILDER), "--check"],

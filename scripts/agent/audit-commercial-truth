@@ -119,6 +119,7 @@ def audit_public_json(
 
 def audit_static_pages(
     root: Path,
+    generator: ModuleType,
     contract: dict[str, Any],
     findings: list[dict[str, str]],
 ) -> None:
@@ -127,6 +128,8 @@ def audit_static_pages(
     release_major = int(version.split(".", 1)[0])
     version_patterns = (
         (re.compile(r"Current public release:</strong>\s*<code>v(\d+\.\d+\.\d+)</code>"), version),
+        (re.compile(r"Current public release:\s*<code>v(\d+\.\d+\.\d+)</code>"), version),
+        (re.compile(r"Current public:\s*v(\d+\.\d+\.\d+)"), version),
         (re.compile(r"Current release:\s*<code>v(\d+\.\d+\.\d+)</code>"), version),
         (re.compile(r"Current public release baseline is v(\d+\.\d+\.\d+)"), version),
         (re.compile(r"current_version --object (\d+\.\d+\.\d+)"), version),
@@ -141,6 +144,18 @@ def audit_static_pages(
             findings.append(finding("static_page_missing", str(relative), "commercial truth target is missing"))
             continue
         lower = text.lower()
+        if relative == Path("docs/public_overview/index.html"):
+            visible = [match.group(2) for match in generator.VISIBLE_PUBLIC_FLOW.finditer(text)]
+            if visible != [train]:
+                findings.append(finding("visible_public_release_train", str(relative),
+                                        f"visible={visible!r}; expected={[train]!r}"))
+        if relative == Path("docs/public_overview/cli.html"):
+            claims = re.findall(r"(?m)^contextlattice_claim_write[^\n]*--predicate current_version[^\n]*$", text)
+            expected_claim = ("contextlattice_claim_write --project contextlattice --subject public-release "
+                              f"--predicate current_version --object {version} --pretty")
+            if claims != [expected_claim]:
+                findings.append(finding("public_release_claim_scope", str(relative),
+                                        "expected exactly one public-scoped current-version claim"))
         if "cli" not in lower or ("primary" not in lower and "canonical local flow" not in lower):
             findings.append(finding("cli_not_primary", str(relative), "page does not identify CLI as primary"))
         if release_major < 4 and re.search(r"\bv4\b|version\s*4", text, flags=re.IGNORECASE):
@@ -558,7 +573,7 @@ def run_audit(root: Path, release_tag: str = "") -> dict[str, Any]:
     contract = audit_generated(root, generator, findings)
     if contract is not None:
         audit_public_json(root, generator, contract, findings)
-        audit_static_pages(root, contract, findings)
+        audit_static_pages(root, generator, contract, findings)
         audit_protected_routes(root, contract, findings)
         audit_active_catalogs(root, findings, warnings)
         audit_release_publish_inputs(root, contract, findings)

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import copy
+import importlib.util
 import json
 import shutil
 import subprocess
@@ -51,13 +53,55 @@ def copy_fixture(destination: Path) -> None:
 
 
 class CommercialTruthTests(unittest.TestCase):
+    def test_public_version_semver_and_generated_scope(self) -> None:
+        spec = importlib.util.spec_from_file_location("public_commercial_truth_under_test", GENERATOR)
+        self.assertIsNotNone(spec)
+        generator = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(generator)
+        contract = json.loads((ROOT / "config/commercial_truth.v1.json").read_text(encoding="utf-8"))
+        version = contract["product"]["version"]
+        train = contract["product"]["release_train"]
+        generator.validate_contract(contract)
+        self.assertEqual(generator.render_go(contract, include_entitled_runtime=False),
+                         (ROOT / "services/gateway-go/commercial_contract_generated.go").read_text(encoding="utf-8"))
+        self.assertEqual(generator.render_typescript(contract),
+                         (ROOT / "contextlattice-dashboard/lib/billing/commercial.generated.ts").read_text(encoding="utf-8"))
+        cli = (ROOT / "docs/public_overview/cli.html").read_text(encoding="utf-8")
+        self.assertIn(f"--subject public-release --predicate current_version --object {version}", cli)
+        self.assertEqual(generator.update_cli(cli, contract), cli)
+        index = (ROOT / "docs/public_overview/index.html").read_text(encoding="utf-8")
+        flows = tuple(generator.VISIBLE_PUBLIC_FLOW.finditer(index))
+        self.assertEqual(len(flows), 1)
+        self.assertEqual(flows[0].group(2), train)
+        self.assertEqual(generator.update_index(index, contract, "index"), index)
+        stale = index[:flows[0].start(2)] + "9.9" + index[flows[0].end(2):]
+        self.assertEqual(generator.update_index(stale, contract, "index"), index)
+        for malformed in (index + flows[0].group(0), index.replace(flows[0].group(0), "", 1)):
+            with self.assertRaises(generator.ContractError):
+                generator.update_index(malformed, contract, "index")
+        for invalid in ("05.1.2", "5.01.2", "5.1.02", "\u0665.1.2", " 5.1.2"):
+            with self.subTest(version=invalid):
+                candidate = copy.deepcopy(contract)
+                candidate["product"].update(version=invalid, stable_tag="v" + invalid,
+                                            release_train=".".join(invalid.split(".")[:2]))
+                with self.assertRaises(generator.ContractError):
+                    generator.validate_contract(candidate)
+        for field, bad in (("stable_tag", "v9.9.9"), ("release_train", "9.9")):
+            candidate = copy.deepcopy(contract)
+            candidate["product"][field] = bad
+            with self.subTest(field=field), self.assertRaises(generator.ContractError):
+                generator.validate_contract(candidate)
+        zero = copy.deepcopy(contract)
+        zero["product"].update(version="0.0.0", stable_tag="v0.0.0", release_train="0.0")
+        generator.validate_contract(zero)
+
     def test_contract_decisions(self) -> None:
         contract = json.loads((ROOT / "config/commercial_truth.v1.json").read_text(encoding="utf-8"))
         self.assertEqual(contract["product"]["version"], "5.1.2")
         self.assertEqual(contract["product"]["stable_tag"], "v5.1.2")
         self.assertEqual(contract["product"]["release_train"], "5.1")
         public_index = (ROOT / "docs/public_overview/index.html").read_text(encoding="utf-8")
-        self.assertIn("<strong>5</strong> Current: v5.1.2", public_index)
+        self.assertIn("<strong>5</strong> Current public: v5.1.2", public_index)
         self.assertEqual(contract["product"]["category"], "local_first_agent_intelligence_layer")
         self.assertIn("local-first intelligence layer", contract["product"]["canonical_description"])
         self.assertEqual(contract["product"]["primary_interface"], "cli")
@@ -452,6 +496,30 @@ class CommercialTruthTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             payload = json.loads(result.stdout)
             self.assertIn("release_publish_version_drift", {row["code"] for row in payload["findings"]})
+
+    def test_audit_rejects_stale_visible_flow_and_unqualified_claim(self) -> None:
+        for case in ("wrong_visible_train", "unqualified_claim"):
+            with self.subTest(case=case), tempfile.TemporaryDirectory(prefix="public-commercial-scope-") as tmp:
+                fixture = Path(tmp)
+                copy_fixture(fixture)
+                contract = json.loads((fixture / "config/commercial_truth.v1.json").read_text(encoding="utf-8"))
+                if case == "wrong_visible_train":
+                    page = fixture / "docs/public_overview/index.html"
+                    text = page.read_text(encoding="utf-8")
+                    old = f'<span>Public v{contract["product"]["release_train"]}</span>'
+                    self.assertEqual(text.count(old), 1)
+                    page.write_text(text.replace(old, "<span>Public v9.9</span>", 1), encoding="utf-8")
+                    expected = "visible_public_release_train"
+                else:
+                    page = fixture / "docs/public_overview/cli.html"
+                    text = page.read_text(encoding="utf-8")
+                    old = "--subject public-release --predicate current_version"
+                    self.assertEqual(text.count(old), 1)
+                    page.write_text(text.replace(old, "--subject release --predicate current_version", 1), encoding="utf-8")
+                    expected = "public_release_claim_scope"
+                result = run(str(fixture / "scripts/agent/audit-commercial-truth"), "--root", str(fixture), root=fixture)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(expected, {row["code"] for row in json.loads(result.stdout)["findings"]})
 
     def test_audit_rejects_stale_release_publish_train(self) -> None:
         with tempfile.TemporaryDirectory(prefix="commercial-truth-launch-train-") as tmp:

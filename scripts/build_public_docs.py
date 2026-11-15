@@ -340,7 +340,7 @@ def render_page(docs: list[Doc], doc: Doc, stable_tag: str) -> str:
 
   <div class="docs-tape" aria-label="Documentation status">
     <span><strong>Manual</strong> Repository-backed</span>
-    <span><strong>Release</strong> {html.escape(stable_tag)}</span>
+    <span><strong>Public release</strong> {html.escape(stable_tag)}</span>
     <span><strong>Interface</strong> CLI first</span>
     <span><strong>Source</strong> Public/main</span>
   </div>
@@ -385,7 +385,7 @@ def render_page(docs: list[Doc], doc: Doc, stable_tag: str) -> str:
   </main>
 
   <footer class="site-footer">
-    <span>ContextLattice / docs / {html.escape(stable_tag)}</span>
+    <span>ContextLattice / public docs / {html.escape(stable_tag)}</span>
     <nav aria-label="Footer">
       <a href="/installation.html">Install</a>
       <a href="/troubleshooting.html">Troubleshoot</a>

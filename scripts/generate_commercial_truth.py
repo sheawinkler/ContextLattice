@@ -36,6 +36,10 @@ TEXT_BEGIN = "# BEGIN GENERATED COMMERCIAL TRUTH: {name}"
 TEXT_END = "# END GENERATED COMMERCIAL TRUTH: {name}"
 MERMAID_BEGIN = "%% BEGIN GENERATED COMMERCIAL TRUTH: {name}"
 MERMAID_END = "%% END GENERATED COMMERCIAL TRUTH: {name}"
+VISIBLE_PUBLIC_FLOW = re.compile(
+    r"(<div><span>Agent or app</span><i>[^<]+</i><span>Public v)"
+    r"(\d+\.\d+)(</span><i>[^<]+</i><span>Gateway :8075</span></div>)"
+)
 
 
 class ContractError(ValueError):
@@ -93,12 +97,14 @@ def validate_contract(contract: dict[str, Any]) -> None:
     if not isinstance(product, dict):
         raise ContractError("product must be an object")
     version = require_string(product, "version", "product")
-    if not re.fullmatch(r"\d+\.\d+\.\d+", version):
+    if product["version"] != version or not re.fullmatch(
+        r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)", version
+    ):
         raise ContractError("product.version must be strict semver without a prefix")
-    if require_string(product, "stable_tag", "product") != f"v{version}":
+    if require_string(product, "stable_tag", "product") != f"v{version}" or product["stable_tag"] != f"v{version}":
         raise ContractError("product.stable_tag must equal v<product.version>")
     expected_train = ".".join(version.split(".")[:2])
-    if require_string(product, "release_train", "product") != expected_train:
+    if require_string(product, "release_train", "product") != expected_train or product["release_train"] != expected_train:
         raise ContractError("product.release_train must equal the major.minor version")
     if product.get("primary_interface") != "cli":
         raise ContractError("product.primary_interface must be cli")
@@ -933,10 +939,15 @@ def update_index(text: str, contract: dict[str, Any], page_key: str) -> str:
         release_sequence = version.split(".", 1)[0]
         text = replace_once(
             text,
-            r"      <span><strong>\d+</strong> Current: v\d+\.\d+\.\d+</span>",
-            f"      <span><strong>{release_sequence}</strong> Current: v{version}</span>",
+            r"      <span><strong>\d+</strong> Current(?: public)?: v\d+\.\d+\.\d+</span>",
+            f"      <span><strong>{release_sequence}</strong> Current public: v{version}</span>",
             "index current release truth tape",
         )
+        flows = tuple(VISIBLE_PUBLIC_FLOW.finditer(text))
+        if len(flows) != 1:
+            raise ContractError("index must contain exactly one visible public release flow")
+        flow = flows[0]
+        text = text[:flow.start(2)] + train + text[flow.end(2):]
 
     heading = marker_block(
         f"{page_key}-release-heading",
@@ -1083,7 +1094,7 @@ def update_cli(text: str, contract: dict[str, Any]) -> str:
         ),
     )
     body = (
-        "contextlattice_claim_write --project contextlattice --subject release "
+        "contextlattice_claim_write --project contextlattice --subject public-release "
         f"--predicate current_version --object {version} --pretty"
     )
     block = marker_block("cli-release-claim", body, indent="")
@@ -1093,7 +1104,7 @@ def update_cli(text: str, contract: dict[str, Any]) -> str:
         block,
         lambda value, replacement: replace_once(
             value,
-            r'contextlattice_claim_write --project contextlattice --subject release '
+            r'contextlattice_claim_write --project contextlattice --subject (?:release|public-release) '
             r'--predicate current_version --object \d+\.\d+\.\d+ --pretty',
             replacement,
             "CLI release claim",
