@@ -58,6 +58,8 @@ The **CLI is the primary interface**. The dashboard makes behavior and proof vis
 
 ContextLattice does not replace your agent harness, choose goals from retrieved text, or execute imported context. Local tools remain execution surfaces; memory and remote content remain evidence.
 
+[**Follow the evidence.**](docs/evals/evidence-chain-2026-11.md) Inspect the proof chain, dated results, public reproduction paths, and the claims those results do not establish.
+
 ## Quickstart
 
 Requirements: macOS, Linux, or Windows through WSL2; a Compose v2-compatible container runtime; and `gmake`, `jq`, `rg`, `python3`, and `curl`. The tested macOS baseline uses OrbStack through its explicit Docker context; see the [container runtime decision](docs/runtime/container-runtime-decision.md).
