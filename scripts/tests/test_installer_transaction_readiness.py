@@ -162,6 +162,53 @@ python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read
         self.assertIn('SYNTHETIC_SECRET=keep-me', (self.install / '.env').read_text())
         self.assertNotIn('docker ', log)
 
+    def test_fresh_install_entropy_failure_cannot_publish_weak_key(self):
+        self.fake('openssl', '''
+case "$FIXTURE_MODE" in
+  entropy_success) print -r -- aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ;;
+  entropy_short) print -r -- aa ;;
+  entropy_exit_output) print -r -- aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; exit 1 ;;
+  entropy_invalid_fallback) print -r -- zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz ;;
+  entropy_invalid) print -r -- zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz ;;
+  *) exit 1 ;;
+esac
+''')
+        self.fake('od', '''
+case "$FIXTURE_MODE" in
+  entropy_fallback|entropy_invalid_fallback) print -r -- 'aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa' ;;
+  entropy_pipe_fail) print -r -- aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; exit 1 ;;
+  entropy_short) print -r -- aa ;;
+  entropy_invalid) print -r -- zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz ;;
+  *) exit 1 ;;
+esac
+''')
+        for mode in ('entropy_failed', 'entropy_short', 'entropy_invalid', 'entropy_exit_output',
+                     'entropy_pipe_fail', 'entropy_fallback', 'entropy_invalid_fallback', 'entropy_success'):
+            with self.subTest(mode=mode):
+                (self.install / '.env').unlink(missing_ok=True)
+                result, log = self.run_case(mode, '--no-launch')
+                if mode in {'entropy_fallback', 'entropy_invalid_fallback', 'entropy_success'}:
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    values = dict(line.split('=', 1) for line in (self.install / '.env').read_text().splitlines()
+                                  if '=' in line and not line.startswith('#'))
+                    self.assertRegex(values['CONTEXTLATTICE_ORCHESTRATOR_API_KEY'], r'^cl_[0-9a-f]{48}$')
+                else:
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn('could not securely generate', result.stderr)
+                    self.assertTrue((self.install / 'previous-only').is_file())
+                    self.assertFalse((self.install / '.env').exists())
+                self.assertNotIn('docker ', log)
+                self.assertFalse(list(self.root.glob('.install.install.*')))
+        original_env = (self.install / '.env').read_bytes()
+        self.fake('openssl', 'print entropy-called >> "$FIXTURE_LOG"; exit 77')
+        self.fake('od', 'print entropy-called >> "$FIXTURE_LOG"; exit 77')
+        result, log = self.run_case('entropy_preserved', '--no-launch')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('CONTEXTLATTICE_ORCHESTRATOR_API_KEY=cl_' + 'a' * 48,
+                      (self.install / '.env').read_text())
+        self.assertNotIn('entropy-called', log)
+        self.assertEqual((self.install / '.env').read_bytes(), original_env)
+
     def test_compose_failure_preserves_both_trees(self):
         result, log = self.run_case('compose_fail')
         self.assertNotEqual(result.returncode, 0)

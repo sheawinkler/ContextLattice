@@ -409,12 +409,20 @@ for preserved_path in .env .data data backups; do
 done
 
 gen_key() {
-  if command -v openssl >/dev/null 2>&1; then
-    printf 'cl_%s' "$(openssl rand -hex 24)"
-    return
+  local random_bytes
+  if command -v openssl >/dev/null 2>&1 &&
+      random_bytes="$(openssl rand -hex 24 2>/dev/null)" &&
+      [[ "${random_bytes}" =~ ^[0-9a-f]{48}$ ]]; then
+    printf 'cl_%s' "${random_bytes}"
+    return 0
   fi
-  command -v od >/dev/null 2>&1 || fail "openssl or od is required to generate the orchestrator key."
-  printf 'cl_%s' "$(LC_ALL=C od -An -N24 -tx1 /dev/urandom | tr -d ' \n')"
+  if command -v od >/dev/null 2>&1 &&
+      random_bytes="$(LC_ALL=C od -An -N24 -tx1 /dev/urandom | tr -d ' \n')" &&
+      [[ "${random_bytes}" =~ ^[0-9a-f]{48}$ ]]; then
+    printf 'cl_%s' "${random_bytes}"
+    return 0
+  fi
+  return 1
 }
 
 set_env_value() {
@@ -443,7 +451,9 @@ if [[ ! -f "${ENV_PATH}" ]]; then
   cat "${STAGED_INSTALL}/.env.example" > "${ENV_PATH}"
   chmod 600 "${ENV_PATH}"
   key="$(awk -F= '/^CONTEXTLATTICE_ORCHESTRATOR_API_KEY=/{print substr($0,index($0,"=")+1)}' "${ENV_PATH}" | tail -n 1)"
-  [[ -n "${key}" ]] || key="$(gen_key)"
+  if [[ -z "${key}" ]]; then
+    key="$(gen_key)" || fail "could not securely generate the orchestrator key; installation was not published."
+  fi
   set_env_value "${ENV_PATH}" CONTEXTLATTICE_ORCHESTRATOR_API_KEY "${key}"
   set_env_value "${ENV_PATH}" CONTEXTLATTICE_ORCHESTRATOR_URL "http://127.0.0.1:8075"
   set_env_value "${ENV_PATH}" HOST_BIND_ADDRESS "127.0.0.1"
