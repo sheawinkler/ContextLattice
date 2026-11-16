@@ -8,7 +8,7 @@ const root = new URL("../", import.meta.url);
 const manifest = JSON.parse(readFileSync(new URL("package.json", root), "utf8"));
 const lock = JSON.parse(readFileSync(new URL("package-lock.json", root), "utf8"));
 const floors = {
-  next: "16.4.1",
+  next: "16.4.5",
   sharp: "0.35.5",
   nodemailer: "10.1.4",
   "brace-expansion": "5.0.12",
