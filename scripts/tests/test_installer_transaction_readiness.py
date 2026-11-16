@@ -270,6 +270,21 @@ esac
         self.assertLess(log.splitlines().index('global'), log.splitlines().index('open'))
         self.assertFalse(list(self.root.glob('.install.install.*')))
 
+    def test_qualification_flags_skip_global_tools_and_both_browser_commands(self):
+        self.fake('xdg-open', 'print xdg-open >> "$FIXTURE_LOG"')
+        result, log = self.run_case('success', '--skip-agent-tools', '--no-browser')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('curl', log.splitlines())
+        self.assertTrue({'global', 'open', 'xdg-open'}.isdisjoint(log.splitlines()))
+
+    def test_no_browser_blocks_xdg_fallback_without_open(self):
+        (self.bin / 'open').unlink()
+        self.fake('xdg-open', 'print xdg-open >> "$FIXTURE_LOG"')
+        result, log = self.run_case('success', '--no-browser')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('global', log.splitlines())
+        self.assertNotIn('xdg-open', log.splitlines())
+
     def test_counter_and_started_at_fences_fail_independently(self):
         for mode in ('counter_only', 'started_only'):
             with self.subTest(mode=mode):

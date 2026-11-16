@@ -12,6 +12,8 @@ PAYLOAD_DIR="${PAYLOAD_DIR:-}"
 FULL_MODE="${FULL_MODE:-0}"
 EXTRACT_ONLY=0
 NO_LAUNCH=0
+SKIP_AGENT_TOOLS=0
+NO_BROWSER=0
 ALLOW_PAID_TO_PUBLIC_DOWNGRADE=0
 TMP_EXTRACT=""
 TRANSACTION_DIR=""
@@ -30,6 +32,8 @@ Options:
   --install-dir PATH     Install/update path (default: \$HOME/ContextLattice)
   --extract-only         Verify, replace, reconcile required posture, then exit
   --no-launch            Install and reconcile required posture without launching
+  --skip-agent-tools     Do not modify agent tools, hooks, or shell profiles
+  --no-browser           Do not open a browser after installation
   --allow-paid-to-public-downgrade
                          Explicitly replace an installed paid tree with public files
                          while preserving only .env, .data, data, and backups
@@ -68,6 +72,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --no-launch)
       NO_LAUNCH=1
+      shift
+      ;;
+    --skip-agent-tools)
+      SKIP_AGENT_TOOLS=1
+      shift
+      ;;
+    --no-browser)
+      NO_BROWSER=1
       shift
       ;;
     --allow-paid-to-public-downgrade)
@@ -533,13 +545,13 @@ for _ in {1..30}; do
 done
 [[ "${ready}" == "1" ]] || fail "Installed gateway readiness was not verified."
 RUN_COMPLETE=1
-if [[ -x scripts/install_global_agent_tools.sh ]]; then
+if [[ "${SKIP_AGENT_TOOLS}" != "1" && -x scripts/install_global_agent_tools.sh ]]; then
   scripts/install_global_agent_tools.sh --quiet || warn "global agent tools were not installed."
 fi
 
 echo "Install complete. Gateway API: http://127.0.0.1:${READY_PORT} Dashboard: http://127.0.0.1:3000"
-if command -v open >/dev/null 2>&1; then
+if [[ "${NO_BROWSER}" != "1" ]] && command -v open >/dev/null 2>&1; then
   open "http://127.0.0.1:3000" >/dev/null 2>&1 || true
-elif command -v xdg-open >/dev/null 2>&1; then
+elif [[ "${NO_BROWSER}" != "1" ]] && command -v xdg-open >/dev/null 2>&1; then
   xdg-open "http://127.0.0.1:3000" >/dev/null 2>&1 || true
 fi
