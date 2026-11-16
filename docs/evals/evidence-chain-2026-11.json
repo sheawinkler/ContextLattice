@@ -1,0 +1,46 @@
+{
+  "schema_id": "contextlattice_public_evidence_snapshot.v1",
+  "recorded_at": "2026-11-16",
+  "purpose": "Dated engineering evidence, not an efficacy benchmark or release authorization",
+  "public_fixture_evidence": {
+    "ledger": "docs/evals/v5.0.0-compositional-response-intelligence.json",
+    "recorded_at": "2026-08-09T00:00:00Z",
+    "scope": "Offline synthetic route-code fixture harness; not a live deployment",
+    "synthetic": true,
+    "export_rows": 1169,
+    "contract_valid_rows": 1169,
+    "production_runtime_used": false,
+    "latency_comparable": false,
+    "transport_tokens_estimated": true,
+    "custody_state": "local_regression/contaminated",
+    "promotional_claims_allowed": false
+  },
+  "maintainer_source_qualification": {
+    "recorded_at": "2026-11-16T13:01:27Z",
+    "scope": "Two source lanes, not a qualification of the public checkout or installed artifacts",
+    "source_build_cohorts": 62,
+    "cohorts_per_lane": [
+      31,
+      31
+    ],
+    "retained_passed_cohorts": 61,
+    "added_paid_contract_cases": 15,
+    "recorded_completed_test_entries": 2109,
+    "build_only_cargo_cohorts": 8,
+    "count_unit": "Recorded Python methods, Node tests and Go test/subtest pass events; not unique tasks",
+    "original_capture_rerun": false,
+    "raw_capture_public": false,
+    "independently_reproducible_from_public_checkout_alone": false,
+    "independent_task_efficacy_established": false,
+    "completion_record_sha256": "33323c6d08eb8a0895c54356c2ae61809e9390ab86164ce673ebaef0ba9d4c4e",
+    "digest_semantics": "Integrity reference to a retained nonsecret completion record, not independent validation"
+  },
+  "claim_boundaries": {
+    "new_final_byte_native_qualification_established_by_report": false,
+    "real_paid_license_acceptance_established_by_report": false,
+    "causal_task_success_lift_established_by_report": false,
+    "total_inference_bill_savings_established_by_report": false,
+    "publication_or_activation_authorized_by_report": false
+  },
+  "reproduction_scope": "Public commands exercise the named public source checks only; they do not reproduce the mixed-lane captures, installed acceptance or independent agent efficacy."
+}
