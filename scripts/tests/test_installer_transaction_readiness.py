@@ -130,6 +130,67 @@ python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read
         self.assertEqual((previous[0] / 'previous-only').read_text(), 'old tree')
         self.assertEqual((previous[0] / 'data/sentinel').read_text(), 'before')
 
+    def add_gateway_witness(self, name, content):
+        archive = self.root / 'payload/contextlattice-payload.tar.gz'
+        with tarfile.open(archive, 'r:gz') as source:
+            rows = [(member, source.extractfile(member).read()) for member in source if member.isfile()]
+        with tarfile.open(archive, 'w:gz') as target:
+            for member, data in rows:
+                target.addfile(member, io.BytesIO(data))
+            member = tarfile.TarInfo('contextlattice/services/gateway-go/' + name)
+            member.mode = 0o644
+            member.size = len(content)
+            target.addfile(member, io.BytesIO(content))
+        archive.with_name(archive.name + '.sha256').write_text(
+            hashlib.sha256(archive.read_bytes()).hexdigest() + '  ' + archive.name + '\n')
+
+    def test_actual_public_disabled_compatibility_stub_is_installable(self):
+        content = (ROOT / 'services/gateway-go/optional_paid_extensions.go').read_bytes()
+        self.assertIn(b'"frontier_t1_governance_state.v1"', content)
+        self.assertIn(b'"configured": false', content)
+        self.add_gateway_witness('optional_paid_extensions.go', content)
+        result, log = self.run_case('no_launch', '--no-launch')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('SYNTHETIC_SECRET=keep-me', (self.install / '.env').read_text())
+        self.assertNotIn('docker ', log)
+
+    def test_paid_marker_matrix_still_rejects_before_replacement(self):
+        markers = (
+            'context_policy_activation.v1', 'context_mesh_orchestration.v1',
+            'frontier_delta_packet_automation.v1', 'frontier_shared_proof_timeline.v1',
+            'frontier_t4_retrieval_governance_state.v1', 'frontier_t5_policy_laboratory_governance_state.v1',
+            'frontier_t6_agent_fit_governance_state.v1', 'frontier_t7_portable_continuation_governance_state.v1',
+            'frontier_t8_skill_evolution_governance_state.v1', 'frontier_t9_continuity_zero_governance_state.v1',
+            'frontier_t10_aggregate_governance_state.v1', 'contextlattice_runtime_license_public_keys.v1',
+            'CONTEXTLATTICE_FRONTIER_T2_PACKET_AUTOMATION', 'CONTEXTLATTICE_FRONTIER_T5_POLICY_GOVERNANCE',
+            'CONTEXTLATTICE_FRONTIER_T6_AGENT_FIT_GOVERNANCE', 'CONTEXTLATTICE_FRONTIER_T7_PORTABLE_CONTINUATION_GOVERNANCE',
+            'CONTEXTLATTICE_FRONTIER_T8_SKILL_EVOLUTION_GOVERNANCE', 'CONTEXTLATTICE_FRONTIER_T9_CONTINUITY_ZERO_GOVERNANCE',
+            'CONTEXTLATTICE_FRONTIER_T10_AGGREGATE_GOVERNANCE', 'runtimeLicenseVerifier', 'runtimeLicenseSchemaID',
+            'GO_V4_ENTITLEMENT', 'GO_V4_RUNTIME_LICENSE', 'GO_V4_MACHINE_BINDING',
+        )
+        for marker in markers:
+            with self.subTest(marker=marker):
+                case = type(self)('test_paid_marker_matrix_still_rejects_before_replacement')
+                case.setUp()
+                self.addCleanup(case.doCleanups)
+                case.add_gateway_witness('witness.go', marker.encode())
+                result, log = case.run_case('no_launch', '--no-launch')
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('paid/private gateway markers', result.stderr)
+                self.assertTrue((case.install / 'previous-only').exists())
+                self.assertNotIn('docker ', log)
+
+    def test_unix_and_windows_marker_guards_preserve_shared_status_only(self):
+        unix = (ROOT / 'packaging/linux/ContextLattice-Install.sh').read_text()
+        windows = (ROOT / 'packaging/windows/Install-ContextLattice.ps1').read_text()
+        unix_pattern = re.search(r"public_runtime_marker='([^']+)'", unix).group(1)
+        windows_pattern = re.search(r'\$runtimePattern = "([^"]+)"', windows).group(1)
+        self.assertEqual(unix_pattern, windows_pattern)
+        self.assertNotIn('frontier_t1_governance_state', unix_pattern)
+        for marker in ('runtimeLicenseVerifier', 'GO_V4_', 'frontier_delta_packet_automation',
+                       'context_policy_activation', 'context_mesh_orchestration'):
+            self.assertIn(marker, unix_pattern)
+
     def test_no_launch_does_not_require_tools(self):
         (self.bin / 'docker').unlink()
         result, log = self.run_case('no_launch', '--no-launch')
