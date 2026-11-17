@@ -42,6 +42,15 @@ def fixture_search(rows) -> dict:
 
 
 class LitePackagingTests(unittest.TestCase):
+    def test_standalone_image_build_uses_the_requested_target_architecture(self):
+        dockerfile = (ROOT / 'Dockerfile.orchestrator').read_text()
+        self.assertNotIn('GOARCH=amd64', dockerfile)
+        self.assertIn('FROM --platform=$BUILDPLATFORM golang:', dockerfile)
+        self.assertIn('ARG TARGETOS', dockerfile)
+        self.assertIn('ARG TARGETARCH', dockerfile)
+        self.assertIn('CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build', dockerfile)
+        self.assertIn('CMD ["/usr/local/bin/contextlattice-gateway-go"]', dockerfile)
+
     def test_image_persists_authoritative_roots_and_bundles_contracts(self):
         dockerfile = (ROOT / "Dockerfile.hf-lite").read_text()
         env = docker_environment()
