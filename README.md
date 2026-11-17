@@ -98,6 +98,21 @@ scripts/agent/agent-adoption-proof-matrix \
   --pretty
 ```
 
+### 3. Update Without Reinstalling
+
+For a managed installer release, check first and then apply through the same
+verified installer path:
+
+```zsh
+contextlattice update --check --install-dir /path/to/managed-install
+contextlattice update --apply --install-dir /path/to/managed-install
+```
+
+Normal apply checks running-runtime readiness and refreshes agent tools. Source
+checkouts keep their explicit Git/quickstart upgrade procedure; the updater never
+overwrites a checkout or crosses from paid to public. Windows applies its native
+MSI. See the [CLI update guide](docs/cli-updates.md) for scope and recovery.
+
 ## Connect your agents
 
 Run integration from the repository that should use ContextLattice:
