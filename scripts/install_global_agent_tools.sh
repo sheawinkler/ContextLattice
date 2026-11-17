@@ -415,17 +415,43 @@ build_go_agent_tools() {
     echo "go is required to install Go-native ContextLattice agent tools." >&2
     exit 1
   fi
-  rm -f "${GLOBAL_BIN_DIR}/contextlattice-agent-tools"
-  (cd "${ROOT_DIR}/services/gateway-go" && go build -o "${GLOBAL_BIN_DIR}/contextlattice-agent-tools" ./cmd/contextlattice-agent-tools)
-  chmod +x "${GLOBAL_BIN_DIR}/contextlattice-agent-tools"
+  local native_target="${GLOBAL_BIN_DIR}/contextlattice-agent-tools"
+  local native_candidate
+  if [[ -e "${native_target}" || -L "${native_target}" ]]; then
+    if [[ ! -f "${native_target}" || -L "${native_target}" ]]; then
+      echo "Refusing to replace a non-regular native tools target." >&2
+      return 1
+    fi
+  fi
+  native_candidate="$(mktemp "${GLOBAL_BIN_DIR}/.contextlattice-agent-tools.XXXXXX")" || return 1
+  if ! (cd "${ROOT_DIR}/services/gateway-go" && go build -o "${native_candidate}" ./cmd/contextlattice-agent-tools); then
+    rm -f -- "${native_candidate}"
+    echo "Native tools build failed; the previous CLI was preserved." >&2
+    return 1
+  fi
+  if [[ ! -s "${native_candidate}" ]] || ! chmod 0755 "${native_candidate}" ||
+     ! mv -f -- "${native_candidate}" "${native_target}"; then
+    rm -f -- "${native_candidate}"
+    echo "Native tools publication failed; inspect the previous CLI and target." >&2
+    return 1
+  fi
 }
 
 install_go_native_link() {
   local command_name="$1"
+  if [[ -d "${GLOBAL_BIN_DIR}/${command_name}" ]]; then
+    echo "Refusing to replace a directory with a native CLI alias." >&2
+    return 1
+  fi
   ln -sf contextlattice-agent-tools "${GLOBAL_BIN_DIR}/${command_name}"
 }
 
-cat > "${GLOBAL_BIN_DIR}/contextlattice_search" <<'EOF'
+# Stage legacy wrappers away from aliases that may point at the active binary.
+install_agent_cli_commands() (
+  LEGACY_WRAPPER_BIN_DIR="$(mktemp -d "${GLOBAL_BIN_DIR}/.contextlattice-wrappers.XXXXXX")"
+  trap 'rm -rf -- "${LEGACY_WRAPPER_BIN_DIR}"' EXIT
+
+cat > "${LEGACY_WRAPPER_BIN_DIR}/contextlattice_search" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 TOOL_HOME="${CONTEXTLATTICE_GLOBAL_HOME:-$HOME/.contextlattice}"
@@ -438,7 +464,7 @@ fi
 exec "${PYTHON_BIN}" "${SCRIPT_PATH}" "$@"
 EOF
 
-cat > "${GLOBAL_BIN_DIR}/contextlattice_write" <<'EOF'
+cat > "${LEGACY_WRAPPER_BIN_DIR}/contextlattice_write" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 TOOL_HOME="${CONTEXTLATTICE_GLOBAL_HOME:-$HOME/.contextlattice}"
@@ -451,7 +477,7 @@ fi
 exec "${PYTHON_BIN}" "${SCRIPT_PATH}" "$@"
 EOF
 
-cat > "${GLOBAL_BIN_DIR}/contextlattice_pack" <<'EOF'
+cat > "${LEGACY_WRAPPER_BIN_DIR}/contextlattice_pack" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 TOOL_HOME="${CONTEXTLATTICE_GLOBAL_HOME:-$HOME/.contextlattice}"
@@ -464,7 +490,7 @@ fi
 exec "${PYTHON_BIN}" "${SCRIPT_PATH}" "$@"
 EOF
 
-cat > "${GLOBAL_BIN_DIR}/contextlattice_agent_orchestration" <<'EOF'
+cat > "${LEGACY_WRAPPER_BIN_DIR}/contextlattice_agent_orchestration" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 TOOL_HOME="${CONTEXTLATTICE_GLOBAL_HOME:-$HOME/.contextlattice}"
@@ -477,7 +503,7 @@ fi
 exec "${PYTHON_BIN}" "${SCRIPT_PATH}" "$@"
 EOF
 
-cat > "${GLOBAL_BIN_DIR}/contextlattice_agent_adapter" <<'EOF'
+cat > "${LEGACY_WRAPPER_BIN_DIR}/contextlattice_agent_adapter" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 TOOL_HOME="${CONTEXTLATTICE_GLOBAL_HOME:-$HOME/.contextlattice}"
@@ -490,7 +516,7 @@ fi
 exec "${PYTHON_BIN}" "${SCRIPT_PATH}" "$@"
 EOF
 
-cat > "${GLOBAL_BIN_DIR}/contextlattice_adopt" <<'EOF'
+cat > "${LEGACY_WRAPPER_BIN_DIR}/contextlattice_adopt" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 TOOL_HOME="${CONTEXTLATTICE_GLOBAL_HOME:-$HOME/.contextlattice}"
@@ -503,7 +529,7 @@ fi
 exec "${PYTHON_BIN}" "${SCRIPT_PATH}" "$@"
 EOF
 
-cat > "${GLOBAL_BIN_DIR}/contextlattice_doctor" <<'EOF'
+cat > "${LEGACY_WRAPPER_BIN_DIR}/contextlattice_doctor" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 TOOL_HOME="${CONTEXTLATTICE_GLOBAL_HOME:-$HOME/.contextlattice}"
@@ -516,7 +542,7 @@ fi
 exec "${PYTHON_BIN}" "${SCRIPT_PATH}" doctor "$@"
 EOF
 
-cat > "${GLOBAL_BIN_DIR}/contextlattice_agent_runtime_proof" <<'EOF'
+cat > "${LEGACY_WRAPPER_BIN_DIR}/contextlattice_agent_runtime_proof" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 TOOL_HOME="${CONTEXTLATTICE_GLOBAL_HOME:-$HOME/.contextlattice}"
@@ -529,7 +555,7 @@ fi
 exec "${PYTHON_BIN}" "${SCRIPT_PATH}" "$@"
 EOF
 
-cat > "${GLOBAL_BIN_DIR}/contextlattice_agent_adoption_proof" <<'EOF'
+cat > "${LEGACY_WRAPPER_BIN_DIR}/contextlattice_agent_adoption_proof" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 TOOL_HOME="${CONTEXTLATTICE_GLOBAL_HOME:-$HOME/.contextlattice}"
@@ -542,7 +568,7 @@ fi
 exec "${PYTHON_BIN}" "${SCRIPT_PATH}" "$@"
 EOF
 
-cat > "${GLOBAL_BIN_DIR}/contextlattice_agent_session" <<'EOF'
+cat > "${LEGACY_WRAPPER_BIN_DIR}/contextlattice_agent_session" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 TOOL_HOME="${CONTEXTLATTICE_GLOBAL_HOME:-$HOME/.contextlattice}"
@@ -555,7 +581,7 @@ fi
 exec "${PYTHON_BIN}" "${SCRIPT_PATH}" "$@"
 EOF
 
-cat > "${GLOBAL_BIN_DIR}/contextlattice_agent_trace" <<'EOF'
+cat > "${LEGACY_WRAPPER_BIN_DIR}/contextlattice_agent_trace" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 TOOL_HOME="${CONTEXTLATTICE_GLOBAL_HOME:-$HOME/.contextlattice}"
@@ -568,7 +594,7 @@ fi
 exec "${PYTHON_BIN}" "${SCRIPT_PATH}" "$@"
 EOF
 
-cat > "${GLOBAL_BIN_DIR}/contextlattice_run_advisor" <<'EOF'
+cat > "${LEGACY_WRAPPER_BIN_DIR}/contextlattice_run_advisor" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 TOOL_HOME="${CONTEXTLATTICE_GLOBAL_HOME:-$HOME/.contextlattice}"
@@ -581,7 +607,7 @@ fi
 exec "${PYTHON_BIN}" "${SCRIPT_PATH}" "$@"
 EOF
 
-cat > "${GLOBAL_BIN_DIR}/contextlattice_agent_runtime_doctor" <<'EOF'
+cat > "${LEGACY_WRAPPER_BIN_DIR}/contextlattice_agent_runtime_doctor" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 TOOL_HOME="${CONTEXTLATTICE_GLOBAL_HOME:-$HOME/.contextlattice}"
@@ -594,7 +620,7 @@ fi
 exec "${PYTHON_BIN}" "${SCRIPT_PATH}" "$@"
 EOF
 
-cat > "${GLOBAL_BIN_DIR}/contextlattice_strict_runtime_native_ownership" <<'EOF'
+cat > "${LEGACY_WRAPPER_BIN_DIR}/contextlattice_strict_runtime_native_ownership" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 TOOL_HOME="${CONTEXTLATTICE_GLOBAL_HOME:-$HOME/.contextlattice}"
@@ -607,7 +633,7 @@ fi
 exec "${PYTHON_BIN}" "${SCRIPT_PATH}" "$@"
 EOF
 
-cat > "${GLOBAL_BIN_DIR}/contextlattice_context_boundary" <<'EOF'
+cat > "${LEGACY_WRAPPER_BIN_DIR}/contextlattice_context_boundary" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 TOOL_HOME="${CONTEXTLATTICE_GLOBAL_HOME:-$HOME/.contextlattice}"
@@ -620,7 +646,7 @@ fi
 exec "${PYTHON_BIN}" "${SCRIPT_PATH}" "$@"
 EOF
 
-cat > "${GLOBAL_BIN_DIR}/contextlattice_memory_topology" <<'EOF'
+cat > "${LEGACY_WRAPPER_BIN_DIR}/contextlattice_memory_topology" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 TOOL_HOME="${CONTEXTLATTICE_GLOBAL_HOME:-$HOME/.contextlattice}"
@@ -633,7 +659,7 @@ fi
 exec "${PYTHON_BIN}" "${SCRIPT_PATH}" "$@"
 EOF
 
-cat > "${GLOBAL_BIN_DIR}/contextlattice_source_backfill" <<'EOF'
+cat > "${LEGACY_WRAPPER_BIN_DIR}/contextlattice_source_backfill" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 TOOL_HOME="${CONTEXTLATTICE_GLOBAL_HOME:-$HOME/.contextlattice}"
@@ -646,7 +672,7 @@ fi
 exec "${PYTHON_BIN}" "${SCRIPT_PATH}" "$@"
 EOF
 
-cat > "${GLOBAL_BIN_DIR}/contextlattice_skills_index" <<'EOF'
+cat > "${LEGACY_WRAPPER_BIN_DIR}/contextlattice_skills_index" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 TOOL_HOME="${CONTEXTLATTICE_GLOBAL_HOME:-$HOME/.contextlattice}"
@@ -659,7 +685,7 @@ fi
 exec "${PYTHON_BIN}" "${SCRIPT_PATH}" "$@"
 EOF
 
-cat > "${GLOBAL_BIN_DIR}/contextlattice_codex_session_store_doctor" <<'EOF'
+cat > "${LEGACY_WRAPPER_BIN_DIR}/contextlattice_codex_session_store_doctor" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 TOOL_HOME="${CONTEXTLATTICE_GLOBAL_HOME:-$HOME/.contextlattice}"
@@ -672,7 +698,7 @@ fi
 exec "${PYTHON_BIN}" "${SCRIPT_PATH}" "$@"
 EOF
 
-cat > "${GLOBAL_BIN_DIR}/contextlattice_runner_quality" <<'EOF'
+cat > "${LEGACY_WRAPPER_BIN_DIR}/contextlattice_runner_quality" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 TOOL_HOME="${CONTEXTLATTICE_GLOBAL_HOME:-$HOME/.contextlattice}"
@@ -685,7 +711,7 @@ fi
 exec "${PYTHON_BIN}" "${SCRIPT_PATH}" "$@"
 EOF
 
-cat > "${GLOBAL_BIN_DIR}/contextlattice_recall_quality_eval" <<'EOF'
+cat > "${LEGACY_WRAPPER_BIN_DIR}/contextlattice_recall_quality_eval" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 TOOL_HOME="${CONTEXTLATTICE_GLOBAL_HOME:-$HOME/.contextlattice}"
@@ -705,7 +731,7 @@ fi
 exec "${PYTHON_BIN}" "${SCRIPT_PATH}" "$@"
 EOF
 
-cat > "${GLOBAL_BIN_DIR}/contextlattice_context_pack_quality_benchmark" <<'EOF'
+cat > "${LEGACY_WRAPPER_BIN_DIR}/contextlattice_context_pack_quality_benchmark" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 TOOL_HOME="${CONTEXTLATTICE_GLOBAL_HOME:-$HOME/.contextlattice}"
@@ -726,30 +752,33 @@ exec "${PYTHON_BIN}" "${SCRIPT_PATH}" "$@"
 EOF
 
 chmod +x \
-  "${GLOBAL_BIN_DIR}/contextlattice_search" \
-  "${GLOBAL_BIN_DIR}/contextlattice_pack" \
-  "${GLOBAL_BIN_DIR}/contextlattice_write" \
-  "${GLOBAL_BIN_DIR}/contextlattice_agent_orchestration" \
-  "${GLOBAL_BIN_DIR}/contextlattice_adopt" \
-  "${GLOBAL_BIN_DIR}/contextlattice_doctor" \
-  "${GLOBAL_BIN_DIR}/contextlattice_agent_adapter" \
-  "${GLOBAL_BIN_DIR}/contextlattice_agent_session" \
-  "${GLOBAL_BIN_DIR}/contextlattice_agent_trace" \
-  "${GLOBAL_BIN_DIR}/contextlattice_run_advisor" \
-  "${GLOBAL_BIN_DIR}/contextlattice_agent_runtime_proof" \
-  "${GLOBAL_BIN_DIR}/contextlattice_agent_adoption_proof" \
-  "${GLOBAL_BIN_DIR}/contextlattice_agent_runtime_doctor" \
-  "${GLOBAL_BIN_DIR}/contextlattice_strict_runtime_native_ownership" \
-  "${GLOBAL_BIN_DIR}/contextlattice_context_boundary" \
-  "${GLOBAL_BIN_DIR}/contextlattice_memory_topology" \
-  "${GLOBAL_BIN_DIR}/contextlattice_source_backfill" \
-  "${GLOBAL_BIN_DIR}/contextlattice_skills_index" \
-  "${GLOBAL_BIN_DIR}/contextlattice_codex_session_store_doctor" \
-  "${GLOBAL_BIN_DIR}/contextlattice_runner_quality" \
-  "${GLOBAL_BIN_DIR}/contextlattice_recall_quality_eval" \
-  "${GLOBAL_BIN_DIR}/contextlattice_context_pack_quality_benchmark"
+  "${LEGACY_WRAPPER_BIN_DIR}/contextlattice_search" \
+  "${LEGACY_WRAPPER_BIN_DIR}/contextlattice_pack" \
+  "${LEGACY_WRAPPER_BIN_DIR}/contextlattice_write" \
+  "${LEGACY_WRAPPER_BIN_DIR}/contextlattice_agent_orchestration" \
+  "${LEGACY_WRAPPER_BIN_DIR}/contextlattice_adopt" \
+  "${LEGACY_WRAPPER_BIN_DIR}/contextlattice_doctor" \
+  "${LEGACY_WRAPPER_BIN_DIR}/contextlattice_agent_adapter" \
+  "${LEGACY_WRAPPER_BIN_DIR}/contextlattice_agent_session" \
+  "${LEGACY_WRAPPER_BIN_DIR}/contextlattice_agent_trace" \
+  "${LEGACY_WRAPPER_BIN_DIR}/contextlattice_run_advisor" \
+  "${LEGACY_WRAPPER_BIN_DIR}/contextlattice_agent_runtime_proof" \
+  "${LEGACY_WRAPPER_BIN_DIR}/contextlattice_agent_adoption_proof" \
+  "${LEGACY_WRAPPER_BIN_DIR}/contextlattice_agent_runtime_doctor" \
+  "${LEGACY_WRAPPER_BIN_DIR}/contextlattice_strict_runtime_native_ownership" \
+  "${LEGACY_WRAPPER_BIN_DIR}/contextlattice_context_boundary" \
+  "${LEGACY_WRAPPER_BIN_DIR}/contextlattice_memory_topology" \
+  "${LEGACY_WRAPPER_BIN_DIR}/contextlattice_source_backfill" \
+  "${LEGACY_WRAPPER_BIN_DIR}/contextlattice_skills_index" \
+  "${LEGACY_WRAPPER_BIN_DIR}/contextlattice_codex_session_store_doctor" \
+  "${LEGACY_WRAPPER_BIN_DIR}/contextlattice_runner_quality" \
+  "${LEGACY_WRAPPER_BIN_DIR}/contextlattice_recall_quality_eval" \
+  "${LEGACY_WRAPPER_BIN_DIR}/contextlattice_context_pack_quality_benchmark"
 
-build_go_agent_tools
+if ! build_go_agent_tools; then
+  rm -rf -- "${LEGACY_WRAPPER_BIN_DIR}"
+  exit 1
+fi
 
 GO_NATIVE_COMMANDS=(
   contextlattice
@@ -817,7 +846,27 @@ for command_name in "${GO_NATIVE_COMMANDS[@]}"; do
   install_go_native_link "$command_name"
 done
 
+for wrapper in "${LEGACY_WRAPPER_BIN_DIR}"/*; do
+  command_name="${wrapper##*/}"
+  native_command=0
+  for native_name in "${GO_NATIVE_COMMANDS[@]}"; do
+    if [[ "$command_name" == "$native_name" ]]; then
+      native_command=1
+      break
+    fi
+  done
+  [[ "$native_command" == "1" ]] && continue
+  if [[ -d "${GLOBAL_BIN_DIR}/${command_name}" ]]; then
+    echo "Refusing to replace a directory with a legacy wrapper." >&2
+    exit 1
+  fi
+  mv -f -- "$wrapper" "${GLOBAL_BIN_DIR}/${command_name}"
+done
+)
+install_agent_cli_commands
+
 install_orbstack_host_helpers
+
 
 if [[ "$INCLUDE_DEV_PYTHON_TOOLS" != "1" ]]; then
   rm -f \

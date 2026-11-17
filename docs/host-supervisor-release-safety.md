@@ -28,6 +28,25 @@ This narrow source-merge path does not authorize packaging, promotion, tags or r
 
 The macOS outer installer stages the shared Unix installer from `packaging/linux`; its directory name is not an OS restriction. Test the actual staged `ContextLattice.command` whenever shared launch preflights change. The unchanged global-tools helper can refresh an already-loaded Darwin supervisor when bootstrap invokes it: bootstrap-only classification is not a claim of zero host side effects. Record that delegation explicitly. Changes to its scheduled payload, cadence or recovery policy retain the full gate above.
 
+## Managed CLI Bootstrap Scope
+
+The exact `services/gateway-go/cmd/contextlattice-agent-tools/update.go` entry
+delegates one-shot installation to the existing installer. Its registration,
+tests and `docs/cli-updates.md` are finite bootstrap companions, not a waiver
+for other application Go files, Dockerfiles or scheduled code. Both global
+tool installers are host-critical. Their binary/link/wrapper publication fixes
+and `scripts/tests/test_native_tools_binary_install.py` may accompany the CLI
+entry only when that entry actually changes and the PR checks this additional
+attestation:
+
+```text
+- [x] Global native-tool changes are confined to candidate binary compilation and atomic binary/link/wrapper publication; supervisor installation and scheduled payloads are unchanged.
+```
+
+A packaging-only change cannot use those companions to bypass its own gate.
+Review the actual hunks; path admission is not behavioral proof. The unchanged
+supervisor delegation still needs applicable installed release evidence.
+
 ## Required Interactive Evidence
 
 Before merging scheduled/runtime-supervision/recovery changes, and before releasing any host-lifecycle change, collect applicable native evidence:
