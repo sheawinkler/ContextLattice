@@ -32,6 +32,8 @@ Options:
   --install-dir PATH     Install/update path (default: \$HOME/ContextLattice)
   --extract-only         Verify, replace, reconcile required posture, then exit
   --no-launch            Install and reconcile required posture without launching
+                         File-only modes require stopped writers; Docker safety
+                         inspection is read-only when Docker is available
   --skip-agent-tools     Do not modify agent tools, hooks, or shell profiles
   --no-browser           Do not open a browser after installation
   --allow-paid-to-public-downgrade
@@ -389,6 +391,110 @@ if [[ "${installed_lane}" == "paid" && "${EXPECTED_RELEASE_LANE}" == "public" ]]
   fi
   echo "Authorized paid-to-public downgrade: paid files will be removed; .env, .data, data, and backups will be preserved."
 fi
+
+assert_no_live_preserved_binds() {
+  if ! command -v docker >/dev/null 2>&1; then
+    [[ "${NO_LAUNCH}" == "1" ]] || fail "Docker is required for preserved-state safety inspection."
+    warn "Offline file-only install: Docker is absent; all writers must already be stopped, including writers on other Docker contexts/hosts."
+    return 0
+  fi
+  command -v python3 >/dev/null 2>&1 || \
+    fail "python3 is required for Docker preserved-state safety inspection; stop owned writers and use an offline file-only environment if Docker is unavailable."
+  python3 - "${INSTALL_DIR}" <<'PY'
+import json
+import os
+import re
+import selectors
+import subprocess
+import sys
+import time
+
+deadline = time.monotonic() + 30
+
+class SafetyError(Exception):
+    pass
+
+def refuse(reason):
+    raise SafetyError(reason)
+
+def docker_read(args, limit):
+    # Mount-only output: never request container environment or credentials.
+    end = min(deadline, time.monotonic() + 10)
+    process = subprocess.Popen(["docker", *args], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    output = bytearray()
+    try:
+        with selectors.DefaultSelector() as ready:
+            ready.register(process.stdout, selectors.EVENT_READ)
+            while True:
+                remaining = end - time.monotonic()
+                if remaining <= 0 or not ready.select(remaining):
+                    refuse("Docker inspection timed out")
+                chunk = os.read(process.stdout.fileno(), min(65536, limit + 1 - len(output)))
+                if not chunk:
+                    break
+                output.extend(chunk)
+                if len(output) > limit:
+                    refuse("Docker inspection output exceeds its bound")
+        if process.wait(timeout=max(0.001, end - time.monotonic())) != 0:
+            refuse("Docker inspection failed (check the selected context and daemon/socket)")
+        return output.decode("utf-8", errors="strict")
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.wait()
+        process.stdout.close()
+
+try:
+    def comparison_path(value):
+        if sys.platform == "darwin":
+            # Docker Desktop and the macOS data-volume alias name the same host.
+            value = os.path.normpath(value)
+            aliases = ("/host_mnt", "/run/desktop/mnt/host", "/System/Volumes/Data")
+            if value in ("/run", "/run/desktop", "/run/desktop/mnt", "/System", "/System/Volumes"):
+                return "/"
+            for alias in aliases:
+                if value == alias or value.startswith(alias + "/"):
+                    value = value[len(alias):] or "/"
+                    break
+        value = os.path.realpath(value)
+        return value.casefold() if sys.platform == "darwin" else value
+
+    root = comparison_path(sys.argv[1])
+    preserved = [os.path.join(root, name) for name in (".env", ".data", "data", "backups")]
+    raw_ids = docker_read(["ps", "--no-trunc", "--quiet"], 65536)
+    ids = raw_ids.splitlines()
+    if len(ids) > 256 or len(ids) != len(set(ids)) or any(re.fullmatch(r"[0-9a-f]{64}", item) is None for item in ids):
+        refuse("Docker running-container IDs are malformed or exceed the 256-container bound")
+    for container_id in ids:
+        raw = docker_read(["inspect", "--type", "container", "--format",
+                           "[{{json .State.Running}},{{json .Mounts}}]", container_id], 1048576)
+        probe = json.loads(raw)
+        if not isinstance(probe, list) or len(probe) != 2 or type(probe[0]) is not bool or not isinstance(probe[1], list) or len(probe[1]) > 1024:
+            refuse("Docker mount inspection has an invalid shape or exceeds the mount bound")
+        for mount in probe[1]:
+            if not isinstance(mount, dict) or mount.get("Type") not in ("bind", "volume", "tmpfs") or type(mount.get("RW")) is not bool:
+                refuse("Docker mount inspection is malformed")
+            if mount["Type"] != "bind":
+                continue
+            source = mount.get("Source")
+            if not isinstance(source, str) or not source.startswith("/") or len(source) > 4096 or "\x00" in source:
+                refuse("Docker bind source is malformed")
+            source = comparison_path(source)
+            if probe[0] and mount["RW"] and any(os.path.commonpath((source, target)) in (source, target) for target in preserved):
+                refuse("Running container " + container_id[:12] + " has a writable bind overlapping install-local preserved state; stop that owned writer before update and rerun. Do not stop unrelated containers")
+except (SafetyError, ValueError, OSError, subprocess.SubprocessError, RecursionError):
+    # Do not echo untrusted JSON, daemon diagnostics, or paths from its output.
+    reason = sys.exc_info()[1]
+    if not isinstance(reason, SafetyError):
+        reason = "Docker preserved-state safety inspection could not be completed"
+    print("ERROR: " + str(reason) + ". No installation files were replaced.", file=sys.stderr)
+    sys.exit(1)
+PY
+}
+
+# This is a precondition check, not a quiescer: keep writers stopped throughout
+# preservation/publication, including non-Docker writers and other contexts.
+assert_no_live_preserved_binds
 
 TRANSACTION_DIR="$(mktemp -d "${INSTALL_PARENT}/.${INSTALL_NAME}.install.XXXXXX")"
 STAGED_INSTALL="${TRANSACTION_DIR}/staged"

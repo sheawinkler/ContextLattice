@@ -4,6 +4,7 @@ import io
 import json
 import os
 import re
+import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -62,12 +63,28 @@ print -r -- "docker $*" >> "$FIXTURE_LOG"
 if [[ "$1" == info ]]; then
   [[ "$FIXTURE_MODE" != daemon_fail ]] || exit 1
   print linux
+elif [[ "$1" == ps ]]; then
+  [[ "$FIXTURE_MODE" != bind_ps_fail ]] || exit 1
+  if [[ -n "$FIXTURE_BIND_IDS" ]]; then /bin/cat "$FIXTURE_BIND_IDS"; fi
 elif [[ "$1" == compose && "$*" == *' up '* ]]; then
   print after > "$FIXTURE_INSTALL/data/runtime-write"
   [[ "$FIXTURE_MODE" != compose_fail ]] || exit 7
 elif [[ "$1" == compose && "$*" == *' ps '* ]]; then
   print aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 elif [[ "$1" == inspect ]]; then
+  if [[ "$*" == *'.Mounts'* ]]; then
+    [[ "$FIXTURE_MODE" != bind_inspect_fail ]] || exit 1
+    if [[ "$FIXTURE_MODE" == bind_inspect_timeout ]]; then exec /bin/sleep 12; fi
+    if [[ -n "$FIXTURE_LATE_WRITE" ]]; then
+      print acknowledged-late > "$FIXTURE_LATE_WRITE"
+      print inspect-late-write >> "$FIXTURE_LOG"
+      for transaction in "${FIXTURE_INSTALL:h}"/.install.install.*(N); do
+        print snapshot-before-inspect >> "$FIXTURE_LOG"
+      done
+    fi
+    /bin/cat "$FIXTURE_BIND_JSON"
+    exit 0
+  fi
   if [[ "$FIXTURE_MODE" == stale ]]; then rev=ffffffffffffffffffffffffffffffffffffffff; else rev=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; fi
   health=healthy
   started=2026-01-01T00:00:00Z
@@ -130,6 +147,29 @@ python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read
         self.assertEqual((previous[0] / 'previous-only').read_text(), 'old tree')
         self.assertEqual((previous[0] / 'data/sentinel').read_text(), 'before')
 
+    def assert_file_only_inspection(self, log):
+        # File-only forbids runtime mutations, not read-only safety inspection.
+        self.assertEqual([line for line in log.splitlines() if line.startswith('docker ')],
+                         ['docker ps --no-trunc --quiet'])
+
+    def bind_fixture(self, mounts, running=True):
+        ids = self.root / 'bind-ids'
+        ids.write_text('d' * 64 + '\n')
+        probe = self.root / 'bind-json'
+        probe.write_text(json.dumps([running, mounts]))
+        self.env.update(FIXTURE_BIND_IDS=str(ids), FIXTURE_BIND_JSON=str(probe))
+        return ids, probe
+
+    def python_free_path(self):
+        (self.bin / 'python3').unlink()
+        for name in ('sed', 'head', 'awk', 'wc', 'tr', 'tar', 'mktemp', 'cmp', 'find', 'grep',
+                     'basename', 'dirname', 'mkdir', 'cat', 'cp', 'chmod', 'mv', 'rm'):
+            source = next(Path(folder) / name for folder in ('/usr/bin', '/bin') if (Path(folder) / name).exists())
+            (self.bin / name).symlink_to(source)
+        digest = hashlib.sha256((self.root / 'payload/contextlattice-payload.tar.gz').read_bytes()).hexdigest()
+        self.fake('sha256sum', 'print -r -- "' + digest + '"')
+        self.env['PATH'] = str(self.bin)
+
     def add_gateway_witness(self, name, content):
         archive = self.root / 'payload/contextlattice-payload.tar.gz'
         with tarfile.open(archive, 'r:gz') as source:
@@ -152,7 +192,7 @@ python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read
         result, log = self.run_case('no_launch', '--no-launch')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('SYNTHETIC_SECRET=keep-me', (self.install / '.env').read_text())
-        self.assertNotIn('docker ', log)
+        self.assert_file_only_inspection(log)
 
     def test_paid_marker_matrix_still_rejects_before_replacement(self):
         markers = (
@@ -196,7 +236,158 @@ python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read
         result, log = self.run_case('no_launch', '--no-launch')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn('docker ', log)
+        self.assertIn('all writers must already be stopped', result.stderr)
         self.assertFalse(list(self.root.glob('.install.install.*')))
+
+    def assert_live_bind_refused(self, source, *args):
+        self.bind_fixture([dict(Type='bind', Source=str(source), Destination='/state',
+                                Mode='rw', RW=True, Propagation='rprivate')])
+        self.env['FIXTURE_LATE_WRITE'] = str(self.install / 'data/late-write')
+        self.fake('cp', 'print data-copy >> "$FIXTURE_LOG"; /bin/cp "$@"')
+        original = {name: (self.install / name).stat().st_ino
+                    for name in ('.', '.env', 'data', 'data/sentinel', 'previous-only')}
+        result, log = self.run_case('live_bind', *args)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('stop that owned writer before update', result.stderr)
+        self.assertIn('inspect-late-write', log.splitlines())
+        self.assertNotIn('snapshot-before-inspect', log.splitlines())
+        self.assertNotIn('data-copy', log.splitlines())
+        self.assertEqual((self.install / 'data/late-write').read_text().strip(), 'acknowledged-late')
+        self.assertEqual((self.install / 'data/sentinel').read_text(), 'before')
+        self.assertEqual((self.install / 'previous-only').read_text(), 'old tree')
+        self.assertIn('SYNTHETIC_SECRET=keep-me', (self.install / '.env').read_text())
+        self.assertEqual(original, {name: (self.install / name).stat().st_ino for name in original})
+        self.assertFalse(list(self.root.glob('.install.install.*')))
+        calls = [line for line in log.splitlines() if line.startswith('docker ')]
+        self.assertEqual(calls[-2:], ['docker ps --no-trunc --quiet',
+            'docker inspect --type container --format [{{json .State.Running}},{{json .Mounts}}] ' + 'd' * 64])
+        self.assertTrue(all(' up ' not in line and ' stop ' not in line for line in calls))
+        self.assertNotIn('global', log.splitlines())
+
+    def test_live_preserved_binds_refuse_before_snapshot_and_retain_late_write(self):
+        for name in ('.env', '.data', 'data', 'backups'):
+            with self.subTest(preserved=name):
+                case = type(self)('test_live_preserved_binds_refuse_before_snapshot_and_retain_late_write')
+                case.setUp()
+                self.addCleanup(case.doCleanups)
+                if name in ('.data', 'backups'):
+                    (case.install / name).mkdir()
+                    (case.install / name / 'sentinel').write_text('retained')
+                case.assert_live_bind_refused(case.install / name)
+                if name in ('.data', 'backups'):
+                    self.assertEqual((case.install / name / 'sentinel').read_text(), 'retained')
+
+    def test_live_preserved_bind_refuses_direct_file_only_entrypoints(self):
+        for flag in ('--no-launch', '--extract-only'):
+            with self.subTest(flag=flag):
+                case = type(self)('test_live_preserved_bind_refuses_direct_file_only_entrypoints')
+                case.setUp()
+                self.addCleanup(case.doCleanups)
+                case.assert_live_bind_refused(case.install / 'data', flag)
+
+    def test_live_bind_ancestors_descendants_and_aliases_refuse(self):
+        relations = ['install', 'parent', 'root', 'child', 'alias']
+        if sys.platform == 'darwin':
+            relations += ['desktop_alias', 'data_volume_alias']
+        for relation in relations:
+            with self.subTest(relation=relation):
+                case = type(self)('test_live_bind_ancestors_descendants_and_aliases_refuse')
+                case.setUp()
+                self.addCleanup(case.doCleanups)
+                child = case.install / 'data/child'
+                child.mkdir()
+                alias = case.root / 'data-alias'
+                alias.symlink_to(case.install / 'data', target_is_directory=True)
+                source = dict(install=case.install, parent=case.root, root=Path('/'), child=child, alias=alias,
+                              desktop_alias=Path('/host_mnt' + str(case.install / 'data')),
+                              data_volume_alias=Path('/System/Volumes/Data' + str(case.install / 'data')))[relation]
+                case.assert_live_bind_refused(source)
+
+    def test_external_readonly_named_volume_and_stopped_binds_are_accepted(self):
+        for kind in ('external', 'sibling', 'readonly', 'volume', 'stopped'):
+            with self.subTest(kind=kind):
+                case = type(self)('test_external_readonly_named_volume_and_stopped_binds_are_accepted')
+                case.setUp()
+                self.addCleanup(case.doCleanups)
+                source = (case.root / 'external' if kind == 'external' else
+                          case.install / ('data-other' if kind == 'sibling' else 'data'))
+                case.bind_fixture([dict(Type='volume' if kind == 'volume' else 'bind',
+                                        Source=str(source), Destination='/state', Mode='rw',
+                                        RW=kind != 'readonly', Propagation='rprivate')], running=kind != 'stopped')
+                result, log = case.run_case('success')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual((case.install / 'data/sentinel').read_text(), 'before')
+                self.assertLess(log.index('.Mounts'), log.index(' up '))
+                self.assertNotIn('docker stop ', log)
+
+    def test_bind_inspection_errors_shapes_and_bounds_fail_closed(self):
+        variants = ('ps_fail', 'inspect_fail', 'inspect_timeout', 'invalid_json', 'invalid_shape',
+                    'coerced_running', 'coerced_rw', 'unknown_type', 'relative_source', 'long_source',
+                    'mount_count', 'invalid_id', 'duplicate_id', 'id_count', 'id_output', 'inspect_output')
+        for variant in variants:
+            with self.subTest(variant=variant):
+                case = type(self)('test_bind_inspection_errors_shapes_and_bounds_fail_closed')
+                case.setUp()
+                self.addCleanup(case.doCleanups)
+                mount = dict(Type='bind', Source=str(case.root / 'external'), RW=True)
+                ids, probe = case.bind_fixture([mount])
+                malformed = dict(invalid_json='{', invalid_shape='{}', coerced_running=json.dumps([1, [mount]]),
+                    coerced_rw=json.dumps([True, [{**mount, 'RW': 'true'}]]),
+                    unknown_type=json.dumps([True, [{**mount, 'Type': 'unknown'}]]),
+                    relative_source=json.dumps([True, [{**mount, 'Source': 'data'}]]),
+                    long_source=json.dumps([True, [{**mount, 'Source': '/' + 'a' * 4096}]]),
+                    mount_count=json.dumps([True, [mount] * 1025]), inspect_output=' ' * 1048577)
+                if variant in malformed:
+                    probe.write_text(malformed[variant])
+                bad_ids = dict(invalid_id='not-an-id\n', duplicate_id=('d' * 64 + '\n') * 2,
+                    id_count=''.join(f'{i:064x}\n' for i in range(257)), id_output='f' * 65537)
+                if variant in bad_ids:
+                    ids.write_text(bad_ids[variant])
+                result, log = case.run_case('bind_' + variant)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('No installation files were replaced', result.stderr)
+                self.assertEqual((case.install / 'previous-only').read_text(), 'old tree')
+                self.assertEqual((case.install / 'data/sentinel').read_text(), 'before')
+                self.assertFalse(list(case.root.glob('.install.install.*')))
+                self.assertNotIn(' up ', log)
+                self.assertNotIn('global', log.splitlines())
+
+    def test_file_only_does_not_bypass_available_but_failed_inspection(self):
+        for flag in ('--no-launch', '--extract-only'):
+            with self.subTest(flag=flag):
+                result, log = self.run_case('bind_ps_fail', flag)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('selected context and daemon/socket', result.stderr)
+                self.assertEqual((self.install / 'data/sentinel').read_text(), 'before')
+                self.assertNotIn(' up ', log)
+
+    def test_offline_file_only_without_python_retains_legacy_support(self):
+        (self.bin / 'docker').unlink()
+        # A deliberately Python-free PATH, including checksum verification.
+        self.python_free_path()
+        result, log = self.run_case('no_launch', '--extract-only')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('all writers must already be stopped', result.stderr)
+        self.assertEqual((self.install / 'data/sentinel').read_text(), 'before')
+        self.assertNotIn('docker ', log)
+
+    def test_file_only_available_docker_without_python_fails_closed(self):
+        self.python_free_path()
+        result, log = self.run_case('no_launch', '--no-launch')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('python3 is required for Docker preserved-state safety inspection', result.stderr)
+        self.assertEqual((self.install / 'data/sentinel').read_text(), 'before')
+        self.assertFalse(list(self.root.glob('.install.install.*')))
+        self.assertNotIn('docker ', log)
+
+    def test_offline_fresh_file_only_still_generates_secure_key(self):
+        (self.bin / 'docker').unlink()
+        shutil.rmtree(self.install)
+        result, log = self.run_case('no_launch', '--no-launch')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('all writers must already be stopped', result.stderr)
+        self.assertRegex((self.install / '.env').read_text(), r'CONTEXTLATTICE_ORCHESTRATOR_API_KEY=cl_[0-9a-f]{48}\n')
+        self.assertNotIn('docker ', log)
 
     def test_public_unmanaged_existing_tree_is_not_replaced(self):
         (self.install / '.contextlattice-release.json').unlink()
@@ -221,7 +412,7 @@ python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read
         self.assertFalse(paid.exists())
         self.assertEqual((self.install / 'data/sentinel').read_text(), 'before')
         self.assertIn('SYNTHETIC_SECRET=keep-me', (self.install / '.env').read_text())
-        self.assertNotIn('docker ', log)
+        self.assert_file_only_inspection(log)
 
     def test_fresh_install_entropy_failure_cannot_publish_weak_key(self):
         self.fake('openssl', '''
@@ -258,7 +449,9 @@ esac
                     self.assertIn('could not securely generate', result.stderr)
                     self.assertTrue((self.install / 'previous-only').is_file())
                     self.assertFalse((self.install / '.env').exists())
-                self.assertNotIn('docker ', log)
+                docker_calls = [line for line in log.splitlines() if line.startswith('docker ')]
+                self.assertTrue(docker_calls)
+                self.assertEqual(set(docker_calls), {'docker ps --no-trunc --quiet'})
                 self.assertFalse(list(self.root.glob('.install.install.*')))
         original_env = (self.install / '.env').read_bytes()
         self.fake('openssl', 'print entropy-called >> "$FIXTURE_LOG"; exit 77')
@@ -459,6 +652,40 @@ esac
         self.assertLess(source.index('Test-GatewayReadiness -'), source.index('scripts\\install_global_agent_tools.ps1'))
         self.assertIn('retaining both', source.lower())
         self.assertNotIn('{{json .Config.Env}}', source)
+
+    def test_windows_live_bind_guard_static_parity(self):
+        # Static parity only; this does not establish native PowerShell acceptance.
+        source = (ROOT / 'packaging/windows/Install-ContextLattice.ps1').read_text()
+        guard = source.split('function Assert-NoLivePreservedBinds {', 1)[1].split('function Get-EnvValue', 1)[0]
+        reader = source.split('function Invoke-BoundedDockerReadOnly {', 1)[1].split('function ConvertTo-BindComparisonPath', 1)[0]
+        paths = source.split('function ConvertTo-BindComparisonPath {', 1)[1].split('function Assert-NoLivePreservedBinds', 1)[0]
+        self.assertLess(source.index('\nAssert-NoLivePreservedBinds\n'), source.index('$transactionDir = Join-Path'))
+        self.assertLess(source.index('\nAssert-NoLivePreservedBinds\n'), source.index('[System.IO.File]::ReadAllBytes($sourcePath)'))
+        for marker in ("@('.env', '.data', 'data', 'backups')", "@('ps', '--no-trunc', '--quiet')",
+                       "'[{{json .State.Running}},{{json .Mounts}}]'", '$ids.Count -gt 256',
+                       '$probe[1].Count -gt 1024', '$mount.RW -isnot [bool]',
+                       '-Limit 65536', '-Limit 1048576', 'stop that owned writer before update',
+                       "$source.StartsWith($target.TrimEnd('/') + '/'", "$target.StartsWith($source.TrimEnd('/') + '/'"):
+            self.assertIn(marker, guard)
+        self.assertIn('ConvertFrom-Json -InputObject $raw', guard)
+        self.assertIn('all writers must already be stopped', guard)
+        self.assertIn("$mount.Type -cne 'bind'", guard)
+        self.assertIn('30000', reader)
+        self.assertIn('10000', reader)
+        self.assertIn('$output.Length + $count -gt $Limit', reader)
+        self.assertIn('$errorSize -gt $Limit', reader)
+        self.assertIn('$process.Kill()', reader)
+        for alias in ('run/desktop/mnt/host', 'host_mnt', 'mnt', 'ToLowerInvariant'):
+            self.assertIn(alias, paths)
+        self.assertIn('[System.IO.FileAttributes]::ReparsePoint', paths)
+        self.assertIn('stop owned writers', paths)
+        self.assertNotIn('.Config', guard)
+        self.assertNotIn('Invoke-Expression', guard + reader + paths)
+        self.assertNotIn('docker stop', guard + reader + paths)
+        self.assertNotIn('Stop-Process', guard + reader + paths)
+        # The only file-only escape is absence of Docker, not an inspection error.
+        self.assertLess(guard.index('return'), guard.index('$clock ='))
+        self.assertNotIn('$NoLaunch', guard.split('$clock =', 1)[1])
 
     def test_windows_inspect_template_avoids_legacy_embedded_quote_loss(self):
         source = (ROOT / 'packaging/windows/Install-ContextLattice.ps1').read_text()
