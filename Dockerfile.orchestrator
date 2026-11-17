@@ -3,7 +3,7 @@ ARG CONTEXTLATTICE_BUILD_CHANNEL=standalone
 ARG CONTEXTLATTICE_SOURCE_COMMIT=unknown
 ARG CONTEXTLATTICE_SOURCE_TREE=unknown
 
-FROM --platform=$BUILDPLATFORM golang:1.26.11-bookworm AS gateway-builder
+FROM golang:1.26.11-bookworm AS gateway-builder
 WORKDIR /src
 COPY services/gateway-go/go.mod services/gateway-go/go.sum ./services/gateway-go/
 RUN cd services/gateway-go && go mod download
@@ -14,7 +14,9 @@ ARG CONTEXTLATTICE_SOURCE_COMMIT
 ARG CONTEXTLATTICE_SOURCE_TREE
 ARG TARGETOS
 ARG TARGETARCH
-RUN cd services/gateway-go && CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath \
+# The base inherits Docker's target platform. Legacy builders do not define
+# BuildKit's automatic target arguments, so use the compiler's native defaults.
+RUN cd services/gateway-go && CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-$(go env GOHOSTARCH)} go build -trimpath \
     -ldflags "-s -w \
       -X main.contextLatticeBuildVersion=${CONTEXTLATTICE_BUILD_VERSION} \
       -X main.contextLatticeBuildChannel=${CONTEXTLATTICE_BUILD_CHANNEL} \
