@@ -19,6 +19,14 @@ COMMIT, TREE = 'a' * 40, 'b' * 40
 @unittest.skipUnless(os.name == 'posix' and os.path.isfile('/bin/zsh') and os.access('/bin/zsh', os.X_OK),
                      'synthetic installer fixtures require POSIX and /bin/zsh')
 class InstallerTransactionReadinessTests(unittest.TestCase):
+    def test_shipped_unix_installer_passes_strict_public_material_scan(self):
+        result = subprocess.run([sys.executable, '-B', '-c',
+            'import sys; from pathlib import Path; sys.path.insert(0, "scripts"); '
+            'from public_release_material_scan import scan_public_release_files; '
+            'scan_public_release_files([Path("packaging/linux/ContextLattice-Install.sh")])'],
+            cwd=ROOT, capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix='synthetic-')
         self.addCleanup(self.tmp.cleanup)

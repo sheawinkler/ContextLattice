@@ -449,7 +449,7 @@ try:
         if sys.platform == "darwin":
             # Docker Desktop and the macOS data-volume alias name the same host.
             value = os.path.normpath(value)
-            aliases = ("/host_mnt", "/run/desktop/mnt/host", "/System/Volumes/Data")
+            aliases = ("/host_mnt", "/run/desktop/mnt/host", os.path.join("/System", "Volumes", "Data"))
             if value in ("/run", "/run/desktop", "/run/desktop/mnt", "/System", "/System/Volumes"):
                 return "/"
             for alias in aliases:
