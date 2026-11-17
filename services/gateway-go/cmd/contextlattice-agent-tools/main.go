@@ -356,6 +356,8 @@ func (c *cli) run(argv []string) error {
 		envString("CONTEXTLATTICE_CLI_OUTPUT", "auto"),
 	)
 	switch command {
+	case "update":
+		return c.cmdUpdate(args)
 	case "context":
 		return c.cmdContext(args)
 	case "resume":
@@ -508,6 +510,7 @@ Usage:
   contextlattice <command> [args]
 
 Primary workflow:
+  update --check                 check a managed public install; --apply delegates a full upgrade
   context <task>                  compact proof-carrying context for the task
   resume [--session-id id]        compact task/session state for continuation
   remember <checkpoint>           durable checkpoint bound to the current session
