@@ -74,6 +74,10 @@
 <ul class="doc-list"><li>Read the <a href="https://github.com/sheawinkler/ContextLattice/releases/latest" target="_blank" rel="noreferrer">release notes</a>.</li><li>Record the current source SHA, runtime profile, and storage locations.</li><li>Preserve a bounded backup or snapshot appropriate to the active backends.</li><li>Run a representative context query and save its evidence.</li><li>Confirm enough free space for images, indexes, and any migration.</li></ul>
 <h2 id="install-or-upgrade">Install or upgrade<a class="heading-anchor" href="#install-or-upgrade" aria-label="Link to Install or upgrade">#</a></h2>
 <p>Source operators should use the repository instructions and <code>gmake quickstart</code>. Homebrew and installer users should use the matching artifact from the same release.</p>
+<p>Managed public installer releases also support a verified CLI update:</p>
+<div class="code-frame"><div class="code-frame-label"><span>zsh</span></div><pre><code class="language-zsh">contextlattice update --check --install-dir /path/to/managed-install
+contextlattice update --apply --install-dir /path/to/managed-install</code></pre></div>
+<p>Normal apply delegates runtime launch/readiness and tool refresh to the existing installer. Source checkouts are deliberately not overwritten; use the explicit Git procedure below after preserving local work and stopping the owned runtime. Windows uses its native MSI, and paid installations never fall back to public assets. The <a href="https://github.com/sheawinkler/ContextLattice/blob/main/docs/cli-updates.md" target="_blank" rel="noreferrer">CLI update guide</a> describes file-only opt-outs, integrity checks and recovery limits.</p>
 <div class="code-frame"><div class="code-frame-label"><span>zsh</span></div><pre><code class="language-zsh">git fetch --tags origin
 git checkout v5.2.0
 gmake quickstart</code></pre></div>

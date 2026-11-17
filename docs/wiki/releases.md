@@ -21,6 +21,20 @@ The current public release baseline is `v5.2.0`. Release identity comes from the
 
 Source operators should use the repository instructions and `gmake quickstart`. Homebrew and installer users should use the matching artifact from the same release.
 
+Managed public installer releases also support a verified CLI update:
+
+```zsh
+contextlattice update --check --install-dir /path/to/managed-install
+contextlattice update --apply --install-dir /path/to/managed-install
+```
+
+Normal apply delegates runtime launch/readiness and tool refresh to the existing
+installer. Source checkouts are deliberately not overwritten; use the explicit
+Git procedure below after preserving local work and stopping the owned runtime.
+Windows uses its native MSI, and paid installations never fall back to public
+assets. The [CLI update guide](https://github.com/sheawinkler/ContextLattice/blob/main/docs/cli-updates.md)
+describes file-only opt-outs, integrity checks and recovery limits.
+
 ```zsh
 git fetch --tags origin
 git checkout v5.2.0
