@@ -124,6 +124,153 @@ function Copy-PayloadTree {
     }
 }
 
+function Invoke-BoundedDockerReadOnly {
+    Param([string[]]$DockerArgs, [int]$Limit, [System.Diagnostics.Stopwatch]$Clock)
+
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo.FileName = (Get-Command docker -CommandType Application -ErrorAction Stop).Source
+    # Only fixed arguments, templates without quotes, and validated hex IDs enter here.
+    if (@($DockerArgs | Where-Object { $_.Contains('"') }).Count -ne 0) {
+        throw "Invalid Docker inspection argument."
+    }
+    $process.StartInfo.Arguments = ($DockerArgs | ForEach-Object { '"' + $_ + '"' }) -join ' '
+    $process.StartInfo.UseShellExecute = $false
+    $process.StartInfo.CreateNoWindow = $true
+    $process.StartInfo.RedirectStandardOutput = $true
+    $process.StartInfo.RedirectStandardError = $true
+    $output = New-Object System.Text.StringBuilder
+    [char[]]$outBuffer = New-Object char[] 4096
+    [char[]]$errBuffer = New-Object char[] 4096
+    $errorSize = 0
+    $endMs = [Math]::Min(30000, $Clock.ElapsedMilliseconds + 10000)
+    try {
+        if (-not $process.Start()) { throw "Docker inspection could not start." }
+        $outRead = $process.StandardOutput.ReadAsync($outBuffer, 0, $outBuffer.Length)
+        $errRead = $process.StandardError.ReadAsync($errBuffer, 0, $errBuffer.Length)
+        while ($null -ne $outRead -or $null -ne $errRead -or -not $process.HasExited) {
+            if ($Clock.ElapsedMilliseconds -ge $endMs) { throw "Docker inspection timed out." }
+            if ($null -ne $outRead -and $outRead.IsCompleted) {
+                $count = $outRead.GetAwaiter().GetResult()
+                if ($output.Length + $count -gt $Limit) { throw "Docker inspection output exceeds its bound." }
+                if ($count -eq 0) { $outRead = $null } else {
+                    [void]$output.Append($outBuffer, 0, $count)
+                    $outRead = $process.StandardOutput.ReadAsync($outBuffer, 0, $outBuffer.Length)
+                }
+            }
+            if ($null -ne $errRead -and $errRead.IsCompleted) {
+                $count = $errRead.GetAwaiter().GetResult()
+                $errorSize += $count
+                if ($errorSize -gt $Limit) { throw "Docker inspection diagnostics exceed their bound." }
+                if ($count -eq 0) { $errRead = $null } else {
+                    $errRead = $process.StandardError.ReadAsync($errBuffer, 0, $errBuffer.Length)
+                }
+            }
+            [System.Threading.Thread]::Sleep(10)
+        }
+        if ($process.ExitCode -ne 0) { throw "Docker inspection failed; check the selected context and daemon/socket." }
+        return $output.ToString()
+    } finally {
+        # Terminate only our own read-only CLI child, never a container or daemon.
+        try { if (-not $process.HasExited) { $process.Kill() } } catch { }
+        $process.Dispose()
+    }
+}
+
+function ConvertTo-BindComparisonPath {
+    Param([string]$Source)
+
+    if ([string]::IsNullOrWhiteSpace($Source) -or $Source.Length -gt 4096 -or $Source.Contains([string][char]0)) {
+        throw "Docker bind source is malformed."
+    }
+    $normalized = $Source.Replace('\', '/')
+    $nativePath = $null
+    if ($normalized -match '^[a-zA-Z]:/' -or $normalized.StartsWith('//')) {
+        $normalized = [System.IO.Path]::GetFullPath($normalized).Replace('\', '/')
+        $nativePath = $normalized
+        if ($normalized -match '^([a-zA-Z]):/(.*)$') {
+            $normalized = '/' + $Matches[1] + '/' + $Matches[2]
+        }
+    } elseif (-not $normalized.StartsWith('/')) {
+        throw "Docker bind source is not absolute."
+    }
+    # Put native drives and Docker Desktop/WSL aliases in one /c/... namespace.
+    # Namespace ancestors conservatively cover every host drive.
+    $parts = New-Object 'System.Collections.Generic.List[string]'
+    foreach ($part in ($normalized -split '/')) {
+        if ($part -eq '' -or $part -eq '.') { continue }
+        if ($part -eq '..') {
+            if ($parts.Count -gt 0) { $parts.RemoveAt($parts.Count - 1) }
+        } else { $parts.Add($part) }
+    }
+    $normalized = ('/' + ($parts -join '/')).ToLowerInvariant()
+    if ($normalized -in @('/run', '/run/desktop', '/run/desktop/mnt')) { return '/' }
+    $normalized = $normalized -replace '^/(run/desktop/mnt/host|host_mnt|mnt)(?=/|$)', ''
+    if ($normalized.Length -eq 0) { return '/' }
+    if ($normalized -match '^/([a-z])(?:/(.*))?$') {
+        $nativePath = $Matches[1] + ':/' + $Matches[2]
+    }
+    # Lexical comparisons cannot prove disjointness through junctions/symlinks.
+    # Refuse instead of introducing a new native path-resolution engine.
+    while (-not [string]::IsNullOrEmpty($nativePath)) {
+        if (Test-Path -LiteralPath $nativePath) {
+            $item = Get-Item -LiteralPath $nativePath -Force
+            if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "Cannot prove Docker bind safety through a reparse point; stop owned writers and use an offline file-only environment."
+            }
+        }
+        $parentPath = [System.IO.Path]::GetDirectoryName($nativePath)
+        if ($parentPath -eq $nativePath) { break }
+        $nativePath = $parentPath
+    }
+    return $normalized
+}
+
+function Assert-NoLivePreservedBinds {
+    if (-not (Get-Command docker -CommandType Application -ErrorAction SilentlyContinue)) {
+        if (-not $ExtractOnly.IsPresent -and -not $NoLaunch.IsPresent) {
+            throw "Docker is required for preserved-state safety inspection."
+        }
+        Write-Warning "Offline file-only install: Docker is absent; all writers must already be stopped, including writers on other Docker contexts/hosts."
+        return
+    }
+    $clock = [System.Diagnostics.Stopwatch]::StartNew()
+    $preserved = @('.env', '.data', 'data', 'backups') | ForEach-Object {
+        ConvertTo-BindComparisonPath -Source (Join-Path $InstallDir $_)
+    }
+    $rawIds = Invoke-BoundedDockerReadOnly -DockerArgs @('ps', '--no-trunc', '--quiet') -Limit 65536 -Clock $clock
+    $ids = @()
+    if ($rawIds.Length -ne 0) { $ids = @($rawIds.TrimEnd("`r", "`n") -split '\r?\n') }
+    if ($ids.Count -gt 256 -or @($ids | Select-Object -Unique).Count -ne $ids.Count -or
+        @($ids | Where-Object { $_ -cnotmatch '\A[0-9a-f]{64}\z' }).Count -ne 0) {
+        throw "Docker running-container IDs are malformed or exceed the 256-container bound."
+    }
+    foreach ($containerId in $ids) {
+        $raw = Invoke-BoundedDockerReadOnly -DockerArgs @('inspect', '--type', 'container', '--format',
+            '[{{json .State.Running}},{{json .Mounts}}]', $containerId) -Limit 1048576 -Clock $clock
+        try { $probe = ConvertFrom-Json -InputObject $raw } catch { throw "Docker mount inspection is not valid JSON." }
+        if ($probe -isnot [array] -or $probe.Count -ne 2 -or $probe[0] -isnot [bool] -or
+            $probe[1] -isnot [array] -or $probe[1].Count -gt 1024) {
+            throw "Docker mount inspection has an invalid shape or exceeds the mount bound."
+        }
+        foreach ($mount in $probe[1]) {
+            if ($mount -isnot [System.Management.Automation.PSCustomObject] -or
+                $mount.Type -cnotin @('bind', 'volume', 'tmpfs') -or $mount.RW -isnot [bool]) {
+                throw "Docker mount inspection is malformed."
+            }
+            if ($mount.Type -cne 'bind') { continue }
+            if ($mount.Source -isnot [string]) { throw "Docker bind source is malformed." }
+            if (-not $probe[0] -or -not $mount.RW) { continue }
+            $source = ConvertTo-BindComparisonPath -Source $mount.Source
+            foreach ($target in $preserved) {
+                if ($source -eq $target -or $source.StartsWith($target.TrimEnd('/') + '/', [System.StringComparison]::Ordinal) -or
+                    $target.StartsWith($source.TrimEnd('/') + '/', [System.StringComparison]::Ordinal)) {
+                    throw "Running container $($containerId.Substring(0, 12)) has a writable bind overlapping install-local preserved state; stop that owned writer before update and rerun. Do not stop unrelated containers."
+                }
+            }
+        }
+    }
+}
+
 function Get-EnvValue {
     Param(
         [Parameter(Mandatory = $true)][string]$Path,
@@ -336,6 +483,10 @@ try {
 } finally {
     $zip.Dispose()
 }
+
+# Precondition only: keep all writers stopped through preservation/publication.
+# File-only switches do not bypass inspection when Docker is available.
+Assert-NoLivePreservedBinds
 
 $tempExtract = Join-Path ([System.IO.Path]::GetTempPath()) ("contextlattice-install-" + [guid]::NewGuid().ToString("N"))
 $transactionDir = Join-Path $installParent (".$installName.install-" + [guid]::NewGuid().ToString("N"))
