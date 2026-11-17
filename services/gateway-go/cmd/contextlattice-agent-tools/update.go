@@ -36,6 +36,8 @@ const (
 	updateMaxExpanded  int64 = 1 << 30
 )
 
+const updateMinInstallerVersion = "5.2.0"
+
 type updateMetadata struct {
 	Schema     string `json:"schema_id"`
 	Lane       string `json:"lane"`
@@ -206,6 +208,9 @@ func (u managedUpdater) run(c *cli, args []string) error {
 	}
 	if *check || !newer {
 		return c.emit(result, *pretty)
+	}
+	if updateNewer(updateMinInstallerVersion, latest) {
+		return fmt.Errorf("update apply requires target v%s or newer for supported installer flags and source-bound readiness", updateMinInstallerVersion)
 	}
 	bundle, err := updateFindAsset(release, updateBundleName, updateMaxBundle)
 	if err != nil {

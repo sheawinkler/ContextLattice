@@ -130,7 +130,12 @@ type updateTestFixture struct {
 
 func newUpdateTestFixture(t *testing.T) *updateTestFixture {
 	t.Helper()
-	x := &updateTestFixture{metadata: updateTestMetadata("5.2.0"), files: map[string][]byte{}, commit: strings.Repeat("a", 40)}
+	return newUpdateTestFixtureVersion(t, "5.2.0")
+}
+
+func newUpdateTestFixtureVersion(t *testing.T, version string) *updateTestFixture {
+	t.Helper()
+	x := &updateTestFixture{metadata: updateTestMetadata(version), files: map[string][]byte{}, commit: strings.Repeat("a", 40)}
 	x.release.Tag = x.metadata.Tag
 	x.manifest = updateManifest{Schema: "contextlattice_release_artifact_manifest.v1", Lane: "public", Channel: "stable", Tag: x.metadata.Tag, Ref: x.metadata.Ref, Commit: x.commit, Count: 3}
 	for i, name := range []string{updateBundleName, "ContextLattice-macOS-universal.dmg", "ContextLattice-windows-x64.msi"} {
@@ -226,6 +231,65 @@ func TestManagedUpdateCheckNeverMutates(t *testing.T) {
 		if strings.HasSuffix(r, updateBundleName) {
 			t.Fatal("check downloaded installer bundle")
 		}
+	}
+}
+
+func TestManagedUpdateApplyRequiresSupportedInstallerTarget(t *testing.T) {
+	for _, scenario := range []struct {
+		name, current, mode string
+		noLaunch, refused   bool
+	}{
+		{"newer-legacy-apply", "5.0.2", "--apply", false, true},
+		{"newer-legacy-file-only", "5.0.2", "--apply", true, true},
+		{"legacy-check", "5.0.2", "--check", false, false},
+		{"legacy-same-noop", "5.1.2", "--apply", false, false},
+		{"legacy-older-noop", "5.2.0", "--apply", false, false},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			x := newUpdateTestFixtureVersion(t, "5.1.2")
+			root := updateTestInstall(t)
+			before := updateTestJSON(t, updateTestMetadata(scenario.current))
+			if err := os.WriteFile(filepath.Join(root, ".contextlattice-release.json"), before, 0600); err != nil {
+				t.Fatal(err)
+			}
+			calls := 0
+			x.u.invoke = func(context.Context, string, []string, []string, io.Writer) error {
+				calls++
+				return errors.New("unexpected invocation")
+			}
+			c, out := updateTestCLI()
+			args := []string{scenario.mode, "--install-dir", root}
+			if scenario.noLaunch {
+				args = append(args, "--no-launch")
+			}
+			err := x.u.run(c, args)
+			if scenario.refused {
+				if err == nil || !strings.Contains(err.Error(), "requires target v5.2.0 or newer") {
+					t.Fatal("legacy installer target was not refused", err)
+				}
+				if out.Len() != 0 {
+					t.Fatal("refused apply emitted success", out.String())
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			if calls != 0 {
+				t.Fatal("legacy target invoked installer")
+			}
+			entries, err := os.ReadDir(filepath.Dir(root))
+			if err != nil || len(entries) != 1 || entries[0].Name() != filepath.Base(root) {
+				t.Fatal("legacy target left staging/lock", err)
+			}
+			after, err := os.ReadFile(filepath.Join(root, ".contextlattice-release.json"))
+			if err != nil || !bytes.Equal(before, after) {
+				t.Fatal("legacy target mutated metadata", err)
+			}
+			for _, request := range x.requests {
+				if strings.HasSuffix(request, updateBundleName) {
+					t.Fatal("legacy target downloaded installer")
+				}
+			}
+		})
 	}
 }
 

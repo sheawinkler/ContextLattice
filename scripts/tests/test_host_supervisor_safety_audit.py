@@ -189,7 +189,10 @@ class HostSupervisorSafetyAuditTests(unittest.TestCase):
         ) as run:
             for paths in ([entry], sorted(audit.BOOTSTRAP_SOURCE_PATHS)):
                 with self.subTest(paths=paths):
-                    payload = audit.run_audit(ROOT, paths, body, syntax_shell="zsh")
+                    case_body = body
+                    if set(paths) & audit.CLI_NATIVE_TOOL_COMPANION_PATHS:
+                        case_body += "\n- [x] " + audit.CLI_NATIVE_TOOL_PR_CHECK
+                    payload = audit.run_audit(ROOT, paths, case_body, syntax_shell="zsh")
                     self.assertTrue(payload["ok"], payload["failures"])
                     self.assertEqual(payload["evidence_scope"], "source_merge")
                     self.assertIs(payload["release_qualified"], False)
@@ -213,6 +216,120 @@ class HostSupervisorSafetyAuditTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 audit.run_audit(ROOT, syntax_shell="arbitrary-command")
             self.assertEqual(run.call_count, before)
+
+    def test_cli_bootstrap_source_merge_is_exact_and_not_release_authority(self) -> None:
+        loader = importlib.machinery.SourceFileLoader("cli_bootstrap_safety_audit_fixture", str(AUDIT))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        audit = importlib.util.module_from_spec(spec)
+        with mock.patch.dict(sys.modules, {loader.name: audit}):
+            loader.exec_module(audit)
+        entry = "services/gateway-go/cmd/contextlattice-agent-tools/update.go"
+        main = "services/gateway-go/cmd/contextlattice-agent-tools/main.go"
+        cli_paths = {
+            entry, main,
+            "services/gateway-go/cmd/contextlattice-agent-tools/update_test.go",
+            "docs/cli-updates.md",
+        }
+        guard_paths = {"scripts/agent/audit-host-supervisor-safety",
+                       "scripts/tests/test_host_supervisor_safety_audit.py"}
+        self.assertIn(entry, audit.HOST_LIFECYCLE_CRITICAL_PATHS)
+        self.assertIn(entry, audit.BOOTSTRAP_ENTRY_PATHS)
+        self.assertTrue(audit.is_host_lifecycle_critical(entry))
+        self.assertFalse(audit.is_host_lifecycle_critical(main))
+        self.assertEqual(audit.SOURCE_GUARD_COMPANION_PATHS, GUARD_EXPECTED_COMPANIONS)
+        self.assertNotIn(entry, audit.SOURCE_GUARD_CRITICAL_PATHS)
+        self.assertEqual(len(audit.BOOTSTRAP_PR_CHECKS), 4)
+        body = "\n".join("- [x] " + label for label in audit.BOOTSTRAP_PR_CHECKS)
+        syntax = subprocess.CompletedProcess(["mocked-syntax-check"], 0, "", "")
+        with mock.patch.object(audit.shutil, "which", return_value="/mocked/zsh"), mock.patch.object(
+            audit.subprocess, "run", return_value=syntax
+        ):
+            for paths in (cli_paths, cli_paths | guard_paths):
+                with self.subTest(allowed_paths=paths):
+                    payload = audit.run_audit(ROOT, sorted(paths), body, syntax_shell="zsh")
+                    self.assertTrue(payload["ok"], payload["failures"])
+                    self.assertEqual(payload["evidence_scope"], "source_merge")
+                    self.assertIs(payload["release_qualified"], False)
+            for extra in (
+                "services/gateway-go/runtime.go",
+                "services/gateway-go/cmd/contextlattice-agent-tools/other.go",
+                "Dockerfile.orchestrator", "Dockerfile.gateway-go", "README.md",
+                "docs/wiki/releases.md", "scripts/orbstack_self_heal.sh",
+                "scripts/retention_runner.sh", "scripts/install_retention_runner.sh",
+                "scripts/install_global_agent_tools.sh", "scripts/other_runtime.sh",
+                ".github/workflows/new-scheduled.yml",
+            ):
+                with self.subTest(rejected_extra=extra):
+                    self.assertIn("pr_evidence", failure_ids(audit.run_audit(
+                        ROOT, sorted(cli_paths | guard_paths | {extra}), body, syntax_shell="zsh"
+                    )))
+            for label in audit.BOOTSTRAP_PR_CHECKS:
+                incomplete = body.replace("- [x] " + label, "- [ ] " + label)
+                self.assertIn("pr_evidence", failure_ids(audit.run_audit(
+                    ROOT, sorted(cli_paths), incomplete, syntax_shell="zsh"
+                )))
+            for invalid_body in ("", body + "\n- [x] " + audit.NO_IMPACT_CHECK,
+                                 "\n".join("- [x] " + label for label in audit.SOURCE_GUARD_PR_CHECKS)):
+                self.assertIn("pr_evidence", failure_ids(audit.run_audit(
+                    ROOT, sorted(cli_paths), invalid_body, syntax_shell="zsh"
+                )))
+            self.assertIn("pr_evidence", failure_ids(audit.run_audit(ROOT, [main], body, syntax_shell="zsh")))
+
+    def test_cli_native_tool_companions_require_update_entry_and_atomic_attestation(self) -> None:
+        loader = importlib.machinery.SourceFileLoader("cli_native_tool_scope_audit_fixture", str(AUDIT))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        audit = importlib.util.module_from_spec(spec)
+        with mock.patch.dict(sys.modules, {loader.name: audit}):
+            loader.exec_module(audit)
+        entry = "services/gateway-go/cmd/contextlattice-agent-tools/update.go"
+        installer = "scripts/install_global_agent_tools.sh"
+        powershell_installer = "scripts/install_global_agent_tools.ps1"
+        native_test = "scripts/tests/test_native_tools_binary_install.py"
+        all_companions = {installer, powershell_installer, native_test}
+        companion_sets = ({installer}, {powershell_installer}, {native_test},
+                          {installer, powershell_installer}, {installer, native_test},
+                          {powershell_installer, native_test}, all_companions)
+        self.assertEqual(audit.CLI_NATIVE_TOOL_COMPANION_PATHS, all_companions)
+        self.assertTrue(all_companions.isdisjoint(audit.BOOTSTRAP_ENTRY_PATHS))
+        self.assertEqual(audit.SOURCE_GUARD_COMPANION_PATHS, GUARD_EXPECTED_COMPANIONS)
+        body = "\n".join("- [x] " + label for label in audit.BOOTSTRAP_PR_CHECKS)
+        attestation = "Global native-tool changes are confined to candidate binary compilation and atomic binary/link/wrapper publication; supervisor installation and scheduled payloads are unchanged."
+        self.assertEqual(audit.CLI_NATIVE_TOOL_PR_CHECK, attestation)
+        checked = body + "\n- [x] " + attestation
+        syntax = subprocess.CompletedProcess(["mocked-syntax-check"], 0, "", "")
+        with mock.patch.object(audit.shutil, "which", return_value="/mocked/zsh"), mock.patch.object(
+            audit.subprocess, "run", return_value=syntax
+        ):
+            for companions in companion_sets:
+                paths = sorted({entry} | companions)
+                with self.subTest(allowed_companions=companions):
+                    payload = audit.run_audit(ROOT, paths, checked, syntax_shell="zsh")
+                    self.assertTrue(payload["ok"], payload["failures"])
+                    self.assertEqual(payload["evidence_scope"], "source_merge")
+                    self.assertIs(payload["release_qualified"], False)
+                    for missing in (body, body + "\n- [ ] " + attestation,
+                                    body + "\n- [x] Global native-tool changes are safe."):
+                        self.assertIn("pr_evidence", failure_ids(audit.run_audit(
+                            ROOT, paths, missing, syntax_shell="zsh"
+                        )))
+            for companions in companion_sets:
+                for entries in (set(), *({path} for path in sorted(audit.BOOTSTRAP_ENTRY_PATHS - {entry}))):
+                    paths = sorted(entries | companions)
+                    with self.subTest(missing_cli_entry=paths):
+                        self.assertIn("pr_evidence", failure_ids(audit.run_audit(
+                            ROOT, paths, checked, syntax_shell="zsh"
+                        )))
+            for extra in ("scripts/orbstack_self_heal.sh", "scripts/install_retention_runner.sh",
+                          "scripts/other_runtime.sh", "scripts/tests/test_other_native_tools.py",
+                          "services/gateway-go/runtime.go", "Dockerfile.orchestrator", "README.md"):
+                with self.subTest(unrelated_change=extra):
+                    self.assertIn("pr_evidence", failure_ids(audit.run_audit(
+                        ROOT, sorted({entry, extra} | all_companions), checked, syntax_shell="zsh"
+                    )))
+            guard_body = "\n".join("- [x] " + label for label in audit.SOURCE_GUARD_PR_CHECKS)
+            self.assertIn("pr_evidence", failure_ids(audit.run_audit(
+                ROOT, sorted({entry} | all_companions), guard_body, syntax_shell="zsh"
+            )))
 
     def test_installer_paths_require_completed_pr_evidence_without_shell(self) -> None:
         loader = importlib.machinery.SourceFileLoader("host_safety_audit_fixture", str(AUDIT))

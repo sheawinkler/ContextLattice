@@ -81,6 +81,10 @@ Only declared installer-preserved state (`.env`, `.data`, `data`, `backups`)
 is retained; preserve any other local modifications before applying.
 
 Same/older versions are reported without downloading or applying the bundle.
+Applying a newer target requires v5.2.0 or later, including file-only mode:
+earlier installers do not support this updater's flags and source-bound
+readiness contract. Such targets are refused before staging or installer
+execution. Checks and same/older-version no-ops remain available.
 Installer failures propagate as CLI failures, and a successful invocation is
 followed by an installed-identity readback. Installer diagnostics may identify
 a retained transaction requiring inspection. The CLI never claims automatic

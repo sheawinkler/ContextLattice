@@ -83,6 +83,7 @@ HOST_LIFECYCLE_CRITICAL_PATHS = frozenset(
         "packaging/linux/ContextLattice-Install.sh",
         "packaging/windows/Install-ContextLattice.ps1",
         "packaging/windows/ContextLattice-Install.cmd",
+        "services/gateway-go/cmd/contextlattice-agent-tools/update.go",
         "scripts/tests/test_host_supervisor_safety_audit.py",
         "scripts/tests/test_installer_transaction_readiness.py",
         "scripts/tests/test_orbstack_self_heal_install.py",
@@ -108,11 +109,23 @@ BOOTSTRAP_PR_CHECKS = (
     "Native installed and final-artifact qualification remain release gates; source merge does not claim them.",
 )
 BOOTSTRAP_ENTRY_PATHS = frozenset({
+    "services/gateway-go/cmd/contextlattice-agent-tools/update.go",
     "packaging/linux/ContextLattice-Install.sh",
     "packaging/windows/Install-ContextLattice.ps1",
     "packaging/windows/ContextLattice-Install.cmd",
 })
-BOOTSTRAP_SOURCE_PATHS = BOOTSTRAP_ENTRY_PATHS | frozenset({
+CLI_NATIVE_TOOL_COMPANION_PATHS = frozenset({
+    "scripts/install_global_agent_tools.sh",
+    "scripts/install_global_agent_tools.ps1",
+    "scripts/tests/test_native_tools_binary_install.py",
+})
+CLI_NATIVE_TOOL_PR_CHECK = (
+    "Global native-tool changes are confined to candidate binary compilation and atomic binary/link/wrapper publication; supervisor installation and scheduled payloads are unchanged."
+)
+BOOTSTRAP_SOURCE_PATHS = BOOTSTRAP_ENTRY_PATHS | CLI_NATIVE_TOOL_COMPANION_PATHS | frozenset({
+    "services/gateway-go/cmd/contextlattice-agent-tools/main.go",
+    "services/gateway-go/cmd/contextlattice-agent-tools/update_test.go",
+    "docs/cli-updates.md",
     "scripts/tests/test_installer_transaction_readiness.py",
     "AGENTS.md", ".github/pull_request_template.md",
     "docs/host-supervisor-release-safety.md",
@@ -500,7 +513,11 @@ def run_audit(root: Path, changed_files: list[str] | None = None, pr_body: str =
         checked = checked_pr_labels(pr_body)
         bootstrap_claimed = BOOTSTRAP_PR_CHECKS[0].casefold() in checked
         guard_claimed = SOURCE_GUARD_PR_CHECKS[0].casefold() in checked
-        bootstrap_only = bool(set(normalized_changed) & BOOTSTRAP_ENTRY_PATHS) and set(normalized_changed) <= BOOTSTRAP_SOURCE_PATHS
+        cli_native_tool_companions = set(normalized_changed) & CLI_NATIVE_TOOL_COMPANION_PATHS
+        cli_native_tool_scope = (not cli_native_tool_companions
+                                or "services/gateway-go/cmd/contextlattice-agent-tools/update.go" in normalized_changed)
+        bootstrap_only = (bool(set(normalized_changed) & BOOTSTRAP_ENTRY_PATHS)
+                          and set(normalized_changed) <= BOOTSTRAP_SOURCE_PATHS and cli_native_tool_scope)
         guard_only = (bool(critical_changed) and set(critical_changed) <= SOURCE_GUARD_CRITICAL_PATHS
                       and set(normalized_changed) <= SOURCE_GUARD_COMPANION_PATHS)
         guard_labels = {label.casefold() for label in SOURCE_GUARD_PR_CHECKS}
@@ -509,6 +526,8 @@ def run_audit(root: Path, changed_files: list[str] | None = None, pr_body: str =
             not guard_claimed and bool(checked & guard_labels)
         )
         required = SOURCE_GUARD_PR_CHECKS if guard_claimed else BOOTSTRAP_PR_CHECKS if bootstrap_claimed else REQUIRED_PR_CHECKS
+        if bootstrap_claimed and cli_native_tool_companions:
+            required = (*required, CLI_NATIVE_TOOL_PR_CHECK)
         missing_pr_checks = [label for label in required if label.casefold() not in checked]
         contradictory = NO_IMPACT_CHECK.casefold() in checked
         invalid_bootstrap_scope = bootstrap_claimed and not bootstrap_only
@@ -517,7 +536,7 @@ def run_audit(root: Path, changed_files: list[str] | None = None, pr_body: str =
             not critical_changed or (not missing_pr_checks and not contradictory)
         )
         detail = (
-            f"critical_paths={critical_changed}; bootstrap_only={bootstrap_only}; source_guard_only={guard_only}; scope_basis=path_allowlist_and_peer_attestation_not_behavioral_analysis; invalid_paths={invalid_paths}; invalid_bootstrap_scope={invalid_bootstrap_scope}; invalid_guard_scope={invalid_guard_scope}; conflicting_guard_scope={conflicting_guard_scope}; missing_checked_items={missing_pr_checks}; contradictory_no_impact={contradictory}"
+            f"critical_paths={critical_changed}; bootstrap_only={bootstrap_only}; cli_native_tool_companions={sorted(cli_native_tool_companions)}; cli_native_tool_scope={cli_native_tool_scope}; source_guard_only={guard_only}; scope_basis=path_allowlist_and_peer_attestation_not_behavioral_analysis; invalid_paths={invalid_paths}; invalid_bootstrap_scope={invalid_bootstrap_scope}; invalid_guard_scope={invalid_guard_scope}; conflicting_guard_scope={conflicting_guard_scope}; missing_checked_items={missing_pr_checks}; contradictory_no_impact={contradictory}"
             if critical_changed or bootstrap_claimed or guard_claimed or conflicting_guard_scope or invalid_paths
             else "no host-lifecycle critical paths changed"
         )
