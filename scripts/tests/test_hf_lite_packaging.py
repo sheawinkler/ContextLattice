@@ -4,8 +4,11 @@ import argparse
 import copy
 import importlib.util
 import json
+import os
 from pathlib import Path
+import re
 import shlex
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -45,11 +48,38 @@ class LitePackagingTests(unittest.TestCase):
     def test_standalone_image_build_uses_the_requested_target_architecture(self):
         dockerfile = (ROOT / 'Dockerfile.orchestrator').read_text()
         self.assertNotIn('GOARCH=amd64', dockerfile)
-        self.assertIn('FROM --platform=$BUILDPLATFORM golang:', dockerfile)
+        self.assertIn('FROM golang:', dockerfile)
+        self.assertNotIn('--platform=$BUILDPLATFORM', dockerfile)
         self.assertIn('ARG TARGETOS', dockerfile)
         self.assertIn('ARG TARGETARCH', dockerfile)
-        self.assertIn('CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build', dockerfile)
+        self.assertIn('GOOS=${TARGETOS:-linux}', dockerfile)
+        self.assertIn('GOARCH=${TARGETARCH:-$(go env GOHOSTARCH)}', dockerfile)
         self.assertIn('CMD ["/usr/local/bin/contextlattice-gateway-go"]', dockerfile)
+
+    def test_standalone_compile_selects_explicit_and_legacy_native_targets(self):
+        source = (ROOT / 'Dockerfile.orchestrator').read_text()
+        match = re.search(r'^RUN cd services/gateway-go && CGO_ENABLED=0 .*?(?=\n\n)', source, re.M | re.S)
+        self.assertIsNotNone(match)
+        command = match.group()[4:].replace('\\\n', '')
+        for host, target in (('amd64', 'arm64'), ('arm64', 'amd64'), ('arm64', None), ('amd64', None)):
+            with self.subTest(host=host, target=target), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                (root / 'services/gateway-go').mkdir(parents=True)
+                tool = root / 'go'
+                tool.write_text('#!/bin/zsh -f\n'
+                    'if [[ "$1" == env && "$2" == GOHOSTARCH ]]; then\n'
+                    '  print -r -- "$FIXTURE_HOST_ARCH"\n'
+                    'elif [[ "$1" == build ]]; then\n'
+                    '  print -r -- "$GOOS|$GOARCH|$CGO_ENABLED"\n'
+                    'else exit 90; fi\n')
+                tool.chmod(0o755)
+                env = {'PATH': str(root) + ':/usr/bin:/bin', 'FIXTURE_HOST_ARCH': host}
+                if target is not None:
+                    env.update(TARGETOS='linux', TARGETARCH=target)
+                result = subprocess.run(['/bin/zsh', '-f', '-c', command], cwd=root,
+                    env=env, capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.strip(), 'linux|' + (target or host) + '|0')
 
     def test_image_persists_authoritative_roots_and_bundles_contracts(self):
         dockerfile = (ROOT / "Dockerfile.hf-lite").read_text()
