@@ -80,6 +80,21 @@ environment or API credentials. The installer's existing lite/full selection
 Only declared installer-preserved state (`.env`, `.data`, `data`, `backups`)
 is retained; preserve any other local modifications before applying.
 
+Keep writers stopped throughout preservation and replacement. A running
+container with a writable bind overlapping that install-local state is refused
+before copying it; stop only that owned writer, then retry. Named volumes,
+read-only binds and disjoint external data directories do not need replacement.
+Inspection uses the selected Docker context and cannot fence other contexts,
+remote-host aliases or non-Docker writers. Even file-only mode refuses a known
+live overlapping bind or failed available-Docker inspection. An offline
+file-only install without Docker requires the operator to establish that all
+writers are stopped. The installer never stops unrelated containers for you.
+
+Tool refresh builds a private sibling executable before replacing the native
+CLI. Legacy wrappers are staged separately so they cannot truncate an existing
+native alias. A compiler failure preserves the working binary; it does not
+make every hook/profile operation one atomic transaction.
+
 Same/older versions are reported without downloading or applying the bundle.
 Applying a newer target requires v5.2.0 or later, including file-only mode:
 earlier installers do not support this updater's flags and source-bound
