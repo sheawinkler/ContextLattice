@@ -215,14 +215,36 @@ if ($null -eq $GoCmd) {
     throw "go is required to install Go-native ContextLattice agent tools."
 }
 $GoTool = Join-Path $BinDir "contextlattice-agent-tools.exe"
-if (Test-Path $GoTool) {
-    Remove-Item $GoTool -Force
+if (Test-Path -LiteralPath $GoTool) {
+    $ExistingTool = Get-Item -LiteralPath $GoTool -Force
+    if ($ExistingTool.PSIsContainer -or ($ExistingTool.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        throw "Refusing to replace a non-regular native tools target."
+    }
 }
-Push-Location (Join-Path $RepoRoot "services\gateway-go")
+$GoCandidate = Join-Path $BinDir (".contextlattice-agent-tools-" + [guid]::NewGuid().ToString("N") + ".exe")
 try {
-    & go build -o $GoTool .\cmd\contextlattice-agent-tools
+    Push-Location (Join-Path $RepoRoot "services\gateway-go")
+    try {
+        & go build -o $GoCandidate .\cmd\contextlattice-agent-tools
+        if ($LASTEXITCODE -ne 0) {
+            throw "Native tools build failed; the previous CLI was preserved."
+        }
+    } finally {
+        Pop-Location
+    }
+    if (!(Test-Path -LiteralPath $GoCandidate -PathType Leaf) -or
+        (Get-Item -LiteralPath $GoCandidate).Length -eq 0) {
+        throw "Native tools build produced no publishable executable."
+    }
+    if (Test-Path -LiteralPath $GoTool) {
+        [IO.File]::Replace($GoCandidate, $GoTool, $null)
+    } else {
+        [IO.File]::Move($GoCandidate, $GoTool)
+    }
 } finally {
-    Pop-Location
+    if (Test-Path -LiteralPath $GoCandidate) {
+        Remove-Item -LiteralPath $GoCandidate -Force
+    }
 }
 
 $searchCmd = @"
