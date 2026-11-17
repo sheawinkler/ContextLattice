@@ -82,6 +82,21 @@ def failure_ids(payload: dict[str, object]) -> set[str]:
 
 
 class HostSupervisorSafetyAuditTests(unittest.TestCase):
+    def test_powershell_global_installer_is_host_critical(self) -> None:
+        loader = importlib.machinery.SourceFileLoader("powershell_global_scope_fixture", str(AUDIT))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        audit = importlib.util.module_from_spec(spec)
+        with mock.patch.dict(sys.modules, {loader.name: audit}):
+            loader.exec_module(audit)
+        path = "scripts/install_global_agent_tools.ps1"
+        self.assertIn(path, audit.HOST_LIFECYCLE_CRITICAL_PATHS)
+        syntax = subprocess.CompletedProcess(["mocked-syntax-check"], 0, "", "")
+        with mock.patch.object(audit.shutil, "which", return_value="/mocked/zsh"), mock.patch.object(
+            audit.subprocess, "run", return_value=syntax
+        ):
+            payload = audit.run_audit(ROOT, [path], "- [x] " + audit.NO_IMPACT_CHECK, syntax_shell="zsh")
+            self.assertIn("pr_evidence", failure_ids(payload))
+
     def test_source_guard_mode_accepts_only_finite_critical_paths(self) -> None:
         loader = importlib.machinery.SourceFileLoader("guard_safety_audit_fixture", str(AUDIT))
         spec = importlib.util.spec_from_loader(loader.name, loader)

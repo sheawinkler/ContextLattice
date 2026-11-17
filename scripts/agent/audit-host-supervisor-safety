@@ -72,6 +72,7 @@ HOST_LIFECYCLE_CRITICAL_PATHS = frozenset(
         "scripts/agent/audit-agent-global-install-smoke",
         "scripts/agent/audit-host-supervisor-safety",
         "scripts/install_global_agent_tools.sh",
+        "scripts/install_global_agent_tools.ps1",
         "scripts/install_retention_runner.sh",
         "scripts/retention_runner.sh",
         "scripts/build_linux_bundle.sh",
