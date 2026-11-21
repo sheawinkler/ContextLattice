@@ -31,6 +31,7 @@ import (
 const (
 	defaultBaseURL                         = "http://127.0.0.1:8075"
 	agentPacketContractID                  = "agent_packet.v1"
+	synthesisPackV2ContractID              = "synthesis_pack.v2"
 	agentPacketDeltaContractID             = "agent_packet_delta.v1"
 	agentPacketReconstructionID            = "agent_packet_reconstruction.v1"
 	defaultAgentPacketTargetTokens         = 2000
@@ -3916,24 +3917,39 @@ func (c *cli) cmdPackWithRouteMode(args []string, commandName string, route stri
 	sessionID := parsed.string("session_id", envString("CONTEXTLATTICE_SESSION_ID", ""))
 	agentID := parsed.string("agent_id", envString("CONTEXTLATTICE_AGENT_ID", envString("MEMMCP_AGENT_ID", "")))
 	taskID := parsed.string("task_id", envString("CONTEXTLATTICE_TASK_ID", derivedAgentTaskID(project, query)))
-	if sessionID == "" && !parsed.bool("no_auto_session") && !autoSessionDisabled() {
-		if responseMode {
-			sessionID = c.ensureRecallResponseSession(project, query, taskID, agentID, parsed.float("timeout", 30))
-		} else {
-			sessionID = c.ensureSession(project, query, taskID, agentID, parsed.float("timeout", 30))
-		}
-	}
 	blocking := parsed.bool("blocking") && !parsed.bool("nonblocking")
 	fullOutput := parsed.bool("full") || parsed.bool("debug") || explicitOutputBudget
 	packetSurface := route == "/memory/context-pack" || route == "/memory/synthesis-pack" || route == "/memory/synthesis-pack/v2"
+	fullSynthesisV2 := fullOutput && route == "/memory/synthesis-pack/v2"
+	synthesisWireBudget := 0
 	allowImplicitFramingNewline := false
-	if fullOutput && !explicitOutputBudget {
+	if fullSynthesisV2 {
+		maximum := asInt(adapterContractDefinition(synthesisPackV2ContractID)["max_total_json_bytes"])
+		if maximum < 1 || maximum == int(^uint(0)>>1) {
+			return errors.New("full synthesis output contract is unavailable")
+		}
+		synthesisWireBudget = maximum + 1 // The registry measures unframed JSON.
+		if explicitOutputBudget {
+			_, effective, _ := normalizedPackCommandBudget(outputBudget)
+			synthesisWireBudget = minInt(synthesisWireBudget, effective)
+		} else {
+			outputBudget = maximum
+			allowImplicitFramingNewline = true
+		}
+	} else if fullOutput && !explicitOutputBudget {
 		outputBudget = maxContextPackResponseJSONBytes
 		allowImplicitFramingNewline = true
 	} else if packetSurface && !explicitOutputBudget {
 		if contractMaximum := asInt(adapterContractDefinition(agentPacketContractID)["max_total_json_bytes"]); contractMaximum > 0 {
 			outputBudget = contractMaximum
 			allowImplicitFramingNewline = true
+		}
+	}
+	if sessionID == "" && !parsed.bool("no_auto_session") && !autoSessionDisabled() {
+		if responseMode {
+			sessionID = c.ensureRecallResponseSession(project, query, taskID, agentID, parsed.float("timeout", 30))
+		} else {
+			sessionID = c.ensureSession(project, query, taskID, agentID, parsed.float("timeout", 30))
 		}
 	}
 	payload := map[string]any{
@@ -4035,13 +4051,23 @@ func (c *cli) cmdPackWithRouteMode(args []string, commandName string, route stri
 		return nil
 	}
 	prettyOutput := parsed.bool("pretty") || !parsed.bool("raw")
-	out, outputOK := preparePackCommandOutput(
-		raw, query, outputBudget, sessionID, agentID, commandName, sessionTag,
-	)
-	if outputOK {
-		out, prettyOutput, outputOK = fitPackCommandOutputBudgetWithFraming(
-			out, outputBudget, allowImplicitFramingNewline, prettyOutput,
+	var out map[string]any
+	var outputOK bool
+	if fullSynthesisV2 {
+		if fullSynthesisV2AttestationValid(raw) {
+			// Preserve the registered envelope, including its byte attestation.
+			out = raw
+			prettyOutput, outputOK = packCommandOutputModeForBudget(out, synthesisWireBudget, prettyOutput)
+		}
+	} else {
+		out, outputOK = preparePackCommandOutput(
+			raw, query, outputBudget, sessionID, agentID, commandName, sessionTag,
 		)
+		if outputOK {
+			out, prettyOutput, outputOK = fitPackCommandOutputBudgetWithFraming(
+				out, outputBudget, allowImplicitFramingNewline, prettyOutput,
+			)
+		}
 	}
 	if !outputOK {
 		boundaryErr := errors.New("context pack response failed its registered output boundary")
@@ -4073,6 +4099,16 @@ func (c *cli) cmdPackWithRouteMode(args []string, commandName string, route stri
 	}
 	c.autoDrainAsyncInbox(sessionID, project, agentID)
 	return nil
+}
+
+func fullSynthesisV2AttestationValid(payload map[string]any) bool {
+	pack := asMap(payload["synthesis_pack"])
+	version, versionOK := adapterExactJSONInt(payload["version"])
+	packVersion, packVersionOK := adapterExactJSONInt(pack["version"])
+	return payload["ok"] == true && payload["schema_id"] == synthesisPackV2ContractID &&
+		pack["schema_id"] == synthesisPackV2ContractID && versionOK && version == 2 && packVersionOK && packVersion == 2 &&
+		asMap(payload["format_contract"])["schema_id"] == synthesisPackV2ContractID &&
+		adapterRegisteredEnvelopeAttestationValid(synthesisPackV2ContractID, payload) && !containsProviderOverflowPayload(payload)
 }
 
 func (c *cli) requestWithRetries(path string, payload any, timeout float64, retries int, delay float64) (map[string]any, error) {

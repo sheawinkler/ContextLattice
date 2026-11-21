@@ -8,6 +8,15 @@ rechecks that record's original owner versions when the session resumes.
 It does not choose a new decision, refresh old pins, evaluate an assumption's
 meaning, or authorize execution.
 
+When two current, directly opposed claim revisions about the same subject and
+predicate survive synthesis in the same project, topic and branch, the compact
+decision gate can include one `conflict_source_check`. It names both revisions.
+Check an authorized original that could distinguish them, not another summary of
+the same observation. If neither claim wins, keep both and identify what is
+missing. Only hold work that actually depends on the disputed premise.
+An absent check is not proof that all evidence agrees; this bounded projection
+never grants access, changes a claim, or authorizes the action under review.
+
 ## CLI Workflow
 
 The CLI is primary. HTTP exposes the same contracts for application adapters.
