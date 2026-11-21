@@ -3,6 +3,8 @@ package main
 import (
 	"strings"
 	"time"
+
+	"github.com/contextlattice/gateway-go/internal/decisionresearch"
 )
 
 const (
@@ -173,6 +175,11 @@ func buildAgentPacket(response map[string]any, request map[string]any, surface s
 	}
 	if warnings := parseWarnings(response["warnings"]); len(warnings) > 0 {
 		packet["warnings"] = stringSliceAny(warnings[:minInt(len(warnings), 3)])
+	}
+	if check, ok := anyMap(response["synthesis_pack"])["conflict_source_check"].(decisionresearch.Case); ok &&
+		check.ValidFor(project, topicPath) && decisionGate["decision"] != "act" {
+		decisionGate["conflict_source_check"] = check
+		packet["prompt"] = anyToString(packet["prompt"]) + "\n" + conflictCheckGuidance
 	}
 	updateAgentPacketProofCoverage(packet)
 	return packet

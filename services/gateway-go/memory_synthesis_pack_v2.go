@@ -188,6 +188,9 @@ func (s *server) buildSynthesisPackV2ResponseWithOptions(
 			"inference_boundary": "Every emitted proof claim has at least one bounded evidence reference; unsupported findings are excluded rather than repaired with model inference.",
 		},
 	}
+	if check, ok := scopedConflictCheck(project, topicPath, claimRows); ok {
+		v2Pack["conflict_source_check"] = check
+	}
 	response := map[string]any{
 		"ok": true, "schema_id": synthesisPackV2ContractID, "version": 2,
 		"project": project, "query": query, "topic_path": topicPath,
@@ -785,6 +788,9 @@ func proofSynthesisReferencePrompt(pack map[string]any) string {
 	}
 	if len(contextPackAnyList(pack["contradictions"])) > 0 {
 		lines = append(lines, "", "## Unresolved Contradictions", "Do not silently resolve contested claims; gather the missing proof or ask the user.")
+		if _, ok := pack["conflict_source_check"]; ok {
+			lines = append(lines, conflictCheckGuidance)
+		}
 	}
 	lines = append(lines, "", "Use only the evidence above. Preserve uncertainty, temporal state, and contradiction labels.")
 	return clipText(strings.Join(lines, "\n"), 8000)

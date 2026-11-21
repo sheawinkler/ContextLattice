@@ -3,10 +3,12 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"net/http"
 	"net/http/httptrace"
@@ -119,8 +121,8 @@ var recallResponseCLIClosedFields = map[string]map[string]bool{
 	"disclosure.evidence_union[].evidence_binding":              recallResponseCLIFieldSet("source_ref", "content_digest", "binding_authority", "source_bound"),
 	"disclosure.component_union[]":                              recallResponseCLIFieldSet("component_ref", "kind", "protected", "binding_digest"),
 	"disclosure.omission_ledger[]":                              recallResponseCLIFieldSet("item_ref", "item_type", "reason", "protected", "evidence_binding", "same_snapshot_counterfactual"),
-	"disclosure.omission_ledger[].evidence_binding":             recallResponseCLIFieldSet("proof_refs", "union_digest", "continuation_digest"),
-	"disclosure.omission_ledger[].same_snapshot_counterfactual": recallResponseCLIFieldSet("verified", "outcome", "comparison_digest"),
+	"disclosure.omission_ledger[].evidence_binding":             recallResponseCLIFieldSet("proof_refs", "binding_digest"),
+	"disclosure.omission_ledger[].same_snapshot_counterfactual": recallResponseCLIFieldSet("verified", "outcome"),
 	"disclosure.continuation_action":                            recallResponseCLIFieldSet("kind", "method", "route", "snapshot_semantics", "request_contract", "scope_digest", "request_digest", "token", "page"),
 	"disclosure.ablation_witness":                               recallResponseCLIFieldSet("schema_id", "status", "component_ref", "baseline_component_ref", "component_kind", "baseline_union_digest", "baseline_response_identity", "omission_receipt_digest", "expected_failure_stage", "observed_failure_stage", "witness_digest"),
 	"disclosure.control_receipt":                                recallResponseCLIFieldSet("snapshot_digest", "receipt_digest", "union_digest", "proof_identity_digest", "source_bound", "artifact_digest"),
@@ -595,6 +597,14 @@ func compactRecallResponse(raw map[string]any) (map[string]any, error) {
 			return nil, err
 		}
 	}
+	disclosure := asMap(projected["disclosure"])
+	scope := asMap(projected["request_scope"])
+	if !recallResponseCLIOmissionBindingsValid(disclosure, scope) {
+		return nil, errors.New("gateway recall response contained an invalid omission binding")
+	}
+	if !recallResponseCLIContinuationActionValid(asMap(disclosure["continuation_action"]), scope) {
+		return nil, errors.New("gateway recall response contained an invalid continuation action")
+	}
 	recomputedID := cliRecallResponseID(projected)
 	recomputedDigest := cliRecallResponseDigest(projected)
 	if !asBool(projected["ok"]) || asInt(projected["version"]) != 1 ||
@@ -618,6 +628,159 @@ func compactRecallResponse(raw map[string]any) (map[string]any, error) {
 		return nil, errors.New("projected recall response exceeded its bounded output contract")
 	}
 	return projected, nil
+}
+
+func recallResponseCLIOmissionBindingsValid(disclosure, scope map[string]any) bool {
+	ledger, ok := disclosure["omission_ledger"].([]any)
+	if !ok || len(ledger) > 2 { // recall_response.non_exclusion.v1 ledger limit
+		return false
+	}
+	if len(ledger) == 0 {
+		return true
+	}
+	unionDigest, _ := disclosure["union_digest"].(string)
+	continuationDigest, _ := disclosure["continuation_digest"].(string)
+	if disclosure["union_schema"] != "recall_response.non_exclusion.v1" ||
+		!recallResponseCLIValidDigest(continuationDigest) || unionDigest != recallResponseCLIUnionDigest(disclosure) {
+		return false
+	}
+	proofUnion, ok := disclosure["proof_union"].([]any)
+	if !ok || len(proofUnion) > 4 { // recall_response.non_exclusion.v1 union limit
+		return false
+	}
+	proofSet := map[string]bool{}
+	for _, raw := range proofUnion {
+		ref, ok := raw.(string)
+		if !ok || strings.TrimSpace(ref) == "" || proofSet[ref] {
+			return false
+		}
+		proofSet[ref] = true
+	}
+	seen := map[[2]string]bool{}
+	for _, raw := range ledger {
+		row := asMap(raw)
+		itemRef, _ := row["item_ref"].(string)
+		itemType, _ := row["item_type"].(string)
+		reason, _ := row["reason"].(string)
+		protected, protectedOK := row["protected"].(bool)
+		switch itemType {
+		case "evidence", "temporal", "proof", "conflict", "component":
+		default:
+			return false
+		}
+		binding := asMap(row["evidence_binding"])
+		proofRefs, refsOK := binding["proof_refs"].([]any)
+		counterfactual := asMap(row["same_snapshot_counterfactual"])
+		verified, verifiedOK := counterfactual["verified"].(bool)
+		outcome, _ := counterfactual["outcome"].(string)
+		identity := [2]string{itemType, itemRef}
+		if seen[identity] || strings.TrimSpace(itemRef) == "" || strings.TrimSpace(reason) == "" ||
+			!protectedOK || !refsOK || !verifiedOK ||
+			verified != (outcome == "no_loss_verified") || (!verified && outcome != "not_verified" && outcome != "fail_closed_control") ||
+			(protected && outcome != "fail_closed_control") ||
+			(verified && !recallResponseCLISameSnapshotProofValid(disclosure, scope, proofUnion)) {
+			return false
+		}
+		seen[identity] = true
+		// The closed v1 union exposes only a direct proof match for the omitted
+		// item. Clipped items can have an empty list, but cannot borrow another ref.
+		if proofSet[itemRef] {
+			if len(proofRefs) != 1 || proofRefs[0] != itemRef {
+				return false
+			}
+		} else if len(proofRefs) != 0 {
+			return false
+		}
+		digest, _ := binding["binding_digest"].(string)
+		if digest != recallResponseCLIHashObject(map[string]any{
+			"item_ref": itemRef, "item_type": itemType, "proof_refs": proofRefs,
+			"union_digest": unionDigest, "continuation_digest": continuationDigest,
+		}) {
+			return false
+		}
+	}
+	return true
+}
+
+func recallResponseCLIUnionDigest(disclosure map[string]any) string {
+	union := map[string]any{"schema": disclosure["union_schema"]}
+	for _, field := range []string{
+		"evidence_union", "proof_union", "component_union", "exclusion_refs", "source_counts",
+		"union_counts", "omitted_counts", "source_truncated", "union_truncated", "continuation_digest", "ablation_witness",
+	} {
+		union[field] = disclosure[field]
+	}
+	return recallResponseCLIHashObject(union)
+}
+
+func recallResponseCLISameSnapshotProofValid(disclosure, scope map[string]any, proofUnion []any) bool {
+	receipt := asMap(disclosure["control_receipt"])
+	proof, err := json.Marshal(proofUnion)
+	if err != nil || scope["source_bound"] != true || receipt["source_bound"] != true || disclosure["union_truncated"] != false ||
+		receipt["union_digest"] != disclosure["union_digest"] || receipt["proof_identity_digest"] != fmt.Sprintf("sha256:%x", sha256Sum(proof)) {
+		return false
+	}
+	for _, field := range []string{"snapshot_digest", "receipt_digest"} {
+		digest, _ := receipt[field].(string)
+		if !recallResponseCLIValidDigest(digest) || digest != scope[field] {
+			return false
+		}
+	}
+	material := map[string]any{}
+	for _, field := range []string{"snapshot_digest", "receipt_digest", "union_digest", "proof_identity_digest", "source_bound"} {
+		material[field] = receipt[field]
+	}
+	if receipt["artifact_digest"] != recallResponseCLIHashObject(material) {
+		return false
+	}
+	evidence, ok := disclosure["evidence_union"].([]any)
+	if !ok {
+		return false
+	}
+	for _, raw := range evidence {
+		binding := asMap(asMap(raw)["evidence_binding"])
+		if binding["source_bound"] != true || (binding["binding_authority"] != "server_receipt" && binding["binding_authority"] != "validated_policy") {
+			return false
+		}
+	}
+	return true
+}
+
+func recallResponseCLIContinuationActionValid(action, scope map[string]any) bool {
+	scopeDigest, _ := action["scope_digest"].(string)
+	page, pageOK := adapterExactJSONInt(action["page"])
+	if !recallResponseCLIValidDigest(scopeDigest) || scopeDigest != scope["scope_digest"] || !pageOK {
+		return false
+	}
+	switch action["kind"] {
+	case "continue_snapshot":
+		digest, _ := action["request_digest"].(string)
+		token, _ := action["token"].(string)
+		if !strings.HasPrefix(token, "rrct_") || len(token) != len("rrct_")+48 {
+			return false
+		}
+		_, tokenErr := hex.DecodeString(strings.TrimPrefix(token, "rrct_"))
+		return action["method"] == http.MethodPost && (action["route"] == "/memory/recall/response" || action["route"] == "/tools/recall_response") &&
+			action["snapshot_semantics"] == "same_snapshot" && action["request_contract"] == "token+scope+agent+request_digest" &&
+			recallResponseCLIValidDigest(digest) && tokenErr == nil && page > 0
+	case "terminal", "owner_cursor_unavailable":
+		semantics := "exhausted"
+		if action["kind"] == "owner_cursor_unavailable" {
+			semantics = "not_served"
+		}
+		return action["method"] == "" && action["route"] == "" && action["snapshot_semantics"] == semantics &&
+			action["request_contract"] == "none" && action["request_digest"] == "" && action["token"] == "" && page == 0
+	default:
+		return false
+	}
+}
+
+func recallResponseCLIHashObject(value map[string]any) string {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("sha256:%x", sha256Sum(raw))
 }
 
 func recallResponseCLIExactID(value, prefix string) bool {
@@ -645,25 +808,30 @@ func recallResponseCLIValidDigest(value string) bool {
 }
 
 func cliRecallResponseDigest(payload map[string]any) string {
-	semantic := map[string]any{}
-	for key, value := range payload {
-		if key != "format_contract" && key != "response_digest" {
-			semantic[key] = value
-		}
-	}
-	raw, _ := json.Marshal(semantic)
-	return "sha256:" + fmt.Sprintf("%x", sha256Sum(raw))
+	return recallResponseCLIHashObject(cliRecallResponseSemanticMaterial(payload))
 }
 
 func cliRecallResponseID(payload map[string]any) string {
-	semantic := map[string]any{}
-	for key, value := range payload {
-		if key != "response_id" && key != "response_digest" && key != "format_contract" {
-			semantic[key] = value
-		}
+	semantic := cliRecallResponseSemanticMaterial(payload)
+	delete(semantic, "response_id")
+	digest := strings.TrimPrefix(recallResponseCLIHashObject(semantic), "sha256:")
+	if len(digest) < 24 {
+		return ""
 	}
-	raw, _ := json.Marshal(semantic)
-	return "rr_" + fmt.Sprintf("%x", sha256Sum(raw))[:24]
+	return "rr_" + digest[:24]
+}
+
+func cliRecallResponseSemanticMaterial(payload map[string]any) map[string]any {
+	semantic := maps.Clone(payload)
+	delete(semantic, "format_contract")
+	delete(semantic, "response_digest")
+	// The gateway binds cursor state separately from semantic identity.
+	disclosure := maps.Clone(asMap(payload["disclosure"]))
+	if disclosure != nil {
+		delete(disclosure, "continuation_action")
+		semantic["disclosure"] = disclosure
+	}
+	return semantic
 }
 
 func failureRecallResponse() map[string]any {
@@ -671,6 +839,7 @@ func failureRecallResponse() map[string]any {
 		return "ref_" + fmt.Sprintf("%x", sha256Sum([]byte("recall-response-cli-unavailable\x00"+kind)))[:24]
 	}
 	asOf := "latest_available"
+	scopeDigest := fmt.Sprintf("sha256:%x", sha256Sum([]byte("recall-response-cli-unavailable\x00scope")))
 	temporalPremiseDigest := "sha256:" + fmt.Sprintf("%x", sha256Sum([]byte("recall-response-cli-unavailable\x00temporal-premise")))
 	snapshotDigest := "sha256:" + fmt.Sprintf("%x", sha256Sum([]byte("recall-response-cli-unavailable\x00snapshot")))
 	receiptDigest := "sha256:" + fmt.Sprintf("%x", sha256Sum([]byte("recall-response-cli-unavailable\x00receipt")))
@@ -687,7 +856,7 @@ func failureRecallResponse() map[string]any {
 	response := map[string]any{
 		"ok": true, "schema_id": recallResponseContractID, "version": 1,
 		"request_scope": map[string]any{
-			"scope_digest": scopeRef("scope"), "query_digest": scopeRef("query"), "workspace_ref": scopeRef("workspace"),
+			"scope_digest": scopeDigest, "query_digest": scopeRef("query"), "workspace_ref": scopeRef("workspace"),
 			"owner_ref": scopeRef("owner"), "project_ref": scopeRef("project"), "topic_ref": scopeRef("topic"), "agent_ref": scopeRef("agent"),
 			"session_ref": scopeRef("session"), "task_ref": scopeRef("task"), "task_identity_ref": scopeRef("task_identity"),
 			"execution_lane_ref": scopeRef("execution_lane"), "retrieval_intent": "decision", "as_of": asOf, "task_class": "general",
@@ -721,7 +890,7 @@ func failureRecallResponse() map[string]any {
 		"inferences":      []any{map[string]any{"inference_id": "inf_" + fmt.Sprintf("%x", sha256Sum([]byte("unavailable")))[:24], "claim_ref": "response_state", "basis_refs": []any{}, "status": "deterministic_metadata_only", "confidence": 0.0, "disclosure": "This is response-state metadata, not a memory fact."}},
 		"next_action":     map[string]any{"kind": "retrieve_or_verify", "label": "Recover recall response availability, then retrieve or verify", "reason": "The response is advisory-only and does not authorize external mutation.", "requires_verification": true, "authority": "advisory_only", "execution_performed": false},
 		"action_boundary": map[string]any{"can_act": false, "requires_confirmation": true, "allowed": []any{"retrieve_missing_sources"}, "forbidden": []any{"external_mutation", "credential_access", "raw_memory_export"}, "reason": "Recall responses provide evidence and advice only; an agent must independently authorize and execute any mutation.", "execution_performed": false},
-		"disclosure":      map[string]any{"bounded": true, "raw_retrieval_included": false, "raw_prompt_included": false, "paths_included": false, "secrets_included": false, "inference_boundary": "Metadata and opaque proof references only.", "omission_policy": "Unavailable evidence is disclosed as a gap and never becomes implicit support.", "union_schema": "recall_response.non_exclusion.v1", "evidence_union": []any{}, "proof_union": []any{gapRef}, "component_union": []any{}, "omission_ledger": []any{}, "union_digest": "sha256:" + strings.Repeat("0", 64), "exclusion_refs": []any{}, "union_truncated": false, "source_counts": map[string]any{"evidence": 0, "temporal": 0, "proof": 0, "conflicts": 0}, "source_truncated": false, "union_counts": map[string]any{"evidence": 0, "exclusions": 0, "proof": 1, "components": 0}, "omitted_counts": map[string]any{"source": 0, "evidence": 0, "exclusions": 0, "proof": 0, "components": 0}, "continuation_digest": "sha256:" + strings.Repeat("0", 64), "continuation_ref": "ref_continuation_" + strings.Repeat("0", 24), "continuation_action": map[string]any{"kind": "owner_cursor_unavailable", "method": "", "route": "", "snapshot_semantics": "not_served", "request_contract": "none", "scope_digest": scopeRef("scope"), "request_digest": "", "token": "", "page": 0}, "ablation_witness": ablationWitness, "control_union_digest": "sha256:" + strings.Repeat("0", 64), "control_proof_identity_digest": "sha256:" + strings.Repeat("0", 64), "control_receipt": map[string]any{"snapshot_digest": "sha256:" + strings.Repeat("0", 64), "receipt_digest": "sha256:" + strings.Repeat("0", 64), "union_digest": "sha256:" + strings.Repeat("0", 64), "proof_identity_digest": "sha256:" + strings.Repeat("0", 64), "source_bound": false, "artifact_digest": "sha256:" + strings.Repeat("0", 64)}},
+		"disclosure":      map[string]any{"bounded": true, "raw_retrieval_included": false, "raw_prompt_included": false, "paths_included": false, "secrets_included": false, "inference_boundary": "Metadata and opaque proof references only.", "omission_policy": "Unavailable evidence is disclosed as a gap and never becomes implicit support.", "union_schema": "recall_response.non_exclusion.v1", "evidence_union": []any{}, "proof_union": []any{gapRef}, "component_union": []any{}, "omission_ledger": []any{}, "union_digest": "sha256:" + strings.Repeat("0", 64), "exclusion_refs": []any{}, "union_truncated": false, "source_counts": map[string]any{"evidence": 0, "temporal": 0, "proof": 0, "conflicts": 0}, "source_truncated": false, "union_counts": map[string]any{"evidence": 0, "exclusions": 0, "proof": 1, "components": 0}, "omitted_counts": map[string]any{"source": 0, "evidence": 0, "exclusions": 0, "proof": 0, "components": 0}, "continuation_digest": "sha256:" + strings.Repeat("0", 64), "continuation_ref": "ref_continuation_" + strings.Repeat("0", 24), "continuation_action": map[string]any{"kind": "owner_cursor_unavailable", "method": "", "route": "", "snapshot_semantics": "not_served", "request_contract": "none", "scope_digest": scopeDigest, "request_digest": "", "token": "", "page": 0}, "ablation_witness": ablationWitness, "control_union_digest": "sha256:" + strings.Repeat("0", 64), "control_proof_identity_digest": "sha256:" + strings.Repeat("0", 64), "control_receipt": map[string]any{"snapshot_digest": "sha256:" + strings.Repeat("0", 64), "receipt_digest": "sha256:" + strings.Repeat("0", 64), "union_digest": "sha256:" + strings.Repeat("0", 64), "proof_identity_digest": "sha256:" + strings.Repeat("0", 64), "source_bound": false, "artifact_digest": "sha256:" + strings.Repeat("0", 64)}},
 		"receipt_refs":    []any{}, "outcome": map[string]any{"status": "not_attributable", "attributable": false, "receipt_id": "", "execution_performed": false}, "writeback_required": true,
 	}
 	response["response_id"] = cliRecallResponseID(response)
