@@ -228,6 +228,23 @@ class Base(unittest.TestCase):
 
 
 class PrefetchTests(Base):
+    def test_prefetch_renders_only_public_duplicate_exclusion_enum(self):
+        self.cl.search_response = {"results": [{
+            "project": "hermes-agent", "file": "notes/review.md", "summary": "bounded summary",
+            "merge_conflict": "conservative_duplicate_exclusion", "hidden_ref": "must-not-render",
+        }]}
+        rendered = self.p.prefetch("query")
+        self.assertIn("producer merge signal: conservative_duplicate_exclusion", rendered)
+        self.assertIn("not a semantic conflict", rendered)
+        self.assertNotIn("must-not-render", rendered)
+
+        self.cl.search_response["results"][0].update({
+            "merge_conflict": "semantic_conflict", "source_result_id": "restricted-source-id",
+        })
+        rendered = self.p.prefetch("query")
+        self.assertNotIn("producer merge signal:", rendered)
+        self.assertNotIn("restricted-source-id", rendered)
+
     def test_outage_is_explicit_degraded(self):
         self.p._cfg["url"] = "http://127.0.0.1:9"  # nothing listens
         out = self.p.prefetch("anything")
@@ -614,12 +631,59 @@ class HandoffTests(Base):
 
 
 class SearchDrainTests(Base):
+    def test_cl_search_projects_only_public_enum_and_preserves_continuation_signal(self):
+        self.cl.search_response = {
+            "results": [{"project": "p", "file": "same.md", "summary": "visible",
+                          "hidden_ref": "must-not-render", "source_result_id": "restricted-source-id"}],
+            "continuation_async": {"poll_url": "/memory/search/continuations/signal"},
+        }
+        self.cl.poll_responses = [{
+            "status": "completed",
+            "result": {"results": [
+                {"project": "p", "file": "same.md", "merge_conflict": "conservative_duplicate_exclusion"},
+                {"project": "p", "file": "unknown.md", "merge_conflict": "semantic_conflict",
+                 "source_result_id": "restricted-source-id"},
+            ]},
+        }]
+        result = json.loads(self.p.handle_tool_call("cl_search", {"query": "q"}))
+        self.assertEqual(len(result["results"]), 2)
+        self.assertEqual(result["results"][0]["merge_conflict"], "conservative_duplicate_exclusion")
+        self.assertNotIn("merge_conflict", result["results"][1])
+        self.assertNotIn("hidden_ref", result["results"][0])
+        self.assertNotIn("source_result_id", json.dumps(result))
+
+    def test_continuation_signal_does_not_cross_hash_collisions_or_missing_identities(self):
+        pairs = (
+            (
+                {"project": "p1", "file": "a.md", "content_hash": "sha256:same"},
+                {"project": "p2", "file": "b.md", "content_hash": "sha256:same",
+                 "merge_conflict": "conservative_duplicate_exclusion"},
+            ),
+            (
+                {"content_hash": "sha256:shared", "summary": "first unrelated row"},
+                {"content_hash": "sha256:shared", "summary": "second unrelated row",
+                 "merge_conflict": "conservative_duplicate_exclusion"},
+            ),
+        )
+        for initial, continued in pairs:
+            with self.subTest(initial=initial):
+                self.cl.search_response = {
+                    "results": [initial],
+                    "continuation_async": {"poll_url": "/memory/search/continuations/identity"},
+                }
+                self.cl.poll_responses = [{"status": "completed", "result": {"results": [continued]}}]
+                result = json.loads(self.p.handle_tool_call("cl_search", {"query": "identity"}))
+                self.assertEqual(len(result["results"]), 2)
+                self.assertNotIn("merge_conflict", result["results"][0])
+                self.assertEqual(result["results"][1]["merge_conflict"], "conservative_duplicate_exclusion")
+
     def test_cl_search_drains_continuation_and_merges(self):
-        self.cl.search_response = {"results": [{"file": "a.md"}],
+        self.cl.search_response = {"results": [{"project": "p", "file": "a.md"}],
                                    "continuation_async": {"poll_url": "/memory/search/continuations/t1"}}
         self.cl.poll_responses = [
             {"status": "running"},
-            {"status": "completed", "result": {"results": [{"file": "a.md"}, {"file": "b.md"}],
+            {"status": "completed", "result": {"results": [{"project": "p", "file": "a.md"},
+                                               {"project": "p", "file": "b.md"}],
                                                "source_summary": {"failed_sources": ["letta"]}}},
         ]
         out = json.loads(self.p.handle_tool_call("cl_search", {"query": "q"}))
