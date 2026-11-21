@@ -15,6 +15,8 @@ var errAgentDecisionResumeScope = errors.New("agent_session_resume_scope_changed
 type agentDecisionResumeObservation struct {
 	projection map[string]any
 	guard      *memoryDerivationGuard
+	shadow     bool
+	witness    *decisionApplicability
 }
 
 func agentDecisionResumeScope(row map[string]any) string {
@@ -79,6 +81,8 @@ func (s *server) observeAgentDecisionResume(ctx context.Context, row map[string]
 		projection["status"], projection["reason"] = "legacy_unpinned", "selected_record_has_no_owner_pins"
 		return observation
 	}
+	a := change.Applicability
+	observation.shadow = a.ArtifactSectionWitness != nil
 	for _, timestamp := range []string{change.RecordedAt, change.OccurredAt} {
 		when, parseErr := time.Parse(time.RFC3339Nano, timestamp)
 		if parseErr != nil || when.After(now) {
@@ -86,9 +90,12 @@ func (s *server) observeAgentDecisionResume(ctx context.Context, row map[string]
 			return observation
 		}
 	}
-	a := change.Applicability
 	if a.Scope.Project != binding.Project || a.Scope.ObjectiveID != binding.ObjectiveID || a.Scope.Branch != binding.Branch || !strings.EqualFold(a.Scope.Repo, binding.Repo) {
 		projection["status"], projection["reason"] = "not_applicable", "selected_record_scope_mismatch"
+		return observation
+	}
+	if observation.shadow {
+		observation.witness = a
 		return observation
 	}
 	if !s.memoryDerivationAvailable() {
@@ -133,11 +140,13 @@ func (s *server) observeAgentDecisionResume(ctx context.Context, row map[string]
 
 func (o agentDecisionResumeObservation) render(row map[string]any, events []map[string]any, now time.Time, compact bool) map[string]any {
 	projection := cloneJSONMap(o.projection)
-	if projection["status"] != "verified_match" {
+	if o.shadow || projection["status"] != "verified_match" {
 		// Build negative views from a fixed allowlist, not arbitrary nested action
 		// aliases or event text. Original intent has one explicitly historical home.
-		projection["historical_intent"] = map[string]any{"not_current_instructions": true,
-			"objective": clipText(anyToString(row["objective"]), 240), "next_action": clipText(anyToString(row["next_action"]), 240)}
+		if !o.shadow {
+			projection["historical_intent"] = map[string]any{"not_current_instructions": true,
+				"objective": clipText(anyToString(row["objective"]), 240), "next_action": clipText(anyToString(row["next_action"]), 240)}
+		}
 		projection["omitted_event_count"] = len(events)
 		safe := map[string]any{}
 		for _, key := range []string{"id", "agent", "agent_id", "project", "repo", "branch", "task_id", "task_identity_id", "execution_lane_id", "native_session_id", "started_at", "updated_at", "status", "scope_ownership", "decision_binding", "decision_baseline", "decision_store_unavailable"} {
@@ -185,6 +194,23 @@ func (o agentDecisionResumeObservation) finish(ctx context.Context, s *server, r
 		drift = drift || agentDecisionResumeState(current) != agentDecisionResumeState(row)
 		return nil
 	}
+	if o.witness != nil {
+		status, visible, err := s.finishAgentDecisionWitness(ctx, row, o.witness, checkSession)
+		if err != nil {
+			return nil, err
+		}
+		if visible {
+			if drift || ctx.Err() != nil {
+				status = decisionWitnessUnknown
+			}
+			o.projection = cloneJSONMap(o.projection)
+			o.projection["reason"] = "artifact_section_shadow_only"
+			o.projection["artifact_section_witness"] = map[string]any{
+				"status": status, "mode": "manual_shadow_only",
+			}
+		}
+		return o.render(row, events, now, compact), nil
+	}
 	if o.projection["status"] == "verified_match" {
 		binding, err := normalizeAgentDecisionBinding(row["decision_binding"], true)
 		if err != nil || s.continuity == nil || o.guard == nil {
@@ -225,6 +251,43 @@ func (o agentDecisionResumeObservation) finish(ctx context.Context, s *server, r
 
 func (s *server) buildAgentDecisionContextPackage(ctx context.Context, row map[string]any, events []map[string]any, now time.Time, compact bool) (map[string]any, error) {
 	observation := s.observeAgentDecisionResume(ctx, row, now)
+	if observation.witness != nil {
+		return observation.finish(ctx, s, row, events, now, compact, nil)
+	}
 	payload := observation.render(row, events, now, compact)
 	return observation.finish(ctx, s, row, events, now, compact, payload)
+}
+
+func (s *server) localDecisionWitnessScope(row map[string]any, project string) bool {
+	return row["scope_ownership"] != nil && agentSessionProject(row) == project && validatePublicAgentSessionScope(row) == nil
+}
+
+// The resume route already holds the project boundary. Evaluate only at the
+// final owner fence, then check the same selected record and session under it.
+func (s *server) finishAgentDecisionWitness(ctx context.Context, row map[string]any, a *decisionApplicability, checkSession func() error) (string, bool, error) {
+	if !s.localDecisionWitnessScope(row, a.Scope.Project) {
+		return decisionWitnessUnknown, false, checkSession()
+	}
+	recordVisible := func() bool {
+		binding, err := normalizeAgentDecisionBinding(row["decision_binding"], true)
+		if err != nil || s.continuity == nil {
+			return false
+		}
+		_, err = s.continuity.agentDecisionResumeRecord(binding, row)
+		return err == nil && s.localDecisionWitnessScope(row, a.Scope.Project)
+	}
+	if !s.memoryDerivationAvailable() {
+		return decisionWitnessUnknown, recordVisible(), checkSession()
+	}
+	owner := s.memoryStore
+	fence, err := owner.acquireMemoryEdgeLogFenceOptionalContext(ctx)
+	if err != nil || fence == nil {
+		return decisionWitnessUnknown, recordVisible(), checkSession()
+	}
+	defer fence.release()
+	status := owner.evaluateDecisionWitness(ctx, a, fence)
+	if !recordVisible() {
+		return decisionWitnessUnknown, false, checkSession()
+	}
+	return status, true, checkSession()
 }

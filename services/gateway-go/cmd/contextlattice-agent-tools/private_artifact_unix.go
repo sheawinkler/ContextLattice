@@ -125,6 +125,10 @@ func normalizePrivateArtifactUnixParent(parentPath string) (string, error) {
 }
 
 func openPrivateArtifactUnixParent(parentPath string) (int, error) {
+	return openPrivateArtifactUnixParentMode(parentPath, true)
+}
+
+func openPrivateArtifactUnixParentMode(parentPath string, create bool) (int, error) {
 	start := "."
 	components := strings.Split(filepath.Clean(parentPath), string(filepath.Separator))
 	if filepath.IsAbs(parentPath) {
@@ -139,7 +143,7 @@ func openPrivateArtifactUnixParent(parentPath string) (int, error) {
 			continue
 		}
 		next, openErr := unix.Openat(current, component, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
-		if errors.Is(openErr, unix.ENOENT) {
+		if create && errors.Is(openErr, unix.ENOENT) {
 			if mkdirErr := unix.Mkdirat(current, component, 0o700); mkdirErr != nil && !errors.Is(mkdirErr, unix.EEXIST) {
 				_ = unix.Close(current)
 				return -1, mkdirErr

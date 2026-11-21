@@ -100,6 +100,18 @@ type memoryStoreEntry struct {
 	ReferenceTransactionID string                      `json:"reference_transaction_id,omitempty"`
 }
 
+// A raw pre-upgrade history row can prove the exact revision without changing
+// the durable projection or certifying defaults synthesized during replay.
+type memoryExactReadIdentity struct {
+	project, fileName, eventID, createdAt, topicPath, objectID, contentHash string
+}
+
+func (entry memoryStoreEntry) exactReadIdentity() memoryExactReadIdentity {
+	return memoryExactReadIdentity{
+		entry.Project, entry.FileName, entry.EventID, entry.CreatedAt, entry.TopicPath, entry.ObjectID, entry.ContentHash,
+	}
+}
+
 type memoryStoreDoc struct {
 	Project     string
 	FileName    string
@@ -178,6 +190,7 @@ type memoryStore struct {
 	currentStateGenerationAdmissionMu sync.Mutex
 	recent                            []memoryStoreEntry
 	currentState                      map[string]memoryCurrentState
+	exactReadIdentities               map[string]memoryExactReadIdentity
 	// currentStateByShard is the exact durable-state index.  Every write keeps
 	// the affected shard projection and its digest leaves current so hot-path
 	// generation roots never scan the whole corpus.
@@ -559,6 +572,7 @@ func (m *memoryStore) loadHistoryWithFence(fence *memoryEdgeLogFenceToken) error
 	}
 	writePolicy := loadWriteIngressPolicy()
 	dirtyCurrentStateShards := map[int]struct{}{}
+	replayedIdentities := map[string]memoryExactReadIdentity{}
 	m.mu.Lock()
 	m.currentStateDigestIndexDeferred = true
 	m.mu.Unlock()
@@ -567,6 +581,15 @@ func (m *memoryStore) loadHistoryWithFence(fence *memoryEdgeLogFenceToken) error
 		key := memoryStoreKey(entry.Project, entry.FileName)
 		if key != "::" {
 			dirtyCurrentStateShards[memoryCurrentStateShardForKey(key)] = struct{}{}
+			current := m.currentState[key].Entry.exactReadIdentity()
+			identity := entry.exactReadIdentity()
+			switch {
+			case identity == current && m.hasExactReadIdentity(entry):
+				replayedIdentities[key] = identity
+			case current.eventID == entry.EventID || replayedIdentities[key] != current:
+				// Do not retain a proof across an ambiguous same-event replay.
+				delete(replayedIdentities, key)
+			}
 		}
 	}
 	persistLoadedCurrentState := func() error {
@@ -589,6 +612,7 @@ func (m *memoryStore) loadHistoryWithFence(fence *memoryEdgeLogFenceToken) error
 		if errors.Is(err, os.ErrNotExist) {
 			m.mu.Lock()
 			m.currentStateDigestIndexDeferred = false
+			m.exactReadIdentities = nil
 			m.mu.Unlock()
 			return nil
 		}
@@ -634,6 +658,9 @@ func (m *memoryStore) loadHistoryWithFence(fence *memoryEdgeLogFenceToken) error
 	if err := persistLoadedCurrentState(); err != nil {
 		return err
 	}
+	m.mu.Lock()
+	m.exactReadIdentities = replayedIdentities
+	m.mu.Unlock()
 	log.Printf("gateway-go memory store history startup load: scanned=%d loaded=%d cap=%d mode=bounded-tail", len(ordered), loaded, maxStartupLines)
 	return nil
 }
@@ -1832,6 +1859,7 @@ func (m *memoryStore) put(item normalizedWrite) (memoryStoreEntry, bool, error) 
 		if _, err := m.retireSupersededMemoryReferenceTransactionsWithFence(fence); err != nil {
 			return memoryStoreEntry{}, false, err
 		}
+		m.rememberExactReadIdentity(transaction.Entry)
 		m.appendAccessLog(project, fileName, "write", now)
 		return transaction.Entry, deduped, nil
 	}
@@ -1868,6 +1896,7 @@ func (m *memoryStore) put(item normalizedWrite) (memoryStoreEntry, bool, error) 
 	if err := m.persistAndRecordEntryLocked(entry); err != nil {
 		return memoryStoreEntry{}, false, err
 	}
+	m.rememberExactReadIdentity(entry)
 	m.appendAccessLog(project, fileName, "write", now)
 	if err := m.storeAgentEdges(entry); err != nil {
 		log.Printf("memory agent edge fanout skipped: %v", err)
@@ -2130,15 +2159,101 @@ func (m *memoryStore) purgeEphemeral(project string, topicPath string, filePrefi
 	}, nil
 }
 
-func (m *memoryStore) fetchByMemoryID(memoryID string) (map[string]any, error) {
+func (m *memoryStore) hasExactReadIdentity(entry memoryStoreEntry) bool {
+	if _, ok := parseTimeBestEffort(entry.CreatedAt); !ok {
+		return false
+	}
+	return entry.DataClass == dataClassLearningMemory && entry.Source == "go_memory_store" &&
+		strings.TrimSpace(entry.EventID) != "" && strings.TrimSpace(entry.TopicPath) != "" &&
+		isHexDigest(entry.ContentHash) && entry.ContentRef == "sha256:"+entry.ContentHash &&
+		entry.ObjectID == m.objectIDFor(entry.Project, entry.FileName, entry.TopicPath, entry.ContentHash)
+}
+
+func (m *memoryStore) rememberExactReadIdentity(entry memoryStoreEntry) {
+	key := memoryStoreKey(entry.Project, entry.FileName)
+	identity := entry.exactReadIdentity()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if state, ok := m.currentState[key]; !ok || state.Tombstone || state.Entry.exactReadIdentity() != identity {
+		return
+	}
+	if m.exactReadIdentities == nil {
+		m.exactReadIdentities = map[string]memoryExactReadIdentity{}
+	}
+	m.exactReadIdentities[key] = identity
+}
+
+func (m *memoryStore) exactReadEntry(ctx context.Context, project, fileName, contentHash string, info os.FileInfo) (memoryStoreEntry, bool) {
+	// The file bytes have already been read and hashed. Hold the writer fence
+	// only for the metadata proof, not for the potentially large file read.
+	fence, err := m.acquireMemoryEdgeLogFenceOptionalContext(ctx)
+	if err != nil || fence == nil {
+		return memoryStoreEntry{}, false
+	}
+	defer fence.release()
+	if err := requireMemoryEdgeLogFence(m, fence); err != nil {
+		return memoryStoreEntry{}, false
+	}
+
+	key := memoryStoreKey(project, fileName)
+	m.mu.RLock()
+	state, found := m.currentState[key]
+	_, exactState := m.exactStatePaths[key]
+	identity, proven := m.exactReadIdentities[key]
+	m.mu.RUnlock()
+	entry := state.Entry
+	if !found || state.Tombstone || exactState || !proven ||
+		entry.Project != project || entry.FileName != fileName ||
+		identity != entry.exactReadIdentity() ||
+		entry.ContentHash != contentHash || !m.hasExactReadIdentity(entry) {
+		return memoryStoreEntry{}, false
+	}
+
+	// A different store instance can commit a same-byte topic change. The
+	// per-project durable card proves that our in-memory revision is still
+	// current without scanning history or reading a current-state shard.
+	if _, err := os.Lstat(m.currentStateTransactionPath()); !errors.Is(err, os.ErrNotExist) {
+		return memoryStoreEntry{}, false
+	}
+	keyGeneration, topicGeneration, stateDigest, err := m.durableCurrentStateGeneration(project)
+	if err != nil {
+		return memoryStoreEntry{}, false
+	}
+	expected, err := memoryCurrentStateGenerationCardPayload(project, memoryCurrentStateGenerationRecord{
+		KeyGeneration: keyGeneration, TopicGeneration: topicGeneration, StateDigest: stateDigest,
+	})
+	if err != nil {
+		return memoryStoreEntry{}, false
+	}
+	card, err := readOwnerOnlyBoundedFile(m.currentStateGenerationCardPath(project), int64(len(expected)))
+	if err != nil || !bytes.Equal(card, expected) {
+		return memoryStoreEntry{}, false
+	}
+
+	currentInfo, err := os.Lstat(filepath.Join(m.policy.rootPath, project, filepath.FromSlash(fileName)))
+	if err != nil || !os.SameFile(info, currentInfo) || info.Size() != currentInfo.Size() ||
+		!info.ModTime().Equal(currentInfo.ModTime()) {
+		return memoryStoreEntry{}, false
+	}
+	return entry, true
+}
+
+func (m *memoryStore) fetchByMemoryID(ctx context.Context, memoryID string) (map[string]any, error) {
 	project, fileName, err := splitEngineMemoryID(memoryID)
 	if err != nil {
 		return nil, err
 	}
-	content, info, err := m.readFile(project, fileName)
+	content, info, project, fileName, err := m.readFileUntracked(project, fileName)
 	if err != nil {
 		return nil, err
 	}
+	contentHash := sha256Hex(content)
+	var entry memoryStoreEntry
+	var hasIdentity bool
+	if utf8.ValidString(content) {
+		entry, hasIdentity = m.exactReadEntry(ctx, project, fileName, contentHash, info)
+	}
+	m.markAccess(project, fileName, "read")
 	key := memoryStoreKey(project, fileName)
 	horizonDays := m.effectiveHotHorizonDays(key)
 	confidence := m.confidenceForKey(key)
@@ -2146,30 +2261,30 @@ func (m *memoryStore) fetchByMemoryID(memoryID string) (map[string]any, error) {
 	if touched := m.docLastTouch(key, time.Time{}); !touched.IsZero() {
 		lastAccess = touched.UTC().Format(time.RFC3339Nano)
 	}
-	contentHash := sha256Hex(content)
-	result := map[string]any{
-		"memory_id": memoryID,
-		"memory": map[string]any{
-			"project":      project,
-			"file":         fileName,
-			"topic_path":   deriveTopicFromFile(fileName),
-			"content":      content,
-			"object_id":    m.objectIDFor(project, fileName, deriveTopicFromFile(fileName), contentHash),
-			"horizon_days": horizonDays,
-			"confidence":   confidence,
-			"content_hash": contentHash,
-			"content_ref":  "sha256:" + contentHash,
-		},
-		"source": "go_memory_store",
+	row := map[string]any{
+		"project":      project,
+		"file":         fileName,
+		"topic_path":   nil,
+		"content":      content,
+		"object_id":    nil,
+		"horizon_days": horizonDays,
+		"confidence":   confidence,
+		"content_hash": contentHash,
+		"content_ref":  "sha256:" + contentHash,
+	}
+	if hasIdentity {
+		row["topic_path"] = entry.TopicPath
+		row["object_id"] = entry.ObjectID
+		row["event_id"] = entry.EventID
 	}
 	if lastAccess != "" {
-		result["memory"].(map[string]any)["last_accessed_at"] = lastAccess
+		row["last_accessed_at"] = lastAccess
 	}
 	if info != nil {
-		result["memory"].(map[string]any)["updated_at"] = info.ModTime().UTC().Format(time.RFC3339Nano)
-		result["memory"].(map[string]any)["raw_bytes"] = info.Size()
+		row["updated_at"] = info.ModTime().UTC().Format(time.RFC3339Nano)
+		row["raw_bytes"] = info.Size()
 	}
-	return result, nil
+	return map[string]any{"memory_id": memoryID, "memory": row, "source": "go_memory_store"}, nil
 }
 
 func (m *memoryStore) recentItems(project string, topicPath string, limit int, offset int) []map[string]any {

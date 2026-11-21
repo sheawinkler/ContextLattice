@@ -36,10 +36,11 @@ type decisionAssumption struct {
 }
 
 type decisionApplicability struct {
-	SchemaID    string                     `json:"schema_id"`
-	Scope       decisionApplicabilityScope `json:"scope"`
-	Inputs      []decisionInputPin         `json:"inputs"`
-	Assumptions []decisionAssumption       `json:"assumptions"`
+	SchemaID               string                          `json:"schema_id"`
+	Scope                  decisionApplicabilityScope      `json:"scope"`
+	Inputs                 []decisionInputPin              `json:"inputs"`
+	Assumptions            []decisionAssumption            `json:"assumptions"`
+	ArtifactSectionWitness *decisionArtifactSectionWitness `json:"artifact_section_witness,omitempty"`
 }
 
 func decisionApplicabilityText(value string, limit int) bool {
@@ -61,11 +62,25 @@ func decisionExactJSONFields(raw json.RawMessage, fields ...string) bool {
 }
 
 func decisionApplicabilityExactFields(encoded []byte) bool {
-	if !decisionExactJSONFields(encoded, "schema_id", "scope", "inputs", "assumptions") {
+	var root map[string]json.RawMessage
+	if json.Unmarshal(encoded, &root) != nil {
 		return false
 	}
-	var root map[string]json.RawMessage
-	_ = json.Unmarshal(encoded, &root)
+	fields := []string{"schema_id", "scope", "inputs", "assumptions"}
+	if witness, present := root["artifact_section_witness"]; present {
+		fields = append(fields, "artifact_section_witness")
+		if !decisionExactJSONFields(witness, "artifact_input_id", "start_byte", "end_byte", "required_groups") {
+			return false
+		}
+		var section map[string]json.RawMessage
+		_ = json.Unmarshal(witness, &section)
+		if bytes.Equal(section["start_byte"], []byte("null")) || bytes.Equal(section["end_byte"], []byte("null")) {
+			return false
+		}
+	}
+	if !decisionExactJSONFields(encoded, fields...) {
+		return false
+	}
 	if !decisionExactJSONFields(root["scope"], "project", "objective_id", "task_identity_id", "repo", "branch") {
 		return false
 	}
@@ -135,6 +150,9 @@ func normalizeDecisionApplicability(raw any) (*decisionApplicability, error) {
 			return nil, errors.New("assumptions require unique names, pinned input owners and an explicit supported role")
 		}
 		assumptions[assumption.AssumptionID] = true
+	}
+	if w := value.ArtifactSectionWitness; w != nil && !w.valid(exactInputs) {
+		return nil, errors.New("artifact section witness requires a bounded section of one pinned artifact and distinct pinned support alternatives")
 	}
 	sort.Slice(value.Inputs, func(i, j int) bool { return value.Inputs[i].MemoryID < value.Inputs[j].MemoryID })
 	sort.Slice(value.Assumptions, func(i, j int) bool { return value.Assumptions[i].AssumptionID < value.Assumptions[j].AssumptionID })
@@ -234,6 +252,15 @@ func (m *memoryStore) validateDecisionApplicabilityOwner(ctx context.Context, a 
 		pin := memoryStructuredReference{TargetID: input.MemoryID, TargetEventID: input.TargetEventID, TargetContentHash: input.TargetContentHash}
 		if !ok || !memoryDerivationReferenceMatchesTarget(pin, entry) || m.checkMemoryDerivation(ctx, entry, fence, walk, 0) != nil {
 			return errDecisionApplicabilityOwner
+		}
+		if w := a.ArtifactSectionWitness; w != nil && w.usesInput(input.MemoryID) {
+			if entry.Project != project || entry.FileName != file {
+				return errDecisionApplicabilityOwner
+			}
+			content, available := m.readDecisionWitnessInput(ctx, entry)
+			if !available || (w.ArtifactInputID == input.MemoryID && !w.hasSection(content)) {
+				return errDecisionApplicabilityOwner
+			}
 		}
 	}
 	return nil

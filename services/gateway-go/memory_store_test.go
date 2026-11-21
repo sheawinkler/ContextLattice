@@ -1,8 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -11,6 +15,306 @@ import (
 	"testing"
 	"time"
 )
+
+func newExactReadTestStore(t *testing.T) *memoryStore {
+	t.Helper()
+	root := t.TempDir()
+	t.Setenv("GO_MEMORY_STORE_ROOT", root)
+	t.Setenv("GO_MEMORY_STORE_ENABLED", "true")
+	t.Setenv("GO_MEMORY_STORE_BACKGROUND_HYDRATION_ENABLED", "false")
+	t.Setenv("GO_MEMORY_STORE_CONTENT_ADDRESSING_ENABLED", "true")
+	t.Setenv("GO_MEMORY_STORE_CONTENT_LINK_MODE", "hardlink")
+	for _, key := range []string{
+		"GO_MEMORY_STORE_HISTORY_PATH", "GO_MEMORY_STORE_ACCESS_LOG_PATH", "GO_MEMORY_GRAPH_EDGE_PATH",
+		"GO_MEMORY_STORE_CONTENT_BLOBS_PATH", "GO_MEMORY_STORE_EXACT_STATE_INDEX_PATH",
+	} {
+		t.Setenv(key, "")
+	}
+	store, err := newMemoryStoreFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return store
+}
+
+func assertExactReadBytes(t *testing.T, row map[string]any, content string) {
+	t.Helper()
+	digest := sha256Hex(content)
+	if row["content"] != content || row["content_hash"] != digest || row["content_ref"] != "sha256:"+digest {
+		t.Fatalf("GET changed the bytes or digest: %#v", row)
+	}
+}
+
+func assertExactReadUnknown(t *testing.T, row map[string]any) {
+	t.Helper()
+	if row["topic_path"] != nil || row["object_id"] != nil || row["event_id"] != nil {
+		t.Fatalf("GET returned unproven identity: %#v", row)
+	}
+}
+
+func TestMemoryStoreExactReadUnprovenRevisions(t *testing.T) {
+	const project = "alpha"
+	put := func(t *testing.T, store *memoryStore, file, content, topic, class string) {
+		t.Helper()
+		_, _, err := store.put(normalizedWrite{project: project, fileName: file, content: content, topicPath: topic, dataClass: class})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeFile := func(t *testing.T, store *memoryStore, file, content string) {
+		t.Helper()
+		if err := writeOwnerOnlyAtomicFile(filepath.Join(store.policy.rootPath, project, file), []byte(content), true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	checkUnknown := func(t *testing.T, reader *memoryStore, file, content string) {
+		t.Helper()
+		row := requestMemoryV1Get(t, &server{memoryStore: reader}, project+"::"+file, "", http.StatusOK)["memory"].(map[string]any)
+		assertExactReadBytes(t, row, content)
+		assertExactReadUnknown(t, row)
+	}
+
+	t.Run("file without metadata", func(t *testing.T) {
+		store := newExactReadTestStore(t)
+		writeFile(t, store, "unindexed.md", "legacy without newline")
+		checkUnknown(t, store, "unindexed.md", "legacy without newline")
+	})
+	t.Run("old bytes do not recover old identity from history", func(t *testing.T) {
+		store := newExactReadTestStore(t)
+		put(t, store, "notes/replaced.md", "same body", "research/old", "")
+		put(t, store, "notes/replaced.md", "new body", "research/new", "")
+		writeFile(t, store, "notes/replaced.md", "same body\n")
+		checkUnknown(t, store, "notes/replaced.md", "same body\n")
+	})
+	t.Run("exact-state mirror has no ordinary revision metadata", func(t *testing.T) {
+		store := newExactReadTestStore(t)
+		put(t, store, "notes/mirror.md", "same body", "research/old", "")
+		put(t, store, "notes/mirror.md", "same body", "state/current", dataClassRuntimeStateMirror)
+		checkUnknown(t, store, "notes/mirror.md", "same body\n")
+	})
+	t.Run("replay does not promote a derived topic to stored identity", func(t *testing.T) {
+		store := newExactReadTestStore(t)
+		const file = "notes/partial.md"
+		const content = "legacy revision\n"
+		digest := sha256Hex(content)
+		writeFile(t, store, file, content)
+		if err := store.appendHistory(memoryStoreEntry{
+			EventID: "legacy-event", Project: project, FileName: file,
+			ObjectID: store.objectIDFor(project, file, "notes", digest), ContentHash: digest,
+			ContentRef: "sha256:" + digest, CreatedAt: nowUTCISO(), Source: "go_memory_store",
+			DataClass: dataClassLearningMemory,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		for attempt := 0; attempt < 2; attempt++ {
+			reopened, err := newMemoryStoreFromEnv()
+			if err != nil {
+				t.Fatal(err)
+			}
+			checkUnknown(t, reopened, file, content)
+		}
+	})
+	t.Run("unsequenced legacy replay does not expose a prior same-byte revision", func(t *testing.T) {
+		store := newExactReadTestStore(t)
+		const file = "notes/unsequenced.md"
+		const content = "same body"
+		const topic = "research/later"
+		put(t, store, file, content, "research/earlier", "")
+		digest := canonicalMemoryContentHash(content)
+		if err := store.appendHistory(memoryStoreEntry{
+			EventID: "legacy-event", Project: project, FileName: file, TopicPath: topic,
+			ObjectID: store.objectIDFor(project, file, topic, digest), ContentHash: digest,
+			ContentRef: "sha256:" + digest, Source: "go_memory_store", DataClass: dataClassLearningMemory,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		reopened, err := newMemoryStoreFromEnv()
+		if err != nil {
+			t.Fatal(err)
+		}
+		checkUnknown(t, reopened, file, canonicalMemoryContent(content))
+	})
+}
+
+func TestMemoryStoreExactReadRejectsStaleGeneration(t *testing.T) {
+	writer := newExactReadTestStore(t)
+	item := normalizedWrite{project: "alpha", fileName: "notes/shared.md", topicPath: "research/before", content: "unchanged"}
+	if _, _, err := writer.put(item); err != nil {
+		t.Fatal(err)
+	}
+	reader, err := newMemoryStoreFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	item.topicPath = "research/after"
+	current, _, err := writer.put(item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := item.project + "::" + item.fileName
+	row := requestMemoryV1Get(t, &server{memoryStore: reader}, id, "", http.StatusOK)["memory"].(map[string]any)
+	assertExactReadBytes(t, row, "unchanged\n")
+	assertExactReadUnknown(t, row)
+
+	row = requestMemoryV1Get(t, &server{memoryStore: writer}, id, "", http.StatusOK)["memory"].(map[string]any)
+	assertExactReadBytes(t, row, "unchanged\n")
+	if row["topic_path"] != current.TopicPath || row["object_id"] != current.ObjectID || row["event_id"] != current.EventID {
+		t.Fatalf("current writer did not return the current revision: %#v", row)
+	}
+}
+
+func TestMemoryStoreLegacyProjectionSurvivesExactReadUpgrade(t *testing.T) {
+	store := newExactReadTestStore(t)
+	const project, file, topic = "alpha", "notes/legacy/fixture.md", "notes/legacy"
+	const content = "bounded cache rollback evidence\n"
+	digest := sha256Hex(content)
+	legacy := memoryStoreEntry{
+		Project: project, FileName: file, CreatedAt: nowUTCISO(), Summary: content,
+		ContentHash: digest, ContentRef: "sha256:" + digest,
+		ObjectID: store.objectIDFor(project, file, topic, digest), DataClass: dataClassLearningMemory,
+	}
+	if err := writeOwnerOnlyAtomicFile(filepath.Join(store.policy.rootPath, project, file), []byte(content), true); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.appendHistory(legacy); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.persistAndRecordEntryLocked(legacy); err != nil {
+		t.Fatal(err)
+	}
+	key := memoryStoreKey(project, file)
+	shardPath := store.currentStateShardPath(memoryCurrentStateShardForKey(key))
+	rawShard, err := os.ReadFile(shardPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var shard memoryCurrentStateShard
+	if err := json.Unmarshal(rawShard, &shard); err != nil || len(shard.Entries) != 1 ||
+		shard.Entries[0].Entry.TopicPath != "" || shard.Entries[0].Entry.EventID != "" {
+		t.Fatalf("fixture must persist the original missing topic/event: %s (%v)", rawShard, err)
+	}
+
+	reopen := func() *memoryStore {
+		t.Helper()
+		reader, err := newMemoryStoreFromEnv()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return reader
+	}
+	assertProjection := func(reader *memoryStore) {
+		t.Helper()
+		current, ok := reader.currentEntry(project, file)
+		if !ok || current.TopicPath != topic || current.EventID == "" || reader.latestTopic[key] != topic {
+			t.Fatalf("startup lost the legacy directory topic/event projection: %#v", current)
+		}
+		rows, _, err := reader.searchCurrentStateRows(context.Background(), content, project, topic, 5, false, false)
+		if err != nil || len(rows) != 1 || rows[0]["file"] != file {
+			t.Fatalf("directory-scoped legacy row unavailable: rows=%#v err=%v", rows, err)
+		}
+		rows, stats, err := reader.searchCurrentStateRowsWithAncestorFallback(
+			context.Background(), content, project, topic+"/sibling", 5, false, false, 1, 0.55, 0.25,
+		)
+		if err != nil || len(rows) != 1 || rows[0]["file"] != file || !stats.AncestorUsed || stats.AncestorPrefix != topic {
+			t.Fatalf("nearest-ancestor legacy row unavailable: rows=%#v stats=%#v err=%v", rows, stats, err)
+		}
+	}
+
+	replayed := reopen()
+	assertProjection(replayed)
+	generationPath := replayed.currentStateGenerationCardPath(project)
+	readCard := func() []byte {
+		t.Helper()
+		card, err := os.ReadFile(generationPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return card
+	}
+	projectedCard := readCard()
+	// Simulate the raw row aging out while the pre-upgrade projection remains.
+	if err := os.Remove(store.policy.historyPath); err != nil {
+		t.Fatal(err)
+	}
+	restored := reopen()
+	assertProjection(restored)
+	if !bytes.Equal(projectedCard, readCard()) {
+		t.Fatalf("opening the durable legacy projection changed its generation card")
+	}
+
+	t.Run("synthetic projection is not exact provenance", func(t *testing.T) {
+		for _, reader := range []*memoryStore{replayed, restored} {
+			row := requestMemoryV1Get(t, &server{memoryStore: reader}, project+"::"+file, "", http.StatusOK)["memory"].(map[string]any)
+			assertExactReadBytes(t, row, content)
+			assertExactReadUnknown(t, row)
+		}
+	})
+}
+
+func TestMemoryStoreExactReadLargeProjectChecksOneBoundedCard(t *testing.T) {
+	store := newExactReadTestStore(t)
+	const project, topic, documents = "alpha", "research/large", 1024
+	const content = "large scoped project evidence\n"
+	digest := sha256Hex(content)
+	var history bytes.Buffer
+	encoder := json.NewEncoder(&history)
+	for i := range documents {
+		file := fmt.Sprintf("notes/%04d.md", i)
+		entry := memoryStoreEntry{
+			EventID: fmt.Sprintf("event-%04d", i), Project: project, FileName: file, TopicPath: topic,
+			CreatedAt: nowUTCISO(), Summary: content, Source: "go_memory_store", DataClass: dataClassLearningMemory,
+			ContentHash: digest, ContentRef: "sha256:" + digest, ObjectID: store.objectIDFor(project, file, topic, digest),
+		}
+		if err := encoder.Encode(entry); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := writeOwnerOnlyAtomicFile(store.policy.historyPath, history.Bytes(), true); err != nil {
+		t.Fatal(err)
+	}
+	const file = "notes/1023.md"
+	if err := writeOwnerOnlyAtomicFile(filepath.Join(store.policy.rootPath, project, file), []byte(content), true); err != nil {
+		t.Fatal(err)
+	}
+	reader, err := newMemoryStoreFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cardPath := reader.currentStateGenerationCardPath(project)
+	card, err := os.ReadFile(cardPath)
+	if err != nil || len(card) == 0 || len(card) > 512 || reader.currentKeyCountsByProject[project] != documents {
+		t.Fatalf("unexpected large-project fixture: card bytes=%d documents=%d err=%v", len(card), reader.currentKeyCountsByProject[project], err)
+	}
+	t.Logf("project documents=%d card bytes=%d", documents, len(card))
+	reader.memoryCurrentStateDigestObserve = func(int, int) { t.Fatal("GET recomputed a shard digest") }
+	reader.memoryCurrentStateGenerationCardActualObserve = func(int) { t.Fatal("GET walked the generation-card tree") }
+	if err := os.Remove(reader.policy.historyPath); err != nil {
+		t.Fatal(err)
+	}
+	s := &server{memoryStore: reader}
+	row := requestMemoryV1Get(t, s, project+"::"+file, "", http.StatusOK)["memory"].(map[string]any)
+	assertExactReadBytes(t, row, content)
+	if row["event_id"] != "event-1023" || row["topic_path"] != topic || row["object_id"] != store.objectIDFor(project, file, topic, digest) {
+		t.Fatalf("GET fell back from its replayed identity: %#v", row)
+	}
+	if err := os.Truncate(cardPath, int64(len(card))+1); err != nil {
+		t.Fatal(err)
+	}
+	row = requestMemoryV1Get(t, s, project+"::"+file, "", http.StatusOK)["memory"].(map[string]any)
+	assertExactReadBytes(t, row, content)
+	assertExactReadUnknown(t, row)
+
+	if err := writeOwnerOnlyAtomicFile(cardPath, card, true); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := newMemoryStoreFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	row = requestMemoryV1Get(t, &server{memoryStore: reopened}, project+"::"+file, "", http.StatusOK)["memory"].(map[string]any)
+	assertExactReadBytes(t, row, content)
+	assertExactReadUnknown(t, row)
+}
 
 func TestMemoryStorePutSkipsUnchangedDuplicateHistory(t *testing.T) {
 	root := t.TempDir()

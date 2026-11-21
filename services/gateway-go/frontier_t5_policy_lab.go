@@ -610,30 +610,51 @@ func (s *server) buildMemoryRetirement(payload map[string]any) (map[string]any, 
 	}
 }
 
-func frontierT5ClaimWeight(claim temporalClaim) float64 {
+func frontierT5DistinctCitationCount(refs []temporalClaimEvidence) int {
+	seen := make(map[string]struct{}, len(refs))
+	for _, ref := range refs {
+		key := ""
+		hash := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(ref.ContentHash)), "sha256:")
+		switch {
+		case utilitySHA256DigestValid("sha256:" + hash):
+			key = "digest:" + hash
+		case strings.TrimSpace(ref.MemoryID) != "":
+			key = "memory:" + strings.TrimSpace(ref.MemoryID)
+			if project, file, err := splitEngineMemoryID(ref.MemoryID); err == nil {
+				key = "memory:" + project + "::" + file
+			}
+		case strings.TrimSpace(ref.URI) != "":
+			key = "uri:" + strings.TrimSpace(ref.URI)
+		case strings.TrimSpace(ref.RefID) != "":
+			key = "ref:" + strings.TrimSpace(ref.RefID)
+		}
+		if key != "" {
+			seen[key] = struct{}{}
+		}
+	}
+	return len(seen)
+}
+
+func frontierT5ClaimWeight(claim temporalClaim, support, opposition int) float64 {
 	weight := math.Max(0, math.Min(1, claim.Confidence))
-	switch strings.ToLower(anyToString(claim.Verification["status"])) {
-	case "verified":
+	if support > 0 {
 		weight *= 1.25
-	case "disputed":
-		weight *= 0.6
-	case "failed":
-		weight *= 0.2
-	default:
+	} else {
 		weight *= 0.8
 	}
-	weight += math.Min(0.2, float64(len(claim.Support))*0.04)
-	weight -= math.Min(0.3, float64(len(claim.Opposition))*0.05)
+	weight += math.Min(0.2, float64(support)*0.04)
+	weight -= math.Min(0.3, float64(opposition)*0.05)
 	return math.Max(0, math.Min(1.5, weight))
 }
 
-func frontierT5Claims(store *temporalClaimStore, project string, ids []string, query string) []temporalClaim {
+func frontierT5Claims(store *temporalClaimStore, project string, ids []string, query string, asOf time.Time) []temporalClaim {
 	if store == nil || !store.enabled {
 		return []temporalClaim{}
 	}
 	if len(ids) == 0 {
 		return store.query(temporalClaimQuery{
-			Project: project, Query: query, Limit: 100, IncludeExpired: true, IncludeSuperseded: true, IncludeRetracted: true,
+			Project: project, Query: query, AsOf: asOf, Limit: 100,
+			IncludeExpired: true, IncludeSuperseded: true, IncludeRetracted: true, KeepStoredStatus: true,
 		})
 	}
 	store.mu.RLock()
@@ -680,18 +701,59 @@ func frontierT5DirectContradictionIDs(winner string, claims []temporalClaim) []s
 	return losers
 }
 
-func frontierT5ContradictionRecommendation(project string, claims []temporalClaim, threshold float64) map[string]any {
+func frontierT5CurrentClaimExclusion(project string, claim temporalClaim, asOf time.Time) string {
+	if claim.Project != project {
+		return "project_mismatch"
+	}
+	if strings.EqualFold(strings.TrimSpace(anyToString(claim.Verification["status"])), "failed") {
+		return "verification_failed"
+	}
+	for _, raw := range []string{claim.ObservedAt, claim.ValidFrom, claim.ValidTo} {
+		if raw != "" {
+			if _, err := time.Parse(time.RFC3339Nano, raw); err != nil {
+				return "invalid_claim_time"
+			}
+		}
+	}
+	if observedAt, err := time.Parse(time.RFC3339Nano, claim.ObservedAt); err == nil && observedAt.After(asOf) {
+		return "observation_in_future"
+	}
+	if !temporalClaimCanInfluence(claim) || temporalClaimStatusAt(claim, asOf) != "active" {
+		return "claim_not_current"
+	}
+	return ""
+}
+
+func frontierT5ContradictionRecommendation(project string, claims []temporalClaim, threshold float64, asOf time.Time, issuers []temporalClaimEvidenceIssuer) map[string]any {
 	type weightedClaim struct {
-		claim  temporalClaim
-		weight float64
+		claim      temporalClaim
+		weight     float64
+		exclusion  string
+		support    map[string]struct{}
+		opposition map[string]struct{}
 	}
 	weighted := make([]weightedClaim, 0, len(claims))
+	current := make([]temporalClaim, 0, len(claims))
 	linked := false
-	for index, claim := range claims {
-		weighted = append(weighted, weightedClaim{claim: claim, weight: frontierT5ClaimWeight(claim)})
-		for other := index + 1; other < len(claims); other++ {
-			linked = linked || frontierT5ClaimsContradict(claim, claims[other])
+	for _, claim := range claims {
+		item := weightedClaim{claim: claim, exclusion: frontierT5CurrentClaimExclusion(project, claim, asOf)}
+		if item.exclusion == "" {
+			item.support = temporalClaimBoundObservations(claim, claim.Support, issuers, asOf)
+			item.opposition = temporalClaimBoundObservations(claim, claim.Opposition, issuers, asOf)
+			// A single bound observation cited on both sides is not decisive.
+			for key := range item.support {
+				if _, exists := item.opposition[key]; exists {
+					delete(item.support, key)
+					delete(item.opposition, key)
+				}
+			}
+			item.weight = frontierT5ClaimWeight(claim, len(item.support), len(item.opposition))
+			for _, other := range current {
+				linked = linked || frontierT5ClaimsContradict(claim, other)
+			}
+			current = append(current, claim)
 		}
+		weighted = append(weighted, item)
 	}
 	sort.SliceStable(weighted, func(i, j int) bool {
 		if weighted[i].weight == weighted[j].weight {
@@ -700,25 +762,43 @@ func frontierT5ContradictionRecommendation(project string, claims []temporalClai
 		return weighted[i].weight > weighted[j].weight
 	})
 	rows := make([]any, 0, len(weighted))
+	scored := make([]any, 0, len(weighted))
 	for _, item := range weighted {
 		rows = append(rows, map[string]any{
 			"claim_id": item.claim.ClaimID, "statement": clipText(item.claim.Statement, 500), "status": item.claim.Status,
 			"confidence": item.claim.Confidence, "verification_status": anyToString(item.claim.Verification["status"]),
-			"support_count": len(item.claim.Support), "opposition_count": len(item.claim.Opposition),
+			"verification_status_source": "writer_reported",
+			"support_count":              len(item.claim.Support), "opposition_count": len(item.claim.Opposition),
+			"distinct_support_citation_count":      frontierT5DistinctCitationCount(item.claim.Support),
+			"distinct_opposition_citation_count":   frontierT5DistinctCitationCount(item.claim.Opposition),
+			"support_citation_authority_counts":    temporalClaimEvidenceAuthorityCounts(project, item.claim, item.claim.Support, issuers, asOf),
+			"opposition_citation_authority_counts": temporalClaimEvidenceAuthorityCounts(project, item.claim, item.claim.Opposition, issuers, asOf),
+			"bound_support_count":                  len(item.support), "bound_opposition_count": len(item.opposition),
+			"current_eligible": item.exclusion == "", "current_exclusion_reason": item.exclusion,
 			"evidence_weight": roundFloat(item.weight, 6), "provenance_present": len(item.claim.Provenance) > 0,
 		})
+		if item.exclusion == "" {
+			scored = append(scored, map[string]any{
+				"claim_id": item.claim.ClaimID, "statement": item.claim.Statement, "status": item.claim.Status,
+				"confidence": item.claim.Confidence, "contradicts": frontierT5DirectContradictionIDs(item.claim.ClaimID, current),
+				"bound_support": item.support, "bound_opposition": item.opposition,
+			})
+		}
 	}
 	winner := ""
 	margin := 0.0
 	status := "abstained"
 	reasons := []any{}
-	if len(weighted) < 2 {
-		reasons = append(reasons, "at least two claims are required")
+	if len(current) < 2 {
+		reasons = append(reasons, "at least two current claims are required")
 	} else if !linked {
-		reasons = append(reasons, "selected claims do not carry an explicit contradiction edge")
+		reasons = append(reasons, "current claims do not carry an explicit contradiction edge")
 	} else {
 		for _, candidate := range weighted {
-			loserIDs := frontierT5DirectContradictionIDs(candidate.claim.ClaimID, claims)
+			if len(candidate.support) == 0 {
+				continue
+			}
+			loserIDs := frontierT5DirectContradictionIDs(candidate.claim.ClaimID, current)
 			if len(loserIDs) == 0 {
 				continue
 			}
@@ -729,7 +809,7 @@ func frontierT5ContradictionRecommendation(project string, claims []temporalClai
 				}
 			}
 			candidateMargin := candidate.weight - strongestOpponent
-			if candidateMargin >= threshold && len(candidate.claim.Support) > 0 && anyToString(candidate.claim.Verification["status"]) == "verified" {
+			if candidateMargin >= threshold {
 				winner = candidate.claim.ClaimID
 				margin = candidateMargin
 				status = "recommended"
@@ -737,21 +817,22 @@ func frontierT5ContradictionRecommendation(project string, claims []temporalClai
 			}
 		}
 		if winner == "" {
-			reasons = append(reasons, "evidence margin or independent verification is insufficient")
+			reasons = append(reasons, "evidence margin or independently bound support is insufficient")
 		}
 	}
 	losers := []any{}
 	if winner != "" {
-		for _, id := range frontierT5DirectContradictionIDs(winner, claims) {
+		for _, id := range frontierT5DirectContradictionIDs(winner, current) {
 			losers = append(losers, id)
 		}
 	}
-	identity := map[string]any{"project": project, "claims": rows, "threshold": threshold}
+	identity := map[string]any{"project": project, "scored_claims": scored, "threshold": threshold}
 	return map[string]any{
 		"recommendation_id": frontierT5CanonicalDigest("contrarec_", identity)[:33], "status": status,
 		"winning_claim_id": winner, "losing_claim_ids": losers, "threshold": roundFloat(threshold, 6),
 		"evidence_margin": roundFloat(margin, 6), "claims": rows, "reasons": reasons,
 		"explicit_contradiction_link": linked, "operator_decision_required": true,
+		"evidence_basis": "recorded_admission_current_issuer_grant", "source_rechecked": false,
 	}
 }
 
@@ -862,19 +943,20 @@ func (s *server) buildContradictionResolution(payload map[string]any) (map[strin
 		return nil, err
 	}
 	ids := anyToStringList(payload["claim_ids"], 64)
-	claims := frontierT5Claims(s.temporalClaims, project, ids, anyToString(payload["query"]))
+	asOf := time.Now().UTC()
+	claims := frontierT5Claims(s.temporalClaims, project, ids, anyToString(payload["query"]), asOf)
 	threshold := anyToFloat(payload["threshold"])
 	if threshold <= 0 {
 		threshold = 0.15
 	}
 	threshold = math.Max(0.01, math.Min(1, threshold))
-	recommendation := frontierT5ContradictionRecommendation(project, claims, threshold)
+	recommendation := frontierT5ContradictionRecommendation(project, claims, threshold, asOf, configuredTemporalClaimEvidenceIssuers())
 	response := map[string]any{
 		"ok": true, "schema_id": contradictionResolutionContractID, "version": 1, "operation": operation,
 		"project": project, "generated_at": nowUTCISO(), "recommendation": recommendation,
 		"resolution": map[string]any{}, "recorded": false, "ordinary_memory_mutated": false,
 		"claim_lifecycle_mutated": false, "immutable_receipt": false,
-		"measurement_limit": "Evidence weights are deterministic advice; ambiguous or unverified conflicts abstain and every lifecycle decision remains appealable.",
+		"measurement_limit": "Only current claims and distinct claim-bound observations under active issuer grants carry evidence weight. Recorded checks are not fresh source reads. Advice never changes claim status.",
 	}
 	switch operation {
 	case "recommend", "status":
