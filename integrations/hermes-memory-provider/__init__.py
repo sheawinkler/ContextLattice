@@ -78,6 +78,9 @@ _DELEGATION_MAX_TASKS = 8
 _DELEGATION_MAX_PENDING = 128
 _DELEGATION_TTL = 3600.0
 _PUBLIC_MERGE_CONFLICTS = frozenset({"conservative_duplicate_exclusion"})
+_CONFLICT_CASE_REF = re.compile(r"^cc_[0-9a-f]{64}$")
+_CONFLICT_CLAIM_ID = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
+_CONFLICT_TOPIC = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,119}(?:/[A-Za-z0-9_][A-Za-z0-9_.-]{0,119})*$")
 _PACK_HEADER = ("CONTEXTLATTICE CONTEXT PACK for this subtask (compiled from the goal by /memory/context-pack; "
                 "UNVERIFIED until you read the cited source):")
 _SEARCH_HEADER = ("CONTEXTLATTICE RECALL for this subtask (seeded from the goal; UNVERIFIED "
@@ -87,6 +90,34 @@ _SEARCH_HEADER = ("CONTEXTLATTICE RECALL for this subtask (seeded from the goal;
 def _public_merge_conflict(value: Any) -> Optional[str]:
     """Project only explicitly public merge-disposition enum values."""
     return value if isinstance(value, str) and value in _PUBLIC_MERGE_CONFLICTS else None
+
+
+def _public_conflict_source_check(value: Any, project: Optional[str],
+                                 topic_path: Optional[str] = None) -> Optional[Dict[str, str]]:
+    """Keep only an existing, structurally valid pointer for the requested scope."""
+    if not project or not isinstance(value, dict):
+        return None
+    topic = value.get("topic_path")
+    claims = value.get("claims")
+    if (value.get("schema_id") != "conflict_source_check.v1"
+            or value.get("project") != project
+            or not isinstance(topic, str) or len(topic) > 240 or not _CONFLICT_TOPIC.fullmatch(topic)
+            or (topic_path and topic != topic_path and not topic.startswith(topic_path.rstrip("/") + "/"))
+            or not isinstance(value.get("case_ref"), str)
+            or not _CONFLICT_CASE_REF.fullmatch(value["case_ref"])
+            or not isinstance(claims, list) or len(claims) != 2):
+        return None
+    for claim in claims:
+        if (not isinstance(claim, dict)
+                or not isinstance(claim.get("claim_id"), str)
+                or not _CONFLICT_CLAIM_ID.fullmatch(claim["claim_id"])
+                or type(claim.get("revision")) is not int or claim["revision"] < 1):
+            return None
+    if claims[0]["claim_id"] == claims[1]["claim_id"]:
+        return None
+    # Claim IDs are not needed by this renderer. Keep the opaque, bounded case
+    # pointer and scope only; source identifiers remain inside the trusted API.
+    return {"case_ref": value["case_ref"], "topic_path": topic}
 
 
 def _search_row_identity(row: Dict[str, Any]) -> Optional[Tuple[str, str, str]]:
@@ -552,6 +583,9 @@ class ContextLatticeProvider(MemoryProvider):
                     results[label] = fut.result()
                 except Exception as exc:  # network/HTTP: surface, never silent
                     errors.append(f"{label}: {type(exc).__name__}")
+        scoped_conflict = _public_conflict_source_check(
+            (results.get("MEMORY ARCHIVE (hermes-agent)") or {}).get("conflict_source_check"),
+            self._cfg["project"], "memory")
         reported_errors = list(errors)
         for label, result in results.items():
             if result.get("error") or result.get("degraded"):
@@ -586,6 +620,9 @@ class ContextLatticeProvider(MemoryProvider):
             for label in ("MEMORY ARCHIVE (hermes-agent)", "CROSS-PROJECT RECALL"):
                 if label in results:
                     lines += self._fmt_hits(label, results[label], seen)
+            if scoped_conflict:
+                lines.append("Scoped conflict-source pointer: " + scoped_conflict["case_ref"] +
+                             " (check one authorized original; duplicate exclusion is not contrary evidence).")
             if reported_errors and results:
                 lines.append("PARTIAL: " + "; ".join(reported_errors))
             if len(lines) == 1 and not errors:
@@ -641,9 +678,14 @@ class ContextLatticeProvider(MemoryProvider):
                         hit["merge_conflict"] = merge_signal
                     hits.append(hit)
                 degraded = bool(d.get("degraded") or d.get("error"))
-                return json.dumps({"results": hits, "degraded": degraded,
-                                   "status": "degraded" if degraded else "ok",
-                                   "continuation": cont_report})
+                response = {"results": hits, "degraded": degraded,
+                            "status": "degraded" if degraded else "ok",
+                            "continuation": cont_report}
+                scoped_conflict = _public_conflict_source_check(
+                    d.get("conflict_source_check"), args.get("project"), args.get("topic_path"))
+                if scoped_conflict:
+                    response["conflict_source_check"] = scoped_conflict
+                return json.dumps(response)
             if tool_name == "cl_write":
                 file = args.get("file") or f"notes/hermes/{_slug(args['content'])}.md"
                 w = self._write(args["project"], args["topic_path"], file, args["content"])

@@ -228,6 +228,88 @@ class Base(unittest.TestCase):
 
 
 class PrefetchTests(Base):
+    @staticmethod
+    def conflict_pointer(project="hermes-agent", topic="memory/decisions"):
+        return {"schema_id": "conflict_source_check.v1", "case_ref": "cc_" + "a" * 64,
+                "project": project, "topic_path": topic,
+                "claims": [{"claim_id": "claim:left", "revision": 2},
+                           {"claim_id": "claim:right", "revision": 3}],
+                "restricted_ref": "must-not-render"}
+
+    def test_prefetch_projects_only_scoped_existing_conflict_pointer(self):
+        self.cl.search_response = {"results": [], "conflict_source_check": self.conflict_pointer()}
+        rendered = self.p.prefetch("query")
+        self.assertEqual(len([call for call in self.cl.calls if call[1] == "/memory/search"]), 2)
+        self.assertIn("Scoped conflict-source pointer: cc_" + "a" * 64, rendered)
+        self.assertIn("not contrary evidence", rendered)
+        self.assertNotIn("claim:left", rendered)
+        self.assertNotIn("must-not-render", rendered)
+
+        # An unscoped cross-project result and duplicate exclusion cannot supply a pointer.
+        self.cl.search_handler = lambda body: {
+            "results": [{"project": "elsewhere", "file": "same.md",
+                         "merge_conflict": "conservative_duplicate_exclusion"}],
+            "conflict_source_check": self.conflict_pointer("elsewhere")}
+        rendered = self.p.prefetch("query")
+        self.assertNotIn("Scoped conflict-source pointer:", rendered)
+        self.assertIn("producer merge signal: conservative_duplicate_exclusion", rendered)
+        self.assertNotIn("not contrary evidence", rendered)
+
+    def test_prefetch_rejects_malformed_or_wrong_topic_pointer(self):
+        self.cl.search_response = {"results": []}
+        baseline = self.p.prefetch("query")
+        for pointer in (self.conflict_pointer(topic="private/other"),
+                        {**self.conflict_pointer(), "case_ref": "unknown-source-id"}):
+            with self.subTest(pointer=pointer):
+                self.cl.search_response = {"results": [], "conflict_source_check": pointer}
+                rendered = self.p.prefetch("query")
+                self.assertEqual(rendered, baseline)
+                self.assertNotIn("Scoped conflict-source pointer:", rendered)
+                self.assertNotIn("unknown-source-id", rendered)
+
+    def test_scoped_pointer_compares_actual_prefetch_and_tool_output(self):
+        project, topic = "hermes-agent", "memory/decisions"
+        pointer = self.conflict_pointer(project, topic)
+        hit = {"project": project, "topic_path": topic, "file": "notes/decision.md",
+               "summary": "Selected evidence passage.",
+               "merge_conflict": "conservative_duplicate_exclusion"}
+
+        def delivered(response):
+            self.cl.search_handler = lambda body: (
+                response if body.get("project") == project else {"results": []})
+            self.cl.calls.clear()
+            prefetch_text = self.p.prefetch("query")
+            self.assertEqual([call[1] for call in self.cl.calls], ["/memory/search"] * 2)
+            self.cl.calls.clear()
+            tool_text = self.p.handle_tool_call("cl_search", {
+                "query": "query", "project": project, "topic_path": "memory",
+            })
+            self.assertEqual([call[1] for call in self.cl.calls], ["/memory/search"])
+            return prefetch_text, tool_text
+
+        baseline = delivered({"results": [hit]})
+        flagged = delivered({"results": [hit], "conflict_source_check": pointer})
+        self.assertEqual(flagged[0], baseline[0] + "\nScoped conflict-source pointer: " +
+                         pointer["case_ref"] +
+                         " (check one authorized original; duplicate exclusion is not contrary evidence).")
+        self.assertEqual(flagged[1], json.dumps({
+            **json.loads(baseline[1]),
+            "conflict_source_check": {"case_ref": pointer["case_ref"], "topic_path": topic},
+        }))
+        for text in flagged:
+            self.assertNotIn("claim:left", text)
+            self.assertNotIn("must-not-render", text)
+
+        self.assertEqual(delivered({
+            "results": [hit], "conflict_source_check": self.conflict_pointer("other", topic),
+        }), baseline)
+        changed = delivered({"results": [{**hit, "summary": "Changed evidence passage."}]})
+        for original, control in zip(baseline, changed):
+            self.assertIn("Selected evidence passage.", original)
+            self.assertNotIn("Changed evidence passage.", original)
+            self.assertIn("Changed evidence passage.", control)
+            self.assertNotIn("Scoped conflict-source pointer:", control)
+
     def test_prefetch_renders_only_public_duplicate_exclusion_enum(self):
         self.cl.search_response = {"results": [{
             "project": "hermes-agent", "file": "notes/review.md", "summary": "bounded summary",
@@ -631,6 +713,34 @@ class HandoffTests(Base):
 
 
 class SearchDrainTests(Base):
+    def test_cl_search_projects_existing_pointer_only_for_matching_explicit_scope(self):
+        pointer = PrefetchTests.conflict_pointer("p", "decisions/current")
+        self.cl.search_response = {"results": [{"project": "p", "file": "decision.md",
+                                                 "source_result_id": "restricted-source-id"}],
+                                  "conflict_source_check": pointer}
+        result = json.loads(self.p.handle_tool_call(
+            "cl_search", {"query": "q", "project": "p", "topic_path": "decisions"}))
+        self.assertEqual(len([call for call in self.cl.calls if call[1] == "/memory/search"]), 1)
+        self.assertEqual(result["conflict_source_check"],
+                         {"case_ref": "cc_" + "a" * 64, "topic_path": "decisions/current"})
+        self.assertNotIn("claim:left", json.dumps(result))
+        self.assertNotIn("restricted-source-id", json.dumps(result))
+
+        # Wrong scope and unknown signals have the exact fail-closed fallback: no field.
+        for args, candidate in (
+                ({"query": "q", "project": "other"}, pointer),
+                ({"query": "q", "project": "p", "topic_path": "unrelated"}, pointer),
+                ({"query": "q", "project": "p"}, {**pointer, "schema_id": "unknown.v1"}),
+                ({"query": "q"}, pointer)):
+            with self.subTest(args=args, candidate=candidate):
+                self.cl.search_response = {"results": [], "conflict_source_check": candidate}
+                result = json.loads(self.p.handle_tool_call("cl_search", args))
+                self.assertNotIn("conflict_source_check", result)
+                if not args.get("topic_path") and args.get("project") == "p":
+                    self.assertEqual(result, {"results": [], "degraded": False, "status": "ok",
+                                              "continuation": None})
+                self.assertNotIn("claim:left", json.dumps(result))
+
     def test_cl_search_projects_only_public_enum_and_preserves_continuation_signal(self):
         self.cl.search_response = {
             "results": [{"project": "p", "file": "same.md", "summary": "visible",
