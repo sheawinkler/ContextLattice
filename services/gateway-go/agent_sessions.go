@@ -219,7 +219,7 @@ func (s *agentSessionStore) persistLocked() error {
 	if err != nil {
 		return err
 	}
-	if s.decisionDurableWrite || s.hasAgentDecisionCustodyLocked() {
+	if s.decisionDurableWrite || s.hasAgentDecisionCustodyLocked() || s.hasCorrectionEventReceiptsLocked() {
 		replaced := false
 		err := writeOwnerOnlyDurableAtomicFileWithHook(s.path, raw, false, func(phase string) error {
 			if phase == "after_replace" {
@@ -2595,13 +2595,17 @@ func (s *server) agentsSessionsEvent(w http.ResponseWriter, r *http.Request, ses
 			scopeOwnership = newAgentSessionPublicScopeOwnership(requestedProject)
 		}
 		var session, event map[string]any
-		if agentDecisionEventRequested(payload) {
+		if raw, present := payload["correction"]; present {
+			session, event, err = s.recordCorrectionSessionEvent(effectiveSessionID, requestedProject, payload, raw, scopeOwnership)
+		} else if untypedCorrectionReceiptRequested(payload) {
+			err = errCorrectionInvalid
+		} else if agentDecisionEventRequested(payload) {
 			session, event, err = s.agentSessions.acknowledgeDecisionScoped(effectiveSessionID, payload, scopeOwnership, s.continuity.resolveAgentDecisionBinding)
 		} else {
 			session, event, err = s.agentSessions.appendEventScoped(effectiveSessionID, payload, scopeOwnership)
 		}
 		if err != nil {
-			if writeAgentDecisionPersistenceFailure(w, err) {
+			if writeCorrectionError(w, err) || writeAgentDecisionPersistenceFailure(w, err) {
 				return
 			}
 			if errors.Is(err, errAgentDecisionConflict) || errors.Is(err, errAgentDecisionUnavailable) {

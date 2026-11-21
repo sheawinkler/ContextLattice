@@ -2646,9 +2646,10 @@ func (c *cli) cmdCorrect(args []string) error {
 		return errors.New("correction note is required")
 	}
 	project := parsed.string("project", envString("CONTEXTLATTICE_PROJECT", "contextlattice"))
-	profile := resolveAdapterProfile(parsed)
-	sessionID := resolveOutcomeSessionID(parsed, project)
+	profile := resolveNativeLifecycleProfile(parsed)
+	sessionID := parsed.string("session_id", envString("CONTEXTLATTICE_SESSION_ID", firstString(profile.caller.readSessionState(project)["session_id"])))
 	targetClaimID := parsed.string("target_claim_id", "")
+	actor := firstNonEmpty(profile.agentID, profile.agent)
 	factual := parsed.bool("factual")
 	if factual {
 		if parsed.string("subject", "") == "" || parsed.string("predicate", "") == "" || parsed.string("object", "") == "" {
@@ -2658,6 +2659,13 @@ func (c *cli) cmdCorrect(args []string) error {
 			return errors.New("wrong, stale, or superseded factual correction requires --target-claim-id")
 		}
 	}
+	if sessionID != "" {
+		if err := c.checkCorrectionSession(project, sessionID, profile.caller, parsed.float("timeout", 10)); err != nil {
+			return err
+		}
+	}
+	operationMaterial, _ := json.Marshal([]string{project, sessionID, actor, category, strconv.FormatBool(factual), targetClaimID, content})
+	operationID := "cor_" + hex.EncodeToString(sha256Sum(operationMaterial))
 	positive := category == "useful"
 	feedbackPayload := map[string]any{
 		"project": project, "source": "agent", "task_id": parsed.string("task_id", ""),
@@ -2667,34 +2675,78 @@ func (c *cli) cmdCorrect(args []string) error {
 		"content":   content, "topic_path": parsed.string("topic_path", "agent/corrections"),
 		"metadata": map[string]any{
 			"schema_id": "contextlattice_correction.v1", "category": category, "factual": factual,
-			"session_id": sessionID, "agent_id": profile.agentID, "target_claim_id": targetClaimID,
+			"session_id": sessionID, "agent_id": actor, "target_claim_id": targetClaimID, "operation_id": operationID,
 		},
-		"idempotencyKey": "correction_" + hex.EncodeToString(sha256Sum([]byte(strings.Join([]string{project, sessionID, category, content, targetClaimID}, "\x00"))))[:24],
+		"idempotencyKey": operationID,
 	}
 	feedback, _, feedbackErr := c.requestJSON(context.Background(), http.MethodPost, "/tools/feedback_submit", feedbackPayload, parsed.float("timeout", 10))
 	findings := errorFinding(feedbackErr)
+	feedbackID := firstString(asMap(feedback["feedback"])["id"])
+	feedbackSaved := feedbackErr == nil && feedback["ok"] == true && feedbackID != "" &&
+		feedback["recorded"] == true && feedback["correction_operation_id"] == operationID && feedback["idempotencyScope"] == "correction_ledger" &&
+		correctionFeedbackReceiptMatches(feedback, feedbackPayload)
+	if feedbackErr == nil && !feedbackSaved {
+		findings = append(findings, map[string]any{"reason": "correction_feedback_unconfirmed"})
+	}
+	operation := map[string]any{
+		"operation_id": operationID, "category": category, "factual": factual,
+		"target_claim_id": targetClaimID, "feedback_id": feedbackID,
+	}
 	claimResult := map[string]any{}
-	if factual && feedbackErr == nil {
-		claimPayload := dropEmpty(map[string]any{
+	claimPersisted := false
+	if factual && feedbackSaved {
+		claimPayload := map[string]any{
 			"claim_id": parsed.string("new_claim_id", ""), "project": project,
 			"subject": parsed.string("subject", ""), "predicate": parsed.string("predicate", ""), "object": parsed.string("object", ""),
-			"statement": content, "topic_path": parsed.string("topic_path", "claims/corrections"),
-			"status": "active", "confidence": 1.0, "agent_id": profile.agentID, "session_id": sessionID,
-			"verification": map[string]any{"status": "verified", "method": "explicit_user_or_agent_correction", "checked_at": time.Now().UTC().Format(time.RFC3339)},
-			"provenance":   map[string]any{"source": "contextlattice_cli_correct", "category": category},
-		})
-		if targetClaimID != "" {
-			if category == "wrong" {
-				claimPayload["contradicts"] = []any{targetClaimID}
-			} else {
-				claimPayload["supersedes"] = []any{targetClaimID}
-			}
+			"topic_path": parsed.string("topic_path", "claims/corrections"), "agent_id": actor, "session_id": sessionID,
+			"correction": operation,
 		}
 		claimResult, _, err = c.requestJSON(context.Background(), http.MethodPost, "/memory/claims", claimPayload, parsed.float("timeout", 10))
 		findings = append(findings, errorFinding(err)...)
+		claim := asMap(claimResult["claim"])
+		verification := asMap(claim["verification"])
+		claimPersisted = err == nil && claimResult["ok"] == true && claimResult["recorded"] == true &&
+			claimResult["correction_operation_id"] == operationID && claimResult["schema_id"] == "temporal_claim.v1" &&
+			asMap(claimResult["format_contract"])["contract_valid"] == true && asMap(claim["provenance"])["run_id"] == operationID &&
+			verification["status"] == "unverified" && verification["method"] == "reporter_assertion" &&
+			claim["project"] == project && claim["agent_id"] == actor && firstString(claim["session_id"]) == sessionID &&
+			correctionClaimReceiptMatches(claim, claimPayload, content, category, targetClaimID)
+		if err == nil && !claimPersisted {
+			findings = append(findings, map[string]any{"reason": "correction_claim_unconfirmed"})
+		}
+		if !claimPersisted {
+			claimResult = nil
+		}
+	}
+	event := map[string]any{}
+	eventRecorded := false
+	if sessionID != "" && feedbackSaved && (!factual || claimPersisted) {
+		event, _, err = c.requestJSON(context.Background(), http.MethodPost, "/v1/agents/sessions/event", map[string]any{
+			"session_id": sessionID, "agent_id": actor, "project": project, "type": "correction.recorded", "correction": operation,
+		}, parsed.float("timeout", 10))
+		findings = append(findings, errorFinding(err)...)
+		row := asMap(event["event"])
+		metadata := asMap(row["metadata"])
+		eventRecorded = err == nil && (event["ok"] == true || event["event_recorded"] == true) && row["id"] == operationID && row["type"] == "correction.recorded" &&
+			row["session_id"] == sessionID && row["agent_id"] == actor && row["project"] == project &&
+			metadata["operation_id"] == operationID && metadata["category"] == category && metadata["factual"] == factual &&
+			metadata["feedback_saved"] == true && metadata["feedback_id"] == feedbackID &&
+			metadata["target_claim_id"] == targetClaimID && metadata["claim_persisted"] == factual &&
+			metadata["correction_status"] == map[bool]string{true: "factual_persisted", false: "feedback_only"}[factual]
+		if factual {
+			claim := asMap(claimResult["claim"])
+			eventRecorded = eventRecorded && metadata["claim_id"] == claim["claim_id"] && asInt(metadata["claim_revision"]) == 1
+		}
+		if err == nil && (!eventRecorded || event["ok"] != true) {
+			findings = append(findings, map[string]any{"reason": "correction_event_unconfirmed_or_incomplete"})
+		}
+		if !eventRecorded {
+			event = nil
+		}
 	}
 	outcomeResult := map[string]any{}
-	if sampleID := resolvePendingContextPackQualitySampleID(parsed, project); sampleID != "" {
+	replayed := asMap(event["event"])["idempotent_replay"] == true || (sessionID == "" && feedback["idempotentReplay"] == true)
+	if sampleID := profile.caller.pendingContextPackSample(parsed, project, sessionID); len(findings) == 0 && sampleID != "" && !replayed {
 		parsed.values["context_pack_quality_sample_id"] = sampleID
 		parsed.values["first_pass_success"] = strconv.FormatBool(positive)
 		parsed.values["repair_required"] = strconv.FormatBool(!positive)
@@ -2705,18 +2757,23 @@ func (c *cli) cmdCorrect(args []string) error {
 		outcomeResult, _, outcomeFindings = c.postContextPackOutcome(parsed, project, sessionID, profile, "cli_correction")
 		findings = append(findings, outcomeFindings...)
 	}
-	event := map[string]any{}
-	if sessionID != "" {
-		event, _, err = c.requestJSON(context.Background(), http.MethodPost, "/v1/agents/sessions/event", map[string]any{
-			"session_id": sessionID, "agent": profile.agent, "agent_id": profile.agentID, "project": project,
-			"type": "correction.recorded", "summary": truncate(category+": "+content, 360),
-			"metadata": map[string]any{"category": category, "factual": factual, "target_claim_id": targetClaimID},
-		}, parsed.float("timeout", 10))
-		findings = append(findings, errorFinding(err)...)
+	if !feedbackSaved {
+		delete(feedback, "feedback")
 	}
-	ok := len(findings) == 0 && feedbackErr == nil && !explicitFalse(feedback["ok"]) && !explicitFalse(claimResult["ok"]) && !explicitFalse(outcomeResult["ok"])
+	ok := len(findings) == 0
+	status := "failed"
+	if feedbackSaved {
+		status = "partial_failure"
+		if ok {
+			status = "feedback_only"
+			if claimPersisted {
+				status = "factual_persisted"
+			}
+		}
+	}
 	if err := c.emit(map[string]any{
-		"ok": ok, "schema_id": "contextlattice_correction.v1", "category": category, "factual": factual,
+		"ok": ok, "schema_id": "contextlattice_correction.v1", "category": category, "factual": factual, "status": status,
+		"operation_id": operationID, "feedback_saved": feedbackSaved, "claim_persisted": claimPersisted, "event_recorded": eventRecorded,
 		"session_id": sessionID, "feedback": feedback["feedback"], "claim": claimResult["claim"], "outcome": outcomeResult["outcome"], "event": event, "findings": findings,
 	}, parsed.bool("pretty") || !parsed.bool("raw")); err != nil {
 		return err

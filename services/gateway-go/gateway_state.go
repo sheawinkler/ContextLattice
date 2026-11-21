@@ -81,6 +81,7 @@ func gatewayProviderCoverageEntry() gatewaystate.EntryInput {
 func gatewayStateInventoryEntries() []gatewaystate.EntryInput {
 	entries := []gatewaystate.EntryInput{
 		gatewayStateEntry("feedback_history", "file", "append_only_durable_file", []string{"FEEDBACK_HISTORY_PATH"}, defaultFeedbackHistoryRelPath),
+		gatewayCorrectionFeedbackIndexEntry(),
 		gatewayStateEntry("task_db", "file", "durable_file", []string{"TASK_DB_PATH"}, filepath.Join(".data", "orchestrator", "agent_tasks.db")),
 		gatewayStateEntry("agent_sessions", "file", "durable_file", []string{"GO_AGENT_SESSIONS_PATH", "GO_AGENT_SESSION_LEDGER_PATH"}, defaultAgentSessionsPathRel),
 		gatewayStateEntry("continuity_ledger", "file", "append_only_durable_file", []string{"CONTEXTLATTICE_CONTINUITY_LEDGER_PATH"}, defaultContinuityLedgerPathRel),
@@ -138,4 +139,11 @@ func prepareGatewayStateRootForStartup() {
 		anyToInt(inventory["entry_count"], 0),
 		anyToBool(inventory["ok"]),
 	)
+}
+
+func gatewayCorrectionFeedbackIndexEntry() gatewaystate.EntryInput {
+	entry := gatewayStateEntry("correction_feedback_index", "file", "owner_only_durable_sqlite_wal", []string{"FEEDBACK_HISTORY_PATH"}, defaultFeedbackHistoryRelPath)
+	entry.Path = correctionFeedbackIndexPath(entry.Path)
+	entry.Source = "derived_feedback_history"
+	return entry
 }

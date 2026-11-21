@@ -81,6 +81,9 @@ type temporalClaimStore struct {
 	parseErrors          int
 	lastPersistedAt      string
 	lastError            string
+
+	correctionClaims    map[string]correctionClaimRecord
+	correctionUncertain bool
 }
 
 type temporalClaimQuery struct {
@@ -129,11 +132,19 @@ func (s *temporalClaimStore) load() error {
 		return fmt.Errorf("open temporal claim ledger: %w", err)
 	}
 	defer file.Close()
+	if err := correctionLedgerTail(file); err != nil {
+		s.correctionUncertain = true
+	}
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 64*1024), 2*1024*1024)
+	scanner.Split(scanTemporalClaimLedgerLine)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
+			continue
+		}
+		if s.loadCorrectionClaimLocked(line) {
+			s.logEntries++
 			continue
 		}
 		var claim temporalClaim
@@ -618,6 +629,9 @@ func (s *temporalClaimStore) trimLocked() {
 }
 
 func (s *temporalClaimStore) compactLocked() error {
+	if s.correctionUncertain {
+		return errCorrectionUnavailable
+	}
 	tmp := s.path + ".tmp"
 	file, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 	if err != nil {
@@ -636,8 +650,17 @@ func (s *temporalClaimStore) compactLocked() error {
 			return err
 		}
 	}
-	if s.fsync {
-		_ = file.Sync()
+	if err := s.encodeCorrectionClaimReceiptsLocked(encoder); err != nil {
+		_ = file.Close()
+		_ = os.Remove(tmp)
+		return err
+	}
+	if s.fsync || len(s.correctionClaims) != 0 {
+		if err := file.Sync(); err != nil && len(s.correctionClaims) != 0 {
+			_ = file.Close()
+			_ = os.Remove(tmp)
+			return err
+		}
 	}
 	if err := file.Close(); err != nil {
 		_ = os.Remove(tmp)
@@ -647,7 +670,13 @@ func (s *temporalClaimStore) compactLocked() error {
 		_ = os.Remove(tmp)
 		return err
 	}
-	s.logEntries = len(rows)
+	if len(s.correctionClaims) != 0 {
+		if err := syncOwnerOnlyDirectory(filepath.Dir(s.path)); err != nil {
+			s.correctionUncertain = true
+			return err
+		}
+	}
+	s.logEntries = len(rows) + len(s.correctionClaims)
 	s.lastPersistedAt = nowUTCISO()
 	return nil
 }
@@ -896,6 +925,10 @@ func (s *server) handleClaimWrite(w http.ResponseWriter, r *http.Request, tool b
 	payload, err := readOptionalJSONBody(r)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json", "detail": err.Error()})
+		return
+	}
+	if raw, present := payload["correction"]; present {
+		s.handleCorrectionClaim(w, r, payload, raw, tool)
 		return
 	}
 	if nested := anyMap(payload["claim"]); len(nested) > 0 {
