@@ -77,10 +77,27 @@ _OUTBOX_DRAIN_BATCH = 32
 _DELEGATION_MAX_TASKS = 8
 _DELEGATION_MAX_PENDING = 128
 _DELEGATION_TTL = 3600.0
+_PUBLIC_MERGE_CONFLICTS = frozenset({"conservative_duplicate_exclusion"})
 _PACK_HEADER = ("CONTEXTLATTICE CONTEXT PACK for this subtask (compiled from the goal by /memory/context-pack; "
                 "UNVERIFIED until you read the cited source):")
 _SEARCH_HEADER = ("CONTEXTLATTICE RECALL for this subtask (seeded from the goal; UNVERIFIED "
                   "until you read the source)")
+
+
+def _public_merge_conflict(value: Any) -> Optional[str]:
+    """Project only explicitly public merge-disposition enum values."""
+    return value if isinstance(value, str) and value in _PUBLIC_MERGE_CONFLICTS else None
+
+
+def _search_row_identity(row: Dict[str, Any]) -> Optional[Tuple[str, str, str]]:
+    """Return an exact, scoped row identity; incomplete identities never coalesce."""
+    project, file = row.get("project"), row.get("file")
+    content_hash = row.get("content_hash")
+    if (not isinstance(project, str) or not project.strip()
+            or not isinstance(file, str) or not file.strip()
+            or (content_hash is not None and not isinstance(content_hash, str))):
+        return None
+    return project, file, content_hash or ""
 
 
 def _load_config() -> Dict[str, Any]:
@@ -385,6 +402,10 @@ class ContextLatticeProvider(MemoryProvider):
             f = r.get("file") or r.get("topic_path") or "?"
             key = r.get("content_hash") or f
             if key in seen:
+                merge_signal = _public_merge_conflict(r.get("merge_conflict"))
+                if merge_signal:
+                    out.append(f"  - [{r.get('project') or '?'}] {f}: producer merge signal {merge_signal} "
+                               "(duplicate exclusion, not a semantic conflict)")
                 continue
             seen.add(key)
             body = " ".join(str(r.get("summary") or r.get("content") or "").split())[:220]
@@ -393,6 +414,9 @@ class ContextLatticeProvider(MemoryProvider):
             except Exception:
                 sc = ""
             out.append(f"  - [{r.get('project') or '?'}] {f}{sc}")
+            merge_signal = _public_merge_conflict(r.get("merge_conflict"))
+            if merge_signal:
+                out.append(f"      producer merge signal: {merge_signal} (duplicate exclusion, not a semantic conflict)")
             if body:
                 out.append(f"      {body}")
         if out:
@@ -585,8 +609,22 @@ class ContextLatticeProvider(MemoryProvider):
                 cont_report: Optional[Dict[str, Any]] = None
                 if cont and args.get("drain", True) is not False:
                     drained = self._drain(cont, float(self._cfg["drain_seconds"]))
-                    have = {r.get("content_hash") or r.get("file") for r in rows}
-                    added = [r for r in drained["results"] if (r.get("content_hash") or r.get("file")) not in have]
+                    by_identity = {
+                        identity: row for row in rows
+                        if (identity := _search_row_identity(row)) is not None
+                    }
+                    added = []
+                    for drained_row in drained["results"]:
+                        identity = _search_row_identity(drained_row)
+                        existing = by_identity.get(identity) if identity is not None else None
+                        merge_signal = _public_merge_conflict(drained_row.get("merge_conflict"))
+                        if existing is not None:
+                            if merge_signal and not _public_merge_conflict(existing.get("merge_conflict")):
+                                existing["merge_conflict"] = merge_signal
+                            continue
+                        if identity is not None:
+                            by_identity[identity] = drained_row
+                        added.append(drained_row)
                     rows += added
                     cont_report = {"status": drained["status"], "added_results": len(added),
                                    "failed_sources": drained.get("failed_sources"),
@@ -595,8 +633,13 @@ class ContextLatticeProvider(MemoryProvider):
                 elif cont:
                     cont_report = {"status": "not_drained", "pending_sources": cont.get("pending_sources"),
                                    "poll_url": cont.get("poll_url")}
-                hits = [{k: r.get(k) for k in ("project", "file", "topic_path", "score", "summary", "created_at")}
-                        for r in rows]
+                hits = []
+                for row in rows:
+                    hit = {k: row.get(k) for k in ("project", "file", "topic_path", "score", "summary", "created_at")}
+                    merge_signal = _public_merge_conflict(row.get("merge_conflict"))
+                    if merge_signal:
+                        hit["merge_conflict"] = merge_signal
+                    hits.append(hit)
                 degraded = bool(d.get("degraded") or d.get("error"))
                 return json.dumps({"results": hits, "degraded": degraded,
                                    "status": "degraded" if degraded else "ok",
