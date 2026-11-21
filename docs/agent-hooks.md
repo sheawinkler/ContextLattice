@@ -78,7 +78,7 @@ Installed commands:
 | `contextlattice_policy_lab` | Primary Policy Laboratory CLI for simulation, scoped cards, promotion evidence, reversible lifecycle, contradiction, storage-temperature, and governance status. |
 | `contextlattice_agent_fit` | Primary Agent Fit CLI for resumable steering, advisory runner/model selection, effective profiles, and explicit-use context preparation. |
 | `contextlattice_continuous_cognition` | One-shot, proof-carrying observation, bounded local investigation, status, canonical outcome/evaluation, rollback advice, and retirement advice. |
-| `contextlattice_recall_response` | Canonical bounded proof-carrying recall response CLI; `contextlattice_pack --response` and script compatibility surfaces delegate here. |
+| `contextlattice_recall_response` | Canonical bounded proof-carrying recall response CLI; `contextlattice context --response`, `contextlattice_pack --response`, and script compatibility surfaces delegate here. |
 | `contextlattice_continuity_zero` | Primary zero-entry CLI: select one unambiguous live objective and bind its packet, checkpoint, Agent Fit profile, preparation, repository commit, provenance, risks, and next move into one path-free manifest. |
 | `contextlattice_aggregate_signal` | Primary Aggregate Signal CLI for local preview, explicit opt-in queueing, cohort-suppressed reports, privacy accounting, and immediate opt-out. |
 | `contextlattice_agent_tools portable-continuation` | Primary Portable Continuation CLI family for signed grants, provenance-preserving imports, encrypted manifests, dry-run reconciliation, and bounded status. |
@@ -274,6 +274,24 @@ normal task lifecycle.
 For explicit decision-bound continuation, see [Decision Evidence Continuity](decision-evidence-continuity.md).
 Session start/ensure/event accept `--payload-file`; typed writes negotiate server
 support and confirm receipts. `contextlattice resume` stays the primary read path.
+
+## Native Caller Attribution
+
+Native `context`, `write`, `remember`, and `finish` use the current caller.
+Use `--agent` or `CONTEXTLATTICE_AGENT` for the harness label. The actor ID
+comes from `--agent-id`, then `CONTEXTLATTICE_AGENT_ID`, then `MEMMCP_AGENT_ID`,
+then the selected profile. With no caller specified, the label is `agent-cli`.
+Use `--model` or `CONTEXTLATTICE_MODEL` (alias `CONTEXTLATTICE_AGENT_MODEL`)
+to report the model actually used. Omitted or unknown models are not inferred
+from profiles or old sessions.
+
+Native pointers are scoped by project, working directory, actor, and optional
+`CONTEXTLATTICE_NATIVE_SESSION_ID`. A matching older pointer may be reused
+after session validation, but its pending outcomes are not imported.
+`context --response` uses the bounded Recall Response route; caller attribution
+stays in session telemetry, and this response does not seed a finish sample.
+Caller and model labels are self-reports, not credentials, reviewer acceptance,
+or independent verification.
 
 ## Policy Laboratory CLI
 

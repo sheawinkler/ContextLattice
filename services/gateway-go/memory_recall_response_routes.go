@@ -74,6 +74,10 @@ func recallResponseRequestPayload(payload map[string]any) map[string]any {
 			request[key] = cloneJSONValue(value)
 		}
 	}
+	// Carry only bounded caller telemetry, never the caller's attribution envelope.
+	if attribution := contextCallerAttribution(payload, firstNonEmptyStrings(anyToString(request["agent_id"]), anyToString(request["agentId"]))); attribution != nil {
+		request["caller_attribution"] = attribution
+	}
 	// The underlying context-pack compiler may still account for its own
 	// bounded work, but this response surface owns the final projection and
 	// must not record a second transport token-impact sample.

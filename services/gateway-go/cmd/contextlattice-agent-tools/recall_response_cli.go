@@ -168,6 +168,9 @@ func recallResponseCLIStringFlags() map[string]string {
 		"limit":                "limit",
 		"max-facts":            "max_facts",
 		"agent-id":             "agent_id",
+		"agent":                "agent",
+		"model":                "model",
+		"native-session-id":    "native_session_id",
 		"session-id":           "session_id",
 		"task-id":              "task_id",
 		"retries":              "retries",
@@ -207,12 +210,19 @@ func (c *cli) cmdRecallResponse(args []string) error {
 	if query == "" {
 		return errors.New("query is required")
 	}
-	project := parsed.string("project", "contextlattice")
+	project := parsed.string("project", envString("CONTEXTLATTICE_PROJECT", "contextlattice"))
 	sessionID := parsed.string("session_id", envString("CONTEXTLATTICE_SESSION_ID", ""))
-	agentID := parsed.string("agent_id", envString("CONTEXTLATTICE_AGENT_ID", envString("MEMMCP_AGENT_ID", "")))
+	caller := resolveNativeCaller(parsed, loadAgentProfiles())
+	agentID := caller.agentID
+	transport := c.recallResponseTransport()
+	if sessionID != "" && (caller.explicit || caller.nativeSessionID != "") {
+		if err := transport.checkCallerSession(project, sessionID, caller, parsed.float("timeout", 10)); err != nil {
+			return err
+		}
+	}
 	taskID := parsed.string("task_id", envString("CONTEXTLATTICE_TASK_ID", derivedAgentTaskID(project, query)))
 	if sessionID == "" && !parsed.bool("no_auto_session") && !autoSessionDisabled() {
-		sessionID = c.recallResponseTransport().ensureRecallResponseSession(project, query, taskID, agentID, parsed.float("timeout", 30))
+		sessionID = transport.ensureRecallResponseSession(project, query, taskID, caller, parsed.float("timeout", 30))
 	}
 	blocking := parsed.bool("blocking") && !parsed.bool("nonblocking")
 	payload := map[string]any{
@@ -233,6 +243,7 @@ func (c *cli) cmdRecallResponse(args []string) error {
 		"session_id":                emptyToNil(sessionID),
 		"task_id":                   emptyToNil(taskID),
 		"native_cli_implementation": true,
+		"caller_attribution":        caller.metadata(),
 	}
 	addContextPackTokenBudgetArgs(payload, parsed)
 	if value := parsed.string("task_phase", ""); value != "" {
@@ -245,7 +256,6 @@ func (c *cli) cmdRecallResponse(args []string) error {
 		payload["evidence_obligations"] = splitCSV(value)
 	}
 
-	transport := c.recallResponseTransport()
 	requestTimeout := clientTimeoutFor(parsed)
 	raw, err := transport.requestRecallResponseWithRetries(
 		"/memory/recall/response", payload, requestTimeout, parsed.int("retries", 0), parsed.float("retry_delay", 1),
@@ -290,11 +300,12 @@ func (c *cli) recallResponseTransport() *cli {
 	return &scoped
 }
 
-func (c *cli) ensureRecallResponseSession(project, objective, taskID, agentID string, timeout float64) string {
+func (c *cli) ensureRecallResponseSession(project, objective, taskID string, caller nativeCaller, timeout float64) string {
 	ownership := adapterOwnership(parsedArgs{})
 	ownership["task_id"] = taskID
 	ownership["session_surface"] = "recall-response"
-	return c.ensureSessionForAgent(project, objective, envString("CONTEXTLATTICE_AGENT", "agent-cli"), agentID, ownership, adapterProfile{}, timeout)
+	ownership["native_session_id"] = caller.nativeSessionID
+	return c.ensureSessionForAgent(project, objective, caller.agent, caller.agentID, ownership, adapterProfile{caller: caller}, timeout)
 }
 
 func (c *cli) requestRecallResponseWithRetries(path string, payload any, timeout float64, retries int, delay float64) (map[string]any, error) {

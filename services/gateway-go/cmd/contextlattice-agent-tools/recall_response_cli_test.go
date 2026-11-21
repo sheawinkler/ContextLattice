@@ -35,6 +35,7 @@ func TestRecallResponseCLIAliasesAndPackDelegationPreserveSemantics(t *testing.T
 		{"contextlattice", "recall-response", "same task", "--project", "alpha", "--agent-id", "agent-a", "--task-id", "task-a", "--no-auto-session", "--raw"},
 		{"contextlattice-agent-tools", "recall-response", "same task", "--project", "alpha", "--agent-id", "agent-a", "--task-id", "task-a", "--no-auto-session", "--raw"},
 		{"contextlattice_pack", "same task", "--project", "alpha", "--agent-id", "agent-a", "--task-id", "task-a", "--response", "--no-auto-session", "--raw"},
+		{"contextlattice", "context", "same task", "--project", "alpha", "--agent-id", "agent-a", "--task-id", "task-a", "--response", "--no-auto-session", "--raw"},
 	}
 	var want map[string]any
 	for _, command := range commands {
