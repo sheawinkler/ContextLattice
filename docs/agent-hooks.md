@@ -398,6 +398,16 @@ printf '%s\n' 'short factual checkpoint' | \
     --stdin
 ```
 
+The Unix `contextlattice_checkpoint` launcher delegates to the native CLI.
+Shared hook environment files can supply transport defaults, but cannot
+supply or replace the caller's actor, model, or session. A selected session
+must belong to the current caller. An unspecified model stays unknown.
+
+The command accepts the existing flags and emits the same compact JSON
+receipt. `--query` is accepted for compatibility but does not run a search:
+success requires a confirmed write and matching readback from the named
+file. Upgrade the Unix launcher and native binary together.
+
 ## Codex hook config
 
 `--install-codex-hooks` installs:

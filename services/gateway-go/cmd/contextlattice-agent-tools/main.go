@@ -84,6 +84,7 @@ var nativeToolNames = map[string]string{
 	"contextlattice_mesh_import":                     "mesh-import",
 	"contextlattice_mesh_status":                     "mesh-status",
 	"contextlattice_write":                           "write",
+	"contextlattice_checkpoint":                      "checkpoint",
 	"contextlattice_agent_session":                   "session",
 	"contextlattice_agent_trace":                     "trace",
 	"contextlattice_adopt":                           "adopt",
@@ -350,12 +351,14 @@ func (c *cli) run(argv []string) error {
 		}
 		args = args[1:]
 	}
-	args = applyCLIOutputDefaults(
-		command,
-		args,
-		cliWriterIsTerminal(c.stdout),
-		envString("CONTEXTLATTICE_CLI_OUTPUT", "auto"),
-	)
+	if command != "checkpoint" {
+		args = applyCLIOutputDefaults(
+			command,
+			args,
+			cliWriterIsTerminal(c.stdout),
+			envString("CONTEXTLATTICE_CLI_OUTPUT", "auto"),
+		)
+	}
 	switch command {
 	case "update":
 		return c.cmdUpdate(args)
@@ -375,6 +378,8 @@ func (c *cli) run(argv []string) error {
 		return c.cmdSearch(args)
 	case "write":
 		return c.cmdWrite(args)
+	case "checkpoint":
+		return c.cmdCheckpoint(args)
 	case "pack":
 		return c.cmdPack(args)
 	case "recall-response":
@@ -1859,6 +1864,39 @@ func (c *cli) requestJSONWithHeaders(ctx context.Context, method, path string, p
 }
 
 func (c *cli) requestJSONWithHeadersMode(ctx context.Context, method, path string, payload any, timeout float64, requestHeaders http.Header, useNumber bool) (map[string]any, int, http.Header, error) {
+	raw, status, headers, err := c.requestGatewayBytes(ctx, method, path, payload, timeout, requestHeaders)
+	if err != nil {
+		return nil, status, headers, err
+	}
+	parsed := map[string]any{}
+	if len(bytes.TrimSpace(raw)) > 0 {
+		if !utf8.Valid(raw) {
+			return nil, status, headers, cliRequestFailure(method, path, status, errors.New("gateway response is not valid UTF-8 JSON"), true, true)
+		}
+		if !jsonEscapedSurrogatesValid(raw) {
+			return nil, status, headers, cliRequestFailure(method, path, status, errors.New("gateway response contains an invalid escaped Unicode scalar"), true, true)
+		}
+		decoder := json.NewDecoder(bytes.NewReader(raw))
+		if useNumber {
+			decoder.UseNumber()
+		}
+		if err := decoder.Decode(&parsed); err != nil {
+			return nil, status, headers, cliRequestFailure(method, path, status, errors.New("gateway response is not valid JSON"), true, true)
+		}
+		var trailing any
+		if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+			return nil, status, headers, cliRequestFailure(method, path, status, errors.New("gateway response contains trailing JSON data"), true, true)
+		}
+	}
+	if status >= 400 {
+		return parsed, status, headers, cliRequestFailure(method, path, status, errors.New("gateway returned a non-success status"), true, true)
+	}
+	return parsed, status, headers, nil
+}
+
+const maximumGatewayResponseBytes = 8 << 20
+
+func (c *cli) requestGatewayBytes(ctx context.Context, method, path string, payload any, timeout float64, requestHeaders http.Header) ([]byte, int, http.Header, error) {
 	if finitePositiveFloat(timeout) {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(timeout*float64(time.Second)))
@@ -1909,7 +1947,6 @@ func (c *cli) requestJSONWithHeadersMode(ctx context.Context, method, path strin
 		return nil, 0, nil, cliRequestFailure(method, path, 0, err, wroteRequest.Load(), gotConnection.Load())
 	}
 	defer resp.Body.Close()
-	const maximumGatewayResponseBytes = 8 << 20
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maximumGatewayResponseBytes+1))
 	if err != nil {
 		return nil, resp.StatusCode, resp.Header.Clone(), cliRequestFailure(method, path, resp.StatusCode, err, true, true)
@@ -1917,30 +1954,7 @@ func (c *cli) requestJSONWithHeadersMode(ctx context.Context, method, path strin
 	if len(raw) > maximumGatewayResponseBytes {
 		return nil, resp.StatusCode, resp.Header.Clone(), cliRequestFailure(method, path, resp.StatusCode, errors.New("gateway response exceeds bounded transport limit"), true, true)
 	}
-	parsed := map[string]any{}
-	if len(bytes.TrimSpace(raw)) > 0 {
-		if !utf8.Valid(raw) {
-			return nil, resp.StatusCode, resp.Header.Clone(), cliRequestFailure(method, path, resp.StatusCode, errors.New("gateway response is not valid UTF-8 JSON"), true, true)
-		}
-		if !jsonEscapedSurrogatesValid(raw) {
-			return nil, resp.StatusCode, resp.Header.Clone(), cliRequestFailure(method, path, resp.StatusCode, errors.New("gateway response contains an invalid escaped Unicode scalar"), true, true)
-		}
-		decoder := json.NewDecoder(bytes.NewReader(raw))
-		if useNumber {
-			decoder.UseNumber()
-		}
-		if err := decoder.Decode(&parsed); err != nil {
-			return nil, resp.StatusCode, resp.Header.Clone(), cliRequestFailure(method, path, resp.StatusCode, errors.New("gateway response is not valid JSON"), true, true)
-		}
-		var trailing any
-		if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-			return nil, resp.StatusCode, resp.Header.Clone(), cliRequestFailure(method, path, resp.StatusCode, errors.New("gateway response contains trailing JSON data"), true, true)
-		}
-	}
-	if resp.StatusCode >= 400 {
-		return parsed, resp.StatusCode, resp.Header.Clone(), cliRequestFailure(method, path, resp.StatusCode, errors.New("gateway returned a non-success status"), true, true)
-	}
-	return parsed, resp.StatusCode, resp.Header.Clone(), nil
+	return raw, resp.StatusCode, resp.Header.Clone(), nil
 }
 
 func jsonEscapedSurrogatesValid(raw []byte) bool {
@@ -2176,28 +2190,9 @@ func (c *cli) cmdWrite(args []string) error {
 		return err
 	}
 	project := parsed.string("project", envString("CONTEXTLATTICE_PROJECT", "contextlattice"))
-	caller := resolveNativeCaller(parsed, loadAgentProfiles())
-	sessionID := parsed.string("session_id", envString("CONTEXTLATTICE_SESSION_ID", ""))
-	if sessionID == "" {
-		sessionID = firstString(caller.readSessionState(project)["session_id"])
-		if sessionID != "" && c.checkCallerSession(project, sessionID, caller, parsed.float("timeout", 10)) != nil {
-			sessionID = ""
-		}
-	} else if caller.explicit || caller.nativeSessionID != "" {
-		if err := c.checkCallerSession(project, sessionID, caller, parsed.float("timeout", 10)); err != nil {
-			return err
-		}
-	}
-	payload := map[string]any{
-		"projectName": project,
-		"fileName":    fileName,
-		"content":     content,
-		"session_id":  emptyToNil(sessionID),
-		"agent_id":    caller.agentID,
-		"tags":        caller.writeTags(),
-	}
-	if topic := parsed.string("topic_path", ""); topic != "" {
-		payload["topicPath"] = topic
+	payload, caller, sessionID, err := c.prepareCallerWrite(parsed, project, fileName, content, false)
+	if err != nil {
+		return err
 	}
 	for _, field := range []string{"references", "relations"} {
 		flag := field + "_json"

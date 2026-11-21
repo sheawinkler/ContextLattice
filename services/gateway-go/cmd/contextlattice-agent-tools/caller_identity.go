@@ -127,6 +127,35 @@ func (c *cli) checkCallerSession(project, sessionID string, caller nativeCaller,
 	return nil
 }
 
+func (c *cli) prepareCallerWrite(parsed parsedArgs, project, fileName, content string, requireSessionOwner bool) (map[string]any, nativeCaller, string, error) {
+	caller := resolveNativeCaller(parsed, loadAgentProfiles())
+	sessionID := parsed.string("session_id", envString("CONTEXTLATTICE_SESSION_ID", ""))
+	selected := sessionID != ""
+	if !selected {
+		sessionID = firstString(caller.readSessionState(project)["session_id"])
+	}
+	if sessionID != "" && (requireSessionOwner || !selected || caller.explicit || caller.nativeSessionID != "") {
+		if err := c.checkCallerSession(project, sessionID, caller, parsed.float("timeout", 10)); err != nil {
+			if requireSessionOwner || selected {
+				return nil, caller, "", err
+			}
+			sessionID = ""
+		}
+	}
+	payload := map[string]any{
+		"projectName": project,
+		"fileName":    fileName,
+		"content":     content,
+		"session_id":  emptyToNil(sessionID),
+		"agent_id":    caller.agentID,
+		"tags":        caller.writeTags(),
+	}
+	if topic := parsed.string("topic_path", ""); topic != "" {
+		payload["topicPath"] = topic
+	}
+	return payload, caller, sessionID, nil
+}
+
 func (c *cli) lifecycleCallerSession(parsed parsedArgs, project, objective string, profile adapterProfile) (string, error) {
 	caller := profile.caller
 	selected := parsed.string("session_id", envString("CONTEXTLATTICE_SESSION_ID", ""))
