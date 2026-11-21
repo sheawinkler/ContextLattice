@@ -451,6 +451,10 @@ install_agent_cli_commands() (
   LEGACY_WRAPPER_BIN_DIR="$(mktemp -d "${GLOBAL_BIN_DIR}/.contextlattice-wrappers.XXXXXX")"
   trap 'rm -rf -- "${LEGACY_WRAPPER_BIN_DIR}"' EXIT
 
+# The checkpoint launcher isolates legacy transport defaults before invoking
+# the native command. Do not put it through the generic hook wrapper.
+install -m 0755 "${ROOT_DIR}/scripts/agent_hooks/contextlattice_checkpoint.sh" "${LEGACY_WRAPPER_BIN_DIR}/contextlattice_checkpoint"
+
 cat > "${LEGACY_WRAPPER_BIN_DIR}/contextlattice_search" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -901,7 +905,6 @@ EOF
 write_hook_wrapper contextlattice_agent_start agent_start.sh
 write_hook_wrapper contextlattice_async_inbox_hook contextlattice_async_inbox_drain.sh
 write_hook_wrapper contextlattice_preflight_hook contextlattice_preflight.sh
-write_hook_wrapper contextlattice_checkpoint contextlattice_checkpoint.sh
 write_hook_wrapper contextlattice_git_lane_guard git_lane_guard.sh
 write_hook_wrapper contextlattice_branch_lane_guard branch_lane_guard.sh
 write_hook_wrapper contextlattice_rust_rebuild_gate rust_rebuild_gate.sh
