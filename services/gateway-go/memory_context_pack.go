@@ -856,6 +856,7 @@ func (s *server) buildContextPackResponseForSurfaceWithOptions(
 				"run_advisor":                    runAdvisor,
 				"graph_quality":                  graphQuality,
 				"context_pack_quality_sample_id": anyToString(contextPackQuality["sample_id"]),
+				"caller_attribution":             contextCallerAttribution(requestPayload, anyToString(searchResponse["agent_id"])),
 				"retrieval_decision_trace_id":    anyToString(anyMap(compiled["retrieval_decision_trace"])["trace_id"]),
 				"retrieval_quarantine_count":     anyToInt(anyMap(compiled["memory_trust_assessment"])["quarantine_count"], 0),
 			},

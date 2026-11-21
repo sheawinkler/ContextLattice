@@ -2150,15 +2150,18 @@ func lifecycleSummary(payload map[string]any) map[string]any {
 
 func (c *cli) cmdWrite(args []string) error {
 	parsed := parseArgs(args, mergeStringFlags(commonStringFlags(), map[string]string{
-		"file":            "file",
-		"f":               "file",
-		"content":         "content",
-		"c":               "content",
-		"content-file":    "content_file",
-		"session-id":      "session_id",
-		"agent-id":        "agent_id",
-		"references-json": "references_json",
-		"relations-json":  "relations_json",
+		"file":              "file",
+		"f":                 "file",
+		"content":           "content",
+		"c":                 "content",
+		"content-file":      "content_file",
+		"session-id":        "session_id",
+		"agent-id":          "agent_id",
+		"agent":             "agent",
+		"model":             "model",
+		"native-session-id": "native_session_id",
+		"references-json":   "references_json",
+		"relations-json":    "relations_json",
 	}), mergeBoolFlags(commonBoolFlags(), map[string]string{"stdin": "stdin"}))
 	if parsed.bool("help") {
 		return c.emitUsage("contextlattice_write --file notes/x.md (--content text|--content-file path|--stdin) [--project p] [--topic-path t] [--references-json '[\"project::notes/source.md\"]'] [--relations-json '[{\"target\":\"project::notes/source.md\",\"relation\":\"supports\"}]']")
@@ -2173,14 +2176,25 @@ func (c *cli) cmdWrite(args []string) error {
 		return err
 	}
 	project := parsed.string("project", envString("CONTEXTLATTICE_PROJECT", "contextlattice"))
+	caller := resolveNativeCaller(parsed, loadAgentProfiles())
 	sessionID := parsed.string("session_id", envString("CONTEXTLATTICE_SESSION_ID", ""))
-	agentID := parsed.string("agent_id", envString("CONTEXTLATTICE_AGENT_ID", envString("MEMMCP_AGENT_ID", "")))
+	if sessionID == "" {
+		sessionID = firstString(caller.readSessionState(project)["session_id"])
+		if sessionID != "" && c.checkCallerSession(project, sessionID, caller, parsed.float("timeout", 10)) != nil {
+			sessionID = ""
+		}
+	} else if caller.explicit || caller.nativeSessionID != "" {
+		if err := c.checkCallerSession(project, sessionID, caller, parsed.float("timeout", 10)); err != nil {
+			return err
+		}
+	}
 	payload := map[string]any{
 		"projectName": project,
 		"fileName":    fileName,
 		"content":     content,
 		"session_id":  emptyToNil(sessionID),
-		"agent_id":    emptyToNil(agentID),
+		"agent_id":    caller.agentID,
+		"tags":        caller.writeTags(),
 	}
 	if topic := parsed.string("topic_path", ""); topic != "" {
 		payload["topicPath"] = topic
@@ -2217,7 +2231,7 @@ func (c *cli) cmdWrite(args []string) error {
 	if result["ok"] != true {
 		return errors.New("memory write was not explicitly confirmed")
 	}
-	c.autoDrainAsyncInbox(sessionID, project, agentID)
+	c.autoDrainAsyncInbox(sessionID, project, caller.agentID)
 	return nil
 }
 
@@ -2368,7 +2382,7 @@ func (c *cli) cmdPacketReconstruct(args []string) error {
 }
 
 func (c *cli) cmdContext(args []string) error {
-	return c.cmdPackWithRoute(args, "contextlattice", "/memory/synthesis-pack/v2", "context")
+	return c.cmdPackWithRouteMode(args, "contextlattice context", "/memory/synthesis-pack/v2", "context", true)
 }
 
 func (c *cli) cmdResume(args []string) error {
@@ -3860,6 +3874,9 @@ func (c *cli) cmdPackWithRouteMode(args []string, commandName string, route stri
 		"limit":                "limit",
 		"max-facts":            "max_facts",
 		"agent-id":             "agent_id",
+		"agent":                "agent",
+		"model":                "model",
+		"native-session-id":    "native_session_id",
 		"session-id":           "session_id",
 		"task-id":              "task_id",
 		"retries":              "retries",
@@ -3911,17 +3928,17 @@ func (c *cli) cmdPackWithRouteMode(args []string, commandName string, route stri
 		if parsed.bool("full") || parsed.bool("debug") || explicitOutputBudget || parsed.string("base_packet_file", "") != "" {
 			return errors.New("--response cannot be combined with Agent Packet, debug, or context-budget output options")
 		}
-		route = "/memory/recall/response"
-		sessionTag = "recall-response"
+		return c.cmdRecallResponse(args)
 	}
 	c.applyBaseURL(parsed)
 	query := strings.TrimSpace(strings.Join(parsed.pos, " "))
 	if query == "" {
 		return errors.New("query is required")
 	}
-	project := parsed.string("project", "contextlattice")
+	project := parsed.string("project", envString("CONTEXTLATTICE_PROJECT", "contextlattice"))
 	sessionID := parsed.string("session_id", envString("CONTEXTLATTICE_SESSION_ID", ""))
-	agentID := parsed.string("agent_id", envString("CONTEXTLATTICE_AGENT_ID", envString("MEMMCP_AGENT_ID", "")))
+	caller := resolveNativeCaller(parsed, loadAgentProfiles())
+	agentID := caller.agentID
 	taskID := parsed.string("task_id", envString("CONTEXTLATTICE_TASK_ID", derivedAgentTaskID(project, query)))
 	blocking := parsed.bool("blocking") && !parsed.bool("nonblocking")
 	fullOutput := parsed.bool("full") || parsed.bool("debug") || explicitOutputBudget
@@ -3951,12 +3968,13 @@ func (c *cli) cmdPackWithRouteMode(args []string, commandName string, route stri
 			allowImplicitFramingNewline = true
 		}
 	}
-	if sessionID == "" && !parsed.bool("no_auto_session") && !autoSessionDisabled() {
-		if responseMode {
-			sessionID = c.ensureRecallResponseSession(project, query, taskID, agentID, parsed.float("timeout", 30))
-		} else {
-			sessionID = c.ensureSession(project, query, taskID, agentID, parsed.float("timeout", 30))
+	if sessionID != "" && (caller.explicit || caller.nativeSessionID != "") {
+		if err := c.checkCallerSession(project, sessionID, caller, parsed.float("timeout", 10)); err != nil {
+			return err
 		}
+	}
+	if sessionID == "" && !parsed.bool("no_auto_session") && !autoSessionDisabled() {
+		sessionID = c.ensureSession(project, query, taskID, caller, parsed.float("timeout", 30))
 	}
 	payload := map[string]any{
 		"query":                     query,
@@ -3976,6 +3994,7 @@ func (c *cli) cmdPackWithRouteMode(args []string, commandName string, route stri
 		"session_id":                emptyToNil(sessionID),
 		"task_id":                   emptyToNil(taskID),
 		"native_cli_implementation": true,
+		"caller_attribution":        caller.metadata(),
 	}
 	addContextPackTokenBudgetArgs(payload, parsed)
 	if packetSurface && !fullOutput {
@@ -4013,23 +4032,8 @@ func (c *cli) cmdPackWithRouteMode(args []string, commandName string, route stri
 		payload["evidence_obligations"] = splitCSV(value)
 	}
 	requestTimeout := clientTimeoutFor(parsed)
-	var raw map[string]any
-	var err error
-	if responseMode {
-		raw, err = c.requestRecallResponseWithRetries(route, payload, requestTimeout, parsed.int("retries", 0), parsed.float("retry_delay", 1))
-	} else {
-		raw, err = c.requestWithRetries(route, payload, requestTimeout, parsed.int("retries", 0), parsed.float("retry_delay", 1))
-	}
+	raw, err := c.requestWithRetries(route, payload, requestTimeout, parsed.int("retries", 0), parsed.float("retry_delay", 1))
 	if err != nil {
-		if responseMode {
-			if emitErr := c.emit(failureRecallResponse(), parsed.bool("pretty") || !parsed.bool("raw")); emitErr != nil {
-				return emitErr
-			}
-			if parsed.bool("soft") {
-				return nil
-			}
-			return err
-		}
 		if parsed.bool("soft") {
 			return c.emitPackFailureWithFraming(
 				query, outputBudget, err, allowImplicitFramingNewline,
@@ -4037,24 +4041,6 @@ func (c *cli) cmdPackWithRouteMode(args []string, commandName string, route stri
 			)
 		}
 		return err
-	}
-	if responseMode {
-		out, responseErr := compactRecallResponse(raw)
-		if responseErr != nil {
-			out = failureRecallResponse()
-			if emitErr := c.emit(out, parsed.bool("pretty") || !parsed.bool("raw")); emitErr != nil {
-				return emitErr
-			}
-			if parsed.bool("soft") {
-				return nil
-			}
-			return responseErr
-		}
-		if err := c.emit(out, parsed.bool("pretty") || !parsed.bool("raw")); err != nil {
-			return err
-		}
-		c.autoDrainAsyncInbox(sessionID, project, agentID)
-		return nil
 	}
 	prettyOutput := parsed.bool("pretty") || !parsed.bool("raw")
 	var out map[string]any
@@ -4099,7 +4085,7 @@ func (c *cli) cmdPackWithRouteMode(args []string, commandName string, route stri
 			qualitySample = map[string]any{}
 		}
 	}
-	recordContextPackQualityPending(project, sessionID, query, agentID, qualitySample)
+	recordContextPackQualityPending(project, sessionID, query, agentID, qualitySample, caller)
 	if err := c.emit(out, prettyOutput); err != nil {
 		return err
 	}
@@ -4422,10 +4408,11 @@ func derivedAgentTaskID(project, objective string) string {
 	return "task_" + hex.EncodeToString(digest[:])[:24]
 }
 
-func (c *cli) ensureSession(project, objective, taskID, agentID string, timeout float64) string {
+func (c *cli) ensureSession(project, objective, taskID string, caller nativeCaller, timeout float64) string {
 	ownership := adapterOwnership(parsedArgs{})
 	ownership["task_id"] = taskID
-	return c.ensureSessionForAgent(project, objective, envString("CONTEXTLATTICE_AGENT", "agent-cli"), agentID, ownership, adapterProfile{}, timeout)
+	ownership["native_session_id"] = caller.nativeSessionID
+	return c.ensureSessionForAgent(project, objective, caller.agent, caller.agentID, ownership, adapterProfile{caller: caller}, timeout)
 }
 
 func agentSessionAuthorityMatches(session map[string]any, expectedID, project, agent, agentID string) bool {
@@ -4492,7 +4479,11 @@ func (c *cli) ensureSessionForAgent(project, objective, agent, agentID string, o
 		ownership = adapterOwnership(parsedArgs{})
 	}
 	reuseKey := agentSessionReuseKey(project, agent, agentID, ownership)
-	if cachedID := firstString(readSessionState(project)["session_id"]); cachedID != "" {
+	readState := readSessionState
+	if profile.caller.agentID != "" {
+		readState = profile.caller.readSessionState
+	}
+	if cachedID := firstString(readState(project)["session_id"]); cachedID != "" {
 		if raw, _, err := c.requestJSONForValidation(context.Background(), http.MethodGet, "/v1/agents/sessions/"+url.PathEscape(cachedID), nil, minFloat(timeout, 5)); err == nil && agentSessionStatusReusable(raw, cachedID, project, agent, agentID, reuseKey) {
 			return cachedID
 		}
@@ -4524,6 +4515,9 @@ func (c *cli) ensureSessionForAgent(project, objective, agent, agentID string, o
 			"state_authority": state["authority"],
 		},
 	}
+	if profile.caller.agentID != "" {
+		asMap(payload["metadata"])["caller_attribution"] = profile.caller.metadata()
+	}
 	raw, _, err := c.requestJSONForValidation(context.Background(), http.MethodPost, "/v1/agents/sessions/start", payload, minFloat(timeout, 10))
 	if err != nil {
 		return ""
@@ -4533,7 +4527,12 @@ func (c *cli) ensureSessionForAgent(project, objective, agent, agentID string, o
 	if !agentSessionStatusReusable(raw, id, project, agent, agentID, reuseKey) {
 		return ""
 	}
-	writeSessionStateWithExtras(project, id, objective, agentID, map[string]any{"reuse_key": reuseKey, "ownership": ownership})
+	extras := map[string]any{"reuse_key": reuseKey, "ownership": ownership}
+	if profile.caller.agentID != "" {
+		profile.caller.writeSessionState(project, id, objective, extras)
+	} else {
+		writeSessionStateWithExtras(project, id, objective, agentID, extras)
+	}
 	return id
 }
 
@@ -6329,6 +6328,7 @@ func adapterBoolFlags() map[string]string {
 }
 
 type adapterProfile struct {
+	caller         nativeCaller
 	agent          string
 	agentID        string
 	topicPath      string
@@ -6343,6 +6343,18 @@ func resolveAdapterProfile(parsed parsedArgs) adapterProfile {
 	agent := parsed.string("agent", "codex")
 	profile := asMap(loadAgentProfiles()[agent])
 	agentID := parsed.string("agent_id", firstString(profile["agent_id"], envString("CONTEXTLATTICE_AGENT_ID", envString("MEMMCP_AGENT_ID", ""))))
+	return adapterProfileFor(parsed, agent, agentID, profile)
+}
+
+func resolveNativeLifecycleProfile(parsed parsedArgs) adapterProfile {
+	profiles := loadAgentProfiles()
+	caller := resolveNativeCaller(parsed, profiles)
+	profile := adapterProfileFor(parsed, caller.agent, caller.agentID, asMap(profiles[caller.agent]))
+	profile.caller = caller
+	return profile
+}
+
+func adapterProfileFor(parsed parsedArgs, agent, agentID string, profile map[string]any) adapterProfile {
 	topicPath := parsed.string("topic_path", firstString(profile["topic_path"]))
 	query := parsed.string("query", parsed.string("objective", firstString(profile["query"], agent+" preflight connectivity and retrieval")))
 	mode := strings.ToLower(parsed.string("mode", firstString(profile["retrieval_mode"], "balanced")))
@@ -6496,7 +6508,7 @@ func contextPackOutcomeReport(sessionID string, sampleID string) map[string]any 
 	}
 }
 
-func recordContextPackQualityPending(project, sessionID, objective, agentID string, quality map[string]any) {
+func recordContextPackQualityPending(project, sessionID, objective, agentID string, quality map[string]any, callers ...nativeCaller) {
 	sampleID := firstString(quality["sample_id"])
 	if sampleID == "" || sessionID == "" {
 		return
@@ -6508,7 +6520,11 @@ func recordContextPackQualityPending(project, sessionID, objective, agentID stri
 		"captured_at":   firstString(quality["capturedAt"], quality["captured_at"], time.Now().UTC().Format(time.RFC3339)),
 		"reported":      false,
 	}
-	state := readSessionState(project)
+	readState := readSessionState
+	if len(callers) != 0 {
+		readState = callers[0].readSessionState
+	}
+	state := readState(project)
 	bySession := asMap(state["pending_context_pack_quality_by_session"])
 	bySession[sessionID] = pendingQuality
 	if len(bySession) > 32 {
@@ -6529,10 +6545,15 @@ func recordContextPackQualityPending(project, sessionID, objective, agentID stri
 			keys = keys[1:]
 		}
 	}
-	writeSessionStateWithExtras(project, sessionID, objective, agentID, map[string]any{
+	extras := map[string]any{
 		"latest_context_pack_quality":             pendingQuality,
 		"pending_context_pack_quality_by_session": bySession,
-	})
+	}
+	if len(callers) != 0 {
+		callers[0].writeSessionState(project, sessionID, objective, extras)
+	} else {
+		writeSessionStateWithExtras(project, sessionID, objective, agentID, extras)
+	}
 }
 
 func resolvePendingContextPackQualitySampleID(parsed parsedArgs, project string) string {
@@ -6544,6 +6565,23 @@ func resolvePendingContextPackQualitySampleID(parsed parsedArgs, project string)
 	}
 	state := readSessionState(project)
 	sessionID := parsed.string("session_id", envString("CONTEXTLATTICE_SESSION_ID", firstString(state["session_id"])))
+	return pendingContextPackSampleForSession(state, sessionID)
+}
+
+func (caller nativeCaller) pendingContextPackSample(parsed parsedArgs, project, sessionID string) string {
+	if sampleID := parsed.string("context_pack_quality_sample_id", ""); sampleID != "" {
+		return sampleID
+	}
+	if sampleID := envString("CONTEXTLATTICE_CONTEXT_PACK_QUALITY_SAMPLE_ID", ""); sampleID != "" {
+		return sampleID
+	}
+	if sessionID == "" {
+		return ""
+	}
+	return pendingContextPackSampleForSession(caller.readSessionState(project), sessionID)
+}
+
+func pendingContextPackSampleForSession(state map[string]any, sessionID string) string {
 	if sessionID != "" {
 		if quality := asMap(asMap(state["pending_context_pack_quality_by_session"])[sessionID]); len(quality) > 0 {
 			if asBool(quality["reported"]) {
@@ -6562,8 +6600,12 @@ func resolvePendingContextPackQualitySampleID(parsed parsedArgs, project string)
 	return firstString(quality["sample_id"])
 }
 
-func markContextPackQualityReported(project string, sessionID string, outcome map[string]any) {
-	state := readSessionState(project)
+func markContextPackQualityReported(project string, sessionID string, outcome map[string]any, caller nativeCaller) {
+	readState := readSessionState
+	if caller.agentID != "" {
+		readState = caller.readSessionState
+	}
+	state := readState(project)
 	bySession := asMap(state["pending_context_pack_quality_by_session"])
 	quality := asMap(bySession[sessionID])
 	if len(quality) == 0 && firstString(state["session_id"]) == sessionID {
@@ -6581,7 +6623,11 @@ func markContextPackQualityReported(project string, sessionID string, outcome ma
 	if firstString(state["session_id"]) == sessionID || firstString(latest["sample_id"]) == firstString(quality["sample_id"]) {
 		extras["latest_context_pack_quality"] = quality
 	}
-	writeSessionStateWithExtras(project, sessionID, firstString(state["objective"]), firstString(state["agent_id"]), extras)
+	if caller.agentID != "" {
+		caller.writeSessionState(project, firstString(state["session_id"]), firstString(state["objective"]), extras)
+	} else {
+		writeSessionStateWithExtras(project, sessionID, firstString(state["objective"]), firstString(state["agent_id"]), extras)
+	}
 }
 
 func (c *cli) ensureAdapterSession(parsed parsedArgs, project, objective, agentID string) (string, error) {
@@ -7656,7 +7702,7 @@ func (c *cli) adapterContextPack(args []string) error {
 }
 
 func (c *cli) adapterCheckpoint(args []string, compactDefault bool) error {
-	parsed := parseArgs(args, adapterStringFlags(), adapterBoolFlags())
+	parsed := parseArgs(args, mergeStringFlags(adapterStringFlags(), map[string]string{"model": "model"}), adapterBoolFlags())
 	if parsed.bool("help") {
 		if compactDefault {
 			return c.emitUsage("contextlattice remember '<checkpoint>' [--session-id <id>] [--project <project>] [--full] [--pretty]")
@@ -7664,9 +7710,9 @@ func (c *cli) adapterCheckpoint(args []string, compactDefault bool) error {
 		return c.emitUsage("contextlattice_agent_adapter checkpoint --session-id <id> --content '<summary>' [--file notes/agent-adapters/checkpoint.md] --pretty")
 	}
 	c.applyBaseURL(parsed)
-	project := parsed.string("project", "contextlattice")
-	profile := resolveAdapterProfile(parsed)
-	sessionID, err := c.ensureAdapterSession(parsed, project, parsed.string("objective", profile.query), profile.agentID)
+	project := parsed.string("project", envString("CONTEXTLATTICE_PROJECT", "contextlattice"))
+	profile := resolveNativeLifecycleProfile(parsed)
+	sessionID, err := c.lifecycleCallerSession(parsed, project, parsed.string("objective", profile.query), profile)
 	if err != nil {
 		return err
 	}
@@ -7721,7 +7767,7 @@ func (c *cli) adapterCheckpoint(args []string, compactDefault bool) error {
 		"repo":        adapterOwnership(parsed)["repo"],
 		"branch":      adapterOwnership(parsed)["branch"],
 		"worktree":    adapterOwnership(parsed)["worktree"],
-		"tags":        []any{"agent-writeback", "checkpoint", "universal-agent-adapter", "go-native-cli"},
+		"tags":        profile.caller.writeTags("agent-writeback", "checkpoint", "universal-agent-adapter", "go-native-cli"),
 	}, parsed.float("timeout", 30))
 	findings := []map[string]any{}
 	if writeErr != nil {
@@ -7740,12 +7786,13 @@ func (c *cli) adapterCheckpoint(args []string, compactDefault bool) error {
 			"type":       "writeback.completed",
 			"summary":    truncate(content, 240),
 			"metadata": map[string]any{
-				"adapter":       "contextlattice-agent-adapter",
-				"file":          fileName,
-				"topic_path":    topicPath,
-				"go_native_cli": true,
-				"agent_state":   buildAgentLifecycleState(parsed, profile, "working"),
-				"ownership":     adapterOwnership(parsed),
+				"adapter":            "contextlattice-agent-adapter",
+				"file":               fileName,
+				"topic_path":         topicPath,
+				"go_native_cli":      true,
+				"caller_attribution": profile.caller.metadata(),
+				"agent_state":        buildAgentLifecycleState(parsed, profile, "working"),
+				"ownership":          adapterOwnership(parsed),
 			},
 		}, parsed.float("timeout", 10))
 		if eventErr != nil || event["ok"] != true {
@@ -7984,7 +8031,14 @@ func resolveOutcomeSessionID(parsed parsedArgs, project string) string {
 }
 
 func buildContextPackOutcomePayload(parsed parsedArgs, project, sessionID string, profile adapterProfile, source string) (map[string]any, bool, error) {
-	sampleID := resolvePendingContextPackQualitySampleID(parsed, project)
+	var sampleID string
+	defaultTaskClass := "agent_workflow"
+	if profile.caller.agentID != "" {
+		sampleID = profile.caller.pendingContextPackSample(parsed, project, sessionID)
+		defaultTaskClass = ""
+	} else {
+		sampleID = resolvePendingContextPackQualitySampleID(parsed, project)
+	}
 	if sampleID == "" {
 		return nil, false, errors.New("context pack quality sample id is required; run contextlattice_agent_adapter context-pack first or pass --context-pack-quality-sample-id")
 	}
@@ -8055,7 +8109,7 @@ func buildContextPackOutcomePayload(parsed parsedArgs, project, sessionID string
 		"agent":                          profile.agent,
 		"agent_id":                       profile.agentID,
 		"project":                        project,
-		"task_class":                     parsed.string("task_class", "agent_workflow"),
+		"task_class":                     parsed.string("task_class", defaultTaskClass),
 		"outcome_source":                 parsed.string("outcome_source", source),
 		"policy_id":                      parsed.string("policy_id", ""),
 		"policy_arm":                     parsed.string("policy_arm", ""),
@@ -8340,6 +8394,14 @@ func (c *cli) postContextPackOutcome(parsed parsedArgs, project, sessionID strin
 	}
 	if len(findings) == 0 && sessionID != "" {
 		var postEventErr error
+		metadata := map[string]any{
+			"adapter":       "contextlattice-agent-adapter",
+			"go_native_cli": true,
+			"outcome":       compactOutcome,
+		}
+		if profile.caller.agentID != "" {
+			metadata["caller_attribution"] = profile.caller.metadata()
+		}
 		event, _, postEventErr = c.requestJSON(context.Background(), http.MethodPost, "/v1/agents/sessions/event", map[string]any{
 			"session_id": sessionID,
 			"agent":      profile.agent,
@@ -8347,11 +8409,7 @@ func (c *cli) postContextPackOutcome(parsed parsedArgs, project, sessionID strin
 			"project":    project,
 			"type":       "context_pack.outcome_reported",
 			"summary":    "context pack outcome reported",
-			"metadata": map[string]any{
-				"adapter":       "contextlattice-agent-adapter",
-				"go_native_cli": true,
-				"outcome":       compactOutcome,
-			},
+			"metadata":   metadata,
 		}, parsed.float("timeout", 10))
 		if postEventErr != nil || event["ok"] != true {
 			findings = append(findings, map[string]any{"reason": "outcome_event_failed"})
@@ -8364,7 +8422,7 @@ func (c *cli) postContextPackOutcome(parsed parsedArgs, project, sessionID strin
 		}
 		raw = safeRaw
 		raw["outcome"] = compactOutcome
-		markContextPackQualityReported(project, sessionID, compactOutcome)
+		markContextPackQualityReported(project, sessionID, compactOutcome, profile.caller)
 	}
 	return raw, event, findings
 }
@@ -8417,7 +8475,7 @@ func (c *cli) adapterOutcomeCommand(args []string, command string) error {
 }
 
 func (c *cli) adapterComplete(args []string, compactDefault bool) error {
-	parsed := parseArgs(args, adapterStringFlags(), adapterBoolFlags())
+	parsed := parseArgs(args, mergeStringFlags(adapterStringFlags(), map[string]string{"model": "model"}), adapterBoolFlags())
 	if parsed.bool("help") {
 		if compactDefault {
 			return c.emitUsage("contextlattice finish '<summary>' [--success|--failure|--repair] [--session-id <id>] [--no-outcome] [--full] [--pretty]")
@@ -8425,13 +8483,13 @@ func (c *cli) adapterComplete(args []string, compactDefault bool) error {
 		return c.emitUsage("contextlattice_agent_adapter complete --session-id <id> --summary '<result>' [--first-pass-success true|false --repair-required true|false --retry-count n] --pretty")
 	}
 	c.applyBaseURL(parsed)
-	project := parsed.string("project", "contextlattice")
-	profile := resolveAdapterProfile(parsed)
+	project := parsed.string("project", envString("CONTEXTLATTICE_PROJECT", "contextlattice"))
+	profile := resolveNativeLifecycleProfile(parsed)
 	summary := parsed.string("summary", strings.Join(parsed.pos, " "))
 	if summary == "" {
 		summary = "session completed"
 	}
-	sessionID, err := c.ensureAdapterSession(parsed, project, parsed.string("objective", summary), profile.agentID)
+	sessionID, err := c.lifecycleCallerSession(parsed, project, parsed.string("objective", summary), profile)
 	if err != nil {
 		return err
 	}
@@ -8440,7 +8498,7 @@ func (c *cli) adapterComplete(args []string, compactDefault bool) error {
 	findings := []map[string]any{}
 	outcomeMode := "skipped_no_pending_sample"
 	outcomeRequested := contextPackOutcomeRequested(parsed)
-	pendingSampleID := resolvePendingContextPackQualitySampleID(parsed, project)
+	pendingSampleID := profile.caller.pendingContextPackSample(parsed, project, sessionID)
 	if !parsed.bool("no_outcome") && !outcomeRequested && pendingSampleID != "" {
 		switch {
 		case parsed.bool("failure"):
@@ -8539,6 +8597,8 @@ func (c *cli) adapterComplete(args []string, compactDefault bool) error {
 			return err
 		}
 	}
+	metadata := mergeAdapterMetadata(parsed, profile, state)
+	metadata["caller_attribution"] = profile.caller.metadata()
 	event, _, eventErr := c.requestJSON(context.Background(), http.MethodPost, "/v1/agents/sessions/event", map[string]any{
 		"session_id": sessionID,
 		"agent":      profile.agent,
@@ -8547,7 +8607,7 @@ func (c *cli) adapterComplete(args []string, compactDefault bool) error {
 		"type":       eventType,
 		"summary":    summary,
 		"status":     eventStatus,
-		"metadata":   mergeAdapterMetadata(parsed, profile, state),
+		"metadata":   metadata,
 	}, parsed.float("timeout", 10))
 	if eventErr != nil {
 		findings = append(findings, map[string]any{"reason": "completion_event_failed"})
@@ -10064,12 +10124,21 @@ func writeSessionStateWithExtras(project, sessionID, objective, agentID string, 
 }
 
 func readSessionState(project string) map[string]any {
-	path := sessionStatePath(project)
+	return readSessionStateFile(sessionStatePath(project))
+}
+
+func readSessionStateFile(path string) map[string]any {
 	if path == "" {
 		return map[string]any{}
 	}
-	data, err := os.ReadFile(path)
+	f, err := os.Open(path)
 	if err != nil {
+		return map[string]any{}
+	}
+	defer f.Close()
+	const maxStateBytes = 64 * 1024
+	data, err := io.ReadAll(io.LimitReader(f, maxStateBytes+1))
+	if err != nil || len(data) > maxStateBytes {
 		return map[string]any{}
 	}
 	payload := map[string]any{}

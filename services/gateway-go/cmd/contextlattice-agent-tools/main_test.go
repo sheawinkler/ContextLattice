@@ -1346,7 +1346,7 @@ func TestPendingContextOutcomeIsSessionScopedAndBounded(t *testing.T) {
 	if got := resolvePendingContextPackQualitySampleID(parsedB, "alpha"); got != "cpq-b" {
 		t.Fatalf("session B resolved wrong pending sample: %q", got)
 	}
-	markContextPackQualityReported("alpha", "sess-a", map[string]any{"outcome_id": "outcome-a"})
+	markContextPackQualityReported("alpha", "sess-a", map[string]any{"outcome_id": "outcome-a"}, nativeCaller{})
 	if got := resolvePendingContextPackQualitySampleID(parsedA, "alpha"); got != "" {
 		t.Fatalf("reported session A sample remained pending: %q", got)
 	}
@@ -1364,6 +1364,7 @@ func TestPendingContextOutcomeIsSessionScopedAndBounded(t *testing.T) {
 
 func TestUnifiedContextSeedsAutomaticFinishOutcomeFromAgentPacket(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CONTEXTLATTICE_AGENT_ID", "fixture-packet-actor")
 	t.Setenv("CONTEXTLATTICE_ASYNC_INBOX_ACK_PATH", filepath.Join(t.TempDir(), "seen.json"))
 	var contextPayload, outcomePayload map[string]any
 	eventTypes := []string{}
@@ -1384,7 +1385,7 @@ func TestUnifiedContextSeedsAutomaticFinishOutcomeFromAgentPacket(t *testing.T) 
 			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "rollup": map[string]any{"agent_inbox": map[string]any{"items": []any{}}}})
 		case "/v1/agents/sessions/sess-packet-finish":
 			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "session": map[string]any{
-				"id": "sess-packet-finish", "status": "active", "project": "alpha",
+				"id": "sess-packet-finish", "status": "active", "project": "alpha", "agent_id": "fixture-packet-actor",
 			}})
 		case "/telemetry/context-pack-quality/outcome":
 			_ = json.NewDecoder(r.Body).Decode(&outcomePayload)
@@ -1418,7 +1419,7 @@ func TestUnifiedContextSeedsAutomaticFinishOutcomeFromAgentPacket(t *testing.T) 
 	if firstString(contextPayload["task_id"]) == "" {
 		t.Fatalf("context request omitted task identity: %#v", contextPayload)
 	}
-	packetQuality := asMap(readSessionState("alpha")["latest_context_pack_quality"])
+	packetQuality := asMap((nativeCaller{agentID: "fixture-packet-actor"}).readSessionState("alpha")["latest_context_pack_quality"])
 	if firstString(packetQuality["sample_id"]) != "cpq_packet_finish" || asBool(packetQuality["reported"]) {
 		t.Fatalf("packet outcome did not seed pending quality custody: %#v", packetQuality)
 	}
@@ -1445,7 +1446,8 @@ func TestUnifiedContextSeedsAutomaticFinishOutcomeFromAgentPacket(t *testing.T) 
 func TestUnifiedFinishAutomaticallyReportsPendingContextOutcome(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("CONTEXTLATTICE_ASYNC_INBOX_ACK_PATH", filepath.Join(t.TempDir(), "seen.json"))
-	writeSessionStateWithExtras("alpha", "sess-finish", "finish task", "codex_test", map[string]any{
+	caller := nativeCaller{agentID: "codex_test"}
+	caller.writeSessionState("alpha", "sess-finish", "finish task", map[string]any{
 		"latest_context_pack_quality": map[string]any{"sample_id": "cpq_finish", "reported": false},
 	})
 	var outcomePayload map[string]any
@@ -1454,6 +1456,8 @@ func TestUnifiedFinishAutomaticallyReportsPendingContextOutcome(t *testing.T) {
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
+		case "/v1/agents/sessions/sess-finish":
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "session": map[string]any{"id": "sess-finish", "agent_id": "codex_test", "project": "alpha", "status": "active"}})
 		case "/telemetry/context-pack-quality/outcome":
 			if err := json.NewDecoder(r.Body).Decode(&outcomePayload); err != nil {
 				t.Fatalf("decode outcome request: %v", err)
@@ -1509,7 +1513,7 @@ func TestUnifiedFinishAutomaticallyReportsPendingContextOutcome(t *testing.T) {
 	if bytes.Contains(stdout.Bytes(), []byte(backendNoise)) || !lifecycleReceiptContractValid(output) {
 		t.Fatalf("completion emitted unbounded backend outcome metadata: %s", stdout.String())
 	}
-	quality := asMap(readSessionState("alpha")["latest_context_pack_quality"])
+	quality := asMap(caller.readSessionState("alpha")["latest_context_pack_quality"])
 	if !asBool(quality["reported"]) || firstString(quality["outcome_id"]) != "outcome_finish" {
 		t.Fatalf("pending outcome was not retired after durable report: %#v", quality)
 	}
@@ -1550,6 +1554,8 @@ func TestAdapterCheckpointRejectsWriteWithoutCompletionEvent(t *testing.T) {
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
+		case "/v1/agents/sessions/session-checkpoint-rejected":
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "session": map[string]any{"id": "session-checkpoint-rejected", "agent_id": "agent-safe", "project": "alpha", "status": "active"}})
 		case "/memory/write":
 			_ = json.NewEncoder(w).Encode(map[string]any{"ok": false})
 		case "/v1/agents/sessions/event":
@@ -1679,6 +1685,8 @@ func TestAdapterCompleteRequiresOutcomeEventBeforeTerminalEventAndStateRetiremen
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
+		case "/v1/agents/sessions/session-complete-ordered":
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "session": map[string]any{"id": "session-complete-ordered", "agent_id": "agent-safe", "project": "alpha", "status": "active"}})
 		case "/telemetry/context-pack-quality/outcome":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"ok": true,
