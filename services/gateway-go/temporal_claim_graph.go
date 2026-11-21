@@ -24,13 +24,15 @@ const (
 var temporalClaimIDPattern = regexp.MustCompile(`^[A-Za-z0-9_.:-]{1,128}$`)
 
 type temporalClaimEvidence struct {
-	RefID       string `json:"ref_id"`
-	Kind        string `json:"kind"`
-	MemoryID    string `json:"memory_id,omitempty"`
-	URI         string `json:"uri,omitempty"`
-	ContentHash string `json:"content_hash,omitempty"`
-	Excerpt     string `json:"excerpt,omitempty"`
-	ObservedAt  string `json:"observed_at,omitempty"`
+	RefID       string                          `json:"ref_id"`
+	Kind        string                          `json:"kind"`
+	MemoryID    string                          `json:"memory_id,omitempty"`
+	URI         string                          `json:"uri,omitempty"`
+	ContentHash string                          `json:"content_hash,omitempty"`
+	Excerpt     string                          `json:"excerpt,omitempty"`
+	ObservedAt  string                          `json:"observed_at,omitempty"`
+	Admission   *temporalClaimEvidenceAdmission `json:"admission,omitempty"`
+	receipt     temporalClaimEvidenceReceipt
 }
 
 type temporalClaim struct {
@@ -91,6 +93,7 @@ type temporalClaimQuery struct {
 	IncludeExpired    bool
 	IncludeSuperseded bool
 	IncludeRetracted  bool
+	KeepStoredStatus  bool
 }
 
 func newTemporalClaimStoreFromEnv() (*temporalClaimStore, error) {
@@ -148,7 +151,7 @@ func (s *temporalClaimStore) load() error {
 	return nil
 }
 
-func normalizeTemporalClaim(payload map[string]any, previous *temporalClaim) (temporalClaim, error) {
+func normalizeTemporalClaim(payload map[string]any) (temporalClaim, error) {
 	project, err := sanitizeMemoryProject(anyToString(payload["project"]))
 	if err != nil {
 		return temporalClaim{}, fmt.Errorf("project: %w", err)
@@ -207,13 +210,6 @@ func normalizeTemporalClaim(payload map[string]any, previous *temporalClaim) (te
 	if confidence < 0 || confidence > 1 {
 		return temporalClaim{}, errors.New("confidence must be between 0 and 1")
 	}
-	now := nowUTCISO()
-	createdAt := now
-	revision := 1
-	if previous != nil {
-		createdAt = previous.CreatedAt
-		revision = previous.Revision + 1
-	}
 	claim := temporalClaim{
 		SchemaID:     temporalClaimContractID,
 		ClaimID:      claimID,
@@ -239,9 +235,7 @@ func normalizeTemporalClaim(payload map[string]any, previous *temporalClaim) (te
 		Commit:       clipText(strings.TrimSpace(anyToString(payload["commit"])), 128),
 		AgentID:      clipText(strings.TrimSpace(anyToString(payload["agent_id"])), 128),
 		SessionID:    clipText(strings.TrimSpace(anyToString(payload["session_id"])), maxAgentSessionIDLength),
-		Revision:     revision,
-		CreatedAt:    createdAt,
-		UpdatedAt:    now,
+		Revision:     1,
 	}
 	claim.searchText = temporalClaimSearchText(claim)
 	return claim, nil
@@ -356,6 +350,7 @@ func normalizeClaimEvidence(raw any, limit int) []temporalClaimEvidence {
 			ContentHash: clipText(strings.TrimSpace(anyToString(item["content_hash"])), 128),
 			Excerpt:     clipText(strings.TrimSpace(anyToString(item["excerpt"])), 500),
 			ObservedAt:  clipText(strings.TrimSpace(anyToString(item["observed_at"])), 64),
+			receipt:     parseTemporalClaimEvidenceReceipt(anyMap(item["receipt"])),
 		}
 		if ref.RefID == "" {
 			ref.RefID = firstNonEmptyStrings(ref.MemoryID, ref.URI, ref.ContentHash)
@@ -399,30 +394,27 @@ func normalizeClaimProvenance(raw any) map[string]any {
 }
 
 func (s *temporalClaimStore) upsert(payload map[string]any) (temporalClaim, error) {
+	return s.upsertWithEvidence(payload, nil)
+}
+
+func (s *temporalClaimStore) upsertWithEvidence(payload map[string]any, admit func(*temporalClaim)) (temporalClaim, error) {
 	if s == nil || !s.enabled {
 		return temporalClaim{}, errors.New("temporal claim graph is disabled")
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	claimID := strings.TrimSpace(anyToString(payload["claim_id"]))
-	var previous *temporalClaim
-	if existing, ok := s.claims[claimID]; ok {
-		copy := existing
-		previous = &copy
-	}
-	claim, err := normalizeTemporalClaim(payload, previous)
+	claim, err := normalizeTemporalClaim(payload)
 	if err != nil {
 		return temporalClaim{}, err
 	}
-	if previous == nil {
-		if existing, ok := s.claims[claim.ClaimID]; ok {
-			copy := existing
-			previous = &copy
-			claim, err = normalizeTemporalClaim(payload, previous)
-			if err != nil {
-				return temporalClaim{}, err
-			}
-		}
+	if admit != nil {
+		admit(&claim)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	claim.UpdatedAt = nowUTCISO()
+	claim.CreatedAt = claim.UpdatedAt
+	if previous, exists := s.claims[claim.ClaimID]; exists {
+		claim.CreatedAt = previous.CreatedAt
+		claim.Revision = previous.Revision + 1
 	}
 	changed := []temporalClaim{claim}
 	for _, supersededID := range claim.Supersedes {
@@ -585,7 +577,9 @@ func (s *temporalClaimStore) query(q temporalClaimQuery) []temporalClaim {
 			continue
 		}
 		copy := claim
-		copy.Status = status
+		if !q.KeepStoredStatus {
+			copy.Status = status
+		}
 		candidate := scoredClaim{claim: copy, score: score}
 		if len(rows) < limit {
 			rows = append(rows, candidate)
@@ -691,6 +685,8 @@ func temporalClaimMaps(rows []temporalClaim) []any {
 		var row map[string]any
 		encoded, _ := json.Marshal(claim)
 		_ = json.Unmarshal(encoded, &row)
+		row["verification_status_source"] = "writer_reported"
+		row["evidence_admission_basis"] = "at_write_not_rechecked"
 		row["contradiction_state"] = "clear"
 		if len(claim.Contradicts) > 0 || len(claim.Opposition) > 0 {
 			row["contradiction_state"] = "contested"
@@ -785,7 +781,9 @@ func (s *server) handleClaimWrite(w http.ResponseWriter, r *http.Request, tool b
 	if nested := anyMap(payload["claim"]); len(nested) > 0 {
 		payload = nested
 	}
-	claim, err := s.temporalClaims.upsert(payload)
+	claim, err := s.temporalClaims.upsertWithEvidence(payload, func(claim *temporalClaim) {
+		s.admitTemporalClaimEvidence(r.Context(), claim, time.Now().UTC())
+	})
 	if err != nil {
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"ok": false, "error": "invalid_temporal_claim", "detail": err.Error()})
 		return
@@ -823,6 +821,14 @@ func (s *server) handleClaimQuery(w http.ResponseWriter, r *http.Request, tool b
 	payload, err := readOptionalJSONBody(r)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json", "detail": err.Error()})
+		return
+	}
+	if raw, present := payload["conflict_source_check"]; present {
+		if tool {
+			writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"ok": false, "error": "unsupported_tool_selector"})
+			return
+		}
+		s.recheckConflictSource(w, r, payload, raw)
 		return
 	}
 	query, err := claimQueryFromPayload(payload)

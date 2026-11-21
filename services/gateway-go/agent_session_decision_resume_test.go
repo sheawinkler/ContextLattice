@@ -15,6 +15,11 @@ func agentDecisionResumeFixture(t *testing.T, mutations ...func(map[string]any))
 	for _, mutate := range mutations {
 		mutate(payload)
 	}
+	return agentDecisionResumeStartFixture(t, continuity, owner, payload)
+}
+
+func agentDecisionResumeStartFixture(t *testing.T, continuity *continuityStore, owner *memoryStore, payload map[string]any) (*server, *memoryStore, string) {
+	t.Helper()
 	change, _, err := continuity.recordDecisionChangeWithOwner(payload, decisionOwnerValidator(owner))
 	if err != nil {
 		t.Fatal(err)
@@ -30,7 +35,11 @@ func agentDecisionResumeFixture(t *testing.T, mutations ...func(map[string]any))
 	}
 	store := &agentSessionStore{path: filepath.Join(t.TempDir(), "sessions.json"), maxKeep: 16, maxEvents: 16, idleTTL: time.Hour,
 		sessions: map[string]map[string]any{}, events: map[string][]map[string]any{}, order: []string{}}
-	if _, _, err := store.startOrReuseDecisionScoped(start, nil, binding); err != nil {
+	var ownership map[string]any
+	if change.Applicability != nil && change.Applicability.ArtifactSectionWitness != nil {
+		ownership = newAgentSessionPublicScopeOwnership(change.Project)
+	}
+	if _, _, err := store.startOrReuseDecisionScoped(start, ownership, binding); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := store.appendEvent("sess_resume", map[string]any{"type": "checkpoint.written", "summary": "Historical deployment intent.",
@@ -73,6 +82,9 @@ func TestAgentDecisionResumeUsesOriginalOwnerPins(t *testing.T) {
 			positive := projection(decisionResumeResponse(t, s, sessionID, compact))
 			if positive["status"] != "verified_match" {
 				t.Fatalf("owner-pinned applicability absent or not checked: %#v", positive)
+			}
+			if _, projected := positive["artifact_section_witness"]; projected {
+				t.Fatal("existing pinned registration acquired a witness without opt-in")
 			}
 			seedMemoryGraphRepairDoc(t, owner, "alpha", "notes/input.md", "pilot/decision", "Corrected deployment acceptance.", "test", "session")
 			response := decisionResumeResponse(t, s, sessionID, compact)

@@ -1,0 +1,14 @@
+{
+  "schema_id": "frontier_t5_policy_laboratory_holdout.v2",
+  "date": "2026-11-21",
+  "base_schema_id": "frontier_t5_policy_laboratory_holdout.v1",
+  "base_sha256": "908ebcd73b772a63f3226e87345e16841f59365bae6a18cc60da57546f259a0c",
+  "expectation_changes": [
+    {
+      "case_id": "contradiction_verified_margin",
+      "old_expected": {"status": "recommended", "winner": "winner"},
+      "new_expected": {"status": "abstained", "winner": ""},
+      "reason": "A writer-reported verified label and an unbound citation cannot qualify as claim-bound support."
+    }
+  ]
+}

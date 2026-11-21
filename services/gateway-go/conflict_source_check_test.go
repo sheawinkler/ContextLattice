@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -41,6 +43,48 @@ func TestScopedConflictCheckRequiresTwoVisibleCurrentOpponents(t *testing.T) {
 	}
 	if _, ok := scopedConflictCheck("studio", "", []temporalClaim{left}); ok {
 		t.Fatal("missing opponent disclosed")
+	}
+}
+
+func TestConflictSourceCurrentFencesExactSessionAndClaimRevisions(t *testing.T) {
+	a := temporalClaim{ClaimID: "a", Project: "studio", TopicPath: "design", Subject: "proposal", Predicate: "state",
+		Object: "submitted", Status: "active", Revision: 1, Contradicts: []string{"b"}}
+	b := a
+	b.ClaimID, b.Object, b.Contradicts = "b", "accepted", nil
+	k, _ := scopedConflictCheck("studio", "design", []temporalClaim{a, b})
+	s := &server{temporalClaims: &temporalClaimStore{enabled: true, claims: map[string]temporalClaim{"a": a, "b": b}},
+		agentSessions: &agentSessionStore{sessions: map[string]map[string]any{"sess": {"id": "sess", "project": "studio", "agent_id": "reviewer",
+			"task_id": "task", "scope_ownership": newAgentSessionPublicScopeOwnership("studio")}}}}
+	call := func(task, session string, tool bool) (int, map[string]any) {
+		t.Helper()
+		data, _ := json.Marshal(map[string]any{"conflict_source_check": k, "project": "studio", "topic_path": "design",
+			"task_id": task, "session_id": session, "agent_id": "reviewer"})
+		req := httptest.NewRequest(http.MethodPost, "/memory/claims/query", strings.NewReader(string(data)))
+		w := httptest.NewRecorder()
+		s.handleClaimQuery(w, req, tool)
+		var out map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		return w.Code, out
+	}
+	code, valid := call("task", "sess", false)
+	if code != http.StatusOK || valid["current"] != true || valid["case_ref"] != k.Ref || len(valid) != 3 {
+		t.Fatalf("current: %d %v", code, valid)
+	}
+	if code, denied := call("other", "sess", false); code != http.StatusNotFound || len(denied) != 1 {
+		t.Fatalf("foreign task: %v", denied)
+	}
+	if code, denied := call("task", "absent", false); code != http.StatusNotFound || len(denied) != 1 {
+		t.Fatalf("absent session: %v", denied)
+	}
+	if code, _ := call("task", "sess", true); code != http.StatusUnprocessableEntity {
+		t.Fatal("native selector admitted by tool")
+	}
+	b.Revision++
+	s.temporalClaims.claims["b"] = b
+	if code, stale := call("task", "sess", false); code != http.StatusOK || stale["current"] != false || len(stale) != 3 {
+		t.Fatalf("stale: %v", stale)
 	}
 }
 

@@ -49,6 +49,63 @@ Invalid claims are rejected before the in-memory index changes. Superseded
 claims remain queryable; history is not overwritten into a single false
 "current truth."
 
+### Policy Lab evidence and issuers
+
+The claim APIs still accept and return the original `verification.status` and
+other writer labels. They are not independently verified. A local source check
+matches the current memory revision's canonical content hash in the same
+project and topic at intake; it does not establish whether the claim is true.
+An owner signature speaks for the configured subject and predicate (such as
+the owner's preference), not for an external fact. Neither source checks nor
+owner statements receive independent evidence weight.
+
+A verifier receipt is a configured issuer's signed witness to a specific
+observation and its relation to a claim. It binds the receipt to the scope,
+claim, polarity, source digest, and observation/check times. It does not prove
+that the witness is correct, that the issuer is organizationally independent,
+or that two issuers know something from different sources. Provision verifier
+keys only for trusted witnesses. Assign mirrors and key rotations the same
+`origin_id`, and have them sign the original stable `observation_id` rather
+than their own citation or event IDs. Policy Lab counts each origin and
+observation pair once per claim and never treats Utility outcome credit as
+claim evidence.
+
+To provision issuers, configure
+`CONTEXTLATTICE_TEMPORAL_CLAIM_EVIDENCE_ISSUERS` in the gateway environment as a
+JSON array of up to 64 grants (64 KiB total). Each grant has an exact `project`
+and normalized `topic_path`, a raw standard-base64 Ed25519 `public_key` (no
+padding), and a `role` of `verifier` or `owner`. A verifier requires a stable
+`origin_id`; an owner requires the exact normalized `subject` and
+`predicate`. Keep signing keys outside the gateway. No configured grant
+means no independently bound evidence.
+
+Submit a `receipt` on a support or opposition reference with
+`observation_id`, `checked_at` (RFC3339), and a `signature` object containing
+`algorithm: "Ed25519"`, `key_id`, and raw standard-base64 `value`. The key
+ID is `ed25519:` plus the first 24 hexadecimal SHA-256 characters of the
+encoded public key. Sign the Go `encoding/json` serialization of the
+`temporal_claim_evidence_receipt.v1` payload defined by
+`temporalClaimEvidenceSigningPayload`: use the normalized claim and citation
+fields, the configured role and origin, and the same polarity and receipt
+fields. Provide explicit claim and citation observation times. A receipt
+cannot predate either observation or claim a future check time. The gateway
+does not fetch external URLs during admission.
+
+Policy Lab compares only active, currently valid claims. The window starts at
+`valid_from` (inclusive) and ends at `valid_to` (exclusive); explicitly
+failed verification is ineligible even with an admitted receipt. Approved
+manual decisions, appeals, and reopening remain separate from this advice.
+
+To revoke an issuer, remove its grant from the gateway environment and apply
+the configuration through the site's normal deployment procedure. Policy Lab
+matches stored admissions against the currently configured exact grant and
+reports unmatched attestations as inactive, not as current proof. Claims and
+their original check timestamps remain readable. `evidence_admission_basis`
+labels that history on claim reads; `source_rechecked: false` on a
+recommendation means no new source read took place. Legacy records without
+a grant-bound admission are not upgraded or rechecked automatically. Re-submit
+a valid signed receipt under a current grant to admit new evidence.
+
 ## Adaptive Retrieval Planner
 
 The planner classifies task phase, names evidence obligations, ranks configured

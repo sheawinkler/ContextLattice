@@ -334,12 +334,12 @@ func TestFrontierT5ContradictionAbstentionWinnerDecisionReopenAppeal(t *testing.
 	s = newFrontierT5PolicyLabTestServer(t)
 	upsertFrontierT5Claim(t, s, map[string]any{"project": "claims-project", "claim_id": "claim-a", "subject": "service", "predicate": "status", "object": "ready", "contradicts": []any{"claim-b"}, "confidence": 0.95, "support": []any{map[string]any{"ref_id": "ref-a", "kind": "test"}}, "verification": map[string]any{"status": "verified"}, "provenance": map[string]any{"source": "fixture"}})
 	upsertFrontierT5Claim(t, s, map[string]any{"project": "claims-project", "claim_id": "claim-b", "subject": "service", "predicate": "status", "object": "blocked", "contradicts": []any{"claim-a"}, "confidence": 0.5, "verification": map[string]any{"status": "unverified"}})
-	decided, err := s.buildContradictionResolution(map[string]any{"operation": "decide", "project": "claims-project", "claim_ids": []any{"claim-a", "claim-b"}, "winning_claim_id": "claim-a", "approved": true, "operator": "operator-1", "reason": "verified evidence wins"})
+	decided, err := s.buildContradictionResolution(map[string]any{"operation": "decide", "project": "claims-project", "claim_ids": []any{"claim-a", "claim-b"}, "winning_claim_id": "claim-a", "approved": true, "operator": "operator-1", "reason": "operator reviewed the competing claims"})
 	if err != nil {
 		t.Fatalf("contradiction decision: %v", err)
 	}
 	resolution := anyMap(decided["resolution"])
-	if anyToString(anyMap(decided["recommendation"])["status"]) != "recommended" || anyToString(resolution["status"]) != "resolved" || !anyToBool(resolution["appealable"]) {
+	if anyToString(anyMap(decided["recommendation"])["status"]) != "abstained" || anyToString(resolution["status"]) != "resolved" || !anyToBool(resolution["appealable"]) {
 		t.Fatalf("winner decision was not recorded as appealable: %#v", decided)
 	}
 	statuses, err := frontierT5CurrentClaimStatuses(s.temporalClaims, "claims-project", "claim-a", []string{"claim-b"})
@@ -580,6 +580,13 @@ type frontierT5HoldoutCase struct {
 	Expected map[string]any `json:"expected"`
 }
 
+type frontierT5HoldoutExpectationChange struct {
+	CaseID      string         `json:"case_id"`
+	OldExpected map[string]any `json:"old_expected"`
+	NewExpected map[string]any `json:"new_expected"`
+	Reason      string         `json:"reason"`
+}
+
 func TestFrontierT5PolicyLaboratoryHoldout(t *testing.T) {
 	fixturePath := filepath.Join("..", "..", "docs", "evals", "fixtures", "frontier-t5-policy-laboratory-holdout.v1.json")
 	raw, err := os.ReadFile(fixturePath)
@@ -596,6 +603,42 @@ func TestFrontierT5PolicyLaboratoryHoldout(t *testing.T) {
 	if fixture.SchemaID != "frontier_t5_policy_laboratory_holdout.v1" || len(fixture.Cases) != 18 {
 		t.Fatalf("unexpected frozen holdout: schema=%s cases=%d", fixture.SchemaID, len(fixture.Cases))
 	}
+	const frozenV1Digest = "908ebcd73b772a63f3226e87345e16841f59365bae6a18cc60da57546f259a0c"
+	if got := sha256Hex(string(raw)); got != frozenV1Digest {
+		t.Fatalf("frozen v1 holdout bytes changed: sha256=%s", got)
+	}
+	currentRaw, err := os.ReadFile(filepath.Join(filepath.Dir(fixturePath), "frontier-t5-policy-laboratory-holdout.v2.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var current struct {
+		SchemaID     string                               `json:"schema_id"`
+		Date         string                               `json:"date"`
+		BaseSchemaID string                               `json:"base_schema_id"`
+		BaseSHA256   string                               `json:"base_sha256"`
+		Changes      []frontierT5HoldoutExpectationChange `json:"expectation_changes"`
+	}
+	if err := json.Unmarshal(currentRaw, &current); err != nil {
+		t.Fatal(err)
+	}
+	if current.SchemaID != "frontier_t5_policy_laboratory_holdout.v2" || current.BaseSchemaID != fixture.SchemaID ||
+		current.BaseSHA256 != frozenV1Digest || len(current.Changes) == 0 {
+		t.Fatalf("invalid v2 holdout lineage: %#v", current)
+	}
+	asOf, err := time.Parse(time.DateOnly, current.Date)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changes := make(map[string]frontierT5HoldoutExpectationChange, len(current.Changes))
+	for _, change := range current.Changes {
+		if change.CaseID == "" || change.Reason == "" || reflect.DeepEqual(change.OldExpected, change.NewExpected) {
+			t.Fatalf("invalid expectation change: %#v", change)
+		}
+		if _, exists := changes[change.CaseID]; exists {
+			t.Fatalf("duplicate expectation change: %s", change.CaseID)
+		}
+		changes[change.CaseID] = change
+	}
 	started := time.Now()
 	seenIDs := map[string]struct{}{}
 	coveredItems := map[int]int{}
@@ -609,6 +652,14 @@ func TestFrontierT5PolicyLaboratoryHoldout(t *testing.T) {
 		}
 		seenIDs[testCase.ID] = struct{}{}
 		coveredItems[testCase.Item]++
+		if change, exists := changes[testCase.ID]; exists {
+			if testCase.Surface != "contradiction_recommendation" || !reflect.DeepEqual(change.OldExpected, testCase.Expected) {
+				t.Fatalf("%s: old expected value does not match frozen v1", testCase.ID)
+			}
+			// The archived expectation is checked as data, not executed as a v1 baseline.
+			testCase.Expected = change.NewExpected
+			delete(changes, testCase.ID)
+		}
 		switch testCase.Surface {
 		case "policy_simulation":
 			result, simulationErr := buildPolicySimulation(cloneMap(testCase.Input))
@@ -658,7 +709,7 @@ func TestFrontierT5PolicyLaboratoryHoldout(t *testing.T) {
 			if err := json.Unmarshal(claimsRaw, &claims); err != nil {
 				t.Fatal(err)
 			}
-			recommendation := frontierT5ContradictionRecommendation("holdout", claims, anyToFloat(testCase.Input["threshold"]))
+			recommendation := frontierT5ContradictionRecommendation("holdout", claims, anyToFloat(testCase.Input["threshold"]), asOf, nil)
 			if anyToString(recommendation["status"]) != anyToString(testCase.Expected["status"]) || anyToString(recommendation["winning_claim_id"]) != anyToString(testCase.Expected["winner"]) {
 				t.Fatalf("%s: recommendation=%#v expected=%#v", testCase.ID, recommendation, testCase.Expected)
 			}
@@ -677,10 +728,15 @@ func TestFrontierT5PolicyLaboratoryHoldout(t *testing.T) {
 			t.Fatalf("holdout omitted Frontier item %d", item)
 		}
 	}
+	if len(changes) != 0 {
+		t.Fatalf("v2 expectations not matched to frozen cases: %#v", changes)
+	}
 	if output := strings.TrimSpace(os.Getenv("FRONTIER_T5_POLICY_LAB_EVIDENCE_PATH")); output != "" {
 		evidence := map[string]any{
-			"schema_id": "frontier_t5_policy_laboratory_eval.v1", "tested_commit": os.Getenv("FRONTIER_T5_TESTED_COMMIT"),
-			"holdout_schema_id": fixture.SchemaID, "case_count": len(fixture.Cases), "passed_count": passed,
+			"schema_id": "frontier_t5_policy_laboratory_eval.v2", "tested_commit": os.Getenv("FRONTIER_T5_TESTED_COMMIT"),
+			"holdout_schema_id": current.SchemaID, "case_count": len(fixture.Cases), "passed_count": passed,
+			"fixture_base_schema_id": fixture.SchemaID, "fixture_base_sha256": frozenV1Digest,
+			"legacy_baseline_executed": false, "changed_expectation_count": len(current.Changes),
 			"failed_count": len(fixture.Cases) - passed, "item_case_counts": coveredItems,
 			"duration_ms":    roundFloat(float64(time.Since(started).Microseconds())/1000, 6),
 			"provider_calls": 0, "local_inference_calls": 0, "external_network_calls": 0,

@@ -50,7 +50,7 @@ func (s *server) memoryV1Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.memoryStore != nil && s.memoryStore.isEnabled() {
-		payload, err := s.memoryStore.fetchByMemoryID(memoryID)
+		payload, err := s.memoryStore.fetchByMemoryID(r.Context(), memoryID)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				writeJSON(w, http.StatusNotFound, map[string]any{"error": "memory_id not found"})
@@ -392,12 +392,15 @@ func (s *server) fetchV1MemoryPayload(
 	memoryID string,
 ) (map[string]any, error) {
 	if s.memoryStore != nil && s.memoryStore.isEnabled() {
-		payload, err := s.memoryStore.fetchByMemoryID(memoryID)
+		project, fileName, err := splitEngineMemoryID(memoryID)
 		if err != nil {
 			return nil, err
 		}
-		memoryRow, _ := payload["memory"].(map[string]any)
-		content := strings.TrimSpace(anyToString(memoryRow["content"]))
+		content, _, err := s.memoryStore.readFile(project, fileName)
+		if err != nil {
+			return nil, err
+		}
+		content = strings.TrimSpace(content)
 		if content == "" {
 			return map[string]any{}, nil
 		}

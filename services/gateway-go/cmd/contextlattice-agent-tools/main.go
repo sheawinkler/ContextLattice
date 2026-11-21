@@ -3299,6 +3299,12 @@ func (c *cli) cmdPolicyLab(args []string) error {
 		return fmt.Errorf("unknown policy-lab operation %q", parsed.pos[0])
 	}
 	c.applyBaseURL(parsed)
+	if labOperation == "contradiction" && parsed.string("operation", "") == "research" {
+		if parsed.has("approved") || parsed.has("winning_claim_id") || parsed.has("action") || parsed.has("operator") {
+			return errors.New("research cannot decide, approve or mutate a claim")
+		}
+		return c.policyConflictResearch(parsed.string("payload_file", ""), parsed.string("project", ""), !parsed.bool("raw"))
+	}
 	if labOperation == "status" {
 		result, _, err := c.requestJSON(context.Background(), http.MethodGet, path, nil, parsed.float("timeout", 15))
 		if err != nil {
@@ -4096,6 +4102,9 @@ func (c *cli) cmdPackWithRouteMode(args []string, commandName string, route stri
 	recordContextPackQualityPending(project, sessionID, query, agentID, qualitySample)
 	if err := c.emit(out, prettyOutput); err != nil {
 		return err
+	}
+	if commandName == "contextlattice" && !responseMode && !fullOutput {
+		c.observeContextConflict(out, project, parsed.string("topic_path", ""), sessionID, taskID, agentID)
 	}
 	c.autoDrainAsyncInbox(sessionID, project, agentID)
 	return nil
