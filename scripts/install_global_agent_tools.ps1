@@ -642,6 +642,7 @@ $goNativeCommands = @(
     "contextlattice_mesh_import",
     "contextlattice_mesh_status",
     "contextlattice_write",
+    "contextlattice_checkpoint",
     "contextlattice_adopt",
     "contextlattice_doctor",
     "contextlattice_agent_adapter",
