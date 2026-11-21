@@ -245,5 +245,13 @@ class CheckpointHookTests(unittest.TestCase):
         self.assertEqual(len(run.stdout.splitlines()), 1)
 
 
+class CheckpointWindowsContractTests(unittest.TestCase):
+    def test_powershell_installer_names_the_native_checkpoint_command(self):
+        installer = (ROOT / "scripts/install_global_agent_tools.ps1").read_text()
+        commands = installer.split("$goNativeCommands = @(", 1)[1].split("\n)", 1)[0]
+        self.assertIn('"contextlattice_checkpoint"', commands)
+        self.assertIn('"%GO_TOOL%" $Name %*', installer)
+
+
 if __name__ == "__main__":
     unittest.main()
