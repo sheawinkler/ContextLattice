@@ -227,6 +227,114 @@ class Base(unittest.TestCase):
         self.temp_home.cleanup()
 
 
+class AttributionTests(Base):
+    unknown = {"source": "caller_reported", "harness": "hermes", "model_known": False}
+    unrelated_fields = {"agent_id", "caller_attribution", "session_start_caller_attribution",
+                        "session_id", "native_session_id"}
+
+    def scoped_search(self):
+        return [body for _, path, body in self.cl.calls if path == "/memory/search" and body.get("project")
+                and body.get("topic_path") != plugin._HANDOFF_TOPIC][-1]
+
+    def test_session_start_is_not_live_and_cannot_cross_session_boundaries(self):
+        self.p._on_session_start(session_id="s1", model="provider/Model-V1", reasoning_effort="high")
+        self.p._on_session_start(session_id="other", model="wrong")
+        self.p.prefetch("query", session_id="s1")
+        scoped = self.scoped_search()
+        self.assertEqual(scoped["caller_attribution"], self.unknown)
+        self.assertEqual(scoped["agent_id"], "hermes_agent")
+        self.assertNotIn("session_start_caller_attribution", scoped)
+        self.assertNotIn("session_id", scoped)
+        self.assertTrue(all(self.unrelated_fields.isdisjoint(body) for _, path, body in self.cl.calls
+                            if path == "/memory/search" and not body.get("project")))
+        self.p.on_session_switch("s2", parent_session_id="s1")
+        self.p._on_session_start(session_id="s1", model="late-parent")
+        self.p.prefetch("query", session_id="s2")
+        self.assertEqual(self.scoped_search()["caller_attribution"], self.unknown)
+        self.assertNotIn("session_start_caller_attribution", self.scoped_search())
+        handoff, = [body for _, path, body in self.cl.calls
+                    if path == "/memory/search" and body.get("topic_path") == plugin._HANDOFF_TOPIC]
+        self.assertTrue(self.unrelated_fields.isdisjoint(handoff))
+        self.p.on_session_switch("s1", reset=True)
+        self.p.prefetch("query", session_id="s1")
+        self.assertNotIn("session_start_caller_attribution", self.scoped_search())
+
+    def test_scoped_tool_never_borrows_model_or_effort(self):
+        args = {"query": "query", "project": "hermes-agent", "model": "from-args", "reasoning_effort": "high"}
+        self.p._on_session_start(session_id="s1", model="at-start")
+        with patch.dict(os.environ, {"CODEX_REASONING_EFFORT": "xhigh", "HERMES_REASONING_EFFORT": "high"}):
+            for kwargs in ({}, {"session_id": "other", "model": "wrong", "reasoning_effort": "high"},
+                           {"session_id": "s1", "model": {}, "reasoning_effort": "high\nignored"},
+                           {"session_id": "s1", "model": "unknown", "reasoning_effort": ["high"]}):
+                self.p.handle_tool_call("cl_search", args, **kwargs)
+                self.assertEqual(self.scoped_search()["caller_attribution"], self.unknown)
+            self.p.handle_tool_call("cl_search", args, session_id="s1", model="provider/Model-V2",
+                                    reasoning_effort="low")
+            self.assertEqual(self.scoped_search()["caller_attribution"],
+                             dict(self.unknown, model_known=True, model="provider/Model-V2", reasoning_effort="low"))
+            self.assertEqual(self.scoped_search()["agent_id"], "hermes_agent")
+            self.assertNotIn("session_id", self.scoped_search())
+            self.assertNotIn("session_start_caller_attribution", self.scoped_search())
+            self.p.handle_tool_call("cl_search", args, session_id="s1", model="provider/Model-V3")
+            self.assertEqual(self.scoped_search()["caller_attribution"],
+                             dict(self.unknown, model_known=True, model="provider/Model-V3"))
+
+    def test_model_validation_matches_gateway(self):
+        for value, expected in ((" \t-_./:Model9\n", "-_./:Model9"), ("x" * 120, "x" * 120),
+                                ("x" * 121, ""), (" N/A ", ""), ("model+alias", ""),
+                                ("model@revision", ""), ("m\u00f6d\u00e9l", ""), ("\x1cmodel", "")):
+            with self.subTest(value=value):
+                self.assertEqual(plugin._reported_model(value), expected)
+
+    def test_write_attribution_is_explicit_and_does_not_follow_mirrors(self):
+        self.p._on_session_start(session_id="s1", model="at-start")
+        args = {"project": "alpha", "topic_path": "notes", "file": "notes/x.md", "content": "fixture"}
+        response = json.loads(self.p.handle_tool_call("cl_write", args, session_id="s1",
+                                                      model="write-model", reasoning_effort="low"))
+        self.assertTrue(response["written"])
+        self.p.handle_tool_call("cl_write", args, session_id="other", model="foreign", reasoning_effort="high")
+        self.cl.fail_paths.add("/memory/write")
+        self.p.on_memory_write("add", "memory", "mirror fixture")
+        self.p.shutdown()
+        self.cl.fail_paths.clear()
+        self.assertEqual(self.p.drain_outbox()["sent"], 1)
+
+        explicit, mismatched, mirror, retry = [body for _, path, body in self.cl.calls if path == "/memory/write"]
+        self.assertEqual(explicit["caller_attribution"],
+                         dict(self.unknown, model_known=True, model="write-model", reasoning_effort="low"))
+        self.assertEqual(mismatched["caller_attribution"], self.unknown)
+        for body in (explicit, mismatched):
+            self.assertEqual(body["agent_id"], "hermes_agent")
+            self.assertNotIn("session_id", body)
+            self.assertNotIn("session_start_caller_attribution", body)
+        for body in (mirror, retry, self.scoped_search()):
+            self.assertTrue(self.unrelated_fields.isdisjoint(body))
+
+    def test_ensure_and_in_flight_delivery_keep_caller_snapshot_and_owner(self):
+        self.p._on_session_start(session_id="s1", model="at-start")
+        args = {"goal": "fixture"}
+        event = {"tool_name": "delegate_task", "session_id": "s1", "tool_call_id": "c1"}
+        directive = self.p._on_pre_tool_call(args=args, model="call-model", reasoning_effort="none", **event)
+        ensure = [body for _, path, body in self.cl.calls if path.endswith("/start")][0]
+        caller = dict(self.unknown, model_known=True, model="call-model", reasoning_effort="none")
+        self.assertEqual(ensure["metadata"]["caller_attribution"], caller)
+        self.assertEqual(ensure["metadata"]["session_start_caller_attribution"],
+                         dict(self.unknown, model_known=True, model="at-start"))
+        self.assertEqual((ensure["agent"], ensure["agent_id"], ensure["native_session_id"]),
+                         ("hermes-agent", "hermes_agent", "s1"))
+        self.p.on_session_switch("s2", reset=True)
+        self.p._on_session_start(session_id="s2", model="new-session")
+        self.p._on_post_tool_call(args=dict(args, **directive["args"]), result={}, **event)
+        self.p.shutdown()
+        posted = [body for _, path, body in self.cl.calls if path.endswith("/events")][0]
+        self.assertEqual(posted["metadata"]["caller_attribution"], caller)
+        self.assertEqual(posted["metadata"]["session_start_caller_attribution"],
+                         ensure["metadata"]["session_start_caller_attribution"])
+        self.assertEqual(posted["metadata"]["native_session_digest"], plugin._text_digest("s1"))
+        self.assertEqual((posted["agent"], posted["agent_id"]), ("hermes-agent", "hermes_agent"))
+        self.assertFalse(posted["metadata"]["independent_verification"])
+
+
 class PrefetchTests(Base):
     @staticmethod
     def conflict_pointer(project="hermes-agent", topic="memory/decisions"):

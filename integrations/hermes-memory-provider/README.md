@@ -87,6 +87,20 @@ the original context-pack task. A missing session binding or failed event acknow
 an explicit unrecorded-observation warning; recall still works. Observation
 events are best-effort, not a durable delivery outbox or an evaluation ledger.
 
+Scoped ordinary recall and explicit `cl_write` requests use the stable
+`agent_id: hermes_agent` and carry `caller_attribution`. Delegation observation
+metadata attributes the Hermes caller, not the delegated child.
+Only invocation fields supplied by the host with the matching native session
+are reported as invocation facts. The matching `on_session_start` model is a
+separate `session_start_caller_attribution` observation in session and event
+metadata only, never a per-call fallback or a search/write field.
+Initialize and switch/reset clear it. Missing model and effort
+remain unknown, including on hosts that do not expose them at call time.
+Neither tool arguments, environment settings nor a parent's model/effort
+are used as evidence. Session ensure carries the initial metadata when sent;
+reuse does not rewrite earlier observations. Unscoped recall, write readback,
+mirrors and outbox retries stay unattributed.
+
 Hermes `completed` can mean a usable summary despite budget exhaustion or a
 failed schema check. The plugin therefore no longer converts that status into
 `first_pass_success=true`, `repair_required=false`, or `retry_count=0` quality

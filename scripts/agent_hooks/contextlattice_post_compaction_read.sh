@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # shellcheck source=common.sh
 source "${SCRIPT_DIR}/common.sh"
 TOOL_ROOT="$(contextlattice_root)"
 
 emit_codex_postcompact_output() {
-  local status="${1:-0}"
+  local exit_status="${1:-0}"
   python3 -c '
 import json
 import os
@@ -61,7 +61,7 @@ if len(encoded.encode("utf-8")) > max_bytes:
     }
     encoded = json.dumps(out, separators=(",", ":"))
 print(encoded)
-' "$status" "$TOOL_ROOT" || printf '%s\n' '{"continue":true,"suppressOutput":false,"systemMessage":"ContextLattice PostCompact checkpoint output emitter failed."}'
+' "$exit_status" "$TOOL_ROOT" || printf '%s\n' '{"continue":true,"suppressOutput":false,"systemMessage":"ContextLattice PostCompact checkpoint output emitter failed."}'
 }
 
 if [[ "${CONTEXTLATTICE_POSTCOMPACT_SCHEMA_SMOKE:-}" == "1" ]]; then
@@ -73,7 +73,13 @@ contextlattice_env
 project="${CONTEXTLATTICE_PROJECT:-contextlattice}"
 topic="${CONTEXTLATTICE_COMPACTION_TOPIC_PATH:-runbooks/context-compaction-handoff}"
 query="${CONTEXTLATTICE_COMPACTION_QUERY:-}"
-if [[ -z "${CONTEXTLATTICE_SESSION_ID:-}" && "${CONTEXTLATTICE_AUTO_SESSION_DISABLED:-0}" != "1" ]]; then
+trap codex_hook_cleanup EXIT
+codex_hook_capture PostCompact replay
+if codex_hook_bind PostCompact "Post-compaction objective readback for ${project}" \
+  --project "$project" --agent-id "${CONTEXTLATTICE_AGENT_ID:-codex_gpt5}" --tag compaction --tag auto-session \
+  --metadata-json '{"hook":"post_compaction"}'; then
+  :
+elif [[ -z "${CONTEXTLATTICE_SESSION_ID:-}" && "${CONTEXTLATTICE_AUTO_SESSION_DISABLED:-0}" != "1" ]]; then
   set +e
   session_out="$(python3 "${TOOL_ROOT}/scripts/agent/contextlattice-session" ensure \
     "Post-compaction objective readback for ${project}" \
@@ -102,7 +108,7 @@ PY
 fi
 if [[ -z "${query}" && ! -t 0 ]]; then
   set +e
-  query="$(python3 "${TOOL_ROOT}/scripts/agent/compaction-handoff-payload" --query)"
+  query="$(python3 "${TOOL_ROOT}/scripts/agent/compaction-handoff-payload" --query <"$codex_hook_stdin")"
   query_status=$?
   set -e
   if [[ "$query_status" -ne 0 ]]; then

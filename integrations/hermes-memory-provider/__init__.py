@@ -220,6 +220,41 @@ def _host_identity(value: Any) -> str:
     return value if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_.:-]{1,180}", value) else ""
 
 
+def _attribution_value(value: Any, max_length: int) -> str:
+    if not isinstance(value, str) or not 0 < len(value) <= max_length:
+        return ""
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:/@+\-]*", value) or value.lower() in {
+        "unknown", "none", "null", "default", "auto",
+    }:
+        return ""
+    return value
+
+
+def _reported_model(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    # Match Go's strings.TrimSpace and calleridentity.Model label boundary.
+    value = value.strip(" \t\n\r\v\f\x85\xa0\u1680\u2000\u2001\u2002\u2003\u2004"
+                        "\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000")
+    if value.lower() in {"unknown", "default", "auto", "none", "null", "n/a"}:
+        return ""
+    if value.startswith(("/", "./")) or ":/" in value or "/../" in f"/{value}/":
+        return ""
+    return value if re.fullmatch(r"[A-Za-z0-9_./:\-]{1,120}", value) else ""
+
+
+def _caller_attribution(model: Any = None, reasoning_effort: Any = None) -> Dict[str, Any]:
+    raw_model = _reported_model(model)
+    # "none" is an explicit effort, unlike a missing effort.
+    effort = "none" if reasoning_effort == "none" else _attribution_value(reasoning_effort, 32)
+    result = {"source": "caller_reported", "harness": "hermes", "model_known": bool(raw_model)}
+    if raw_model:
+        result["model"] = raw_model
+    if effort:
+        result["reasoning_effort"] = effort
+    return result
+
+
 def _handoff_file(session_id: Any) -> str:
     native_id = _host_identity(session_id)
     return f"notes/hermes/handoff/{native_id}.md" if native_id and native_id not in {".", ".."} else ""
@@ -275,6 +310,7 @@ class ContextLatticeProvider(MemoryProvider):
         self._cfg = _load_config()
         self._key = ""
         self._session_id = ""
+        self._session_start_model = ""
         self._parent_session_id = ""
         self._primary = True
         self._pending_handoff = False
@@ -311,6 +347,7 @@ class ContextLatticeProvider(MemoryProvider):
         self._key = _read_key(self._cfg["env_file"])
         with self._lock:
             self._session_id = session_id or ""
+            self._session_start_model = ""
             self._handoff_generation += 1
             self._pending_handoff = False
             self._parent_session_id = ""
@@ -322,6 +359,16 @@ class ContextLatticeProvider(MemoryProvider):
             self._home = Path(kwargs["hermes_home"])
         if self._primary and self._key:
             self._bg(self._startup_maintenance, "contextlattice-maintenance")
+
+    def _on_session_start(self, session_id: str = "", model: Any = None, **_: Any) -> None:
+        with self._lock:
+            if _host_identity(session_id) and session_id == self._session_id:
+                self._session_start_model = _reported_model(model)
+
+    def _invocation_attribution_locked(self, session_id: str, model: Any, reasoning_effort: Any) -> Dict[str, Any]:
+        if _host_identity(session_id) and session_id == self._session_id:
+            return _caller_attribution(model, reasoning_effort)
+        return _caller_attribution()
 
     def system_prompt_block(self) -> str:
         # STATIC (prompt-cache safe): no counts, no timestamps.
@@ -360,21 +407,27 @@ class ContextLatticeProvider(MemoryProvider):
                 exc.close()
 
     def _search(self, query: str, *, project: Optional[str] = None, topic_path: Optional[str] = None,
-                mode: Optional[str] = None, limit: Optional[int] = None) -> Dict[str, Any]:
+                mode: Optional[str] = None, limit: Optional[int] = None,
+                caller_attribution: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         body: Dict[str, Any] = {"query": query[:400], "include_grounding": True,
                                 "mode": mode or self._cfg["mode"], "limit": int(limit or self._cfg["limit"])}
         if project:
             body["project"] = project
+            if caller_attribution is not None:
+                body.update(agent_id="hermes_agent", caller_attribution=caller_attribution)
         if topic_path:
             body["topic_path"] = topic_path
         return self._post("/memory/search", body)
 
     def _write(self, project: str, topic_path: str, file: str, content: str,
-               lifecycle: Optional[str] = None) -> Dict[str, Any]:
+               lifecycle: Optional[str] = None, *,
+               caller_attribution: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         body = {"projectName": project, "topicPath": topic_path,
                 "fileName": file, "content": content}
         if lifecycle:
             body["lifecycle"] = lifecycle
+        if caller_attribution is not None:
+            body.update(agent_id="hermes_agent", caller_attribution=caller_attribution)
         response = self._post("/memory/write", body)
         if response.get("ok") is not True:
             raise RuntimeError("write_unconfirmed")
@@ -547,7 +600,8 @@ class ContextLatticeProvider(MemoryProvider):
             return None, "write hash mismatch"
         return row, "write hash matched" if pinned_digest else "unpinned search result"
 
-    def prefetch(self, query: str, *, session_id: str = "") -> str:
+    def prefetch(self, query: str, *, session_id: str = "", model: Any = None,
+                 reasoning_effort: Any = None) -> str:
         if not query or not query.strip() or not self._key:
             return ""
         jobs = {
@@ -555,6 +609,8 @@ class ContextLatticeProvider(MemoryProvider):
             "CROSS-PROJECT RECALL": dict(),
         }
         with self._lock:
+            jobs["MEMORY ARCHIVE (hermes-agent)"]["caller_attribution"] = self._invocation_attribution_locked(
+                session_id, model, reasoning_effort)
             handoff = ((self._handoff_generation, self._handoff_project, self._parent_session_id,
                         self._session_id) if self._pending_handoff else None)
             handoff_error = self._handoff_parent_error
@@ -638,9 +694,14 @@ class ContextLatticeProvider(MemoryProvider):
 
     def handle_tool_call(self, tool_name: str, args: Dict[str, Any], **kwargs) -> str:
         try:
+            if tool_name in ("cl_search", "cl_write"):
+                with self._lock:
+                    caller = self._invocation_attribution_locked(
+                        kwargs.get("session_id"), kwargs.get("model"), kwargs.get("reasoning_effort"))
             if tool_name == "cl_search":
                 d = self._search(args["query"], project=args.get("project"), topic_path=args.get("topic_path"),
-                                 mode=args.get("mode") or "balanced", limit=args.get("limit") or 8)
+                                 mode=args.get("mode") or "balanced", limit=args.get("limit") or 8,
+                                 caller_attribution=caller)
                 rows = [r for r in (d.get("results") or []) if isinstance(r, dict)]
                 cont = d.get("continuation_async") or {}
                 cont_report: Optional[Dict[str, Any]] = None
@@ -688,7 +749,7 @@ class ContextLatticeProvider(MemoryProvider):
                 return json.dumps(response)
             if tool_name == "cl_write":
                 file = args.get("file") or f"notes/hermes/{_slug(args['content'])}.md"
-                w = self._write(args["project"], args["topic_path"], file, args["content"])
+                w = self._write(args["project"], args["topic_path"], file, args["content"], caller_attribution=caller)
                 rb = self._search(args["content"][:200], project=args["project"],
                                   topic_path=args["topic_path"], limit=5)
                 digest = _nonempty_digest(w.get("content_hash"))
@@ -1014,6 +1075,7 @@ class ContextLatticeProvider(MemoryProvider):
         with self._lock:
             self._handoff_generation += 1
             self._session_id = new_session_id
+            self._session_start_model = ""
             self._pending_handoff = not reset
             self._handoff_project = self._cfg["project"] if not reset else ""
             self._parent_session_id = parent_session_id if not reset and _handoff_file(parent_session_id) else ""
@@ -1087,7 +1149,7 @@ class ContextLatticeProvider(MemoryProvider):
             return "call:" + _text_digest(json.dumps(identity))
         return "legacy:" + _text_digest(json.dumps(identity[:2] + [_goals_key(goals)]))
 
-    def _delegation_session(self, project: str, native_session_id: str) -> str:
+    def _delegation_session(self, project: str, native_session_id: str, caller: Dict[str, Any]) -> str:
         """Reuse an authenticated gateway session, not a host id masquerading as one."""
         if not native_session_id:
             return ""
@@ -1100,6 +1162,7 @@ class ContextLatticeProvider(MemoryProvider):
                     "project": project, "agent": "hermes-agent", "agent_id": "hermes_agent",
                     "native_session_id": native_session_id, "ensure": True,
                     "objective": "Native Hermes context delivery observations",
+                    "metadata": caller,
                 }, timeout=min(float(self._cfg["timeout"]), 2.0))
                 row = response.get("session") or {}
                 session_id = _host_identity(row.get("id"))
@@ -1135,7 +1198,8 @@ class ContextLatticeProvider(MemoryProvider):
             self._closed_calls.pop(next(iter(self._closed_calls)))
 
     def _on_pre_tool_call(self, tool_name: str = "", args: Optional[Dict[str, Any]] = None,
-                          session_id: str = "", tool_call_id: str = "", **_: Any):
+                          session_id: str = "", tool_call_id: str = "", model: Any = None,
+                          reasoning_effort: Any = None, **_: Any):
         """Children run with skip_memory=True, so they get no prefetch. Inject one context
         pack per task into its `context`. Never raises (pre_tool_call fails closed)."""
         key = None
@@ -1151,10 +1215,13 @@ class ContextLatticeProvider(MemoryProvider):
             if len(goals) > _DELEGATION_MAX_TASKS:
                 logger.warning("contextlattice delegation batch exceeds bounded recall; no injection")
                 return None
-            native_id = _host_identity(session_id) or _host_identity(self._session_id)
             call_id = _host_identity(tool_call_id)
-            key = self._delegation_key(goals, native_id, call_id)
             with self._lock:
+                native_id = _host_identity(session_id) or _host_identity(self._session_id)
+                caller = {"caller_attribution": self._invocation_attribution_locked(session_id, model, reasoning_effort)}
+                if _host_identity(session_id) and session_id == self._session_id and self._session_start_model:
+                    caller["session_start_caller_attribution"] = _caller_attribution(self._session_start_model)
+                key = self._delegation_key(goals, native_id, call_id)
                 self._expire_delegations_locked()
                 if key in self._closed_calls or sum(self._pending_invocations.values()) >= _DELEGATION_MAX_PENDING:
                     logger.warning("contextlattice duplicate or capacity-limited delegation; no injection")
@@ -1174,7 +1241,7 @@ class ContextLatticeProvider(MemoryProvider):
             invocation_id = uuid.uuid4().hex
             ids = [f"hermes-{invocation_id}-{i}" for i in range(len(goals))]
             project = str(self._cfg["project"])
-            gateway_session = self._delegation_session(project, native_id)
+            gateway_session = self._delegation_session(project, native_id, caller)
             with ThreadPoolExecutor(max_workers=min(8, len(goals))) as ex:
                 packs = list(ex.map(lambda pair: self._delegation_pack(pair[0], pair[1], gateway_session),
                                     zip(goals, ids)))
@@ -1194,6 +1261,7 @@ class ContextLatticeProvider(MemoryProvider):
                 contexts = [((args.get("context") or "") + "\n\n" + block).strip()]
                 directive = {"action": "modify", "args": {"context": contexts[0]}} if block else None
             records = [{"project": project, "session_id": gateway_session, "task_id": ids[i],
+                        **caller,
                         "sample_id": sample, "invocation_id": invocation_id, "task_index": i,
                         "native_session_digest": _text_digest(native_id),
                         "tool_call_digest": _text_digest(call_id) if call_id else "",
@@ -1321,6 +1389,7 @@ class ContextLatticeProvider(MemoryProvider):
 def register(ctx) -> None:
     provider = ContextLatticeProvider()
     ctx.register_memory_provider(provider)
+    ctx.register_hook("on_session_start", provider._on_session_start)
     ctx.register_hook("pre_tool_call", provider._on_pre_tool_call)
     ctx.register_hook("post_tool_call", provider._on_post_tool_call)
     try:

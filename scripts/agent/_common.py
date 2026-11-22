@@ -984,6 +984,47 @@ def agent_session_matches_authority(
     return bool(reuse_key) and str(session.get("reuse_key") or "").strip() == reuse_key
 
 
+def ensure_codex_hook_session(
+    *, project: str, agent_id: str, objective: str, native_session_id: str,
+    metadata: dict[str, Any], tags: list[str], timeout: float,
+) -> dict[str, Any]:
+    if auto_session_disabled() or not agent_id:
+        return {"ok": False, "session_id": ""}
+
+    def matches(row: Any) -> bool:
+        return (
+            isinstance(row, dict) and session_identity_valid(row.get("id"))
+            and row.get("project") == project and row.get("agent_id") == agent_id
+            and row.get("native_session_id") == native_session_id and session_is_reusable(row)
+        )
+
+    # Gateway native-ID ensure is atomic. The display alias is not part of
+    # the owner/native binding, and sending it would exclude older aliases.
+    payload: dict[str, Any] = {
+        "project": project, "agent_id": agent_id,
+        "native_session_id": native_session_id, "ensure": True,
+        "objective": objective, "metadata": metadata, "tags": tags,
+    }
+    inherited = os.getenv("CONTEXTLATTICE_SESSION_ID", "").strip()
+    timeout = min(timeout, 2.0)
+    try:
+        if inherited:
+            if not session_identity_valid(inherited):
+                return {"ok": False, "session_id": ""}
+            existing = request_json_for_validation("GET", f"/v1/agents/sessions/{inherited}", None, timeout)
+            row = existing.get("session")
+            if existing.get("ok") is not True or not matches(row) or row["id"] != inherited:
+                return {"ok": False, "session_id": ""}
+            payload["session_id"] = inherited
+        raw = request_json_for_validation("POST", "/v1/agents/sessions/start", payload, timeout)
+        row = raw.get("session")
+        if raw.get("ok") is True and matches(row) and (not inherited or row["id"] == inherited):
+            return {"ok": True, "session_id": row["id"], "source": "codex-native"}
+    except (Exception, SystemExit):
+        pass
+    return {"ok": False, "session_id": ""}
+
+
 def ensure_agent_session(
     *,
     project: str,

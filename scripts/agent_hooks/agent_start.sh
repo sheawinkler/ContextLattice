@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # shellcheck source=common.sh
 source "${SCRIPT_DIR}/common.sh"
 
@@ -41,7 +41,15 @@ done
 
 contextlattice_env
 TOOL_ROOT="$(contextlattice_root)"
-if [[ -z "${CONTEXTLATTICE_SESSION_ID:-}" && "${CONTEXTLATTICE_AUTO_SESSION_DISABLED:-0}" != "1" ]]; then
+codex_hook_identity='{}'
+if [[ "${CONTEXTLATTICE_CODEX_HOOK_EVENT:-}" == "SessionStart" ]]; then
+  codex_hook_capture SessionStart
+fi
+if codex_hook_bind SessionStart "Agent startup for ${PROJECT} at ${TOPIC}" \
+  --project "$PROJECT" --agent-id "$AGENT" --tag agent-start --tag auto-session \
+  --metadata-json '{"hook":"agent_start"}'; then
+  :
+elif [[ -z "${CONTEXTLATTICE_SESSION_ID:-}" && "${CONTEXTLATTICE_AUTO_SESSION_DISABLED:-0}" != "1" ]]; then
   set +e
   session_out="$(python3 "${TOOL_ROOT}/scripts/agent/contextlattice-session" ensure \
     "Agent startup for ${PROJECT} at ${TOPIC}" \
