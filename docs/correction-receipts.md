@@ -32,10 +32,12 @@ and session. Do not change the note to get around an uncertain receipt or
 count a retry as new evidence.
 
 The feedback ledger owns its records. Its SQLite index locates the original
-bytes; it is not a substitute for them. Back up the ledger and a consistent
-SQLite snapshot together. Pause correction writes before a downgrade. If the
-index and ledger do not agree after a restore, preserve both, keep typed writes
-paused and reconcile the pair. Do not delete an index to make an error go away.
+bytes; it is not a substitute for them. Back up each owning ledger or session
+snapshot and its corresponding consistent SQLite sidecar together, including
+any active journal. After conversion, do not downgrade in place: keep the newer
+gateway, or pause writes and restore a matched pre-conversion backup. If the
+files do not agree after a restore, preserve them, keep typed writes paused and
+reconcile the pair. Do not delete an index to make an error go away.
 
 Older feedback is still readable but is not upgraded into correction receipts.
-Typed correction history without its valid index fails closed.
+Typed feedback history without its valid offset index fails closed.
