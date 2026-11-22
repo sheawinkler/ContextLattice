@@ -241,7 +241,7 @@ class PrefetchTests(Base):
         rendered = self.p.prefetch("query")
         self.assertEqual(len([call for call in self.cl.calls if call[1] == "/memory/search"]), 2)
         self.assertIn("Scoped conflict-source pointer: cc_" + "a" * 64, rendered)
-        self.assertIn("not contrary evidence", rendered)
+        self.assertIn("no winner is implied", rendered)
         self.assertNotIn("claim:left", rendered)
         self.assertNotIn("must-not-render", rendered)
 
@@ -253,7 +253,7 @@ class PrefetchTests(Base):
         rendered = self.p.prefetch("query")
         self.assertNotIn("Scoped conflict-source pointer:", rendered)
         self.assertIn("producer merge signal: conservative_duplicate_exclusion", rendered)
-        self.assertNotIn("not contrary evidence", rendered)
+        self.assertNotIn("no winner is implied", rendered)
 
     def test_prefetch_rejects_malformed_or_wrong_topic_pointer(self):
         self.cl.search_response = {"results": []}
@@ -291,7 +291,7 @@ class PrefetchTests(Base):
         flagged = delivered({"results": [hit], "conflict_source_check": pointer})
         self.assertEqual(flagged[0], baseline[0] + "\nScoped conflict-source pointer: " +
                          pointer["case_ref"] +
-                         " (check one authorized original; duplicate exclusion is not contrary evidence).")
+                         " (opposed revisions are identified; verify one authorized original; no winner is implied).")
         self.assertEqual(flagged[1], json.dumps({
             **json.loads(baseline[1]),
             "conflict_source_check": {"case_ref": pointer["case_ref"], "topic_path": topic},
