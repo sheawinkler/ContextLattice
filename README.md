@@ -310,6 +310,7 @@ Security reports follow [SECURITY.md](SECURITY.md).
 | Agent hooks | [Agent hook contract](docs/agent-hooks.md) |
 | Retrieval trust | [Retrieval receipts](docs/retrieval-receipts.md) |
 | Decision/session evidence | [Manual decision continuity](docs/decision-evidence-continuity.md) |
+| Decision operator guides (source checkout; not released) | [Authorized conflict source check](docs/authorized-conflict-source-check.md) · [Correction receipts](docs/correction-receipts.md) · [Artifact section witness](docs/decision-continuity-artifact-section-witness.md) |
 | Skills and verified learning | [Skill efficacy review](docs/skill-efficacy-review.md) · [Skill Foundry](docs/outcome-policy-skill-foundry.md) |
 | Portable context | [Context Passport and Mesh](docs/context-passport-mesh.md) |
 | Local inference | [Local model options](docs/runtime/local-model-options.md) |
