@@ -47,7 +47,7 @@ func assertExactReadBytes(t *testing.T, row map[string]any, content string) {
 
 func assertExactReadUnknown(t *testing.T, row map[string]any) {
 	t.Helper()
-	if row["topic_path"] != nil || row["object_id"] != nil || row["event_id"] != nil {
+	if row["topic_path"] != nil || row["object_id"] != nil || row["event_id"] != nil || row["event_recorded_at"] != nil {
 		t.Fatalf("GET returned unproven identity: %#v", row)
 	}
 }

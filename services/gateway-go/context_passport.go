@@ -34,6 +34,7 @@ const (
 	contextIdentityKeysSchemaID         = "context_identity_keys.v1"
 	contextPassportLedgerSchemaID       = "context_passport_record.v1"
 	contextPassportLedgerAnchorSchemaID = "context_passport_ledger_anchor.v1"
+	contextPassportMaxItemBytes         = 1024 * 1024
 )
 
 var (
@@ -210,7 +211,7 @@ func defaultContextPassportStoreConfig() contextPassportStoreConfig {
 		KeyPath:      resolveStoragePath("CONTEXTLATTICE_CONTEXT_IDENTITY_KEY_PATH", filepath.Join(".data", "orchestrator", "context_identity_keys.json")),
 		MaxBytes:     int64(clampInt(envInt("CONTEXTLATTICE_CONTEXT_PASSPORT_MAX_BYTES", 16*1024*1024), 256*1024, 128*1024*1024)),
 		MaxEntries:   clampInt(envInt("CONTEXTLATTICE_CONTEXT_PASSPORT_MAX_ENTRIES", 512), 16, 10000),
-		MaxItemBytes: clampInt(envInt("CONTEXTLATTICE_CONTEXT_PASSPORT_MAX_ITEM_BYTES", 180*1024), 16*1024, 1024*1024),
+		MaxItemBytes: clampInt(envInt("CONTEXTLATTICE_CONTEXT_PASSPORT_MAX_ITEM_BYTES", 180*1024), 16*1024, contextPassportMaxItemBytes),
 		Fsync:        envBool("CONTEXTLATTICE_CONTEXT_PASSPORT_FSYNC", true),
 	}
 }
@@ -1597,9 +1598,26 @@ func (s *server) memoryContextPassportExport(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	payload, err := readOptionalJSONBody(r)
+	if r.Body != nil {
+		r.Body = http.MaxBytesReader(w, r.Body, contextPassportMaxItemBytes)
+	}
+	raw, err := readRequestBody(r)
+	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeJSON(w, http.StatusRequestEntityTooLarge, map[string]any{"ok": false, "error": "request_body_too_large"})
+			return
+		}
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid_json"})
+		return
+	}
+	payload, err := parseJSONMap(bytes.TrimSpace(raw))
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid_json"})
+		return
+	}
+	if _, pinned := payload["transfer_observation"]; pinned {
+		s.memoryContextPassportTransferSourceExport(w, r, raw)
 		return
 	}
 	if strings.TrimSpace(anyToString(payload["project"])) == "" || strings.TrimSpace(anyToString(payload["query"])) == "" {

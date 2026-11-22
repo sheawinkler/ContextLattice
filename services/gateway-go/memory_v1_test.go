@@ -40,7 +40,7 @@ func TestMemoryV1GetExactRevision(t *testing.T) {
 		row := requestMemoryV1Get(t, s, "alpha::notes//revision.md", "test-key", http.StatusOK)["memory"].(map[string]any)
 		assertExactReadBytes(t, row, canonicalMemoryContent(item.content))
 		if row["file"] != item.fileName || row["topic_path"] != entry.TopicPath ||
-			row["object_id"] != entry.ObjectID || row["event_id"] != entry.EventID {
+			row["object_id"] != entry.ObjectID || row["event_id"] != entry.EventID || row["event_recorded_at"] != entry.CreatedAt {
 			t.Fatalf("GET did not return identity of committed entry %#v: %#v", entry, row)
 		}
 		return entry

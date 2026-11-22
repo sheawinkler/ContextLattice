@@ -232,9 +232,19 @@ type parsedArgs struct {
 
 var errCLIReportedFailure = errors.New("command failed after emitting a structured response")
 
+type cliCommandExitCode int
+
+func (code cliCommandExitCode) Error() string {
+	return fmt.Sprintf("command exited with status %d", code)
+}
+
 func main() {
 	c := newCLI(os.Stdout, os.Stderr)
 	if err := c.run(os.Args); err != nil {
+		var code cliCommandExitCode
+		if errors.As(err, &code) {
+			os.Exit(int(code))
+		}
 		if errors.Is(err, errCLIReportedFailure) {
 			os.Exit(1)
 		}
@@ -351,6 +361,15 @@ func (c *cli) run(argv []string) error {
 		}
 		args = args[1:]
 	}
+	if command == "dream" && len(args) > 0 && args[0] == "authorize-local" {
+		if len(args) == 2 && (args[1] == "--help" || args[1] == "-h") {
+			return c.emitUsage(cliDreamAuthorityUsage)
+		}
+		if code := runCLIDreamTransferAuthority(args[1:]); code != 0 {
+			return cliCommandExitCode(code)
+		}
+		return nil
+	}
 	if command != "checkpoint" {
 		args = applyCLIOutputDefaults(
 			command,
@@ -380,6 +399,8 @@ func (c *cli) run(argv []string) error {
 		return c.cmdWrite(args)
 	case "checkpoint":
 		return c.cmdCheckpoint(args)
+	case "dream":
+		return c.cmdDream(args)
 	case "pack":
 		return c.cmdPack(args)
 	case "recall-response":
@@ -527,6 +548,8 @@ Primary workflow:
 
 Advanced/compatibility commands:
   search                         lifecycle-aware memory search
+  dream authorize-local          provision a short-lived transfer grant and proof offline
+  dream transfer                 submit one authorized manual cross-project transfer operation
  pack                           bounded context package
   recall-response               bounded proof-carrying recall response
  packet-reconstruct             verify and rebuild a delta against its trusted base packet
@@ -3635,14 +3658,25 @@ func (c *cli) cmdPassportExport(args []string) error {
 	if err != nil {
 		return err
 	}
-	query := strings.TrimSpace(strings.Join(parsed.pos, " "))
-	if query != "" {
-		payload["query"] = query
+	_, sourceExport := payload["transfer_observation"]
+	if sourceExport {
+		if _, hasQuery := payload["query"]; hasQuery || len(parsed.pos) != 0 {
+			return errors.New("a Dream source observation export does not accept a query")
+		}
+		project, _ := payload["project"].(string)
+		if strings.TrimSpace(project) == "" || (parsed.has("project") && parsed.string("project", "") != project) {
+			return errors.New("a Dream source observation export requires an explicit matching project in the payload")
+		}
+	} else {
+		query := strings.TrimSpace(strings.Join(parsed.pos, " "))
+		if query != "" {
+			payload["query"] = query
+		}
+		if firstString(payload["query"]) == "" {
+			return errors.New("passport query is required")
+		}
+		payload["project"] = firstNonEmpty(parsed.string("project", ""), firstString(payload["project"]), envString("CONTEXTLATTICE_PROJECT", "contextlattice"))
 	}
-	if firstString(payload["query"]) == "" {
-		return errors.New("passport query is required")
-	}
-	payload["project"] = firstNonEmpty(parsed.string("project", ""), firstString(payload["project"]), envString("CONTEXTLATTICE_PROJECT", "contextlattice"))
 	for _, key := range []string{"topic_path", "expires_at", "parent_passport_id", "agent_id", "session_id", "branch", "commit"} {
 		if value := parsed.string(key, ""); value != "" {
 			payload[key] = value
@@ -3664,7 +3698,12 @@ func (c *cli) cmdPassportExport(args []string) error {
 		payload["blocking"] = true
 		payload["sync_slow_sources"] = true
 	}
-	result, _, err := c.requestJSON(context.Background(), http.MethodPost, "/memory/context-passport/export", payload, parsed.float("timeout", 60))
+	var result map[string]any
+	if sourceExport {
+		result, err = c.requestDreamSourcePassport(payload, parsed.float("timeout", 60))
+	} else {
+		result, _, err = c.requestJSON(context.Background(), http.MethodPost, "/memory/context-passport/export", payload, parsed.float("timeout", 60))
+	}
 	if err != nil {
 		return err
 	}

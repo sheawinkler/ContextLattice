@@ -316,6 +316,8 @@ Security reports follow [SECURITY.md](SECURITY.md).
 | Local inference | [Local model options](docs/runtime/local-model-options.md) |
 | Full repository-backed manual | [Public field manual](docs/wiki/README.md) |
 
+In a source checkout, [freeze a prediction before recording the result](docs/manual-dream-transfer.md) to test whether a lesson holds in another project.
+
 The current public release baseline is [`v5.2.0`](https://github.com/sheawinkler/ContextLattice/releases/tag/v5.2.0).
 
 Commercial distribution follows its separately verified release; this public release does not authorize paid automation.

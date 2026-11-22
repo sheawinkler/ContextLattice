@@ -123,23 +123,25 @@ type contextMeshStoreConfig struct {
 }
 
 type contextMeshStore struct {
-	mu                sync.RWMutex
-	enabled           bool
-	path              string
-	maxBytes          int
-	maxGrants         int
-	maxRevocations    int
-	maxReceipts       int
-	maxEnvelopeBytes  int
-	maxPlaintextBytes int
-	fsync             bool
-	identity          *contextIdentityKeys
-	grants            map[string]contextMeshGrant
-	revocations       map[string]contextMeshRevocation
-	receipts          []contextMeshReceipt
-	lastPersistedAt   string
-	lastError         string
-	parseErrors       int
+	mu                    sync.RWMutex
+	enabled               bool
+	path                  string
+	maxBytes              int
+	maxGrants             int
+	maxRevocations        int
+	maxReceipts           int
+	maxEnvelopeBytes      int
+	maxPlaintextBytes     int
+	fsync                 bool
+	identity              *contextIdentityKeys
+	grants                map[string]contextMeshGrant
+	revocations           map[string]contextMeshRevocation
+	receipts              []contextMeshReceipt
+	dreamTransferReceipts []dreamTransferReceipt
+	dreamTransferStamp    memoryEdgeLogFileStamp
+	lastPersistedAt       string
+	lastError             string
+	parseErrors           int
 }
 
 type contextMeshSender struct {

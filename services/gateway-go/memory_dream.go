@@ -49,6 +49,12 @@ func (s *server) memoryDream(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
 		return
 	}
+	key, explicit := requestAPIKey(r)
+	role, known := s.toolCallerRole(key)
+	if len(r.Header.Values(dreamTransferProofHeader)) != 0 || (explicit && known && role == "worker") {
+		s.serveDreamTransferWire(w, r, "/memory/dream")
+		return
+	}
 	incomingHeaders, ok := s.prepareAuthorizedHeaders(w, r)
 	if !ok {
 		return
@@ -67,9 +73,38 @@ func (s *server) memoryDream(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, status, response)
 }
 
+func dreamTransferMemoryDispatchPayload(payload map[string]any) bool {
+	if !dreamTransferOnlyKeys(payload, "project", "experience_transfer", "use_llm", "persist") || strings.TrimSpace(anyToString(payload["project"])) == "" {
+		return false
+	}
+	for _, key := range []string{"use_llm", "persist"} {
+		if value, exists := payload[key]; exists {
+			flag, ok := value.(bool)
+			if !ok || flag {
+				return false
+			}
+		}
+	}
+	input, ok := payload["experience_transfer"].(map[string]any)
+	if !ok {
+		return false
+	}
+	if !dreamTransferOnlyKeys(input, "action", "grant_id", "source_passport_id", "experience_ref", "destination_project", "mechanism", "mismatch", "prediction", "falsifier", "expires_at") {
+		if !dreamTransferOnlyKeys(input, "action", "transfer_id", "result", "evidence_refs") {
+			return false
+		}
+	}
+	action := anyToString(input["action"])
+	return action == "freeze" || action == "record_result"
+}
+
 func (s *server) toolsDream(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+		return
+	}
+	if len(r.Header.Values(dreamTransferProofHeader)) != 0 {
+		s.serveDreamTransferWire(w, r, "/tools/dream")
 		return
 	}
 	incomingHeaders, ok := s.prepareToolHeaders(w, r, "/tools/dream")
@@ -94,6 +129,9 @@ func (s *server) buildDreamModeResponse(
 	endpoint string,
 ) (map[string]any, int) {
 	opts := normalizeDreamModeOptions(payload)
+	if transfer, ok := payload["experience_transfer"]; ok {
+		return s.buildDreamExperienceTransferResponse(ctx, incomingHeaders, opts, transfer, endpoint)
+	}
 	if strings.TrimSpace(opts.Goal) == "" && strings.TrimSpace(opts.Query) == "" {
 		return attachDreamModeFormatContract(dreamModeMissingGoalResponse(opts), endpoint), http.StatusUnprocessableEntity
 	}
