@@ -300,6 +300,13 @@ type memoryStore struct {
 	referenceEdgeIndex                               map[string]map[string]string
 }
 
+var errMemoryStoreWritePrecondition = errors.New("memory store write precondition failed")
+
+type memoryStoreWritePrecondition struct {
+	expectAbsent bool
+	expectedHash string
+}
+
 type memoryPathLock struct {
 	mu   sync.Mutex
 	refs int
@@ -1662,6 +1669,21 @@ func (m *memoryStore) putExactStateMirror(item normalizedWrite, fence *memoryEdg
 }
 
 func (m *memoryStore) put(item normalizedWrite) (memoryStoreEntry, bool, error) {
+	return m.putWithDreamTransferPrecondition(item, nil)
+}
+
+func (m *memoryStore) putDreamTransferProjectionCAS(item normalizedWrite, expectedHash string, expectAbsent bool) (memoryStoreEntry, bool, error) {
+	cleanFile, err := sanitizeMemoryFile(item.fileName)
+	if err != nil || !strings.HasPrefix(cleanFile, "dream-transfers/") ||
+		(expectAbsent && expectedHash != "") || (!expectAbsent && !isHexDigest(expectedHash)) {
+		return memoryStoreEntry{}, false, errMemoryStoreWritePrecondition
+	}
+	return m.putWithDreamTransferPrecondition(item, &memoryStoreWritePrecondition{
+		expectAbsent: expectAbsent, expectedHash: expectedHash,
+	})
+}
+
+func (m *memoryStore) putWithDreamTransferPrecondition(item normalizedWrite, precondition *memoryStoreWritePrecondition) (memoryStoreEntry, bool, error) {
 	if m == nil || !m.isEnabled() {
 		return memoryStoreEntry{}, false, errors.New("go memory store is disabled")
 	}
@@ -1699,6 +1721,20 @@ func (m *memoryStore) put(item normalizedWrite) (memoryStoreEntry, bool, error) 
 	}
 	unlockPath := m.lockMemoryPaths(lockKeys...)
 	defer unlockPath()
+	if precondition != nil {
+		if fence == nil || requireMemoryEdgeLogFence(m, fence) != nil {
+			return memoryStoreEntry{}, false, errMemoryStoreWritePrecondition
+		}
+		filePath := filepath.Join(m.policy.rootPath, project, filepath.FromSlash(fileName))
+		current, _, readErr := readOwnerOnlyBoundedFileWithInfo(filePath, dreamExperienceTransferMaxBytes+1)
+		if precondition.expectAbsent {
+			if readErr == nil || !errors.Is(readErr, os.ErrNotExist) {
+				return memoryStoreEntry{}, false, errMemoryStoreWritePrecondition
+			}
+		} else if readErr != nil || sha256Hex(string(current)) != precondition.expectedHash {
+			return memoryStoreEntry{}, false, errMemoryStoreWritePrecondition
+		}
+	}
 	if err := m.validateMemoryDerivationRegistration(memoryStoreEntry{Project: project, FileName: fileName, TopicPath: sanitizeTopicPath(item.topicPath, fileName), DataClass: item.dataClass, References: item.references}, fence); err != nil {
 		return memoryStoreEntry{}, false, err
 	}
@@ -2276,6 +2312,7 @@ func (m *memoryStore) fetchByMemoryID(ctx context.Context, memoryID string) (map
 		row["topic_path"] = entry.TopicPath
 		row["object_id"] = entry.ObjectID
 		row["event_id"] = entry.EventID
+		row["event_recorded_at"] = entry.CreatedAt
 	}
 	if lastAccess != "" {
 		row["last_accessed_at"] = lastAccess
