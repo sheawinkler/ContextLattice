@@ -203,6 +203,11 @@ func normalizeWriteMetadata(raw map[string]any) canonicalMetadata {
 	if len(tags) == 0 {
 		tags = defaultMetadataTags()
 	}
+	if raw["caller_attribution"] != nil {
+		if label, ok := contextCallerAttribution(raw, agentID)["execution_label"].(string); ok {
+			tags = normalizeTagList(tags, []string{"execution:" + label})
+		}
+	}
 	lifecycle := firstNonEmptyStrings(
 		anyToString(raw["lifecycle"]),
 		anyToString(raw["memory_lifecycle"]),

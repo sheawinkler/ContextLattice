@@ -1216,6 +1216,8 @@ func TestAgentPreflightProfileMatrixCoversLocalAgents(t *testing.T) {
 		topic   string
 	}{
 		{"codex", "codex", "codex_gpt5", "runbooks/codex-integration"},
+		{"", "agent-cli", "agent-cli", "runbooks/agent-integration"},
+		{"unknown-harness", "agent-cli", "agent-cli", "runbooks/agent-integration"},
 		{"claude-code", "claude-code", "claude_code_agent", "runbooks/claude-code-integration"},
 		{"opencode", "opencode", "opencode_agent", "runbooks/opencode-integration"},
 		{"hermes", "hermes-agent", "hermes_agent", "runbooks/hermes-agent-integration"},

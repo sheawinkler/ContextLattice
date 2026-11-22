@@ -14,6 +14,17 @@ function card(html: string, label: string): string {
   return result;
 }
 
+test("sessions show observed execution, with partial and historical fallbacks", () => {
+  const html = render({ agentRuntime: { sessions: [
+    { id: "a", agent_id: "owner-one", execution_identity: { execution_label: "pi-lab-maple-2.1-low" } },
+    { id: "b", agent_id: "owner-two", execution_identity: { harness: "hermes", model: "lab-2.1-maple" } },
+    { id: "c", agent_id: "historical-owner" },
+  ] } });
+  assert.match(html, /title="Session owner: owner-one">pi-lab-maple-2.1-low</);
+  assert.match(html, />hermes \/ lab-2.1-maple</);
+  assert.match(html, />historical-owner</);
+});
+
 function value(html: string, label: string): string {
   const result = card(html, label).match(/class="cl-metric-value[^"]*">([^<]*)<\/div>/);
   assert.ok(result, `missing metric value: ${label}`);

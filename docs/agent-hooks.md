@@ -3,6 +3,16 @@
 ContextLattice ships deterministic agent hooks so agents spend fewer tokens
 remembering mechanical rules and more tokens reasoning about the task.
 
+Use `contextlattice identity` to distinguish the session owner from the last
+observed harness, model origin, family, version, and reasoning effort. A new
+model changes future observations, not the owner or prior events. The CLI
+can read the active Codex thread's indexed model and effort with a locally
+available `sqlite3`; it does not read transcripts. Other harnesses can pass
+`--harness`, `--model`, and `--reasoning-effort` for each invocation. Use
+`--model-origin`, `--model-family`, and `--model-version` for opaque model
+names. Missing facts produce no full execution label. These labels are
+telemetry, not credentials or evidence that a reviewer accepted the work.
+
 ## Rule
 
 Use hooks for stable pass/fail mechanics. Keep judgment in `AGENTS.md`.

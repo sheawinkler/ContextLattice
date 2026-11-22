@@ -89,6 +89,10 @@ function LaneBar({ name, metrics }: { name: string; metrics: any }) {
 }
 
 function SessionRow({ session }: { session: any }) {
+  const identity = asRecord(session?.execution_identity);
+  const owner = toText(session?.agent_id) || toText(session?.agent) || "agent";
+  const observed = [toText(identity.harness), toText(identity.model)].filter(Boolean).join(" / ");
+  const title = toText(identity.execution_label) || observed || owner;
   const rollup = asRecord(session?.rollup);
   const contribution = asRecord(session?.memory_contribution);
   const objective = toText(session?.objective) || toText(rollup.objective) || "active agent session";
@@ -96,7 +100,7 @@ function SessionRow({ session }: { session: any }) {
   return (
     <div className="cl-session-row">
       <div>
-        <div className="cl-session-title">{toText(session?.agent_id) || toText(session?.agent) || "agent"}</div>
+        <div className="cl-session-title" title={`Session owner: ${owner}`}>{title}</div>
         <div className="cl-session-subtitle">{objective.slice(0, 118)}</div>
       </div>
       <div className="cl-session-meta">

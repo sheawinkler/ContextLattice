@@ -16,7 +16,9 @@ or change the source project.
    the source evidence.
 2. Write the mechanism you expect to carry over, a material difference at the
    destination, a measurable prediction, and an observation that would falsify
-   it. Freeze them before examining the destination result.
+   it. Record these before anyone checks the result in the second project.
+   The API calls this step `freeze`: the prediction cannot be edited to fit
+   what you learned afterward.
 3. Have the destination owner decide whether to run the test and who may record
    its result. Use destination-scoped evidence, including a negative control
    when possible. Record whether the evidence confirms, narrows, rejects, or
