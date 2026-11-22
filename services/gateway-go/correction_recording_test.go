@@ -192,15 +192,19 @@ func TestCorrectionRecordingHTTPReplay(t *testing.T) {
 	if target.Revision != 2 || target.Status != "active" || target.Verification["status"] != "verified" {
 		t.Fatal("unverified correction changed the target")
 	}
-	stored := s.temporalClaims.correctionClaims[anyToString(req["operation_id"])]
-	if len(s.temporalClaims.correctionClaims) != 1 || s.temporalClaims.claims[stored.Claim.ClaimID].Revision != 1 || s.temporalClaims.logEntries != 3 {
+	parsed, err := parseCorrectionRequest(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, receiptErr := s.temporalClaims.correctionClaimReceipt(parsed, correctionTestProject, correctionTestSession, correctionTestAgent)
+	if receiptErr != nil || s.temporalClaims.claims[stored.ClaimID].Revision != 1 || s.temporalClaims.logEntries != 3 {
 		t.Fatal("correction conflicts or retries appended a claim revision")
 	}
 	row, _, _ := s.agentSessions.get(correctionTestSession)
 	eventCount := anyToInt(row["event_count"], 0)
 
 	s.temporalClaims.mu.Lock()
-	err := s.temporalClaims.compactLocked()
+	err = s.temporalClaims.compactLocked()
 	s.temporalClaims.mu.Unlock()
 	if err != nil {
 		t.Fatal(err)
@@ -481,7 +485,7 @@ func TestCorrectionRecordingPublicScope(t *testing.T) {
 			t.Fatalf("stored or disclosed feedback for a different session %s: %d", field, code)
 		}
 	}
-	if len(s.feedbackStore.records) != 1 || len(s.temporalClaims.correctionClaims) != 0 {
+	if len(s.feedbackStore.records) != 1 || s.temporalClaims.correctionStamp.Owner != "" {
 		t.Fatal("project or actor failures left a durable write")
 	}
 

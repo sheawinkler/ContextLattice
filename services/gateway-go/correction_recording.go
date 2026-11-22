@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -19,8 +18,6 @@ import (
 
 const (
 	correctionClaimRecordPrefix = `{"correction_operation_id":`
-	maxCorrectionClaimReceipts  = 4096
-	maxCorrectionEventReceipts  = 128
 )
 
 var (
@@ -38,13 +35,14 @@ type correctionRequest struct {
 }
 
 type correctionClaimRecord struct {
-	ID          string        `json:"correction_operation_id"`
-	Fingerprint string        `json:"fingerprint"`
-	FeedbackID  string        `json:"feedback_id"`
-	Category    string        `json:"category"`
-	Target      string        `json:"target_claim_id,omitempty"`
-	Claim       temporalClaim `json:"claim"`
-	Apply       bool          `json:"apply,omitempty"`
+	ID          string                  `json:"correction_operation_id"`
+	Fingerprint string                  `json:"fingerprint"`
+	FeedbackID  string                  `json:"feedback_id"`
+	Category    string                  `json:"category"`
+	Target      string                  `json:"target_claim_id,omitempty"`
+	Claim       temporalClaim           `json:"claim"`
+	Apply       bool                    `json:"apply,omitempty"`
+	Receipt     *correctionReceiptStamp `json:"receipt_owner,omitempty"`
 }
 
 func parseCorrectionRequest(raw any) (correctionRequest, error) {
@@ -180,49 +178,6 @@ func scanTemporalClaimLedgerLine(data []byte, atEOF bool) (int, []byte, error) {
 	return bufio.ScanLines(data, atEOF)
 }
 
-func (s *temporalClaimStore) loadCorrectionClaimLocked(line string) bool {
-	if !strings.HasPrefix(line, correctionClaimRecordPrefix) {
-		return false
-	}
-	var record correctionClaimRecord
-	if err := json.Unmarshal([]byte(line), &record); err != nil || !correctionOperationPattern.MatchString(record.ID) ||
-		!correctionDigestPattern.MatchString(record.Fingerprint) || !temporalClaimIDPattern.MatchString(record.FeedbackID) ||
-		!temporalClaimIDPattern.MatchString(record.Claim.ClaimID) ||
-		record.Claim.Provenance["run_id"] != record.ID || record.Claim.Verification["status"] != "unverified" || record.Claim.Verification["method"] != "reporter_assertion" {
-		s.correctionUncertain = true
-		return true
-	}
-	if s.correctionClaims == nil {
-		s.correctionClaims = make(map[string]correctionClaimRecord)
-	}
-	if _, exists := s.correctionClaims[record.ID]; exists || len(s.correctionClaims) >= maxCorrectionClaimReceipts {
-		s.correctionUncertain = true
-		return true
-	}
-	record.Claim.searchText = temporalClaimSearchText(record.Claim)
-	s.correctionClaims[record.ID] = record
-	if record.Apply {
-		s.setClaimLocked(record.Claim)
-	}
-	return true
-}
-
-func (s *temporalClaimStore) encodeCorrectionClaimReceiptsLocked(encoder *json.Encoder) error {
-	ids := make([]string, 0, len(s.correctionClaims))
-	for id := range s.correctionClaims {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	for _, id := range ids {
-		record := s.correctionClaims[id]
-		record.Apply = false // Compaction must not resurrect trimmed or revised claims.
-		if err := encoder.Encode(record); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func (s *temporalClaimStore) recordCorrectionClaim(req correctionRequest, payload map[string]any) (temporalClaim, bool, error) {
 	if s == nil || !s.enabled {
 		return temporalClaim{}, false, errCorrectionUnavailable
@@ -241,7 +196,21 @@ func (s *temporalClaimStore) recordCorrectionClaim(req correctionRequest, payloa
 	if s.correctionUncertain || s.parseErrors != 0 {
 		return temporalClaim{}, false, errCorrectionUnavailable
 	}
-	if record, exists := s.correctionClaims[req.id]; exists {
+	db, token, err := openCorrectionReceiptDB(s.path, correctionClaimReceiptKind, s.correctionStamp.Owner)
+	if err != nil {
+		return temporalClaim{}, false, errCorrectionUnavailable
+	}
+	defer db.Close()
+	tip := s.correctionStamp
+	tip.Owner = token
+	if err := checkCorrectionReceiptFrontier(db, tip); err != nil {
+		return temporalClaim{}, false, errCorrectionUnavailable
+	}
+	record, exists, err := readCorrectionClaimReceipt(db, req.id)
+	if err != nil {
+		return temporalClaim{}, false, errCorrectionUnavailable
+	}
+	if exists {
 		if record.Fingerprint != fingerprint || record.FeedbackID != req.feedbackID || record.Category != req.category || record.Target != req.target {
 			return temporalClaim{}, false, errCorrectionConflict
 		}
@@ -251,10 +220,12 @@ func (s *temporalClaimStore) recordCorrectionClaim(req correctionRequest, payloa
 		return temporalClaim{}, false, errCorrectionConflict
 	}
 	// A trimmed correction's claim ID remains reserved by its operation receipt.
-	for _, record := range s.correctionClaims {
-		if record.Claim.ClaimID == claim.ClaimID {
-			return temporalClaim{}, false, errCorrectionConflict
-		}
+	var reserved int
+	if err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM receipts WHERE alternate = ?)", claim.ClaimID).Scan(&reserved); err != nil {
+		return temporalClaim{}, false, errCorrectionUnavailable
+	}
+	if reserved != 0 {
+		return temporalClaim{}, false, errCorrectionConflict
 	}
 	if req.target != "" {
 		target, found := s.claims[req.target]
@@ -262,46 +233,73 @@ func (s *temporalClaimStore) recordCorrectionClaim(req correctionRequest, payloa
 			return temporalClaim{}, false, errCorrectionConflict
 		}
 	}
-	if len(s.correctionClaims) >= maxCorrectionClaimReceipts {
-		return temporalClaim{}, false, errCorrectionUnavailable
-	}
 	claim.CreatedAt = nowUTCISO()
 	claim.UpdatedAt = claim.CreatedAt
-	record := correctionClaimRecord{
+	record = correctionClaimRecord{
 		ID: req.id, Fingerprint: fingerprint, FeedbackID: req.feedbackID, Category: req.category,
 		Target: req.target, Claim: claim, Apply: true,
 	}
-	encoded, err := json.Marshal(record)
+	proof, err := record.receipt()
 	if err != nil {
 		return temporalClaim{}, false, errCorrectionInvalid
 	}
-	if err := s.appendCorrectionClaimLocked(append(encoded, '\n')); err != nil {
+	// Open the owner before reserving. A clean open failure is retryable
+	// without quarantining the current process.
+	if tip.Seq == 0 {
+		if err := createOwnerOnlyDurableEmptyFileIfMissing(s.path, false); err != nil {
+			return temporalClaim{}, false, errCorrectionUnavailable
+		}
+	} else if info, err := os.Lstat(s.path); err != nil || !info.Mode().IsRegular() {
+		return temporalClaim{}, false, errCorrectionUnavailable
+	}
+	file, err := openOwnerOnlyAppend(s.path, false)
+	if err != nil {
 		s.lastError = err.Error()
 		return temporalClaim{}, false, errCorrectionUnavailable
 	}
-	if s.correctionClaims == nil {
-		s.correctionClaims = make(map[string]correctionClaimRecord)
+	defer file.Close()
+	stamp, err := reserveCorrectionReceipt(db, tip, proof)
+	if err != nil {
+		return temporalClaim{}, false, errCorrectionUnavailable
 	}
-	s.correctionClaims[req.id] = record
+	record.Receipt = &stamp
+	encoded, err := json.Marshal(record)
+	if err == nil {
+		err = s.appendCorrectionClaimLocked(file, append(encoded, '\n'))
+	}
+	if err == nil {
+		err = commitCorrectionReceipt(db, stamp.Seq)
+	}
+	if err != nil {
+		s.correctionUncertain = true
+		s.lastError = err.Error()
+		return temporalClaim{}, false, errCorrectionUnavailable
+	}
+	s.correctionStamp = stamp
 	s.setClaimLocked(claim)
 	s.logEntries++
 	s.lastPersistedAt = nowUTCISO()
 	s.trimLocked()
+	if s.compactEvery > 0 && s.logEntries >= s.maxClaims*2 && s.logEntries%s.compactEvery == 0 {
+		if err := s.compactLocked(); err != nil {
+			s.lastError = err.Error()
+		}
+	}
 	return claim, false, nil
 }
 
-func (s *temporalClaimStore) appendCorrectionClaimLocked(line []byte) error {
-	file, err := openOwnerOnlyAppend(s.path, false)
+func (s *temporalClaimStore) appendCorrectionClaimLocked(file *os.File, line []byte) error {
+	reader, err := openOwnerOnlyReadPlatform(s.path)
 	if err != nil {
 		return err
 	}
-	defer file.Close()
-	reader, err := os.Open(s.path)
-	if err != nil {
-		return err
+	defer reader.Close()
+	readInfo, readErr := reader.Stat()
+	writeInfo, writeErr := file.Stat()
+	if readErr != nil || writeErr != nil || !os.SameFile(readInfo, writeInfo) {
+		return errCorrectionUnavailable
 	}
 	tailErr := correctionLedgerTail(reader)
-	_ = reader.Close()
 	if tailErr != nil {
 		s.correctionUncertain = true
 		return tailErr
@@ -339,7 +337,21 @@ func (s *temporalClaimStore) correctionClaimReceipt(req correctionRequest, proje
 	if s.correctionUncertain || s.parseErrors != 0 {
 		return temporalClaim{}, errCorrectionUnavailable
 	}
-	record, ok := s.correctionClaims[req.id]
+	if s.correctionStamp.Owner == "" {
+		return temporalClaim{}, errCorrectionConflict
+	}
+	db, _, err := openCorrectionReceiptDB(s.path, correctionClaimReceiptKind, s.correctionStamp.Owner)
+	if err != nil {
+		return temporalClaim{}, errCorrectionUnavailable
+	}
+	defer db.Close()
+	if err := checkCorrectionReceiptFrontier(db, s.correctionStamp); err != nil {
+		return temporalClaim{}, errCorrectionUnavailable
+	}
+	record, ok, err := readCorrectionClaimReceipt(db, req.id)
+	if err != nil {
+		return temporalClaim{}, errCorrectionUnavailable
+	}
 	if !ok || record.FeedbackID != req.feedbackID || record.Category != req.category || record.Target != req.target ||
 		record.Claim.Project != project || record.Claim.SessionID != session || record.Claim.AgentID != actor {
 		return temporalClaim{}, errCorrectionConflict
@@ -391,19 +403,10 @@ func (s *server) recordCorrectionSessionEvent(sessionID, project string, payload
 	return s.agentSessions.appendCorrectionEvent(sessionID, project, actor, req, claim, scope)
 }
 
-func (s *agentSessionStore) hasCorrectionEventReceiptsLocked() bool {
-	for _, row := range s.sessions {
-		if len(anyMap(row["correction_receipts"])) != 0 {
-			return true
-		}
-	}
-	return false
-}
-
 func (s *agentSessionStore) appendCorrectionEvent(sessionID, project, actor string, req correctionRequest, claim temporalClaim, scope map[string]any) (map[string]any, map[string]any, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.decisionUncertain {
+	if s.decisionUncertain || s.correctionUncertain {
 		return nil, nil, errCorrectionUnavailable
 	}
 	row, found := s.sessions[sessionID]
@@ -414,22 +417,39 @@ func (s *agentSessionStore) appendCorrectionEvent(sessionID, project, actor stri
 	if _, err := establishAgentSessionScopeOwnership(candidate, scope); err != nil {
 		return nil, nil, errCorrectionConflict
 	}
-	receipts := anyMap(candidate["correction_receipts"])
-	if saved, exists := receipts[req.id]; exists {
-		event := cloneJSONMap(anyMap(saved))
+	db, token, err := openCorrectionReceiptDB(s.path, correctionSessionReceiptKind, s.correctionStamp.Owner)
+	if err != nil {
+		return nil, nil, errCorrectionUnavailable
+	}
+	defer db.Close()
+	tip := s.correctionStamp
+	tip.Owner = token
+	if err := checkCorrectionReceiptFrontier(db, tip); err != nil {
+		return nil, nil, errCorrectionUnavailable
+	}
+	saved, exists, err := readCorrectionReceipt(db.QueryRow(correctionReceiptLookup, req.id))
+	if err != nil {
+		return nil, nil, errCorrectionUnavailable
+	}
+	if exists {
+		event := map[string]any{}
+		if saved.scope != correctionSessionReceiptScope(sessionID, anyToString(row[correctionSessionGenerationField])) {
+			return nil, nil, errCorrectionConflict
+		}
+		if saved.alternate.Valid || json.Unmarshal(saved.body, &event) != nil {
+			return nil, nil, errCorrectionUnavailable
+		}
 		metadata := anyMap(event["metadata"])
 		if event["id"] != req.id || event["type"] != "correction.recorded" || event["session_id"] != sessionID ||
 			event["agent_id"] != actor || event["project"] != project ||
 			metadata["operation_id"] != req.id || metadata["category"] != req.category || metadata["factual"] != req.factual ||
-			metadata["target_claim_id"] != req.target || metadata["feedback_saved"] != true || metadata["feedback_id"] != req.feedbackID || metadata["claim_persisted"] != req.factual ||
+			metadata["target_claim_id"] != req.target || metadata["feedback_saved"] != true || metadata["feedback_id"] != req.feedbackID ||
+			metadata["claim_persisted"] != req.factual ||
 			(req.factual && (metadata["claim_id"] != claim.ClaimID || anyToInt(metadata["claim_revision"], 0) != claim.Revision)) {
 			return nil, nil, errCorrectionUnavailable
 		}
 		event["idempotent_replay"] = true
 		return s.effectiveSessionLocked(row, time.Now().UTC()), event, nil
-	}
-	if len(receipts) >= maxCorrectionEventReceipts {
-		return nil, nil, errCorrectionUnavailable
 	}
 	metadata := map[string]any{
 		"operation_id": req.id, "category": req.category, "factual": req.factual, "target_claim_id": req.target,
@@ -444,18 +464,37 @@ func (s *agentSessionStore) appendCorrectionEvent(sessionID, project, actor stri
 		"id": req.id, "session_id": sessionID, "project": agentSessionProject(row), "agent_id": actor, "agent": row["agent"],
 		"type": "correction.recorded", "summary": "Correction recorded: " + req.category, "metadata": metadata, "created_at": nowUTCISO(),
 	}
-	// Save the exact normalized event with the session snapshot, independently
-	// of the bounded visible event ring. No caller status enters the snapshot.
-	receipts[req.id] = normalizeAgentSessionEvent(sessionID, eventPayload)
-	candidate["correction_receipts"] = receipts
+	generation := ensureCorrectionSessionGeneration(candidate)
+	proof, err := makeCorrectionReceipt(req.id, correctionSessionReceiptScope(sessionID, generation), "", normalizeAgentSessionEvent(sessionID, eventPayload))
+	if err != nil {
+		return nil, nil, errCorrectionUnavailable
+	}
+	stamp, err := reserveCorrectionReceipt(db, tip, proof)
+	if err != nil {
+		return nil, nil, errCorrectionUnavailable
+	}
+	before := s.correctionStamp
+	s.correctionStamp = stamp
 	var session, event map[string]any
-	err := s.withAgentSessionMutationLocked(true, func() error {
+	err = s.withAgentSessionMutationLocked(true, func() error {
 		s.sessions[sessionID] = candidate
 		var appendErr error
 		session, event, appendErr = s.appendEventScopedLocked(sessionID, eventPayload, scope)
 		return appendErr
 	})
 	if err != nil {
+		if !s.decisionUncertain {
+			s.correctionStamp = before
+			if _, err := db.Exec("DELETE FROM pending_receipt WHERE seq = ?", stamp.Seq); err != nil {
+				s.correctionUncertain = true
+			}
+		}
+		return nil, nil, errCorrectionUnavailable
+	}
+	if err := commitCorrectionReceipt(db, stamp.Seq); err != nil {
+		// The snapshot is durable. Fence typed writes until reopen confirms
+		// the pending receipt; ordinary snapshots preserve the witness.
+		s.correctionUncertain = true
 		return nil, nil, errCorrectionUnavailable
 	}
 	return session, event, nil

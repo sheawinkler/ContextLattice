@@ -82,7 +82,7 @@ type temporalClaimStore struct {
 	lastPersistedAt      string
 	lastError            string
 
-	correctionClaims    map[string]correctionClaimRecord
+	correctionStamp     correctionReceiptStamp
 	correctionUncertain bool
 }
 
@@ -124,8 +124,11 @@ func newTemporalClaimStoreFromEnv() (*temporalClaimStore, error) {
 }
 
 func (s *temporalClaimStore) load() error {
-	file, err := os.Open(s.path)
+	replay := correctionClaimReplay{}
+	defer replay.close()
+	file, err := openOwnerOnlyReadPlatform(s.path)
 	if errors.Is(err, os.ErrNotExist) {
+		s.correctionUncertain = !emptyCorrectionReceiptOwner(s.path, correctionClaimReceiptKind)
 		return nil
 	}
 	if err != nil {
@@ -143,8 +146,10 @@ func (s *temporalClaimStore) load() error {
 		if line == "" {
 			continue
 		}
-		if s.loadCorrectionClaimLocked(line) {
-			s.logEntries++
+		if replay.consume(s, line) {
+			if !strings.HasPrefix(line, correctionReceiptOwnerPrefix) {
+				s.logEntries++
+			}
 			continue
 		}
 		var claim temporalClaim
@@ -158,6 +163,16 @@ func (s *temporalClaimStore) load() error {
 	}
 	if err := scanner.Err(); err != nil {
 		return fmt.Errorf("scan temporal claim ledger: %w", err)
+	}
+	if !s.correctionUncertain && s.parseErrors == 0 {
+		if err := replay.finish(s); err != nil {
+			s.correctionUncertain = true
+			s.lastError = err.Error()
+		}
+	} else if replay.legacy != 0 || replay.stamp.Owner != "" || !ensureCorrectionReceiptMissing(s.path) {
+		// Do not compact away inline proofs if loading could not verify their
+		// migration or if a stamped generation could not be reconciled.
+		s.correctionUncertain = true
 	}
 	s.trimLocked()
 	return nil
@@ -643,6 +658,22 @@ func (s *temporalClaimStore) compactLocked() error {
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].ClaimID < rows[j].ClaimID })
 	encoder := json.NewEncoder(file)
+	custody := s.correctionStamp.Owner != ""
+	if custody {
+		db, _, err := openCorrectionReceiptDB(s.path, correctionClaimReceiptKind, s.correctionStamp.Owner)
+		if err == nil {
+			err = checkCorrectionReceiptFrontier(db, s.correctionStamp)
+			_ = db.Close()
+		}
+		if err == nil {
+			err = encoder.Encode(map[string]any{correctionReceiptOwnerField: s.correctionStamp})
+		}
+		if err != nil {
+			_ = file.Close()
+			_ = os.Remove(tmp)
+			return err
+		}
+	}
 	for _, claim := range rows {
 		if err := encoder.Encode(claim); err != nil {
 			_ = file.Close()
@@ -650,13 +681,8 @@ func (s *temporalClaimStore) compactLocked() error {
 			return err
 		}
 	}
-	if err := s.encodeCorrectionClaimReceiptsLocked(encoder); err != nil {
-		_ = file.Close()
-		_ = os.Remove(tmp)
-		return err
-	}
-	if s.fsync || len(s.correctionClaims) != 0 {
-		if err := file.Sync(); err != nil && len(s.correctionClaims) != 0 {
+	if s.fsync || custody {
+		if err := file.Sync(); err != nil && custody {
 			_ = file.Close()
 			_ = os.Remove(tmp)
 			return err
@@ -670,13 +696,13 @@ func (s *temporalClaimStore) compactLocked() error {
 		_ = os.Remove(tmp)
 		return err
 	}
-	if len(s.correctionClaims) != 0 {
+	if custody {
 		if err := syncOwnerOnlyDirectory(filepath.Dir(s.path)); err != nil {
 			s.correctionUncertain = true
 			return err
 		}
 	}
-	s.logEntries = len(rows) + len(s.correctionClaims)
+	s.logEntries = len(rows)
 	s.lastPersistedAt = nowUTCISO()
 	return nil
 }
