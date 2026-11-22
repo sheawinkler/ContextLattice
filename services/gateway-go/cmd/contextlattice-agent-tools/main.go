@@ -381,6 +381,8 @@ func (c *cli) run(argv []string) error {
 	switch command {
 	case "update":
 		return c.cmdUpdate(args)
+	case "identity":
+		return c.cmdIdentity(args)
 	case "context":
 		return c.cmdContext(args)
 	case "resume":
@@ -537,6 +539,7 @@ Usage:
   contextlattice <command> [args]
 
 Primary workflow:
+  identity                       show the session owner and observed execution identity
   update --check                 check a managed public install; --apply delegates a full upgrade
   context <task>                  compact proof-carrying context for the task
   resume [--session-id id]        compact task/session state for continuation
@@ -1090,6 +1093,10 @@ func signedDecimalCLIInteger(raw string) bool {
 
 func commonStringFlags() map[string]string {
 	return map[string]string{
+		"agent": "agent", "agent-id": "agent_id", "native-session-id": "native_session_id",
+		"harness": "harness", "model": "model", "model-origin": "model_origin",
+		"model-family": "model_family", "model-version": "model_version",
+		"reasoning-effort": "reasoning_effort", "effort": "reasoning_effort",
 		"project":    "project",
 		"p":          "project",
 		"topic-path": "topic_path",
@@ -2090,7 +2097,8 @@ func (c *cli) cmdSearch(args []string) error {
 	}
 	mode := parsed.string("mode", envString("CONTEXTLATTICE_RETRIEVAL_MODE", "balanced"))
 	project := parsed.string("project", envString("CONTEXTLATTICE_PROJECT", "contextlattice"))
-	agentID := parsed.string("agent_id", envString("CONTEXTLATTICE_AGENT_ID", envString("MEMMCP_AGENT_ID", "codex_gpt5")))
+	caller := resolveNativeCaller(parsed, loadAgentProfiles())
+	agentID := caller.agentID
 	sessionID := parsed.string("session_id", envString("CONTEXTLATTICE_SESSION_ID", ""))
 	payload := map[string]any{
 		"query":                   query,
@@ -2101,6 +2109,7 @@ func (c *cli) cmdSearch(args []string) error {
 		"retrieval_mode":          mode,
 		"include_grounding":       true,
 		"include_retrieval_debug": false,
+		"caller_attribution":      caller.metadata(),
 		"agent_id":                agentID,
 		"session_id":              emptyToNil(sessionID),
 	}

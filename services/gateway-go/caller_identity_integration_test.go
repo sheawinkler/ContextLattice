@@ -71,6 +71,7 @@ func TestPublicNativeCallerIdentityAcrossActorsAndRestart(t *testing.T) {
 	router.HandleFunc("/memory/recall/response", s.memoryRecallResponse)
 	router.HandleFunc("/v1/agents/sessions/", s.agentsSessionsRoute)
 	router.HandleFunc("/memory/write", s.memoryWrite)
+	router.HandleFunc("/memory/search", s.memorySearch)
 	router.HandleFunc("/telemetry/context-pack-quality/outcome", s.telemetryContextPackQualityOutcomeRoute)
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		transportCalls.Add(1)
@@ -241,5 +242,40 @@ func TestPublicNativeCallerIdentityAcrossActorsAndRestart(t *testing.T) {
 			t.Fatalf("missing durable events for %s: %v", want.actor, expected)
 		}
 	}
-	t.Logf("fixture actors=2 CLI invocations=12 loopback requests=%d inference_calls=0 independent_acceptances=0", transportCalls.Load())
+	const third = "stable-host-owner"
+	run(third, "lab-1.2-maple", "", false, "context", "per-turn identity", "--harness", "hermes", "--effort", "low")
+	id := sessionID(third)
+	row, _, ok := s.agentSessions.get(id)
+	if !ok || anyMap(row["execution_identity"])["execution_label"] != "hermes-lab-maple-1.2-low" {
+		t.Fatalf("initial observation: %#v", row["execution_identity"])
+	}
+	found := run(third, "lab-2.1-birch", id, false, "search", "observed search", "--harness", "hermes", "--effort", "high", "--mode", "fast")
+	if anyMap(anyMap(found["initial_response"])["caller_attribution"])["execution_label"] != "hermes-lab-birch-2.1-high" {
+		t.Fatal("ordinary search lost current identity")
+	}
+	run(third, "lab-2.1-birch", id, false, "remember", "updated model", "--file", "notes/exec.md", "--harness", "hermes", "--effort", "high")
+	written, ok := s.memoryStore.currentEntry(project, "notes/exec.md")
+	if !ok || written.SessionID != id || written.AgentID != third || !slices.Contains(written.Tags, "execution:hermes-lab-birch-2.1-high") {
+		t.Fatalf("wrong indexed owner or execution: %#v", written.Tags)
+	}
+	run(third, "lab-2.1-birch", id, false, "remember", "effort unavailable", "--file", "notes/partial.md", "--harness", "hermes")
+	restarted, err := newAgentSessionStoreFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	row, events, ok := restarted.get(id)
+	facts := anyMap(row["execution_identity"])
+	if !ok || row["agent_id"] != third || facts["execution_status"] != "partial" || facts["execution_label"] != nil {
+		t.Fatalf("stale display after reopening: %#v", facts)
+	}
+	labels := map[string]bool{}
+	for _, event := range events {
+		if label, ok := anyMap(anyMap(event["metadata"])["caller_attribution"])["execution_label"].(string); ok {
+			labels[label] = true
+		}
+	}
+	if !labels["hermes-lab-maple-1.2-low"] || !labels["hermes-lab-birch-2.1-high"] {
+		t.Fatalf("lost earlier event observations: %v", labels)
+	}
+	t.Logf("fixture actors=3 loopback requests=%d inference_calls=0 independent_acceptances=0", transportCalls.Load())
 }

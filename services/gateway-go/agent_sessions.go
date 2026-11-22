@@ -1541,6 +1541,13 @@ func normalizeAgentSessionStart(payload map[string]any, fallbackID string, scope
 	if len(scopeOwnership) > 0 && len(scopeOwnership[0]) > 0 {
 		record["scope_ownership"] = cloneAnyMap(scopeOwnership[0])
 	}
+	if m := anyMap(record["metadata"]); m["caller_attribution"] != nil {
+		if facts := contextCallerAttribution(m, anyToString(record["agent_id"])); facts != nil {
+			m["caller_attribution"], record["execution_identity"] = facts, facts
+		} else {
+			delete(m, "caller_attribution")
+		}
+	}
 	initializeAgentDecisionBaseline(record, nil)
 	return record
 }
@@ -1819,21 +1826,10 @@ func (s *agentSessionStore) startOrReuseScopedLocked(payload map[string]any, sco
 				if scopeErr != nil {
 					return nil, false, fmt.Errorf("%w: %v", errAgentSessionReuseConflict, scopeErr)
 				}
-				if changed {
-					previous, hadPrevious := existing["scope_ownership"]
-					existing["scope_ownership"] = candidate["scope_ownership"]
-					if err := s.persistLocked(); err != nil {
-						if ownerOnlyAtomicWriteCommitted(err) {
-							return nil, false, err
-						} else if hadPrevious {
-							existing["scope_ownership"] = previous
-						} else {
-							delete(existing, "scope_ownership")
-						}
-						return nil, false, err
-					}
+				if err := s.persistReuseFactsLocked(existing, candidate, payload, changed); err != nil {
+					return nil, false, err
 				}
-				return s.effectiveSessionLocked(existing, now), true, nil
+				return s.effectiveSessionLocked(s.sessions[anyToString(existing["id"])], now), true, nil
 			}
 			return nil, false, errAgentSessionReuseConflict
 		}
@@ -1867,21 +1863,10 @@ func (s *agentSessionStore) startOrReuseScopedLocked(payload map[string]any, sco
 			if scopeErr != nil {
 				return nil, false, fmt.Errorf("%w: %v", errAgentSessionReuseConflict, scopeErr)
 			}
-			if changed {
-				previous, hadPrevious := existing["scope_ownership"]
-				existing["scope_ownership"] = candidate["scope_ownership"]
-				if err := s.persistLocked(); err != nil {
-					if ownerOnlyAtomicWriteCommitted(err) {
-						return nil, false, err
-					} else if hadPrevious {
-						existing["scope_ownership"] = previous
-					} else {
-						delete(existing, "scope_ownership")
-					}
-					return nil, false, err
-				}
+			if err := s.persistReuseFactsLocked(existing, candidate, payload, changed); err != nil {
+				return nil, false, err
 			}
-			return s.effectiveSessionLocked(existing, now), true, nil
+			return s.effectiveSessionLocked(s.sessions[anyToString(existing["id"])], now), true, nil
 		}
 	}
 	record := normalizeAgentSessionStart(payload, "", scopeOwnership)
@@ -2043,6 +2028,13 @@ func (s *agentSessionStore) appendEventScopedLocked(sessionID string, payload ma
 	session["updated_at"] = createdAt
 	session["event_count"] = anyToInt(session["event_count"], 0) + 1
 	metadata := anyMap(event["metadata"])
+	if metadata["caller_attribution"] != nil {
+		if facts := contextCallerAttribution(metadata, anyToString(session["agent_id"])); facts != nil {
+			metadata["caller_attribution"], session["execution_identity"] = facts, facts
+		} else {
+			delete(metadata, "caller_attribution")
+		}
+	}
 	if runtime := anyMap(metadata["objective_runtime"]); len(runtime) > 0 {
 		session["objective_runtime"] = compactAgentSessionMetadata(runtime)
 		if hierarchy := anyMap(runtime["objective_hierarchy"]); len(hierarchy) > 0 {
@@ -2129,7 +2121,7 @@ func compactAgentSessionRow(row map[string]any) map[string]any {
 	out := map[string]any{}
 	for _, key := range []string{
 		"id", "agent", "agent_id", "project", "status", "objective", "task_id", "task_identity_id", "execution_lane_id", "native_session_id",
-		"reuse_key", "started_at", "updated_at", "last_event_at", "last_event_type", "event_count",
+		"reuse_key", "started_at", "updated_at", "last_event_at", "last_event_type", "event_count", "execution_identity",
 		"stale", "expired_at", "idle_ttl_seconds", "scope_ownership",
 		"decision_binding", "decision_baseline", "decision_store_unavailable",
 	} {

@@ -2219,7 +2219,7 @@ var agentPreflightAliases = map[string]string{
 func normalizeAgentPreflightKey(agent string) string {
 	candidate := strings.TrimSpace(strings.ToLower(agent))
 	if candidate == "" {
-		return "codex"
+		return "agent-cli"
 	}
 	if mapped, ok := agentPreflightAliases[candidate]; ok {
 		return mapped
@@ -2231,8 +2231,7 @@ func resolveAgentPreflightProfile(agent string) (string, agentPreflightProfile) 
 	key := normalizeAgentPreflightKey(agent)
 	profile, ok := defaultAgentPreflightProfiles[key]
 	if !ok {
-		key = "codex"
-		profile = defaultAgentPreflightProfiles[key]
+		return "agent-cli", agentPreflightProfile{AgentID: "agent-cli", TopicPath: "runbooks/agent-integration", Query: "agent preflight connectivity and retrieval", RetrievalMode: "balanced"}
 	}
 	return key, profile
 }
@@ -2369,10 +2368,7 @@ func (s *server) agentPreflight(w http.ResponseWriter, r *http.Request, forcedAg
 		reqBody.AgentID = strings.TrimSpace(os.Getenv("CONTEXTLATTICE_AGENT_ID"))
 	}
 	if strings.TrimSpace(reqBody.AgentID) == "" {
-		reqBody.AgentID = strings.TrimSpace(os.Getenv("CONTEXTLATTICE_AGENT_ID"))
-	}
-	if strings.TrimSpace(reqBody.AgentID) == "" {
-		reqBody.AgentID = "codex_gpt5"
+		reqBody.AgentID = "agent-cli"
 	}
 	objectiveCtx := objectiveContextFromPreflightRequest(reqBody, rawPayload)
 	sessionID := strings.TrimSpace(reqBody.SessionID)
@@ -2408,6 +2404,7 @@ func (s *server) agentPreflight(w http.ResponseWriter, r *http.Request, forcedAg
 				"topic_path":          reqBody.TopicPath,
 				"retrieval_mode":      reqBody.RetrievalMode,
 				"profile":             profileKey,
+				"caller_attribution":  contextCallerAttribution(rawPayload, reqBody.AgentID),
 				"endpoint":            r.URL.Path,
 				"objective_hierarchy": objectiveCtx.hierarchy(reqBody.Project, reqBody.TopicPath, sessionID, reqBody.Query),
 				"objective_lineage":   objectiveCtx.lineage(reqBody.Project, reqBody.TopicPath, sessionID, reqBody.Query),
@@ -8143,6 +8140,8 @@ func (s *server) memorySearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	includeGrounding := anyToBool(payload["include_grounding"])
+	callerFacts := contextCallerAttribution(payload, anyToString(payload["agent_id"]))
+	delete(payload, "caller_attribution")
 	response, status, execErr := s.executeRetrieval(r.Context(), incomingHeaders, payload, includeGrounding)
 	if execErr != nil {
 		log.Printf("staged memory/search failed; falling back to backend proxy: %s", execErr)
@@ -8183,6 +8182,10 @@ func (s *server) memorySearch(w http.ResponseWriter, r *http.Request) {
 	response["traffic_class"] = trafficClass
 	if agentID := strings.TrimSpace(anyToString(payload["agent_id"])); agentID != "" {
 		response["agent_id"] = agentID
+	}
+	delete(response, "caller_attribution")
+	if callerFacts != nil {
+		response["caller_attribution"] = callerFacts
 	}
 	resultState := strings.TrimSpace(strings.ToLower(anyToString(response["result_state"])))
 	response["degraded"] = resultState == "degraded"

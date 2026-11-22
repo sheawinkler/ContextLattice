@@ -17,6 +17,7 @@ import (
 
 type nativeCaller struct {
 	agent, agentID, model, nativeSessionID string
+	facts                                  calleridentity.Facts
 	explicit                               bool
 }
 
@@ -41,11 +42,14 @@ func resolveNativeCaller(parsed parsedArgs, profiles map[string]any) nativeCalle
 	agent = firstNonEmpty(agent, "agent-cli")
 	agentID = firstNonEmpty(agentID, firstString(asMap(profiles[agent])["agent_id"]), agent)
 	model := parsed.string("model", envString("CONTEXTLATTICE_MODEL", envString("CONTEXTLATTICE_AGENT_MODEL", "")))
-	return nativeCaller{agent: agent, agentID: agentID, model: calleridentity.Model(model), nativeSessionID: parsed.string("native_session_id", envString("CONTEXTLATTICE_NATIVE_SESSION_ID", "")), explicit: explicit}
+	facts := invocationFacts(parsed, agent, model)
+	return nativeCaller{agent: agent, agentID: agentID, model: facts.Model, facts: facts, nativeSessionID: parsed.string("native_session_id", envString("CONTEXTLATTICE_NATIVE_SESSION_ID", "")), explicit: explicit}
 }
 
 func (caller nativeCaller) metadata() map[string]any {
-	return calleridentity.Metadata(caller.agentID, caller.model)
+	facts := caller.facts
+	facts.Model = caller.model
+	return facts.Metadata(caller.agentID)
 }
 
 func (caller nativeCaller) writeTags(base ...string) []string {
@@ -56,6 +60,9 @@ func (caller nativeCaller) writeTags(base ...string) []string {
 	}
 	if tag := calleridentity.Tag(caller.agentID, caller.model); tag != "" {
 		tags = append(tags, tag)
+	}
+	if name, ok := caller.metadata()["execution_label"].(string); ok {
+		tags = append(tags, "execution:"+name)
 	}
 	return tags
 }

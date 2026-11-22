@@ -1770,6 +1770,7 @@ body,
 }
 
 .cl-session-title {
+  overflow-wrap: anywhere;
   color: var(--cl-paper);
   font-size: 0.9rem;
   font-weight: 800;
