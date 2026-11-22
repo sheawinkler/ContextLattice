@@ -67,19 +67,20 @@ type temporalClaim struct {
 }
 
 type temporalClaimStore struct {
-	mu                sync.RWMutex
-	enabled           bool
-	path              string
-	maxClaims         int
-	compactEvery      int
-	fsync             bool
-	claims            map[string]temporalClaim
-	proofSessionIndex map[string][]string
-	proofRevision     uint64
-	logEntries        int
-	parseErrors       int
-	lastPersistedAt   string
-	lastError         string
+	mu                   sync.RWMutex
+	enabled              bool
+	path                 string
+	maxClaims            int
+	compactEvery         int
+	fsync                bool
+	claims               map[string]temporalClaim
+	proofSessionIndex    map[string][]string
+	visibleEvidenceIndex map[string]map[string]map[string]map[string]struct{}
+	proofRevision        uint64
+	logEntries           int
+	parseErrors          int
+	lastPersistedAt      string
+	lastError            string
 }
 
 type temporalClaimQuery struct {
@@ -248,10 +249,15 @@ func (s *temporalClaimStore) setClaimLocked(claim temporalClaim) {
 	if s.proofSessionIndex == nil {
 		s.proofSessionIndex = map[string][]string{}
 	}
+	if s.visibleEvidenceIndex == nil {
+		s.visibleEvidenceIndex = map[string]map[string]map[string]map[string]struct{}{}
+	}
 	if previous, exists := s.claims[claim.ClaimID]; exists {
 		s.removeProofClaimRefLocked(previous)
+		s.removeVisibleEvidenceClaimLocked(previous)
 	}
 	s.claims[claim.ClaimID] = claim
+	s.addVisibleEvidenceClaimLocked(claim)
 	s.proofRevision = nextProofTimelineRevision(s.proofRevision)
 	if key := temporalClaimProofIndexKey(claim.Project, claim.SessionID); key != "" {
 		refs := append(s.proofSessionIndex[key], claim.ClaimID)
@@ -261,6 +267,119 @@ func (s *temporalClaimStore) setClaimLocked(claim temporalClaim) {
 		}
 		s.proofSessionIndex[key] = refs
 	}
+}
+
+func temporalClaimScopeIndexKeys(project, topic string) []string {
+	project = strings.ToLower(strings.TrimSpace(project))
+	topic = strings.Trim(strings.TrimSpace(topic), "/")
+	if project == "" || topic == "" {
+		return nil
+	}
+	return []string{project + "\x00" + topic}
+}
+
+func temporalClaimVisibleEvidenceKeys(claim temporalClaim) map[string]map[string]struct{} {
+	out := map[string]map[string]struct{}{}
+	for _, refs := range [][]temporalClaimEvidence{claim.Support, claim.Opposition} {
+		for _, ref := range refs {
+			digest := normalizeProjectedContentHash(ref.ContentHash)
+			memoryID := strings.TrimSpace(ref.MemoryID)
+			if !isHexDigest(digest) || memoryID == "" {
+				continue
+			}
+			if out[digest] == nil {
+				out[digest] = map[string]struct{}{}
+			}
+			out[digest][memoryID] = struct{}{}
+		}
+	}
+	return out
+}
+
+func (s *temporalClaimStore) addVisibleEvidenceClaimLocked(claim temporalClaim) {
+	if !temporalClaimCanInfluence(claim) {
+		return
+	}
+	keys := temporalClaimScopeIndexKeys(claim.Project, claim.TopicPath)
+	evidence := temporalClaimVisibleEvidenceKeys(claim)
+	if len(evidence) == 0 {
+		return
+	}
+	for _, scope := range keys {
+		if s.visibleEvidenceIndex[scope] == nil {
+			s.visibleEvidenceIndex[scope] = map[string]map[string]map[string]struct{}{}
+		}
+		for digest, memoryIDs := range evidence {
+			if s.visibleEvidenceIndex[scope][digest] == nil {
+				s.visibleEvidenceIndex[scope][digest] = map[string]map[string]struct{}{}
+			}
+			for memoryID := range memoryIDs {
+				if s.visibleEvidenceIndex[scope][digest][memoryID] == nil {
+					s.visibleEvidenceIndex[scope][digest][memoryID] = map[string]struct{}{}
+				}
+				s.visibleEvidenceIndex[scope][digest][memoryID][claim.ClaimID] = struct{}{}
+			}
+		}
+	}
+}
+
+func (s *temporalClaimStore) removeVisibleEvidenceClaimLocked(claim temporalClaim) {
+	if s == nil || s.visibleEvidenceIndex == nil {
+		return
+	}
+	for _, scope := range temporalClaimScopeIndexKeys(claim.Project, claim.TopicPath) {
+		for digest, memoryIDs := range temporalClaimVisibleEvidenceKeys(claim) {
+			for memoryID := range memoryIDs {
+				delete(s.visibleEvidenceIndex[scope][digest][memoryID], claim.ClaimID)
+				if len(s.visibleEvidenceIndex[scope][digest][memoryID]) == 0 {
+					delete(s.visibleEvidenceIndex[scope][digest], memoryID)
+				}
+				if len(s.visibleEvidenceIndex[scope][digest]) == 0 {
+					delete(s.visibleEvidenceIndex[scope], digest)
+				}
+			}
+		}
+		if len(s.visibleEvidenceIndex[scope]) == 0 {
+			delete(s.visibleEvidenceIndex, scope)
+		}
+	}
+}
+
+// visibleEvidenceClaims joins only exact, caller-visible source identities; it
+// never enumerates the full claim ledger. An overfull join fails closed.
+func (s *temporalClaimStore) visibleEvidenceClaims(project, topic string,
+	visible map[string]map[string]struct{}, limit int) ([]temporalClaim, bool) {
+	if s == nil || !s.enabled || project == "" || topic == "" || len(visible) == 0 {
+		return nil, false
+	}
+	limit = clampInt(limit, 1, 256)
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	ids := map[string]struct{}{}
+	for _, scope := range temporalClaimScopeIndexKeys(project, topic) {
+		for digest, memoryIDs := range visible {
+			for memoryID := range memoryIDs {
+				for id := range s.visibleEvidenceIndex[scope][digest][memoryID] {
+					ids[id] = struct{}{}
+					if len(ids) > limit {
+						return nil, false
+					}
+				}
+			}
+		}
+	}
+	ordered := make([]string, 0, len(ids))
+	for id := range ids {
+		ordered = append(ordered, id)
+	}
+	sort.Strings(ordered)
+	rows := make([]temporalClaim, 0, len(ordered))
+	for _, id := range ordered {
+		if claim, ok := s.claims[id]; ok {
+			rows = append(rows, claim)
+		}
+	}
+	return rows, true
 }
 
 func temporalClaimProofIndexKey(project, sessionID string) string {
@@ -492,6 +611,7 @@ func (s *temporalClaimStore) trimLocked() {
 	sort.Slice(rows, func(i, j int) bool { return rows[i].UpdatedAt > rows[j].UpdatedAt })
 	for _, claim := range rows[s.maxClaims:] {
 		s.removeProofClaimRefLocked(claim)
+		s.removeVisibleEvidenceClaimLocked(claim)
 		delete(s.claims, claim.ClaimID)
 		s.proofRevision = nextProofTimelineRevision(s.proofRevision)
 	}

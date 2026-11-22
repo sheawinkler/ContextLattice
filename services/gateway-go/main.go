@@ -8152,6 +8152,15 @@ func (s *server) memorySearch(w http.ResponseWriter, r *http.Request) {
 		s.proxyWithBody(w, r, bodyBytes)
 		return
 	}
+	// This response field is reserved for the native scoped producer, never a
+	// caller- or upstream-carried value.
+	delete(response, "conflict_source_check")
+	if status >= http.StatusOK && status < http.StatusBadRequest {
+		if check, ok := scopedSearchConflictSourceCheck(s.temporalClaims,
+			anyToString(payload["project"]), anyToString(payload["topic_path"]), response["results"]); ok {
+			response["conflict_source_check"] = check
+		}
+	}
 	retrievalMode := normalizeRetrievalMode(anyToString(payload["retrieval_mode"]))
 	retrievalIntent := strings.TrimSpace(strings.ToLower(anyToString(payload["retrieval_intent"])))
 	if retrievalIntent == "" {

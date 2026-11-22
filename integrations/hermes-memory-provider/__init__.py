@@ -622,7 +622,7 @@ class ContextLatticeProvider(MemoryProvider):
                     lines += self._fmt_hits(label, results[label], seen)
             if scoped_conflict:
                 lines.append("Scoped conflict-source pointer: " + scoped_conflict["case_ref"] +
-                             " (check one authorized original; duplicate exclusion is not contrary evidence).")
+                             " (opposed revisions are identified; verify one authorized original; no winner is implied).")
             if reported_errors and results:
                 lines.append("PARTIAL: " + "; ".join(reported_errors))
             if len(lines) == 1 and not errors:
