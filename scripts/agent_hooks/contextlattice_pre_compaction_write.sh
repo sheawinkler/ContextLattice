@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # shellcheck source=common.sh
 source "${SCRIPT_DIR}/common.sh"
 TOOL_ROOT="$(contextlattice_root)"
 
 emit_codex_precompact_output() {
-  local status="${1:-0}"
+  local exit_status="${1:-0}"
   python3 -c '
 import json
 import os
@@ -61,7 +61,7 @@ if len(encoded.encode("utf-8")) > max_bytes:
     }
     encoded = json.dumps(out, separators=(",", ":"))
 print(encoded)
-' "$status" "$TOOL_ROOT" || printf '%s\n' '{"continue":true,"suppressOutput":false,"systemMessage":"ContextLattice PreCompact checkpoint output emitter failed."}'
+' "$exit_status" "$TOOL_ROOT" || printf '%s\n' '{"continue":true,"suppressOutput":false,"systemMessage":"ContextLattice PreCompact checkpoint output emitter failed."}'
 }
 
 summary="${1:-${CONTEXTLATTICE_COMPACTION_SUMMARY:-}}"
@@ -72,7 +72,18 @@ mode="${CONTEXTLATTICE_COMPACTION_RETRIEVAL_MODE:-balanced}"
 query="${CONTEXTLATTICE_COMPACTION_QUERY:-context compaction handoff mission objective goal blockers next actions}"
 export CONTEXTLATTICE_CLIENT_TIMEOUT_SECS="${CONTEXTLATTICE_CLIENT_TIMEOUT_SECS:-${CONTEXTLATTICE_HOOK_TIMEOUT_SECS:-200}}"
 
-if [[ -z "${CONTEXTLATTICE_SESSION_ID:-}" && "${CONTEXTLATTICE_AUTO_SESSION_DISABLED:-0}" != "1" ]]; then
+if [[ "${CONTEXTLATTICE_PRECOMPACT_SCHEMA_SMOKE:-}" == "1" ]]; then
+  printf '%s' '{"ok":true}' | emit_codex_precompact_output 0
+  exit 0
+fi
+
+trap codex_hook_cleanup EXIT
+codex_hook_capture PreCompact replay
+if codex_hook_bind PreCompact "$summary" \
+  --project "$project" --agent-id "${CONTEXTLATTICE_AGENT_ID:-codex_gpt5}" --tag compaction --tag auto-session \
+  --metadata-json '{"hook":"pre_compaction"}'; then
+  :
+elif [[ -z "${CONTEXTLATTICE_SESSION_ID:-}" && "${CONTEXTLATTICE_AUTO_SESSION_DISABLED:-0}" != "1" ]]; then
   set +e
   session_out="$(python3 "${TOOL_ROOT}/scripts/agent/contextlattice-session" ensure \
     "$summary" \
@@ -100,13 +111,8 @@ PY
   fi
 fi
 
-if [[ "${CONTEXTLATTICE_PRECOMPACT_SCHEMA_SMOKE:-}" == "1" ]]; then
-  printf '%s' '{"ok":true}' | emit_codex_precompact_output 0
-  exit 0
-fi
-
 set +e
-handoff_payload="$(python3 "${TOOL_ROOT}/scripts/agent/compaction-handoff-payload" --fallback-summary "${summary}" --summary)"
+handoff_payload="$(python3 "${TOOL_ROOT}/scripts/agent/compaction-handoff-payload" --fallback-summary "${summary}" --summary <"$codex_hook_stdin")"
 payload_status=$?
 set -e
 if [[ "$payload_status" -ne 0 ]]; then

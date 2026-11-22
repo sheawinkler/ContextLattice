@@ -9,7 +9,8 @@ func Model(value string) string {
 	case "", "unknown", "default", "auto", "none", "null", "n/a":
 		return ""
 	}
-	if !label(value, 120) {
+	if !label(value, 120) || strings.HasPrefix(value, "/") || strings.Contains(value, ":/") ||
+		strings.HasPrefix(value, "./") || strings.Contains("/"+value+"/", "/../") {
 		return ""
 	}
 	return value

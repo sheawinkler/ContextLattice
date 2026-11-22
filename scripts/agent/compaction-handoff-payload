@@ -6,8 +6,12 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
+import select
+import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +29,13 @@ TEXT_KEYS = (
 )
 SESSION_KEYS = ("session_id", "sessionId", "conversation_id", "conversationId", "id")
 DEFAULT_MAX_STDIN_BYTES = 512 * 1024
+CODEX_EVENTS = ("SessionStart", "PreCompact", "PostCompact")
+CODEX_UUID = re.compile(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", re.I | re.ASCII)
+MODEL_LABEL = re.compile(r"[A-Za-z0-9_./:-]{1,120}")
+MODEL_PART = re.compile(r"[a-z][a-z0-9]{0,31}")
+MODEL_VERSION = re.compile(r"[0-9]{1,4}(?:\.[0-9]{1,4}){0,2}")
+UNKNOWN_MODELS = {"", "unknown", "default", "auto", "none", "null", "n/a"}
+GO_SPACE = "\t\n\v\f\r \x85\xa0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000"
 DEFAULT_MAX_SUMMARY_JSON_BYTES = 12_000
 MAX_DEPTH = 8
 MAX_DICT_ITEMS = 80
@@ -128,6 +139,100 @@ def load_payload() -> Any:
         return {"raw": raw[:1600], "input_truncated": truncated}
 
 
+def codex_native_id(payload: Any, event: str) -> str:
+    if not isinstance(payload, dict) or payload.get("hook_event_name") != event:
+        return ""
+    value = payload.get("session_id")
+    return value if isinstance(value, str) and CODEX_UUID.fullmatch(value) else ""
+
+
+def read_hook_input(limit: int) -> tuple[bytes, bool]:
+    if sys.stdin.isatty():
+        return b"", False
+    fd = sys.stdin.fileno()
+    deadline = time.monotonic() + 0.4
+    raw = bytearray()
+    while len(raw) <= limit:
+        wait = max(0, deadline - time.monotonic())
+        if not wait or not select.select([fd], [], [], wait)[0]:
+            break
+        chunk = os.read(fd, min(65536, limit + 1 - len(raw)))
+        if not chunk:
+            return bytes(raw), True
+        raw.extend(chunk)
+    return bytes(raw), False
+
+
+def sanitize_model(value: Any) -> str:
+    # Match internal/calleridentity.Model: trim, never truncate a slug.
+    if not isinstance(value, str):
+        return ""
+    value = value.strip(GO_SPACE)
+    if (value.lower() in UNKNOWN_MODELS or not MODEL_LABEL.fullmatch(value)
+            or value.startswith(("/", "./")) or ":/" in value or "/../" in f"/{value}/"):
+        return ""
+    return value
+
+
+def codex_hook_attribution(native_id: str, model: Any) -> dict[str, Any]:
+    model = sanitize_model(model)
+    fallback = {"source": "caller_reported", "harness": "codex", "model_known": bool(model)}
+    if not model:
+        return fallback
+    fallback["model"] = model
+    tool_home = Path(os.getenv("CONTEXTLATTICE_GLOBAL_HOME") or Path.home() / ".contextlattice")
+    cli = shutil.which("contextlattice") or str(tool_home / "bin/contextlattice")
+    try:
+        result = subprocess.run(
+            [cli, "identity", "--agent", "codex", "--model", model,
+             "--native-session-id", native_id, "--raw"],
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            timeout=0.8, check=True,
+        )
+        if len(result.stdout) > 8192:
+            return fallback
+        response = json.loads(result.stdout)
+        resolved = response.get("caller_attribution") if isinstance(response, dict) else None
+        if (not isinstance(resolved, dict) or resolved.get("source") != "caller_reported"
+                or resolved.get("harness") != "codex" or resolved.get("model_known") is not True
+                or resolved.get("model") != model):
+            return fallback
+    except (OSError, ValueError, RecursionError, subprocess.SubprocessError):
+        return fallback
+
+    attribution = dict(fallback)
+    for field, pattern in (("model_origin", MODEL_PART), ("model_family", MODEL_PART),
+                           ("model_version", MODEL_VERSION)):
+        value = sanitize_model(resolved.get(field))
+        if pattern.fullmatch(value):
+            attribution[field] = value
+    if os.getenv("CODEX_THREAD_ID") == native_id:
+        effort = resolved.get("reasoning_effort")
+        if effort in ("none", "minimal", "low", "medium", "high", "xhigh", "max"):
+            attribution["reasoning_effort"] = effort
+    return attribution
+
+
+def capture_codex_hook(event: str, replay_path: str) -> dict[str, Any]:
+    limit = env_int("CONTEXTLATTICE_COMPACTION_STDIN_MAX_BYTES", DEFAULT_MAX_STDIN_BYTES)
+    raw, complete = read_hook_input(limit)
+    if replay_path:
+        Path(replay_path).write_bytes(raw)
+    if not complete:
+        return {}
+    try:
+        payload = json.loads(raw)
+    except (ValueError, RecursionError):
+        return {}
+    native_id = codex_native_id(payload, event)
+    if not native_id:
+        return {}
+    return {
+        "native_session_id": native_id,
+        "caller_attribution": codex_hook_attribution(native_id, payload.get("model")),
+    }
+
+
 def first_string(value: Any, keys: tuple[str, ...], accept_bare: bool = False) -> str:
     if isinstance(value, str):
         return compact_text(value) if accept_bare else ""
@@ -191,6 +296,12 @@ def all_strings(value: Any, keys: tuple[str, ...], limit: int = 8) -> list[str]:
 
 
 def find_session_id(payload: Any) -> str:
+    host_event = os.getenv("CONTEXTLATTICE_CODEX_HOOK_EVENT")
+    if host_event in ("PreCompact", "PostCompact"):
+        return codex_native_id(payload, host_event)
+    for event in ("PreCompact", "PostCompact"):
+        if native_id := codex_native_id(payload, event):
+            return native_id
     env_value = os.getenv("CODEX_SESSION_ID") or os.getenv("CONTEXTLATTICE_SESSION_ID") or ""
     if env_value.strip():
         return compact_text(env_value, 160)
@@ -319,8 +430,15 @@ def main() -> int:
     parser.add_argument("--fallback-summary", default="")
     parser.add_argument("--summary", action="store_true", help="Emit compact JSON for storage as the handoff summary.")
     parser.add_argument("--query", action="store_true", help="Emit only query terms for post-compaction readback.")
+    parser.add_argument("--capture-codex-hook", choices=CODEX_EVENTS)
+    parser.add_argument("--replay-stdin", default="")
     parser.add_argument("--pretty", action="store_true")
     args = parser.parse_args()
+
+    if args.capture_codex_hook:
+        # Private shell handoff: public CLI redaction masks the native ID.
+        print(json.dumps(capture_codex_hook(args.capture_codex_hook, args.replay_stdin)))
+        return 0
 
     payload = build_payload(load_payload(), args.fallback_summary)
     if args.query:

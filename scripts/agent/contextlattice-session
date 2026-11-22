@@ -6,13 +6,14 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import time
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlencode
 
-from _common import emit, ensure_agent_session, git_value, request_json, write_agent_session_state
+from _common import emit, ensure_agent_session, ensure_codex_hook_session, git_value, request_json, write_agent_session_state
 
 
 def metadata_from_args(raw: str) -> dict[str, Any]:
@@ -127,6 +128,25 @@ def cmd_start(args: argparse.Namespace) -> int:
 
 
 def cmd_ensure(args: argparse.Namespace) -> int:
+    if args.codex_hook_identity:
+        identity = metadata_from_args(args.codex_hook_identity)
+        native_id = identity.get("native_session_id")
+        attribution = identity.get("caller_attribution")
+        if (not isinstance(native_id, str)
+                or not re.fullmatch(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", native_id)
+                or not isinstance(attribution, dict) or attribution.get("harness") != "codex"
+                or attribution.get("source") != "caller_reported"):
+            return 1
+        metadata = metadata_from_args(args.metadata_json)
+        metadata["caller_attribution"] = attribution
+        raw = ensure_codex_hook_session(
+            project=args.project, agent_id=args.agent_id, objective=args.objective,
+            native_session_id=native_id, metadata=metadata, tags=args.tag, timeout=args.timeout,
+        )
+        # Private hook protocol; only the validated gateway ID crosses back.
+        print(json.dumps(raw))
+        return 0 if raw.get("ok") else 1
+
     raw = ensure_agent_session(
         project=args.project,
         objective=args.objective,
@@ -512,6 +532,7 @@ def main() -> int:
     ensure.add_argument("--goal", default="")
     ensure.add_argument("--tag", action="append", default=["auto-session"])
     ensure.add_argument("--metadata-json", default="")
+    ensure.add_argument("--codex-hook-identity", default="", help=argparse.SUPPRESS)
     ensure.add_argument("--strict", action="store_true")
     ensure.set_defaults(func=cmd_ensure)
 
