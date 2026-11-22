@@ -7,9 +7,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -36,6 +38,10 @@ type feedbackStore struct {
 	idempotency      map[string]feedbackIdempotencyEntry
 	idempotencyOrder []string
 	metrics          map[string]int
+
+	correctionFile  os.FileInfo
+	correctionSize  int64
+	correctionIndex correctionFeedbackIndexState
 }
 
 func feedbackHistoryPath() string {
@@ -57,7 +63,7 @@ func newFeedbackStoreFromEnv() (*feedbackStore, error) {
 			"idempotentHits": 0,
 		},
 	}
-	if err := prepareOwnerOnlyFile(store.path, strings.TrimSpace(os.Getenv("FEEDBACK_HISTORY_PATH")) == ""); err != nil {
+	if err := createOwnerOnlyDurableEmptyFileIfMissing(store.path, strings.TrimSpace(os.Getenv("FEEDBACK_HISTORY_PATH")) == ""); err != nil {
 		return store, fmt.Errorf("prepare owner-only feedback store: %w", err)
 	}
 	if err := store.load(); err != nil {
@@ -72,7 +78,12 @@ func (s *feedbackStore) load() error {
 	if strings.TrimSpace(s.path) == "" {
 		return nil
 	}
-	file, err := os.Open(s.path)
+	unlock, err := lockCorrectionFeedbackOwner(s.path)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	file, err := openOwnerOnlyReadPlatform(s.path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
@@ -80,10 +91,35 @@ func (s *feedbackStore) load() error {
 		return err
 	}
 	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return err
+	}
+	s.correctionFile, s.correctionSize = info, info.Size()
+	if indexExists := s.loadCorrectionFeedbackIndexLocked(file); indexExists {
+		// Once an epoch exists, no startup reader needs the historical prefix.
+		lines, err := readHistoryTailLines(file, s.maxKeep, maxIndexedFeedbackPreferenceBytes)
+		if err != nil {
+			return err
+		}
+		s.records = make([]map[string]any, 0, len(lines))
+		for _, line := range lines {
+			var row map[string]any
+			if json.Unmarshal([]byte(line), &row) == nil {
+				s.records = append(s.records, row)
+			}
+		}
+		return nil
+	}
+
+	// The legacy public baseline has no typed correction feedback.
+	// Certify that once, in the existing scan that warms legacy preferences.
+	cleanBaseline := correctionLedgerTail(file) == nil
 	scanner := bufio.NewScanner(file)
 	buf := make([]byte, 0, 64*1024)
 	scanner.Buffer(buf, 2*1024*1024)
 	loaded := make([]map[string]any, 0, 256)
+	next := 0
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
@@ -91,17 +127,33 @@ func (s *feedbackStore) load() error {
 		}
 		var row map[string]any
 		if err := json.Unmarshal([]byte(line), &row); err != nil {
+			cleanBaseline = false
 			continue
 		}
-		loaded = append(loaded, row)
+		if correctionFeedbackLedgerTyped(row) {
+			cleanBaseline = false
+		}
+		if len(loaded) < s.maxKeep {
+			loaded = append(loaded, row)
+		} else if s.maxKeep > 0 {
+			loaded[next] = row
+			next = (next + 1) % s.maxKeep
+		}
 	}
 	if err := scanner.Err(); err != nil {
 		return err
 	}
-	if len(loaded) > s.maxKeep {
-		loaded = loaded[len(loaded)-s.maxKeep:]
+	if next > 0 {
+		slices.Reverse(loaded[:next])
+		slices.Reverse(loaded[next:])
+		slices.Reverse(loaded)
 	}
 	s.records = loaded
+	if cleanBaseline {
+		s.prepareCorrectionFeedbackEpochLocked(file, info.Size())
+	} else {
+		s.correctionIndex.uncertain = true
+	}
 	return nil
 }
 
@@ -109,31 +161,58 @@ func (s *feedbackStore) append(record map[string]any) error {
 	if s == nil {
 		return errors.New("feedback store unavailable")
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if strings.TrimSpace(s.path) == "" {
 		return errors.New("feedback store path is empty")
 	}
+	unlock, err := lockCorrectionFeedbackOwner(s.path)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	line, err := json.Marshal(record)
 	if err != nil {
+		return err
+	}
+	if err := s.checkLegacyFeedbackRecoveryTailLocked(); err != nil {
 		return err
 	}
 	file, err := openOwnerOnlyAppend(s.path, false)
 	if err != nil {
 		return err
 	}
-	if _, err := file.Write(append(line, '\n')); err != nil {
+	line = append(line, '\n')
+	wasUncertain := s.correctionIndex.uncertain
+	s.beforeLegacyFeedbackAppendLocked(file, record, len(line))
+	if !wasUncertain && s.correctionIndex.uncertain {
+		if err := s.checkLegacyFeedbackRecoveryTailLocked(); err != nil {
+			_ = file.Close()
+			return err
+		}
+	}
+	if n, err := file.Write(line); err != nil || n != len(line) {
+		s.correctionIndex.uncertain = true
 		_ = file.Close()
+		if err == nil {
+			return io.ErrShortWrite
+		}
 		return err
 	}
 	if err := file.Close(); err != nil {
+		s.correctionIndex.uncertain = true
 		return err
 	}
-	s.mu.Lock()
+	s.advanceCorrectionFeedbackLocked(line)
+	s.retainFeedbackLocked(record)
+	return nil
+}
+
+func (s *feedbackStore) retainFeedbackLocked(record map[string]any) {
 	s.records = append(s.records, cloneAnyMap(record))
 	if len(s.records) > s.maxKeep {
 		s.records = s.records[len(s.records)-s.maxKeep:]
 	}
-	s.mu.Unlock()
-	return nil
 }
 
 func (s *feedbackStore) list(project string, userID string, source string, limit int) []map[string]any {
@@ -661,6 +740,10 @@ func (s *server) feedbackRoute(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, status, map[string]any{"error": message})
 			return
 		}
+		if correctionFeedbackRequested(payload, normalized) {
+			writeCorrectionError(w, errCorrectionInvalid)
+			return
+		}
 		record := s.buildFeedbackRecord(normalized)
 		if s.feedbackStore != nil {
 			if err := s.feedbackStore.append(record); err != nil {
@@ -742,9 +825,22 @@ func (s *server) toolsFeedbackSubmit(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, status, map[string]any{"error": message})
 		return
 	}
+	typedCorrection := correctionFeedbackRequested(payload, normalized)
+	var record map[string]any
+	var operationID string
+	var correctionReplay bool
 	fingerprint := feedbackSubmitFingerprint(normalized)
 	idempotencyKey := feedbackSubmitCacheKey(anyToString(payload["idempotencyKey"]))
-	if idempotencyKey != "" && s.feedbackStore != nil {
+	if typedCorrection {
+		operationID, record, correctionReplay, err = s.submitCorrectionFeedback(w, r, payload, normalized, fingerprint)
+		if err != nil {
+			writeCorrectionError(w, err)
+			return
+		}
+		if record == nil { // Scope rejection has already written the response.
+			return
+		}
+	} else if idempotencyKey != "" && s.feedbackStore != nil {
 		replayed, mismatch := s.feedbackStore.feedbackSubmitIdempotencyLookup(idempotencyKey, fingerprint)
 		if mismatch {
 			s.feedbackStore.recordMetric("rejected")
@@ -757,14 +853,16 @@ func (s *server) toolsFeedbackSubmit(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	record := s.buildFeedbackRecord(normalized)
-	if s.feedbackStore != nil {
-		if err := s.feedbackStore.append(record); err != nil {
-			s.feedbackStore.recordMetric("persistFailed")
-			writeJSON(w, http.StatusBadGateway, map[string]any{"error": "feedback_store_unavailable", "detail": err.Error()})
-			return
+	if !typedCorrection {
+		record = s.buildFeedbackRecord(normalized)
+		if s.feedbackStore != nil {
+			if err := s.feedbackStore.append(record); err != nil {
+				s.feedbackStore.recordMetric("persistFailed")
+				writeJSON(w, http.StatusBadGateway, map[string]any{"error": "feedback_store_unavailable", "detail": err.Error()})
+				return
+			}
+			s.feedbackStore.recordMetric("accepted")
 		}
-		s.feedbackStore.recordMetric("accepted")
 	}
 	preferences := map[string]any(nil)
 	preferenceUpdated := false
@@ -786,7 +884,12 @@ func (s *server) toolsFeedbackSubmit(w http.ResponseWriter, r *http.Request) {
 	if preferences != nil {
 		response["preferences"] = preferences
 	}
-	if s.feedbackStore != nil {
+	if typedCorrection {
+		response["correction_operation_id"] = operationID
+		response["recorded"] = true
+		response["idempotencyScope"] = "correction_ledger"
+		response["idempotentReplay"] = correctionReplay
+	} else if s.feedbackStore != nil {
 		s.feedbackStore.feedbackSubmitIdempotencyStore(idempotencyKey, fingerprint, response)
 	}
 	writeJSON(w, http.StatusOK, response)

@@ -79,17 +79,22 @@ func gatewayProviderCoverageEntry() gatewaystate.EntryInput {
 }
 
 func gatewayStateInventoryEntries() []gatewaystate.EntryInput {
+	sessions := gatewayStateEntry("agent_sessions", "file", "durable_file", []string{"GO_AGENT_SESSIONS_PATH", "GO_AGENT_SESSION_LEDGER_PATH"}, defaultAgentSessionsPathRel)
+	claims := gatewayStateEntry("temporal_claims", "file", "append_only_durable_file", []string{"CONTEXTLATTICE_TEMPORAL_CLAIMS_PATH"}, filepath.Join(".data", "orchestrator", "temporal_claims.ndjson"))
 	entries := []gatewaystate.EntryInput{
 		gatewayStateEntry("feedback_history", "file", "append_only_durable_file", []string{"FEEDBACK_HISTORY_PATH"}, defaultFeedbackHistoryRelPath),
+		gatewayCorrectionFeedbackIndexEntry(),
 		gatewayStateEntry("task_db", "file", "durable_file", []string{"TASK_DB_PATH"}, filepath.Join(".data", "orchestrator", "agent_tasks.db")),
-		gatewayStateEntry("agent_sessions", "file", "durable_file", []string{"GO_AGENT_SESSIONS_PATH", "GO_AGENT_SESSION_LEDGER_PATH"}, defaultAgentSessionsPathRel),
+		sessions,
+		gatewayCorrectionReceiptEntry(sessions),
 		gatewayStateEntry("continuity_ledger", "file", "append_only_durable_file", []string{"CONTEXTLATTICE_CONTINUITY_LEDGER_PATH"}, defaultContinuityLedgerPathRel),
 		gatewayStateEntry("continuation_outbox", "directory", "durable_queue", []string{"GO_RETRIEVAL_CONTINUATION_DURABLE_DIR"}, filepath.Join(".data", "orchestrator", "continuation_outbox")),
 		gatewayStateEntry("agent_memory_profiles", "file", "durable_file", []string{"AGENT_MEMORY_PROFILE_PATH"}, filepath.Join("services", "orchestrator", "data", "agent_memory_profiles.json")),
 		gatewayStateEntry("telemetry_spool", "file", "bounded_durable_spool", []string{"GO_TELEMETRY_SPOOL_PATH"}, filepath.Join("services", "orchestrator", "data", "telemetry_spool.ndjson")),
 		gatewayStateEntry("recall_eval_cases", "file", "durable_file", []string{"ORCH_RECALL_EVAL_CASES_PATH"}, defaultRecallEvalCasesRelativePath),
 		gatewayStateEntry("recall_monitor", "file", "append_only_durable_file", []string{"RECALL_MONITOR_PATH"}, filepath.Join(".data", "orchestrator", "recall_monitor.ndjson")),
-		gatewayStateEntry("temporal_claims", "file", "append_only_durable_file", []string{"CONTEXTLATTICE_TEMPORAL_CLAIMS_PATH"}, filepath.Join(".data", "orchestrator", "temporal_claims.ndjson")),
+		claims,
+		gatewayCorrectionReceiptEntry(claims),
 		gatewayStateEntry("context_policy", "file", "append_only_durable_file", []string{"CONTEXTLATTICE_CONTEXT_POLICY_PATH"}, filepath.Join(".data", "orchestrator", "context_policy.ndjson")),
 		gatewayStateEntry("context_passports", "file", "append_only_durable_file", []string{"CONTEXTLATTICE_CONTEXT_PASSPORT_PATH"}, filepath.Join(".data", "orchestrator", "context_passports.ndjson")),
 		gatewayStateEntry("context_identity_keys", "file", "owner_only_durable_file", []string{"CONTEXTLATTICE_CONTEXT_IDENTITY_KEY_PATH"}, filepath.Join(".data", "orchestrator", "context_identity_keys.json")),
@@ -138,4 +143,19 @@ func prepareGatewayStateRootForStartup() {
 		anyToInt(inventory["entry_count"], 0),
 		anyToBool(inventory["ok"]),
 	)
+}
+
+func gatewayCorrectionFeedbackIndexEntry() gatewaystate.EntryInput {
+	entry := gatewayStateEntry("correction_feedback_index", "file", "owner_only_durable_sqlite_wal", []string{"FEEDBACK_HISTORY_PATH"}, defaultFeedbackHistoryRelPath)
+	entry.Path = correctionFeedbackIndexPath(entry.Path)
+	entry.Source = "derived_feedback_history"
+	return entry
+}
+
+func gatewayCorrectionReceiptEntry(owner gatewaystate.EntryInput) gatewaystate.EntryInput {
+	owner.ID += "_correction_receipts"
+	owner.Path = correctionReceiptDBPath(owner.Path)
+	owner.Source = "derived_correction_owner"
+	owner.PersistenceClass = "owner_only_durable_sqlite"
+	return owner
 }

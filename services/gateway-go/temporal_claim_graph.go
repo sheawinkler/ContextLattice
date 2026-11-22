@@ -81,6 +81,9 @@ type temporalClaimStore struct {
 	parseErrors          int
 	lastPersistedAt      string
 	lastError            string
+
+	correctionStamp     correctionReceiptStamp
+	correctionUncertain bool
 }
 
 type temporalClaimQuery struct {
@@ -121,19 +124,32 @@ func newTemporalClaimStoreFromEnv() (*temporalClaimStore, error) {
 }
 
 func (s *temporalClaimStore) load() error {
-	file, err := os.Open(s.path)
+	replay := correctionClaimReplay{}
+	defer replay.close()
+	file, err := openOwnerOnlyReadPlatform(s.path)
 	if errors.Is(err, os.ErrNotExist) {
+		s.correctionUncertain = !emptyCorrectionReceiptOwner(s.path, correctionClaimReceiptKind)
 		return nil
 	}
 	if err != nil {
 		return fmt.Errorf("open temporal claim ledger: %w", err)
 	}
 	defer file.Close()
+	if err := correctionLedgerTail(file); err != nil {
+		s.correctionUncertain = true
+	}
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 64*1024), 2*1024*1024)
+	scanner.Split(scanTemporalClaimLedgerLine)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
+			continue
+		}
+		if replay.consume(s, line) {
+			if !strings.HasPrefix(line, correctionReceiptOwnerPrefix) {
+				s.logEntries++
+			}
 			continue
 		}
 		var claim temporalClaim
@@ -147,6 +163,16 @@ func (s *temporalClaimStore) load() error {
 	}
 	if err := scanner.Err(); err != nil {
 		return fmt.Errorf("scan temporal claim ledger: %w", err)
+	}
+	if !s.correctionUncertain && s.parseErrors == 0 {
+		if err := replay.finish(s); err != nil {
+			s.correctionUncertain = true
+			s.lastError = err.Error()
+		}
+	} else if replay.legacy != 0 || replay.stamp.Owner != "" || !ensureCorrectionReceiptMissing(s.path) {
+		// Do not compact away inline proofs if loading could not verify their
+		// migration or if a stamped generation could not be reconciled.
+		s.correctionUncertain = true
 	}
 	s.trimLocked()
 	return nil
@@ -618,6 +644,9 @@ func (s *temporalClaimStore) trimLocked() {
 }
 
 func (s *temporalClaimStore) compactLocked() error {
+	if s.correctionUncertain {
+		return errCorrectionUnavailable
+	}
 	tmp := s.path + ".tmp"
 	file, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 	if err != nil {
@@ -629,6 +658,22 @@ func (s *temporalClaimStore) compactLocked() error {
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].ClaimID < rows[j].ClaimID })
 	encoder := json.NewEncoder(file)
+	custody := s.correctionStamp.Owner != ""
+	if custody {
+		db, _, err := openCorrectionReceiptDB(s.path, correctionClaimReceiptKind, s.correctionStamp.Owner)
+		if err == nil {
+			err = checkCorrectionReceiptFrontier(db, s.correctionStamp)
+			_ = db.Close()
+		}
+		if err == nil {
+			err = encoder.Encode(map[string]any{correctionReceiptOwnerField: s.correctionStamp})
+		}
+		if err != nil {
+			_ = file.Close()
+			_ = os.Remove(tmp)
+			return err
+		}
+	}
 	for _, claim := range rows {
 		if err := encoder.Encode(claim); err != nil {
 			_ = file.Close()
@@ -636,8 +681,12 @@ func (s *temporalClaimStore) compactLocked() error {
 			return err
 		}
 	}
-	if s.fsync {
-		_ = file.Sync()
+	if s.fsync || custody {
+		if err := file.Sync(); err != nil && custody {
+			_ = file.Close()
+			_ = os.Remove(tmp)
+			return err
+		}
 	}
 	if err := file.Close(); err != nil {
 		_ = os.Remove(tmp)
@@ -646,6 +695,12 @@ func (s *temporalClaimStore) compactLocked() error {
 	if err := os.Rename(tmp, s.path); err != nil {
 		_ = os.Remove(tmp)
 		return err
+	}
+	if custody {
+		if err := syncOwnerOnlyDirectory(filepath.Dir(s.path)); err != nil {
+			s.correctionUncertain = true
+			return err
+		}
 	}
 	s.logEntries = len(rows)
 	s.lastPersistedAt = nowUTCISO()
@@ -896,6 +951,10 @@ func (s *server) handleClaimWrite(w http.ResponseWriter, r *http.Request, tool b
 	payload, err := readOptionalJSONBody(r)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json", "detail": err.Error()})
+		return
+	}
+	if raw, present := payload["correction"]; present {
+		s.handleCorrectionClaim(w, r, payload, raw, tool)
 		return
 	}
 	if nested := anyMap(payload["claim"]); len(nested) > 0 {

@@ -84,6 +84,8 @@ type agentSessionStore struct {
 	decisionUncertain        bool
 	decisionWriteHook        func(string) error
 	successfulSnapshotWrites uint64
+	correctionStamp          correctionReceiptStamp
+	correctionUncertain      bool
 }
 
 func agentSessionsPath() string {
@@ -183,6 +185,17 @@ func (s *agentSessionStore) load() error {
 	s.sessions = loadedSessions
 	s.order = order
 	s.events = loadedEvents
+	s.correctionUncertain = false
+	s.correctionStamp = correctionReceiptStamp{}
+	if err := s.loadCorrectionSessionReceipts(raw); err != nil {
+		s.correctionUncertain = true
+		if s.correctionStamp.Owner == "" {
+			// No durable external fence yet: rewriting or trimming an old
+			// snapshot could discard the only copy of its inline receipts.
+			s.decisionUncertain = true
+			return fmt.Errorf("load correction event custody: %w", err)
+		}
+	}
 	s.enforceBoundsLocked()
 	return nil
 }
@@ -211,15 +224,19 @@ func (s *agentSessionStore) persistLocked() error {
 		}
 		events[id] = items
 	}
-	raw, err := json.MarshalIndent(map[string]any{
+	payload := map[string]any{
 		"updated_at": nowUTCISO(),
 		"sessions":   sessions,
 		"events":     events,
-	}, "", "  ")
+	}
+	if s.correctionStamp.Owner != "" {
+		payload[correctionReceiptOwnerField] = s.correctionStamp
+	}
+	raw, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
 		return err
 	}
-	if s.decisionDurableWrite || s.hasAgentDecisionCustodyLocked() {
+	if s.decisionDurableWrite || s.hasAgentDecisionCustodyLocked() || s.correctionStamp.Owner != "" {
 		replaced := false
 		err := writeOwnerOnlyDurableAtomicFileWithHook(s.path, raw, false, func(phase string) error {
 			if phase == "after_replace" {
@@ -411,6 +428,7 @@ func agentSessionEffectiveStatus(row map[string]any, now time.Time, idleTTL time
 
 func agentSessionEffectiveSnapshot(row map[string]any, idleTTL time.Duration, now time.Time) map[string]any {
 	copyRow := cloneAnyMap(row)
+	delete(copyRow, correctionSessionGenerationField)
 	status := agentSessionEffectiveStatus(copyRow, now, idleTTL)
 	copyRow["status"] = status
 	copyRow["stale"] = status == "expired"
@@ -2102,7 +2120,9 @@ func (s *agentSessionStore) appendEventScopedLocked(sessionID string, payload ma
 	if err := s.persistLocked(); err != nil {
 		return nil, nil, err
 	}
-	return cloneAnyMap(session), cloneAnyMap(event), nil
+	result := cloneAnyMap(session)
+	delete(result, correctionSessionGenerationField)
+	return result, cloneAnyMap(event), nil
 }
 
 func compactAgentSessionRow(row map[string]any) map[string]any {
@@ -2595,13 +2615,17 @@ func (s *server) agentsSessionsEvent(w http.ResponseWriter, r *http.Request, ses
 			scopeOwnership = newAgentSessionPublicScopeOwnership(requestedProject)
 		}
 		var session, event map[string]any
-		if agentDecisionEventRequested(payload) {
+		if raw, present := payload["correction"]; present {
+			session, event, err = s.recordCorrectionSessionEvent(effectiveSessionID, requestedProject, payload, raw, scopeOwnership)
+		} else if untypedCorrectionReceiptRequested(payload) {
+			err = errCorrectionInvalid
+		} else if agentDecisionEventRequested(payload) {
 			session, event, err = s.agentSessions.acknowledgeDecisionScoped(effectiveSessionID, payload, scopeOwnership, s.continuity.resolveAgentDecisionBinding)
 		} else {
 			session, event, err = s.agentSessions.appendEventScoped(effectiveSessionID, payload, scopeOwnership)
 		}
 		if err != nil {
-			if writeAgentDecisionPersistenceFailure(w, err) {
+			if writeCorrectionError(w, err) || writeAgentDecisionPersistenceFailure(w, err) {
 				return
 			}
 			if errors.Is(err, errAgentDecisionConflict) || errors.Is(err, errAgentDecisionUnavailable) {

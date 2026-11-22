@@ -1880,8 +1880,12 @@ func TestUnifiedContextAndResumeCommandsUseCompactContracts(t *testing.T) {
 func TestUnifiedCorrectSeparatesFeedbackFromFactualClaimMutation(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("CONTEXTLATTICE_ASYNC_INBOX_ACK_PATH", filepath.Join(t.TempDir(), "seen.json"))
-	writeSessionStateWithExtras("alpha", "sess-correct", "correct task", "codex_test", map[string]any{
+	t.Setenv("CONTEXTLATTICE_NATIVE_SESSION_ID", "stale-run")
+	nativeCaller{agentID: "codex_test", nativeSessionID: "selected-run"}.writeSessionState("alpha", "sess-correct", "correct task", map[string]any{
 		"latest_context_pack_quality": map[string]any{"sample_id": "cpq_correct", "reported": false},
+	})
+	nativeCaller{agentID: "codex_test", nativeSessionID: "stale-run"}.writeSessionState("alpha", "sess-other", "other task", map[string]any{
+		"latest_context_pack_quality": map[string]any{"sample_id": "cpq_other", "reported": false},
 	})
 	var feedbackPayload map[string]any
 	var claimPayload map[string]any
@@ -1889,19 +1893,48 @@ func TestUnifiedCorrectSeparatesFeedbackFromFactualClaimMutation(t *testing.T) {
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
+		case "/v1/agents/sessions/sess-correct":
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "session": map[string]any{
+				"id": "sess-correct", "project": "alpha", "agent_id": "codex_test", "status": "active", "native_session_id": "selected-run",
+			}})
 		case "/tools/feedback_submit":
 			_ = json.NewDecoder(r.Body).Decode(&feedbackPayload)
-			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "feedback": map[string]any{"id": "feedback-correct"}})
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ok": true, "recorded": true, "correction_operation_id": feedbackPayload["idempotencyKey"], "idempotencyScope": "correction_ledger",
+				"feedback": map[string]any{"id": "feedback-correct", "project": feedbackPayload["project"], "source": feedbackPayload["source"],
+					"content": feedbackPayload["content"], "metadata": feedbackPayload["metadata"]},
+			})
 		case "/memory/claims":
 			_ = json.NewDecoder(r.Body).Decode(&claimPayload)
-			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "claim": map[string]any{"claim_id": "claim_new"}})
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ok": true, "recorded": true, "correction_operation_id": asMap(claimPayload["correction"])["operation_id"],
+				"schema_id": "temporal_claim.v1", "format_contract": map[string]any{"contract_valid": true},
+				"claim": map[string]any{"claim_id": "claim_new", "schema_id": "temporal_claim.v1", "revision": 1,
+					"project": "alpha", "agent_id": "codex_test", "session_id": "sess-correct", "statement": "The current release is v4",
+					"subject": "public release", "predicate": "version", "object": "v4", "contradicts": []string{"claim_old"},
+					"verification": map[string]any{"status": "unverified", "method": "reporter_assertion"},
+					"provenance":   map[string]any{"source": "correction_reporter_assertion", "source_id": "claim_old", "run_id": feedbackPayload["idempotencyKey"]}},
+			})
 		case "/telemetry/context-pack-quality/outcome":
 			_ = json.NewDecoder(r.Body).Decode(&outcomePayload)
 			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "outcome": map[string]any{
 				"schema_id": "contextlattice_context_pack_outcome.v1", "outcome_id": "outcome_correct", "sample_id": "cpq_correct",
 			}})
 		case "/v1/agents/sessions/event":
-			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "session": map[string]any{"id": "sess-correct"}})
+			var req map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			if req["type"] == "correction.recorded" {
+				proof := asMap(req["correction"])
+				proof["feedback_saved"], proof["claim_persisted"] = true, true
+				proof["claim_id"], proof["claim_revision"] = "claim_new", 1
+				proof["correction_status"] = "factual_persisted"
+				_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "event": map[string]any{
+					"id": proof["operation_id"], "type": req["type"], "agent_id": req["agent_id"], "project": req["project"],
+					"session_id": req["session_id"], "metadata": proof,
+				}})
+			} else {
+				_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+			}
 		case "/v1/agents/sessions/sess-correct/rollup":
 			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "rollup": map[string]any{"agent_inbox": map[string]any{"items": []any{}}}})
 		default:
@@ -1916,7 +1949,7 @@ func TestUnifiedCorrectSeparatesFeedbackFromFactualClaimMutation(t *testing.T) {
 	if err := c.run([]string{
 		"contextlattice", "correct", "The current release is v4", "--category", "wrong", "--factual",
 		"--subject", "public release", "--predicate", "version", "--object", "v4", "--target-claim-id", "claim_old",
-		"--session-id", "sess-correct", "--project", "alpha", "--agent-id", "codex_test", "--raw",
+		"--project", "alpha", "--agent-id", "codex_test", "--native-session-id", "selected-run", "--raw",
 	}); err != nil {
 		t.Fatalf("correct command: %v output=%s", err, stdout.String())
 	}
@@ -1924,10 +1957,10 @@ func TestUnifiedCorrectSeparatesFeedbackFromFactualClaimMutation(t *testing.T) {
 	if !asBool(metadata["factual"]) || firstString(metadata["category"]) != "wrong" {
 		t.Fatalf("correction feedback lost category boundary: %#v", feedbackPayload)
 	}
-	if values := firstList(claimPayload["contradicts"]); len(values) != 1 || firstString(values[0]) != "claim_old" || len(firstList(claimPayload["supersedes"])) != 0 {
+	if proof := asMap(claimPayload["correction"]); proof["target_claim_id"] != "claim_old" || proof["feedback_id"] != "feedback-correct" || claimPayload["supersedes"] != nil || claimPayload["verification"] != nil {
 		t.Fatalf("wrong factual correction did not create explicit contradiction: %#v", claimPayload)
 	}
-	if asBool(outcomePayload["first_pass_success"]) || !asBool(outcomePayload["repair_required"]) {
+	if outcomePayload["sample_id"] != "cpq_correct" || asBool(outcomePayload["first_pass_success"]) || !asBool(outcomePayload["repair_required"]) {
 		t.Fatalf("negative correction did not train retrieval outcome: %#v", outcomePayload)
 	}
 }

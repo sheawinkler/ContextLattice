@@ -10,7 +10,7 @@ import (
 func TestPublicGatewayStateInventoryExcludesCommercialOnlyOwners(t *testing.T) {
 	entries := gatewayStateInventoryEntries()
 	expected := map[string]bool{
-		"feedback_history": true, "task_db": true, "agent_sessions": true,
+		"feedback_history": true, "correction_feedback_index": true, "task_db": true, "agent_sessions": true,
 		"continuity_ledger": true, "continuation_outbox": true, "agent_memory_profiles": true,
 		"telemetry_spool": true, "recall_eval_cases": true, "recall_monitor": true,
 		"temporal_claims": true, "context_policy": true, "context_passports": true,
