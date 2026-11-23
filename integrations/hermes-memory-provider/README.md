@@ -173,6 +173,18 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s integrations/hermes-me
 
 Stubs `agent.memory_provider` and fakes the orchestrator over local HTTP; no Hermes install needed.
 
+Before proposing a catalog entry or updating its pin, run Hermes's admission
+check from a clean checkout of the exact public commit:
+
+```zsh
+hermes plugins validate integrations/hermes-memory-provider --json
+```
+
+Check the exit status and read the warnings. In particular, `provides_hooks`
+must match the hooks registered through `ctx.register_hook`. Provider lifecycle
+methods are not additional generic hooks. A passing check qualifies that commit
+for submission; it does not mean the plugin is listed, installed or selected.
+
 For an installed Hermes version, use its already-installed Python environment:
 
 ```zsh
