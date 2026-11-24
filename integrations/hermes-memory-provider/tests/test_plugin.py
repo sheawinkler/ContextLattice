@@ -38,8 +38,11 @@ def _load_plugin():
     sys.modules.setdefault("agent", agent)
     sys.modules["agent.memory_provider"] = mp
     constants = types.ModuleType("hermes_constants")
-    constants.hermes_home_key = lambda: "test-profile"
+    constants.hermes_home_key = lambda home=None: home or "test-profile"
     sys.modules.setdefault("hermes_constants", constants)
+    secrets = types.ModuleType("agent.secret_scope")
+    secrets.current_secret_scope_home = lambda: None
+    sys.modules.setdefault("agent.secret_scope", secrets)
     spec = importlib.util.spec_from_file_location("cl_hermes_plugin_under_test", PLUGIN)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
@@ -58,6 +61,7 @@ def _secret_scope_module(resolver=_MISSING):
     previous_attr = getattr(parent, "secret_scope", _MISSING) if parent else _MISSING
     if resolver is not _MISSING:
         module = types.ModuleType(name)
+        module.current_secret_scope_home = lambda: None
         if resolver is not None:
             module.get_secret = resolver
         sys.modules[name] = module
@@ -115,6 +119,24 @@ class ScopedKeyResolutionTests(unittest.TestCase):
         with _secret_scope_module(lambda _: "shared"), patch.object(plugin, "_profile_home", return_value="b"):
             with self.assertRaises(PermissionError):
                 provider._request_key()
+
+    def test_misaligned_activity_and_secret_profile_cannot_queue_or_request(self):
+        with _secret_scope_module(lambda _: "shared"), patch.object(
+            sys.modules["agent.secret_scope"], "current_secret_scope_home", return_value="test-profile"
+        ) as home:
+            p = plugin.ContextLatticeProvider()
+            p.initialize("same", agent_context="child")
+            p._primary = True
+            self.assertEqual(p._request_key(), "shared")
+            home.return_value = "another-profile"
+            with self.assertRaises(PermissionError):
+                p._request_key()
+            with patch.object(p, "_bg", side_effect=AssertionError("unexpected background work")):
+                p.on_memory_write("add", "memory", "unrelated")
+            with patch.object(p, "_outbox_path", side_effect=AssertionError("unexpected file access")):
+                with self.assertRaises(PermissionError):
+                    p.drain_outbox()
+            self.assertFalse(p.is_available())
 
     def test_resolver_exception_fails_closed(self):
         def fail(_name):
@@ -1328,6 +1350,7 @@ class MirrorReconcileTests(Base):
     def test_outbox_appends_are_atomic_across_provider_instances(self):
         providers = [plugin.ContextLatticeProvider() for _ in range(6)]
         for provider in providers:
+            provider.initialize("outbox-writer", agent_context="child")
             provider._home = self.home
         errors = []
 

@@ -134,6 +134,8 @@ steps. No existing profile or credential needs to be changed to install it.
 Parallel lookups keep the invoking Hermes profile. Switching profiles or
 rotating the credential requires provider reinitialization. Authenticated
 requests do not follow redirects.
+The credential scope must agree with the activity's profile home; a mismatch
+also blocks local memory mirroring and outbox access, even with a shared key.
 
 Older hosts without the scoped resolver and profile identity APIs can keep their existing installation
 or use the ContextLattice CLI. The [0.3.1 compatibility source](https://github.com/sheawinkler/ContextLattice/tree/b6250470e34cfa65a3daf2bfdf8890642f99f1ac/integrations/hermes-memory-provider)
