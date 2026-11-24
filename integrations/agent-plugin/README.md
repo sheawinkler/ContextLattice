@@ -2,7 +2,7 @@
 
 One on-demand [recall skill](plugins/contextlattice/skills/contextlattice-recall/SKILL.md)
 calls the already-installed CLI. It is not a memory provider, startup hook,
-model, or remote service. The local Codex and Claude plugins and the Prime
+model, or remote service. The local Codex, Claude, and Droid plugins and the Prime
 capability package ship that same file. Mercury's native adapter returns its
 contents from a command or tool; it does **not** run a subprocess or query a
 gateway from the plugin. Rust Ultra uses its own native skill loader.
@@ -29,7 +29,7 @@ Before changing a profile, select the actual host binary and its config root
 python3 -B backup_profile.py "$HOST" --profile "$PROFILE" --backup-dir "$BACKUPS"
 ```
 
-Backup host names are `codex`, `claude-code`, `prime-agent`, and `mercury`.
+Backup host names are `codex`, `claude-code`, `droid`, `prime-agent`, and `mercury`.
 This captures the relevant native settings/registration files or records their
 absence; it does not copy auth stores. The direct skill installer never edits
 shared settings. Its uninstall backs up its own files.
@@ -52,6 +52,7 @@ native evidence. File presence alone is not acceptance.
 
 | Host | Inspect before install | Install | Verify | Remove |
 | --- | --- | --- | --- | --- |
+| Factory Droid | `droid plugin marketplace list`; `droid plugin list --scope user` | `droid plugin marketplace add "$MARKET"` then `droid plugin install "$ID" --scope user` | `python3 -B verify.py droid --profile "$HOME/.factory" --dist "$DIST"` | `droid plugin uninstall "$ID" --scope user`; remove `contextlattice-local` only if added for this plugin and unused by anything else |
 | Codex | `codex plugin marketplace list`; `codex plugin list --json` | `codex plugin marketplace add "$MARKET"` then `codex plugin add "$ID"` | `python3 -B verify.py codex --profile "$CODEX_HOME" --dist "$DIST"` | `codex plugin remove "$ID"`; `codex plugin marketplace remove contextlattice-local` |
 | Claude Code | `claude plugin marketplace list`; `claude plugin list --json` | `claude plugin marketplace add "$MARKET"` then `claude plugin install "$ID"` | `python3 -B verify.py claude --profile "$CLAUDE_CONFIG_DIR" --dist "$DIST"` | `claude plugin uninstall "$ID" --keep-data`; `claude plugin marketplace remove contextlattice-local` |
 | Prime Intellect Rust prime-agent | `prime-agent package list`; `prime-agent skills --json` | `prime-agent package install "$MARKET/plugins/contextlattice"` | `python3 -B verify.py prime-agent --profile "$PRIME_AGENT_CODING_AGENT_DIR" --dist "$DIST"` | `prime-agent package remove "$MARKET/plugins/contextlattice"` |
@@ -66,6 +67,16 @@ Python runtime. Do not install this skill as a Python memory provider.
 If a profile's `skills` directory does not exist, create only that directory
 after confirming the intended profile. Do not use a shared `.agents/skills`
 root on a host that already sees the packaged skill.
+
+Droid reads the same staged [marketplace format](https://docs.factory.com/harness/plugins);
+there is no separate Droid package. Choose the plugin **or** the personal
+skill, not both. A same-name shared skill can win discovery even when the
+plugin is active. To check effective selection, a fresh session's
+`droid.list_skills` must return one enabled, user-invocable guide whose path
+and body match the registered plugin cache. There is no separate slash command.
+For removal, finish any session using this plugin first. Check the user
+plugin inventory and the skill in a fresh process; do not delete an entire
+cache or settings file to clear a stale entry.
 
 ## Additional profiles
 
