@@ -67,14 +67,57 @@ If a profile's `skills` directory does not exist, create only that directory
 after confirming the intended profile. Do not use a shared `.agents/skills`
 root on a host that already sees the packaged skill.
 
-Other native skill loaders can use the same `manage.py --kind skill`
-procedure in their **host-specific** skills root. Gemini: `skills` under its
-Gemini profile, then `gemini skills list --all`. Pi and OMP: `skills` under
-the respective agent profile, then look for one `skill:contextlattice-recall`
-in RPC `get_commands` (no user prompt). None of these is a JS extension or
-automatic lifecycle hook. OpenCode, Droid, and other unqualified hosts may use
-the installed CLI directly; do not infer native qualification from an MCP
-settings file or a plugin manager's existence.
+## Additional profiles
+
+These opt-in resources use the skill from the **stable** receipt-managed
+`$DIST/contextlattice-local`, not a source checkout. Ship the additive
+`extra_profiles.py` and `gemini/gemini-extension.json` beside the durable
+operator kit's existing `manage.py`; do not replace a running profile, core
+marketplace, or manager. Select an existing physical profile below. The helper
+creates only its native resource directory if necessary; no registry, settings,
+model, hook, MCP server, package install, or network is involved.
+
+| Host argument | Ordinary profile | Native destination beneath profile | Qualified surface |
+| --- | --- | --- | --- |
+| `gemini` | `$HOME/.gemini` | `extensions/contextlattice-recall/` | Direct-load Gemini extension; `extensions list` enabled it and `skills list --all` resolved its one bundled skill. |
+| `gemini-skill` | `$HOME/.gemini` | `skills/contextlattice-recall/` | Native standalone skill instead of the extension; choose one. |
+| `droid` | `$HOME/.factory` | `skills/contextlattice-recall/` | Droid's native `droid.list_skills` RPC returned the enabled, user-invocable personal skill and its body. Not a Factory marketplace plugin. |
+| `pi` | `$HOME/.pi/agent` | `skills/contextlattice-recall/` | One native `skill:contextlattice-recall` command in RPC `get_commands`. |
+| `omp` | `$HOME/.omp/agent` | `skills/contextlattice-recall/` | Same command in OMP's own RPC inventory, distinct from its instruction file. |
+
+For example, install in ordinary profiles **only when selected**:
+
+```zsh
+python3 -B "$KIT/extra_profiles.py" install gemini --profile "$HOME/.gemini" --dist "$DIST"
+python3 -B "$KIT/extra_profiles.py" install droid  --profile "$HOME/.factory" --dist "$DIST"
+python3 -B "$KIT/extra_profiles.py" install pi     --profile "$HOME/.pi/agent" --dist "$DIST"
+python3 -B "$KIT/extra_profiles.py" install omp    --profile "$HOME/.omp/agent" --dist "$DIST"
+```
+
+For the corresponding row set `HOST` and `PROFILE` from the table:
+
+```zsh
+python3 -B "$KIT/extra_profiles.py" status "$HOST" --profile "$PROFILE" --dist "$DIST"
+python3 -B "$KIT/extra_profiles.py" uninstall "$HOST" --profile "$PROFILE" --backup-dir "$BACKUPS"
+```
+
+`status` checks installed bytes, not host invocation. Identical **owned**
+installs are no-ops; unowned targets, edited files, extra children, linked
+resource roots, and same-name personal shared skills refuse installation or
+removal as applicable. The two Gemini modes exclude each other. Check any
+custom or project discovery roots separately. Use an owner-private backup
+directory outside all discovery roots. Rollback does not require the original
+distribution, removes only verified owned files, and leaves unrelated settings
+and previously existing instructions alone.
+
+Reproduce the Gemini and Droid loader/rollback checks without a model using
+`python3 -B tests/probe_extra_profiles.py --scratch-root "$SCRATCH"` on macOS
+with the hosts installed. OpenCode 2.3.2's standalone skill API starts a
+private server on a TCP port, which the no-network fixture refused. Its
+documented personal skill root is `$XDG_CONFIG_HOME/opencode/skills` (normally
+`$HOME/.config/opencode/skills`), but an installed skill or plugin was not
+qualified there. Use the CLI fallback; no offline plugin installation or
+always-on service is prescribed.
 
 ## Optional project MCP
 
