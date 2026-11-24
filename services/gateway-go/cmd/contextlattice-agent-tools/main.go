@@ -2420,10 +2420,10 @@ func (c *cli) cmdContext(args []string) error {
 
 func (c *cli) cmdResume(args []string) error {
 	parsed := parseArgs(args, mergeStringFlags(commonStringFlags(), map[string]string{
-		"session-id": "session_id", "agent-id": "agent_id", "limit": "limit",
+		"session-id": "session_id", "agent-id": "agent_id", "limit": "limit", "scope": "decision_scope",
 	}), mergeBoolFlags(commonBoolFlags(), map[string]string{"full": "full"}))
 	if parsed.bool("help") {
-		return c.emitUsage("contextlattice resume [--session-id <id>] [--project <project>] [--agent-id <id>] [--full] [--pretty]; discovery requires one unambiguous live session, historical reads require an explicit session")
+		return c.emitUsage("contextlattice resume [--session-id <id>] [--project <project>] [--topic-path T [--scope LABEL]] [--agent-id <id>] [--full] [--pretty]; discovery requires one unambiguous live session, historical reads require an explicit session")
 	}
 	c.applyBaseURL(parsed)
 	project := parsed.string("project", envString("CONTEXTLATTICE_PROJECT", "contextlattice"))
@@ -2483,6 +2483,11 @@ func (c *cli) cmdResume(args []string) error {
 		}
 	}
 	writeSessionState(project, sessionID, firstString(raw["query"], asMap(raw["session"])["objective"]), parsed.string("agent_id", firstString(raw["agent_id"])))
+	if !parsed.bool("full") {
+		if pin := selectedNamedDecision(parsed, project); pin != nil {
+			return c.emitNamedDecision(raw, pin, sessionID, false, 0, parsed.bool("pretty") || !parsed.bool("raw"))
+		}
+	}
 	return c.emit(raw, parsed.bool("pretty") || !parsed.bool("raw"))
 }
 
@@ -4012,12 +4017,18 @@ func (c *cli) cmdPackWithRouteMode(args []string, commandName string, route stri
 	if allowResponse {
 		boolFlags["response"] = "response"
 	}
+	if sessionTag == "context" {
+		stringFlags["scope"] = "decision_scope"
+	}
 	parsed := parseArgs(args, stringFlags, boolFlags)
 	responseMode := allowResponse && parsed.bool("response")
 	if parsed.bool("help") {
 		usage := commandName + " '<task>' [--project p] [--task-id id] [--topic-path t] [--mode balanced] [--base-packet-file trusted.json] [--full|--debug] [--pretty]"
 		if allowResponse {
 			usage += " [--response]"
+		}
+		if sessionTag == "context" {
+			usage += " [--scope LABEL for a configured named decision]"
 		}
 		return c.emitUsage(usage)
 	}
@@ -4054,6 +4065,13 @@ func (c *cli) cmdPackWithRouteMode(args []string, commandName string, route stri
 	taskID := parsed.string("task_id", envString("CONTEXTLATTICE_TASK_ID", derivedAgentTaskID(project, query)))
 	blocking := parsed.bool("blocking") && !parsed.bool("nonblocking")
 	fullOutput := parsed.bool("full") || parsed.bool("debug") || explicitOutputBudget
+	var decisionPin *namedDecisionPin
+	if sessionTag == "context" && !fullOutput && !parsed.has("base_packet_file") {
+		decisionPin = selectedNamedDecision(parsed, project)
+		if decisionPin != nil {
+			parsed.values["topic_path"] = decisionPin.topic
+		}
+	}
 	packetSurface := route == "/memory/context-pack" || route == "/memory/synthesis-pack" || route == "/memory/synthesis-pack/v2"
 	fullSynthesisV2 := fullOutput && route == "/memory/synthesis-pack/v2"
 	synthesisWireBudget := 0
@@ -4198,7 +4216,7 @@ func (c *cli) cmdPackWithRouteMode(args []string, commandName string, route stri
 		}
 	}
 	recordContextPackQualityPending(project, sessionID, query, agentID, qualitySample, caller)
-	if err := c.emit(out, prettyOutput); err != nil {
+	if err := c.emitNamedDecision(out, decisionPin, sessionID, true, outputBudget+1, prettyOutput); err != nil {
 		return err
 	}
 	if commandName == "contextlattice" && !responseMode && !fullOutput {
