@@ -146,6 +146,13 @@ func (s *temporalClaimStore) load() error {
 		if line == "" {
 			continue
 		}
+		if strings.HasPrefix(line, namedDecisionPrefix) {
+			if err := replay.consumeNamedDecision(s.path, line); err != nil {
+				s.correctionUncertain = true
+			}
+			s.logEntries++
+			continue
+		}
 		if replay.consume(s, line) {
 			if !strings.HasPrefix(line, correctionReceiptOwnerPrefix) {
 				s.logEntries++
@@ -269,6 +276,11 @@ func normalizeTemporalClaim(payload map[string]any) (temporalClaim, error) {
 }
 
 func (s *temporalClaimStore) setClaimLocked(claim temporalClaim) {
+	// Decision values belong to the scoped receipt reader, never to an
+	// unscoped search, proof timeline or legacy claim projection.
+	if reservedDecisionSlot(claim.ClaimID) && claim.Provenance["source"] == temporalDecisionCategory {
+		return
+	}
 	if s.claims == nil {
 		s.claims = map[string]temporalClaim{}
 	}
@@ -550,6 +562,9 @@ func (s *temporalClaimStore) upsertWithEvidence(payload map[string]any, admit fu
 	if err != nil {
 		return temporalClaim{}, err
 	}
+	if reservedDecisionSlot(claim.ClaimID) || payload["decision_change"] != nil || payload["decision_context"] != nil {
+		return temporalClaim{}, errCorrectionInvalid
+	}
 	if admit != nil {
 		admit(&claim)
 	}
@@ -558,12 +573,18 @@ func (s *temporalClaimStore) upsertWithEvidence(payload map[string]any, admit fu
 	claim.UpdatedAt = nowUTCISO()
 	claim.CreatedAt = claim.UpdatedAt
 	if previous, exists := s.claims[claim.ClaimID]; exists {
+		if previous.Project != claim.Project || previous.TopicPath != claim.TopicPath {
+			return temporalClaim{}, errCorrectionConflict
+		}
 		claim.CreatedAt = previous.CreatedAt
 		claim.Revision = previous.Revision + 1
 	}
 	changed := []temporalClaim{claim}
 	for _, supersededID := range claim.Supersedes {
 		target, ok := s.claims[supersededID]
+		if ok && (target.Project != claim.Project || target.TopicPath != claim.TopicPath) {
+			return temporalClaim{}, errCorrectionConflict
+		}
 		if !ok || target.Status == "superseded" {
 			continue
 		}
@@ -947,10 +968,49 @@ func (s *server) toolsClaimWrite(w http.ResponseWriter, r *http.Request) {
 	s.handleClaimWrite(w, r, true)
 }
 
+// Proxy header normalization is not proof that a claim caller presented a
+// key. Keep the original keyless local API when no service key is configured.
+func (s *server) legacyClaimCredentialAllowed(r *http.Request, tool bool) bool {
+	if strings.TrimSpace(s.orchestratorAPIKey) == "" {
+		return true
+	}
+	key, ok := requestAPIKey(r)
+	return ok && (secureTokenEqual(key, s.orchestratorAPIKey) ||
+		(tool && s.toolCalls.roleSplitEnabled && secureTokenEqual(key, s.toolCalls.workerKey)))
+}
+
+func ambiguousDecisionSelector(payload map[string]any) bool {
+	for key := range payload {
+		switch strings.NewReplacer("_", "", "-", "", ".", "").Replace(strings.ToLower(key)) {
+		case "decisionchange", "decisioncontext":
+			if key != "decision_change" && key != "decision_context" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (s *server) handleClaimWrite(w http.ResponseWriter, r *http.Request, tool bool) {
-	payload, err := readOptionalJSONBody(r)
+	payload, wire, err := readManualClaimBody(w, r)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json", "detail": err.Error()})
+		return
+	}
+	if ambiguousDecisionSelector(payload) {
+		writeCorrectionError(w, errCorrectionInvalid)
+		return
+	}
+	if raw, present := payload["decision_change"]; present {
+		s.handleTemporalDecision(w, r, payload, wire, raw, true, tool)
+		return
+	}
+	if _, present := payload["decision_context"]; present {
+		writeCorrectionError(w, errCorrectionInvalid)
+		return
+	}
+	if !s.legacyClaimCredentialAllowed(r, tool) {
+		writeTemporalClaimNotFound(w)
 		return
 	}
 	if raw, present := payload["correction"]; present {
@@ -997,9 +1057,25 @@ func (s *server) toolsClaimQuery(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleClaimQuery(w http.ResponseWriter, r *http.Request, tool bool) {
-	payload, err := readOptionalJSONBody(r)
+	payload, wire, err := readManualClaimBody(w, r)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json", "detail": err.Error()})
+		return
+	}
+	if ambiguousDecisionSelector(payload) {
+		writeCorrectionError(w, errCorrectionInvalid)
+		return
+	}
+	if raw, present := payload["decision_context"]; present {
+		s.handleTemporalDecision(w, r, payload, wire, raw, false, tool)
+		return
+	}
+	if _, present := payload["decision_change"]; present {
+		writeCorrectionError(w, errCorrectionInvalid)
+		return
+	}
+	if !s.legacyClaimCredentialAllowed(r, tool) {
+		writeTemporalClaimNotFound(w)
 		return
 	}
 	if raw, present := payload["conflict_source_check"]; present {

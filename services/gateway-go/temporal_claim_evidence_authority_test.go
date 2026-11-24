@@ -200,7 +200,7 @@ func TestTemporalClaimEvidenceWriterOwnerSourceAndBoundReceipt(t *testing.T) {
 }
 
 func TestTemporalClaimEvidenceRejectsForgedAndDifferentScopeReceipts(t *testing.T) {
-	s := newFrontierT5PolicyLabTestServer(t)
+	var s *server
 	verifier := newTemporalClaimTestSigner(t, "experiment-fixture", "verifier")
 	owner := newTemporalClaimTestSigner(t, "owner-fixture", "owner")
 	unknown := newTemporalClaimTestSigner(t, "unregistered", "verifier")
@@ -266,6 +266,9 @@ func TestTemporalClaimEvidenceRejectsForgedAndDifferentScopeReceipts(t *testing.
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			// Exercise evidence admission, not a move of the preceding
+			// fixture's claim ID to another project or topic.
+			s = newFrontierT5PolicyLabTestServer(t)
 			c := cloneJSONMap(claim)
 			c["support"] = []any{tc.mutate(c, cloneJSONMap(valid))}
 			got := writeTemporalClaimTestHTTP(t, s, c, false)
