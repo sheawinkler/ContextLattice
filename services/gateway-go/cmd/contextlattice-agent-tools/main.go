@@ -370,6 +370,9 @@ func (c *cli) run(argv []string) error {
 		}
 		return nil
 	}
+	if command == "mcp" {
+		return c.cmdMCPStdio(args)
+	}
 	if command != "checkpoint" {
 		args = applyCLIOutputDefaults(
 			command,
@@ -550,6 +553,7 @@ Primary workflow:
 	  doctor                          verify local CLI, gateway, and agent integration health
 
 Advanced/compatibility commands:
+  mcp --project PROJECT          serve read-only project search over MCP stdio
   search                         lifecycle-aware memory search
   dream authorize-local          provision a short-lived transfer grant and proof offline
   dream transfer                 submit one authorized manual cross-project transfer operation
