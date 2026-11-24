@@ -1,0 +1,7 @@
+{
+  "name": "contextlattice-recall",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local skill resources for the installed ContextLattice CLI.",
+  "pi": { "skills": ["./skills"] }
+}

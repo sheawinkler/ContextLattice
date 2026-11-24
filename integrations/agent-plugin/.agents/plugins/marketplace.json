@@ -1,0 +1,9 @@
+{
+  "name": "contextlattice-local",
+  "plugins": [
+    {
+      "name": "contextlattice",
+      "source": { "source": "local", "path": "./plugins/contextlattice" }
+    }
+  ]
+}
