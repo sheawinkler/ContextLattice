@@ -90,3 +90,31 @@ and `decision_change` on `/memory/claims`. They accept neither tool-role
 credentials nor caller-supplied ownership records. No feedback, session event,
 search ranking, automatic recall, or resume action is created. Back up the
 claim owner and receipt index together.
+
+### Opt-in pointer for compact context and resume
+
+An operator can set one host environment variable, `CONTEXTLATTICE_NAMED_DECISION`,
+to a bounded JSON address (not a value, URL, credential, or session):
+`{"project":"alpha","topic_path":"release/review","decision_id":"approval","scope":"preview","agent_id":"reviewer"}`.
+Do not load it from an untrusted repository. For example:
+
+```sh
+contextlattice context "prepare review" --project alpha --topic-path release/review --scope preview --agent-id reviewer --session-id S
+contextlattice resume --project alpha --topic-path release/review --scope preview --agent-id reviewer --session-id S
+```
+
+Project, topic, scope and durable actor must match independently. A host can
+supply the topic with `CONTEXTLATTICE_ACTIVE_TOPIC_PATH` and the actor with
+`CONTEXTLATTICE_AGENT_ID`. An empty pointer scope requires no scope; omitting
+a nonempty scope does not select it. Query text is never an address.
+The session locator alone grants nothing. The CLI rechecks the actual active
+session and delegates the exact read to the local manual decision owner. Both
+responses must agree with the address and actor. The supplemental read makes
+no writes, follows no redirects, and never retries a generic claim query.
+
+Only the opt-in compact presentation changes: the original packet stays under
+`context`. A sufficiently small current value may appear under `named_decision`
+as `needs_source_check`, with effective and receipt versions and read time. This
+is recorded guidance, not a verified outcome. Missing authority or an older
+owner yields no value; warming, contested, expired and retracted decisions do
+not supply instructions. There is no cached decision fallback.
