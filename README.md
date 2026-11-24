@@ -115,6 +115,11 @@ MSI. See the [CLI update guide](docs/cli-updates.md) for scope and recovery.
 
 ## Connect your agents
 
+Already running the CLI? [Install a native recall plugin or skill](integrations/agent-plugin/README.md)
+for Codex, Claude Code, Prime Agent, Mercury, or Hermes Ultra. Python Hermes can
+instead [select ContextLattice as its memory provider](integrations/hermes-memory-provider/README.md).
+Neither path installs the agent itself.
+
 Run integration from the repository that should use ContextLattice:
 
 ```zsh

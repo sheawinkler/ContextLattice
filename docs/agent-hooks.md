@@ -1,5 +1,8 @@
 # ContextLattice Agent Hooks
 
+For an on-demand recall skill, a native host adapter, or an opt-in project-scoped
+MCP connection, see the [host install and verification guide](../integrations/agent-plugin/README.md).
+
 ContextLattice ships deterministic agent hooks so agents spend fewer tokens
 remembering mechanical rules and more tokens reasoning about the task.
 
