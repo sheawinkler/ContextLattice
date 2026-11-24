@@ -1,5 +1,8 @@
 name: contextlattice
-version: 0.3.1
+version: 0.4.0
+kind: exclusive
+requires_env:
+  - CONTEXTLATTICE_ORCHESTRATOR_API_KEY
 description: "ContextLattice memory provider: per-turn scoped recall, native compaction handoff, built-in memory mirroring."
 provides_hooks:
   - on_session_start

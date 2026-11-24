@@ -17,18 +17,18 @@ Replaces the shell-hook seed retrieval with the native MemoryProvider lifecycle:
 
 Failure mode: CL unreachable => explicit DEGRADED line, never silent empty recall.
 MEMORY.md / USER.md (built-in) stay local and always loaded.
-Config (config.yaml memory.contextlattice): url, project, env_file, limit, mode, timeout,
+Config (config.yaml memory.contextlattice): url, project, limit, mode, timeout,
   delegation_recall, delegation_tokens, delegation_limit, delegation_max_chars,
   drain_seconds, reconcile_hours.
 Env: CONTEXTLATTICE_ORCHESTRATOR_URL overrides url.
-API key: CONTEXTLATTICE_ORCHESTRATOR_API_KEY from env, Hermes secrets, or env_file.
+API key: CONTEXTLATTICE_ORCHESTRATOR_API_KEY through Hermes profile secrets.
 """
 from __future__ import annotations
 
 import datetime as _dt
 import contextlib
+import contextvars
 import hashlib
-import importlib
 import json
 import logging
 import os
@@ -56,7 +56,6 @@ logger = logging.getLogger(__name__)
 _DEFAULTS: Dict[str, Any] = {
     "url": "http://127.0.0.1:8075",
     "project": "hermes-agent",
-    "env_file": "",  # optional path to a .env holding CONTEXTLATTICE_ORCHESTRATOR_API_KEY
     "limit": 5,
     "mode": "fast",
     "timeout": 6.0,
@@ -145,47 +144,34 @@ def _load_config() -> Dict[str, Any]:
     return cfg
 
 
-def _read_key(env_file: str) -> str:
-    """Use Hermes' profile-scoped secret resolver when available; legacy fallback is unscoped."""
+def _read_key() -> str:
+    """Only the host may resolve credentials for the active profile."""
     try:
-        secret_scope = importlib.import_module("agent.secret_scope")
-    except ModuleNotFoundError as exc:
-        if exc.name not in {"agent", "agent.secret_scope"}:
-            return ""
-        secret_scope = None
+        from agent.secret_scope import get_secret
+
+        value = get_secret(_KEY_NAME)
+        return value.strip() if isinstance(value, str) else ""
     except Exception:
         return ""
 
-    try:
-        resolver = getattr(secret_scope, "get_secret", None) if secret_scope is not None else None
-    except Exception:
-        return ""
-    if resolver is not None:
-        if not callable(resolver):
-            return ""
-        try:
-            value = resolver(_KEY_NAME)
-        except Exception:
-            return ""
-        return str(value).strip() if value else ""
 
-    # Legacy compatibility only for Hermes versions without the scoped resolver.
-    # These process-wide sources are not safe for per-profile secrets in multiplex mode.
-    legacy_env = os.environ.get(_KEY_NAME, "").strip()
-    if legacy_env:
-        return legacy_env
-    if not env_file:
-        env_file = os.environ.get("CONTEXTLATTICE_ENV_FILE", "")
-    if not env_file:
-        return ""
+class _NoCredentialRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def _profile_home() -> str:
     try:
-        key = ""
-        for line in Path(env_file).expanduser().read_text().splitlines():
-            if line.startswith(_KEY_NAME + "="):
-                key = line.split("=", 1)[1].strip()
-        return key
+        from hermes_constants import hermes_home_key
+
+        return hermes_home_key()
     except Exception:
         return ""
+
+
+def _submit_scoped(executor, func, *args, **kwargs):
+    # Each concurrent call needs its own copy of the invoking Hermes profile.
+    return executor.submit(contextvars.copy_context().run, func, *args, **kwargs)
 
 
 def _slug(text: str, n: int = 6) -> str:
@@ -309,6 +295,8 @@ class ContextLatticeProvider(MemoryProvider):
     def __init__(self) -> None:
         self._cfg = _load_config()
         self._key = ""
+        self._profile = _profile_home()
+        self._http = urllib.request.build_opener(_NoCredentialRedirects())
         self._session_id = ""
         self._session_start_model = ""
         self._parent_session_id = ""
@@ -340,11 +328,12 @@ class ContextLatticeProvider(MemoryProvider):
         return "contextlattice"
 
     def is_available(self) -> bool:
-        return bool(_read_key(self._cfg["env_file"]))
+        return bool(_profile_home() and _read_key())
 
     def initialize(self, session_id: str, **kwargs) -> None:
         self._cfg = _load_config()
-        self._key = _read_key(self._cfg["env_file"])
+        self._profile = _profile_home()
+        self._key = _read_key() if self._profile else ""
         with self._lock:
             self._session_id = session_id or ""
             self._session_start_model = ""
@@ -383,22 +372,28 @@ class ContextLatticeProvider(MemoryProvider):
     def _url(self, path: str) -> str:
         return self._cfg["url"].rstrip("/") + path
 
+    def _request_key(self) -> str:
+        key = _read_key()
+        if not key or key != self._key or not self._profile or self._profile != _profile_home():
+            raise PermissionError("ContextLattice provider requires its initialized Hermes profile")
+        return key
+
     def _post(self, path: str, body: Dict[str, Any], timeout: Optional[float] = None) -> Dict[str, Any]:
         req = urllib.request.Request(
             self._url(path), data=json.dumps(body).encode(),
-            headers={"Content-Type": "application/json", "X-API-Key": self._key}, method="POST",
+            headers={"Content-Type": "application/json", "X-API-Key": self._request_key()}, method="POST",
         )
         try:
-            with urllib.request.urlopen(req, timeout=timeout or float(self._cfg["timeout"])) as resp:
+            with self._http.open(req, timeout=timeout or float(self._cfg["timeout"])) as resp:
                 return json.loads(resp.read().decode() or "{}")
         except urllib.error.HTTPError as exc:
             exc.close()
             raise
 
     def _get(self, path: str, timeout: Optional[float] = None) -> Tuple[int, str]:
-        req = urllib.request.Request(self._url(path), headers={"X-API-Key": self._key}, method="GET")
+        req = urllib.request.Request(self._url(path), headers={"X-API-Key": self._request_key()}, method="GET")
         try:
-            with urllib.request.urlopen(req, timeout=timeout or float(self._cfg["timeout"])) as resp:
+            with self._http.open(req, timeout=timeout or float(self._cfg["timeout"])) as resp:
                 return resp.status, resp.read().decode()
         except urllib.error.HTTPError as exc:
             try:
@@ -632,7 +627,7 @@ class ContextLatticeProvider(MemoryProvider):
         results: Dict[str, Any] = {}
         errors: List[str] = []
         with ThreadPoolExecutor(max_workers=len(jobs)) as ex:
-            futs = {label: ex.submit(self._search, file if label == "COMPACTION HANDOFF" else query, **kw)
+            futs = {label: _submit_scoped(ex, self._search, file if label == "COMPACTION HANDOFF" else query, **kw)
                     for label, kw in jobs.items()}
             for label, fut in futs.items():
                 try:
@@ -1243,8 +1238,9 @@ class ContextLatticeProvider(MemoryProvider):
             project = str(self._cfg["project"])
             gateway_session = self._delegation_session(project, native_id, caller)
             with ThreadPoolExecutor(max_workers=min(8, len(goals))) as ex:
-                packs = list(ex.map(lambda pair: self._delegation_pack(pair[0], pair[1], gateway_session),
-                                    zip(goals, ids)))
+                pending = [_submit_scoped(ex, self._delegation_pack, goal, task_id, gateway_session)
+                           for goal, task_id in zip(goals, ids)]
+                packs = [future.result() for future in pending]
             tasks = args.get("tasks")
             contexts = []
             if isinstance(tasks, list) and tasks:

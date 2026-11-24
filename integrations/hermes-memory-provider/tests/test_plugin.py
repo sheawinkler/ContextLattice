@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import importlib.util
 import hashlib
+import contextvars
 import json
 import os
 import sys
@@ -36,6 +37,9 @@ def _load_plugin():
     mp.spawn_context_thread = spawn_context_thread
     sys.modules.setdefault("agent", agent)
     sys.modules["agent.memory_provider"] = mp
+    constants = types.ModuleType("hermes_constants")
+    constants.hermes_home_key = lambda: "test-profile"
+    sys.modules.setdefault("hermes_constants", constants)
     spec = importlib.util.spec_from_file_location("cl_hermes_plugin_under_test", PLUGIN)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
@@ -76,48 +80,48 @@ def _secret_scope_module(resolver=_MISSING):
 
 
 class ScopedKeyResolutionTests(unittest.TestCase):
-    def test_scoped_miss_ignores_process_and_file_fallback(self):
+    def test_missing_scope_or_value_never_reads_legacy_credentials(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             env_file = Path(temp_dir) / "legacy.env"
-            env_file.write_text(plugin._KEY_NAME + "=file-secret\n")
-            with _secret_scope_module(lambda _name: None), patch.dict(os.environ, {
-                plugin._KEY_NAME: "process-secret", "CONTEXTLATTICE_ENV_FILE": "",
-            }):
-                self.assertEqual(plugin._read_key(str(env_file)), "")
+            env_file.write_text(plugin._KEY_NAME + "=file-canary\n")
+            for resolver in (_MISSING, None, lambda _name: None):
+                with self.subTest(resolver=resolver), _secret_scope_module(resolver), patch.dict(
+                    os.environ, {plugin._KEY_NAME: "process-canary", "CONTEXTLATTICE_ENV_FILE": str(env_file)}
+                ), patch.object(Path, "read_text", side_effect=AssertionError("unexpected credential file read")) as read:
+                    self.assertEqual(plugin._read_key(), "")
+                    read.assert_not_called()
 
-    def test_scoped_value_overrides_legacy_sources(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            env_file = Path(temp_dir) / "legacy.env"
-            env_file.write_text(plugin._KEY_NAME + "=file-secret\n")
-            with _secret_scope_module(lambda _name: "scoped-secret"), patch.dict(os.environ, {
-                plugin._KEY_NAME: "process-secret", "CONTEXTLATTICE_ENV_FILE": "",
-            }):
-                self.assertEqual(plugin._read_key(str(env_file)), "scoped-secret")
+    def test_scoped_value_is_the_only_source(self):
+        with _secret_scope_module(lambda name: " profile-canary " if name == plugin._KEY_NAME else None):
+            self.assertEqual(plugin._read_key(), "profile-canary")
 
-    def test_legacy_fallback_only_without_scoped_resolver(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            env_file = Path(temp_dir) / "legacy.env"
-            with _secret_scope_module(), patch.dict(os.environ, {
-                plugin._KEY_NAME: "", "CONTEXTLATTICE_ENV_FILE": "",
-            }):
-                self.assertEqual(plugin._read_key(str(env_file)), "")
-                os.environ[plugin._KEY_NAME] = "legacy-process-secret"
-                self.assertEqual(plugin._read_key(str(env_file)), "legacy-process-secret")
-                os.environ[plugin._KEY_NAME] = ""
-                env_file.write_text(plugin._KEY_NAME + "=legacy-file-secret\n")
-                self.assertEqual(plugin._read_key(str(env_file)), "legacy-file-secret")
+    def test_profile_switch_or_revocation_requires_reinitialization(self):
+        provider = plugin.ContextLatticeProvider()
+        with _secret_scope_module(lambda _name: "profile-a"):
+            provider.initialize("a", agent_context="child")
+            self.assertEqual(provider._request_key(), "profile-a")
+        for other in ("profile-b", None):
+            with _secret_scope_module(lambda _name: other):
+                with self.assertRaises(PermissionError):
+                    provider._post("/memory/search", {})
+        with _secret_scope_module(lambda _name: "profile-b"):
+            provider.initialize("b", agent_context="child")
+            self.assertEqual(provider._request_key(), "profile-b")
+
+    def test_profile_guard_rejects_shared_key_under_different_home(self):
+        with _secret_scope_module(lambda _: "shared"), patch.object(plugin, "_profile_home", return_value="a"):
+            provider = plugin.ContextLatticeProvider()
+            provider.initialize("a", agent_context="child")
+        with _secret_scope_module(lambda _: "shared"), patch.object(plugin, "_profile_home", return_value="b"):
+            with self.assertRaises(PermissionError):
+                provider._request_key()
 
     def test_resolver_exception_fails_closed(self):
         def fail(_name):
             raise RuntimeError("bound scope unavailable")
 
-        with tempfile.TemporaryDirectory() as temp_dir:
-            env_file = Path(temp_dir) / "legacy.env"
-            env_file.write_text(plugin._KEY_NAME + "=file-secret\n")
-            with _secret_scope_module(fail), patch.dict(os.environ, {
-                plugin._KEY_NAME: "process-secret", "CONTEXTLATTICE_ENV_FILE": "",
-            }):
-                self.assertEqual(plugin._read_key(str(env_file)), "")
+        with _secret_scope_module(fail):
+            self.assertEqual(plugin._read_key(), "")
 
 
 class FakeCL:
@@ -211,6 +215,9 @@ class FakeCL:
 
 class Base(unittest.TestCase):
     def setUp(self):
+        key = patch.object(plugin, "_read_key", return_value="test-key")
+        key.start()
+        self.addCleanup(key.stop)
         self.cl = FakeCL()
         self.temp_home = tempfile.TemporaryDirectory()
         self.home = Path(self.temp_home.name)
@@ -336,6 +343,37 @@ class AttributionTests(Base):
 
 
 class PrefetchTests(Base):
+    def test_profile_context_reaches_prefetch_and_delegate_threads(self):
+        profile = contextvars.ContextVar("profile", default="wrong-profile")
+        profile.set("test-profile")
+        with patch.object(plugin, "_profile_home", side_effect=profile.get):
+            self.p.prefetch("ordinary recall")
+            self.assertEqual(self.cl.paths().count("/memory/search"), 2)
+            result = self.p._on_pre_tool_call(tool_name="delegate_task",
+                                              args={"tasks": [{"goal": "one"}, {"goal": "two"}]})
+            self.assertEqual(self.cl.paths().count("/memory/context-pack"), 2)
+            self.assertTrue(all("PACKED" in task["context"] for task in result["args"]["tasks"]))
+
+    def test_profile_credentials_do_not_follow_redirects(self):
+        destination = self.cl.url + "/memory/search"
+
+        class Redirect(BaseHTTPRequestHandler):
+            def log_message(self, *_):
+                pass
+
+            def do_GET(self):
+                self.send_response(302)
+                self.send_header("Location", destination)
+                self.end_headers()
+
+        with HTTPServer(("127.0.0.1", 0), Redirect) as redirect:
+            thread = threading.Thread(target=redirect.handle_request, daemon=True)
+            thread.start()
+            self.p._cfg["url"] = f"http://127.0.0.1:{redirect.server_port}"
+            self.assertEqual(self.p._get("/check")[0], 302)
+            thread.join(timeout=2)
+        self.assertEqual(self.cl.calls, [])
+
     @staticmethod
     def conflict_pointer(project="hermes-agent", topic="memory/decisions"):
         return {"schema_id": "conflict_source_check.v1", "case_ref": "cc_" + "a" * 64,

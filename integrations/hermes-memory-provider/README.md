@@ -124,14 +124,22 @@ cp __init__.py plugin.yaml "$HERMES_HOME/plugins/contextlattice/"
 hermes config set memory.provider contextlattice
 ```
 
-When available, Hermes `agent.secret_scope.get_secret` is authoritative for the
-profile. A scoped miss or resolver error fails closed; process environment and
-env-file values are not used to fill a missing profile secret. Only Hermes
-versions without that resolver use the legacy fallback order:
-`CONTEXTLATTICE_ORCHESTRATOR_API_KEY` env, then
-`memory.contextlattice.env_file` (or `CONTEXTLATTICE_ENV_FILE`). That legacy
-fallback is process-wide and must not be used for per-profile credentials in a
-multiplexed gateway.
+Starting with 0.4.0, configure `CONTEXTLATTICE_ORCHESTRATOR_API_KEY` in the
+intended Hermes profile's secret store. The plugin only calls Hermes's
+`agent.secret_scope.get_secret`. If the key or resolver is unavailable, the
+provider is unavailable; it does not read an environment file or try a different
+profile. Installing the plugin and selecting an exclusive provider are separate
+steps. No existing profile or credential needs to be changed to install it.
+
+Parallel lookups keep the invoking Hermes profile. Switching profiles or
+rotating the credential requires provider reinitialization. Authenticated
+requests do not follow redirects.
+
+Older hosts without the scoped resolver and profile identity APIs can keep their existing installation
+or use the ContextLattice CLI. The [0.3.1 compatibility source](https://github.com/sheawinkler/ContextLattice/tree/b6250470e34cfa65a3daf2bfdf8890642f99f1ac/integrations/hermes-memory-provider)
+is pinned for operators who must roll back. Do not use its legacy credential
+fallback for multiple profiles in one process. Install only from a source you
+trust; a source installation is not a marketplace listing.
 
 Optional `config.yaml`:
 
