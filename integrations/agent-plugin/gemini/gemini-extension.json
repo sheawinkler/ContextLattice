@@ -1,0 +1,5 @@
+{
+  "name": "contextlattice-recall",
+  "version": "0.1.0",
+  "description": "Recall project context on demand using the installed ContextLattice CLI."
+}
