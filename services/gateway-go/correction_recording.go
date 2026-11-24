@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"io"
@@ -43,6 +44,7 @@ type correctionClaimRecord struct {
 	Claim       temporalClaim           `json:"claim"`
 	Apply       bool                    `json:"apply,omitempty"`
 	Receipt     *correctionReceiptStamp `json:"receipt_owner,omitempty"`
+	Decision    *temporalDecisionEvent  `json:"decision,omitempty"`
 }
 
 func parseCorrectionRequest(raw any) (correctionRequest, error) {
@@ -172,7 +174,8 @@ func correctionLedgerTail(file *os.File) error {
 func scanTemporalClaimLedgerLine(data []byte, atEOF bool) (int, []byte, error) {
 	// A record is committed only with its terminating newline. Keep legacy
 	// ScanLines behavior for old claim rows that lack a final newline.
-	if atEOF && bytes.IndexByte(data, '\n') < 0 && bytes.HasPrefix(bytes.TrimSpace(data), []byte(correctionClaimRecordPrefix)) {
+	if atEOF && bytes.IndexByte(data, '\n') < 0 && (bytes.HasPrefix(bytes.TrimSpace(data), []byte(correctionClaimRecordPrefix)) ||
+		bytes.HasPrefix(bytes.TrimSpace(data), []byte(namedDecisionPrefix))) {
 		return 0, nil, nil
 	}
 	return bufio.ScanLines(data, atEOF)
@@ -183,7 +186,7 @@ func (s *temporalClaimStore) recordCorrectionClaim(req correctionRequest, payloa
 		return temporalClaim{}, false, errCorrectionUnavailable
 	}
 	claim, err := normalizeTemporalClaim(payload)
-	if err != nil || claim.ClaimID == req.target {
+	if err != nil || claim.ClaimID == req.target || reservedDecisionSlot(claim.ClaimID) {
 		return temporalClaim{}, false, errCorrectionInvalid
 	}
 	material, err := json.Marshal(payload)
@@ -239,31 +242,42 @@ func (s *temporalClaimStore) recordCorrectionClaim(req correctionRequest, payloa
 		ID: req.id, Fingerprint: fingerprint, FeedbackID: req.feedbackID, Category: req.category,
 		Target: req.target, Claim: claim, Apply: true,
 	}
+	if err := s.persistCorrectionRecordLocked(db, tip, record); err != nil {
+		return temporalClaim{}, false, err
+	}
+	return claim, false, nil
+}
+
+func (s *temporalClaimStore) persistCorrectionRecordLocked(db *sql.DB, tip correctionReceiptStamp, record correctionClaimRecord) error {
 	proof, err := record.receipt()
 	if err != nil {
-		return temporalClaim{}, false, errCorrectionInvalid
+		return errCorrectionInvalid
 	}
 	// Open the owner before reserving. A clean open failure is retryable
 	// without quarantining the current process.
 	if tip.Seq == 0 {
 		if err := createOwnerOnlyDurableEmptyFileIfMissing(s.path, false); err != nil {
-			return temporalClaim{}, false, errCorrectionUnavailable
+			return errCorrectionUnavailable
 		}
 	} else if info, err := os.Lstat(s.path); err != nil || !info.Mode().IsRegular() {
-		return temporalClaim{}, false, errCorrectionUnavailable
+		return errCorrectionUnavailable
 	}
 	file, err := openOwnerOnlyAppend(s.path, false)
 	if err != nil {
 		s.lastError = err.Error()
-		return temporalClaim{}, false, errCorrectionUnavailable
+		return errCorrectionUnavailable
 	}
 	defer file.Close()
 	stamp, err := reserveCorrectionReceipt(db, tip, proof)
 	if err != nil {
-		return temporalClaim{}, false, errCorrectionUnavailable
+		return errCorrectionUnavailable
 	}
 	record.Receipt = &stamp
-	encoded, err := json.Marshal(record)
+	var ownerRow any = record
+	if record.Decision != nil {
+		ownerRow = namedDecisionEnvelope{record}
+	}
+	encoded, err := json.Marshal(ownerRow)
 	if err == nil {
 		err = s.appendCorrectionClaimLocked(file, append(encoded, '\n'))
 	}
@@ -273,10 +287,10 @@ func (s *temporalClaimStore) recordCorrectionClaim(req correctionRequest, payloa
 	if err != nil {
 		s.correctionUncertain = true
 		s.lastError = err.Error()
-		return temporalClaim{}, false, errCorrectionUnavailable
+		return errCorrectionUnavailable
 	}
 	s.correctionStamp = stamp
-	s.setClaimLocked(claim)
+	s.setClaimLocked(record.Claim)
 	s.logEntries++
 	s.lastPersistedAt = nowUTCISO()
 	s.trimLocked()
@@ -285,7 +299,7 @@ func (s *temporalClaimStore) recordCorrectionClaim(req correctionRequest, payloa
 			s.lastError = err.Error()
 		}
 	}
-	return claim, false, nil
+	return nil
 }
 
 func (s *temporalClaimStore) appendCorrectionClaimLocked(file *os.File, line []byte) error {

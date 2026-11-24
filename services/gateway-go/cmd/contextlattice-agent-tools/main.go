@@ -2667,12 +2667,15 @@ func normalizeCorrectionCategory(raw string) (string, error) {
 }
 
 func (c *cli) cmdCorrect(args []string) error {
+	if decisionFlagsPresent(args) {
+		return c.cmdTemporalDecision(args, true)
+	}
 	parsed := parseArgs(args, mergeStringFlags(adapterStringFlags(), map[string]string{
 		"category": "category", "target-claim-id": "target_claim_id", "new-claim-id": "new_claim_id",
 		"subject": "subject", "predicate": "predicate", "object": "object", "statement": "statement",
 	}), mergeBoolFlags(adapterBoolFlags(), map[string]string{"factual": "factual"}))
 	if parsed.bool("help") {
-		return c.emitUsage("contextlattice correct '<note>' --category useful|wrong|stale|superseded [--factual --subject s --predicate p --object o --target-claim-id id] [--project p] [--pretty]")
+		return c.emitUsage("contextlattice correct '<note>' --category useful|wrong|stale|superseded [--factual --subject s --predicate p --object o --target-claim-id id] [--project p] [--pretty]\nFor a scoped decision change: contextlattice correct --decision-id ID --help")
 	}
 	c.applyBaseURL(parsed)
 	category, err := normalizeCorrectionCategory(parsed.string("category", ""))
@@ -3032,13 +3035,16 @@ func (c *cli) cmdClaimWrite(args []string) error {
 }
 
 func (c *cli) cmdClaimQuery(args []string) error {
+	if decisionFlagsPresent(args) {
+		return c.cmdTemporalDecision(args, false)
+	}
 	parsed := parseArgs(args, mergeStringFlags(commonStringFlags(), map[string]string{
 		"subject": "subject", "predicate": "predicate", "status": "status", "as-of": "as_of", "limit": "limit",
 	}), mergeBoolFlags(commonBoolFlags(), map[string]string{
 		"include-expired": "include_expired", "include-superseded": "include_superseded",
 	}))
 	if parsed.bool("help") {
-		return c.emitUsage("contextlattice_claim_query '<query>' [--project p] [--as-of RFC3339] [--include-expired] [--pretty]")
+		return c.emitUsage("contextlattice_claim_query '<query>' [--project p] [--as-of RFC3339] [--include-expired] [--pretty]\nFor an effective decision: contextlattice claim-query --decision-id ID --help")
 	}
 	c.applyBaseURL(parsed)
 	payload := map[string]any{
