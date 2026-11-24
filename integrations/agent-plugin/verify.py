@@ -13,7 +13,7 @@ from manage import Conflict, SKILL, SOURCE, directory, payload
 
 
 NATIVE = {"codex": "CODEX_HOME", "claude": "CLAUDE_CONFIG_DIR", "prime-agent": "PRIME_AGENT_CODING_AGENT_DIR",
-          "mercury": "MERCURY_HOME", "hermes-ultra": "HERMES_HOME"}
+          "mercury": "MERCURY_HOME", "hermes-ultra": "HERMES_HOME", "droid": "HOME"}
 NAME = "contextlattice-recall"
 MARKET = "contextlattice-local"
 ID = "contextlattice@" + MARKET
@@ -29,9 +29,48 @@ def one(rows):
     return rows[0]
 
 
+def droid_guide(profile, market, inventory):
+    def record(key):
+        path = profile / key
+        require(path == path.resolve() and path.is_file() and path.stat().st_size <= 4 * 1024 * 1024,
+                "invalid Droid registration file")
+        value = json.loads(path.read_bytes())
+        require(isinstance(value, dict), "invalid Droid registration")
+        return value
+
+    lines = inventory.decode().splitlines()
+    active = False
+    matches = 0
+    for line in lines:
+        if not line.startswith((" ", "\t")) and line.rstrip().endswith(":"):
+            active = line.strip() == "Active:"
+        elif active and re.fullmatch(r"\s*" + re.escape(ID) + r"\s+\[user\]\s+\S+\s*", line):
+            matches += 1
+    require(matches == 1, "Droid did not list exactly one active user plugin")
+    settings = record("settings.json")
+    known = record("plugins/known_marketplaces.json")[MARKET]
+    source = {"source": "local", "path": str(market)}
+    require(known["source"] == source and known["installLocation"] == str(market)
+            and settings["enabledPlugins"][ID] is True and settings["extraKnownMarketplaces"][MARKET]["source"] == source,
+            "Droid marketplace source or enablement mismatch")
+    row = one(record("plugins/installed_plugins.json")["plugins"][ID])
+    version = row["version"]
+    require(isinstance(version, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.+_-]{0,127}", version),
+            "invalid Droid cache version")
+    parent = profile / "plugins/cache" / MARKET / "contextlattice" / version
+    file = parent / "skills" / NAME / "SKILL.md"
+    require(row["scope"] == "user" and row["source"] == MARKET and row["installPath"] == str(parent)
+            and file == file.resolve() and file.is_file() and file.stat().st_size <= 65536,
+            "Droid registration does not own the expected cached skill")
+    return file
+
+
 def verify(host, profile, dist, binary):
     guide = (SOURCE / SKILL).read_bytes()
     env = {**os.environ, NATIVE[host]: str(profile)}
+    if host == "droid":
+        require(profile.name == ".factory", "select the explicit native .factory profile")
+        env["HOME"] = str(profile.parent)
     def native(*args):
         p = subprocess.run([binary or host, *args], capture_output=True, env=env, timeout=30)
         require(p.returncode == 0, "native " + " ".join(args[:2]) + " returned " + str(p.returncode))
@@ -45,6 +84,12 @@ def verify(host, profile, dist, binary):
     require(dist is not None, "explicit --dist is required to verify the selected source")
     kit = dist / MARKET
     skill = Path("skills") / NAME / "SKILL.md"
+    if host == "droid":
+        file = droid_guide(profile, kit, native("plugin", "list", "--scope", "user"))
+        staged = kit / SKILL
+        require(staged == staged.resolve() and staged.is_file() and staged.stat().st_size == len(guide)
+                and file.read_bytes() == guide == staged.read_bytes(), "Droid cached skill differs from the guide")
+        return "native-active-user-plugin-and-cached-bytes"
     if host == "codex":
         row = one([r for r in json.loads(native("plugin", "list", "--marketplace", MARKET, "--json"))["installed"]
                    if r["pluginId"] == ID])

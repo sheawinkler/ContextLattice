@@ -15,6 +15,7 @@ from manage import Conflict, directory, stat_kind
 SETTINGS = {
     "codex": ("config.toml",),
     "claude-code": ("settings.json", "plugins/known_marketplaces.json", "plugins/installed_plugins.json"),
+    "droid": ("settings.json", "plugins/known_marketplaces.json", "plugins/installed_plugins.json"),
     "prime-agent": ("settings.json",),
     "mercury": ("plugins/state.json",),
 }
