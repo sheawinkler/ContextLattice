@@ -1,0 +1,5 @@
+{
+  "name": "contextlattice",
+  "version": "0.1.0",
+  "description": "Recall scoped project context with the installed ContextLattice CLI."
+}

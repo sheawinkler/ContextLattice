@@ -1,0 +1,7 @@
+{
+  "name": "contextlattice-local",
+  "owner": { "name": "ContextLattice" },
+  "plugins": [
+    { "name": "contextlattice", "source": "./plugins/contextlattice" }
+  ]
+}

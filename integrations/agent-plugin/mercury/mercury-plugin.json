@@ -1,0 +1,19 @@
+{
+  "manifestVersion": 1,
+  "id": "contextlattice",
+  "name": "ContextLattice",
+  "version": "0.1.0",
+  "description": "Select the shared, CLI-first project recall guide.",
+  "kind": "in-process",
+  "engines": { "mercury": ">=1.5.0 <2.0.0", "pluginApi": "^1.2.0" },
+  "entry": "index.mjs",
+  "contributes": {
+    "tools": [
+      { "name": "recall_guide", "description": "Load the ContextLattice project recall workflow. Does not query memory.", "readOnly": true }
+    ],
+    "commands": [
+      { "name": "contextlattice", "description": "Show the project recall workflow (no query or configuration changes)." }
+    ]
+  },
+  "permissions": { "network": [], "secrets": [] }
+}
