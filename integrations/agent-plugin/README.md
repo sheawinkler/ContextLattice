@@ -81,9 +81,9 @@ model, hook, MCP server, package install, or network is involved.
 | --- | --- | --- | --- |
 | `gemini` | `$HOME/.gemini` | `extensions/contextlattice-recall/` | Direct-load Gemini extension; `extensions list` enabled it and `skills list --all` resolved its one bundled skill. |
 | `gemini-skill` | `$HOME/.gemini` | `skills/contextlattice-recall/` | Native standalone skill instead of the extension; choose one. |
-| `droid` | `$HOME/.factory` | `skills/contextlattice-recall/` | Droid's native `droid.list_skills` RPC returned the enabled, user-invocable personal skill and its body. Not a Factory marketplace plugin. |
+| `droid` | `$HOME/.factory` | `skills/contextlattice-recall/` | A clean profile's `droid.list_skills` returned the personal skill and its body. Some configured profiles select only a shared skill root; check the returned file path before calling this installed and discoverable. |
 | `pi` | `$HOME/.pi/agent` | `skills/contextlattice-recall/` | One native `skill:contextlattice-recall` command in RPC `get_commands`. |
-| `omp` | `$HOME/.omp/agent` | `skills/contextlattice-recall/` | Same command in OMP's own RPC inventory, distinct from its instruction file. |
+| `omp` | `$HOME/.omp/agent` | `skills/contextlattice-recall/` | One `skill:contextlattice-recall` in the native startup event `available_commands_update`. OMP 19.1.1 rejects Pi's `get_commands` request. |
 
 For example, install in ordinary profiles **only when selected**:
 
@@ -110,14 +110,23 @@ directory outside all discovery roots. Rollback does not require the original
 distribution, removes only verified owned files, and leaves unrelated settings
 and previously existing instructions alone.
 
+To check a captured **Pi** RPC inventory, send
+`{"id":"cl-inventory","type":"get_commands"}` to an ephemeral session.
+For **OMP**, collect the startup inventory instead; no prompt or request is
+needed. Close the session and pass its JSONL output to
+`python3 verify_rpc_catalog.py pi` or `python3 verify_rpc_catalog.py omp`
+on standard input. The verifier prints only the result, never the catalog.
+This proves command discovery, not a model invoking the skill or reading memory.
+
 Reproduce the Gemini and Droid loader/rollback checks without a model using
 `python3 -B tests/probe_extra_profiles.py --scratch-root "$SCRATCH"` on macOS
 with the hosts installed. OpenCode 2.3.2's standalone skill API starts a
 private server on a TCP port, which the no-network fixture refused. Its
 documented personal skill root is `$XDG_CONFIG_HOME/opencode/skills` (normally
 `$HOME/.config/opencode/skills`), but an installed skill or plugin was not
-qualified there. Use the CLI fallback; no offline plugin installation or
-always-on service is prescribed.
+qualified there. A subsequent loopback-only request reached the native API,
+but its inventory did not contain the product skill. Use the CLI fallback;
+no offline plugin installation or always-on service is prescribed.
 
 ## Optional project MCP
 
