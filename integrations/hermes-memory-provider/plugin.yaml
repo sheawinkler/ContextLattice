@@ -1,5 +1,5 @@
 name: contextlattice
-version: 0.4.0
+version: 0.4.1
 kind: exclusive
 requires_env:
   - CONTEXTLATTICE_ORCHESTRATOR_API_KEY

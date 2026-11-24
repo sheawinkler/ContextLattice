@@ -162,9 +162,12 @@ class _NoCredentialRedirects(urllib.request.HTTPRedirectHandler):
 
 def _profile_home() -> str:
     try:
+        from agent.secret_scope import current_secret_scope_home
         from hermes_constants import hermes_home_key
 
-        return hermes_home_key()
+        active = hermes_home_key()
+        stamped = current_secret_scope_home()
+        return active if stamped is None or hermes_home_key(stamped) == active else ""
     except Exception:
         return ""
 
@@ -344,12 +347,14 @@ class ContextLatticeProvider(MemoryProvider):
             self._handoff_parent_error = ""
             self._handoff_receipt = None
         self._primary = kwargs.get("agent_context", "primary") == "primary"
-        if kwargs.get("hermes_home"):
-            self._home = Path(kwargs["hermes_home"])
+        if self._profile:
+            self._home = Path(self._profile)
         if self._primary and self._key:
             self._bg(self._startup_maintenance, "contextlattice-maintenance")
 
     def _on_session_start(self, session_id: str = "", model: Any = None, **_: Any) -> None:
+        if not self._scope_active():
+            return
         with self._lock:
             if _host_identity(session_id) and session_id == self._session_id:
                 self._session_start_model = _reported_model(model)
@@ -377,6 +382,13 @@ class ContextLatticeProvider(MemoryProvider):
         if not key or key != self._key or not self._profile or self._profile != _profile_home():
             raise PermissionError("ContextLattice provider requires its initialized Hermes profile")
         return key
+
+    def _scope_active(self) -> bool:
+        try:
+            self._request_key()
+        except PermissionError:
+            return False
+        return True
 
     def _post(self, path: str, body: Dict[str, Any], timeout: Optional[float] = None) -> Dict[str, Any]:
         req = urllib.request.Request(
@@ -597,7 +609,7 @@ class ContextLatticeProvider(MemoryProvider):
 
     def prefetch(self, query: str, *, session_id: str = "", model: Any = None,
                  reasoning_effort: Any = None) -> str:
-        if not query or not query.strip() or not self._key:
+        if not query or not query.strip() or not self._scope_active():
             return ""
         jobs = {
             "MEMORY ARCHIVE (hermes-agent)": dict(project=self._cfg["project"], topic_path="memory"),
@@ -801,7 +813,7 @@ class ContextLatticeProvider(MemoryProvider):
 
     def on_memory_write(self, action: str, target: str, content: str,
                         metadata: Optional[Dict[str, Any]] = None) -> None:
-        if not self._primary or not self._key:
+        if not self._primary or not self._scope_active():
             return
         metadata = metadata if isinstance(metadata, dict) else {}
         previous = metadata.get("previous_content")
@@ -929,6 +941,7 @@ class ContextLatticeProvider(MemoryProvider):
                 os.unlink(temporary)
 
     def _outbox_append(self, item: Dict[str, Any]) -> None:
+        self._request_key()
         path = self._outbox_path()
         with self._outbox_lock, self._outbox_process_lock("mirror-outbox.lock"):
             items = self._read_outbox(path)
@@ -938,6 +951,7 @@ class ContextLatticeProvider(MemoryProvider):
             self._atomic_write_outbox(path, items)
 
     def drain_outbox(self) -> Dict[str, int]:
+        self._request_key()
         path = self._outbox_path()
         with self._outbox_drain_lock, self._outbox_process_lock("mirror-outbox-drain.lock"):
             with self._outbox_lock, self._outbox_process_lock("mirror-outbox.lock"):
@@ -968,6 +982,7 @@ class ContextLatticeProvider(MemoryProvider):
     def reconcile(self, repair: bool = True) -> Dict[str, Any]:
         """Diff every built-in MEMORY.md / USER.md entry against its CL mirror file;
         backfill missing ones. Present-check is by exact file (content digest in the name)."""
+        self._request_key()
         report: Dict[str, Any] = {"checked": 0, "present": 0, "missing": [], "repaired": 0, "errors": []}
         project = self._cfg["project"]
         for target, fname in (("memory", "MEMORY.md"), ("user", "USER.md")):
@@ -1016,7 +1031,7 @@ class ContextLatticeProvider(MemoryProvider):
             logger.error("contextlattice startup maintenance BLOCKED (%s)", type(exc).__name__)
 
     def _cmd_reconcile(self, raw_args: str = "") -> str:
-        if not self._key:
+        if not self._scope_active():
             return "ContextLattice reconcile: no API key (provider inactive)."
         dry = "--dry-run" in (raw_args or "").split()
         if dry:
@@ -1035,7 +1050,7 @@ class ContextLatticeProvider(MemoryProvider):
                 f"repaired={r['repaired']} errors={len(r['errors'])}")
 
     def on_pre_compress(self, messages: List[Dict[str, Any]], **kwargs) -> str:
-        if not self._primary or not self._key:
+        if not self._primary or not self._scope_active():
             return ""
         with self._lock:
             project, source, generation = self._cfg["project"], self._session_id, self._handoff_generation
@@ -1067,6 +1082,8 @@ class ContextLatticeProvider(MemoryProvider):
 
     def on_session_switch(self, new_session_id: str, *, parent_session_id: str = "",
                           reset: bool = False, **kwargs) -> None:
+        if not self._scope_active():
+            return
         with self._lock:
             self._handoff_generation += 1
             self._session_id = new_session_id
@@ -1202,7 +1219,7 @@ class ContextLatticeProvider(MemoryProvider):
         samples_recorded = False
         generation = ""
         try:
-            if tool_name != "delegate_task" or not self._primary or not self._key or not isinstance(args, dict):
+            if tool_name != "delegate_task" or not self._primary or not self._scope_active() or not isinstance(args, dict):
                 return None
             if self._cfg.get("delegation_recall") is False:
                 return None
@@ -1285,7 +1302,7 @@ class ContextLatticeProvider(MemoryProvider):
                            **_: Any) -> None:
         """Observe host results. Completion is neither first-pass success nor verification."""
         try:
-            if tool_name != "delegate_task" or not isinstance(args, dict):
+            if tool_name != "delegate_task" or not isinstance(args, dict) or not self._scope_active():
                 return None
             goals = _goals_of(args)
             native_id = _host_identity(session_id) or _host_identity(self._session_id)
