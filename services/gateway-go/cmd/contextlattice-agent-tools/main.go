@@ -173,6 +173,7 @@ type cli struct {
 	baseURL string
 	apiKey  string
 	client  *http.Client
+	stdin   io.Reader
 	stdout  io.Writer
 	stderr  io.Writer
 }
@@ -258,6 +259,7 @@ func newCLI(stdout, stderr io.Writer) *cli {
 		baseURL: baseURLFromEnv(),
 		apiKey:  apiKeyFromEnv(),
 		client:  &http.Client{},
+		stdin:   os.Stdin,
 		stdout:  stdout,
 		stderr:  stderr,
 	}
