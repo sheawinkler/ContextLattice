@@ -1,20 +1,25 @@
 #!/usr/bin/env python3
-"""Hard launch gate so channel submissions stay in the correct order."""
+"""Separate local release readiness from hosted MCP publication evidence."""
 
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
+import re
 import subprocess
 import sys
-import urllib.error
-import urllib.parse
-import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 
 
 ROOT = Path(__file__).resolve().parents[1]
+# Independent, reviewed trust anchor. Never derive it from the listing or env.
+TRUSTED_MCP_URLS: frozenset[str] = frozenset()
+PROTOCOL = "2025-11-25"
+MAX_BYTES = 16 * 1024
+UNPUBLISHED = "hosted MCP unpublished"
 
 
 @dataclass
@@ -29,167 +34,133 @@ def _run_submission_preflight(online: bool) -> GateCheck:
     if online:
         cmd.append("--online")
     proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, check=False)
-    summary = "pass" if proc.returncode == 0 else "fail"
-    if proc.returncode != 0:
-        tail = "\n".join((proc.stdout + "\n" + proc.stderr).strip().splitlines()[-12:])
-        return GateCheck(False, "submission_preflight", f"{summary}\n{tail}")
-    return GateCheck(True, "submission_preflight", summary)
+    if proc.returncode:
+        return GateCheck(False, "submission_preflight", "failed; inspect submission_preflight separately")
+    return GateCheck(True, "submission_preflight", "pass")
 
 
-def _load_registry_remote_url() -> GateCheck:
+def _json_object(raw: bytes) -> dict:
+    def unique(pairs):
+        obj = dict(pairs)
+        if len(obj) != len(pairs):
+            raise ValueError("duplicate member")
+        return obj
+
+    def invalid_number(_):
+        raise ValueError("invalid number")
+
+    if len(raw) > MAX_BYTES:
+        raise ValueError("oversized object")
+    obj = json.loads(raw.decode("utf-8"), object_pairs_hook=unique, parse_constant=invalid_number)
+    if not isinstance(obj, dict):
+        raise ValueError("not an object")
+    return obj
+
+
+def _trusted(url: object) -> bool:
+    return (isinstance(url, str) and url in TRUSTED_MCP_URLS and
+            re.fullmatch(r"https://(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)?contextlattice\.io/mcp", url) is not None)
+
+
+def _registry_remote() -> str | None:
     path = ROOT / "registry/contextlattice.server.json"
-    if not path.exists():
-        return GateCheck(False, "registry_manifest", "registry/contextlattice.server.json missing")
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        return GateCheck(False, "registry_manifest", f"invalid json: {exc}")
-    remotes = payload.get("remotes") or []
-    if not remotes:
-        return GateCheck(False, "registry_manifest", "no remotes[] configured")
-    url = str(remotes[0].get("url", "")).strip()
-    if not url:
-        return GateCheck(False, "registry_manifest", "remotes[0].url missing")
-    return GateCheck(True, "registry_manifest", url)
-
-
-def _is_private_host(host: str | None) -> bool:
-    if not host:
-        return True
-    host_l = host.lower()
-    return host_l in {"127.0.0.1", "localhost"} or host_l.startswith("192.168.") or host_l.startswith("10.")
+    with path.open("rb") as manifest:
+        obj = _json_object(manifest.read(MAX_BYTES + 1))
+    if obj.get("name") != "io.github.sheawinkler/contextlattice":
+        raise ValueError("unexpected registry identity")
+    remotes = obj.get("remotes")
+    if remotes == []:
+        return None
+    if not isinstance(remotes, list) or len(remotes) != 1 or not isinstance(remotes[0], dict):
+        raise ValueError("expected one remote")
+    remote = remotes[0]
+    if (set(remote) != {"type", "url"} or remote["type"] != "streamable-http"
+            or not _trusted(remote["url"])):
+        raise ValueError("not a trusted credential-free remote")
+    return remote["url"]
 
 
 def _probe_public_mcp(url: str, timeout: int) -> GateCheck:
-    parsed = urllib.parse.urlparse(url)
-    if parsed.scheme != "https":
-        return GateCheck(False, "public_mcp_url_scheme", f"{url} is not https")
-    if _is_private_host(parsed.hostname):
-        return GateCheck(False, "public_mcp_url_host", f"{parsed.hostname} is local/private")
+    def fail(reason: str) -> GateCheck:
+        return GateCheck(False, "public_mcp_probe", f"{UNPUBLISHED}: {reason}")
 
-    payload = json.dumps(
-        {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "initialize",
-            "params": {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {},
-                "clientInfo": {"name": "launch-lock", "version": "1.0"},
-            },
-        }
-    ).encode("utf-8")
-
-    req = urllib.request.Request(
-        url,
-        data=payload,
-        method="POST",
-        headers={
-            "Accept": "application/json, text/event-stream",
-            "Content-Type": "application/json",
-            "User-Agent": "ContextLattice-Launch-Lock/1.0",
-        },
-    )
-    status = None
-    final_url = url
-    body = ""
+    if not _trusted(url) or not 1 <= timeout <= 30:
+        return fail("untrusted remote or invalid timeout")
+    init = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+        "protocolVersion": PROTOCOL, "capabilities": {},
+        "clientInfo": {"name": "launch-lock", "version": "1"},
+    }}
+    origin = urlsplit(url)
+    # Direct, certificate-verified HTTPS: no ambient proxy, cookies, auth or redirect handler.
+    conn = http.client.HTTPSConnection(origin.hostname, timeout=timeout)
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            status = getattr(resp, "status", 200)
-            final_url = getattr(resp, "geturl", lambda: url)()
-            body = resp.read(220).decode("utf-8", errors="ignore")
-    except urllib.error.HTTPError as exc:
-        status = exc.code
-        final_url = exc.geturl() or url
-        body = exc.read(220).decode("utf-8", errors="ignore")
-    except Exception as exc:  # noqa: BLE001
-        return GateCheck(False, "public_mcp_probe", f"probe failed: {exc}")
+        conn.request("POST", origin.path, json.dumps(init).encode("utf-8"), headers={
+            "Content-Type": "application/json", "Accept": "application/json, text/event-stream",
+        })
+        with conn.getresponse() as response:
+            if response.status != 200:
+                return fail(f"initialize returned HTTP {response.status}")
+            if response.getheader("Content-Type", "").partition(";")[0].strip().lower() != "application/json":
+                return fail("expected JSON initialize response")
+            obj = _json_object(response.read(MAX_BYTES + 1))
+    except (OSError, http.client.HTTPException, ValueError, RecursionError):
+        return fail("invalid or unavailable initialize response")
+    finally:
+        conn.close()
 
-    final = urllib.parse.urlparse(final_url)
-    if final.scheme != "https":
-        return GateCheck(False, "public_mcp_probe", f"redirected to non-https: {final_url}")
-
-    # 200: initialize worked, 401/403: endpoint reachable with auth policy.
-    if status not in {200, 401, 403}:
-        short_body = body.replace("\n", " ").strip()[:120]
-        return GateCheck(False, "public_mcp_probe", f"status={status} final={final_url} body={short_body}")
-
-    return GateCheck(True, "public_mcp_probe", f"status={status} final={final_url}")
-
-
-def _channel_gates(mode: str, public_ready: bool) -> list[GateCheck]:
-    # Purpose: make explicit what is allowed to publish right now.
-    out = [
-        GateCheck(True, "channel:GitHub Release", "allowed"),
-        GateCheck(True, "channel:Custom Domain Docs", "allowed"),
-        GateCheck(True, "channel:MCP.so", "allowed (use local config unless public endpoint exists)"),
-        GateCheck(True, "channel:Glama MCP", "allowed"),
-        GateCheck(True, "channel:Awesome MCP Servers", "allowed (PR review queue)"),
-    ]
-    if mode == "local":
-        registry_ok = True
-        registry_details = "intentionally blocked in local mode (public publish deferred)"
-        pulse_details = "intentionally blocked in local mode (depends on MCP Registry publish)"
-    else:
-        registry_ok = public_ready
-        registry_details = "allowed" if registry_ok else "blocked (requires public HTTPS /mcp endpoint + auth)"
-        pulse_details = "allowed" if registry_ok else "blocked (depends on official MCP Registry publication)"
-
-    out.append(
-        GateCheck(
-            registry_ok,
-            "channel:MCP Registry (official)",
-            registry_details,
-        )
-    )
-    out.append(
-        GateCheck(
-            registry_ok,
-            "channel:PulseMCP",
-            pulse_details,
-        )
-    )
-    return out
+    result = obj.get("result")
+    if (obj.get("jsonrpc") != "2.0" or type(obj.get("id")) is not int or obj["id"] != 1
+            or set(obj) != {"jsonrpc", "id", "result"} or not isinstance(result, dict)
+            or result.get("protocolVersion") != PROTOCOL):
+        return fail("initialize envelope or protocol mismatch")
+    identity = result.get("serverInfo")
+    caps = result.get("capabilities")
+    if (not isinstance(identity, dict) or identity.get("name") != "contextlattice"
+            or identity.get("version") != "1" or not isinstance(caps, dict)
+            or not isinstance(caps.get("tools"), dict)
+            or ("listChanged" in caps["tools"] and type(caps["tools"]["listChanged"]) is not bool)):
+        return fail("server identity or tools capability mismatch")
+    return GateCheck(True, "public_mcp_probe", "verified anonymous initialize only; not publication")
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Enforce launch sequencing gates for ContextLattice submissions.")
+    parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mode", choices=("local", "public"), default="local")
-    parser.add_argument("--timeout", type=int, default=10)
+    parser.add_argument("--timeout", type=int, choices=range(1, 31), default=10, metavar="1..30")
     args = parser.parse_args()
+    local = args.mode == "local"
+    remote = None
+    try:
+        remote = _registry_remote()
+        manifest = GateCheck(True, "registry_manifest", "reviewed remote configured" if remote else
+                             f"{UNPUBLISHED}: no remote configured")
+    except (OSError, ValueError, RecursionError):
+        manifest = GateCheck(False, "registry_manifest", f"{UNPUBLISHED}: invalid or untrusted manifest")
 
-    checks: list[GateCheck] = []
-    checks.append(_run_submission_preflight(online=(args.mode == "public")))
-
-    remote = _load_registry_remote_url()
-    checks.append(remote)
-
-    public_ready = False
-    if args.mode == "public":
-        if remote.ok:
-            probe = _probe_public_mcp(remote.details, timeout=args.timeout)
-            checks.append(probe)
-            public_ready = probe.ok
-        else:
-            checks.append(GateCheck(False, "public_mcp_probe", "skipped (manifest missing/invalid)"))
+    if local:
+        probe = GateCheck(True, "public_mcp_probe", "not required for local stdio; no request")
+    elif remote is None:
+        probe = GateCheck(False, "public_mcp_probe", f"{UNPUBLISHED}: no trusted configured remote")
     else:
-        # Local mode intentionally does not require public endpoint readiness.
-        checks.append(GateCheck(True, "public_mcp_probe", "skipped in local mode"))
+        probe = _probe_public_mcp(remote, args.timeout)
+    checks = [manifest, probe, _run_submission_preflight(online=not local and probe.ok)]
+    for name in ("GitHub Release", "Custom Domain Docs"):
+        checks.append(GateCheck(True, f"channel:{name}", "not evidence of hosted MCP publication"))
+    for name in ("MCP.so", "Glama MCP", "Awesome MCP Servers", "MCP Registry (official)", "PulseMCP"):
+        checks.append(GateCheck(local, f"channel:{name}", "hosted listing deferred" if local
+                                else "hosted listing not qualified by this lock"))
+    # This lock has no verifier for these independent publication prerequisites.
+    # Never turn endpoint reachability (or ordinary docs preflight) into their proof.
+    for name in ("public-site ownership", "public authentication policy", "matching registry registration"):
+        checks.append(GateCheck(local, name, "deferred in local mode" if local else "not verified; hosted promotion blocked"))
 
-    checks.extend(_channel_gates(mode=args.mode, public_ready=public_ready))
-
-    failing = [c for c in checks if not c.ok]
     print(f"Launch lock mode: {args.mode}")
-    for c in checks:
-        state = "PASS" if c.ok else "FAIL"
-        print(f"[{state}] {c.name} :: {c.details}")
-
-    print(f"\nSummary: {len(checks) - len(failing)}/{len(checks)} checks passed.")
-    if failing:
-        print("Result: NO-GO")
-        return 1
-    print("Result: GO")
-    return 0
+    for check in checks:
+        print(f"[{'PASS' if check.ok else 'FAIL'}] {check.name} :: {check.details}")
+    passed = sum(check.ok for check in checks)
+    print(f"\nSummary: {passed}/{len(checks)} checks passed.")
+    print("Result: GO" if passed == len(checks) else "Result: NO-GO")
+    return int(passed != len(checks))
 
 
 if __name__ == "__main__":
